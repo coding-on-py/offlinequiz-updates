@@ -3110,7 +3110,8 @@ document.addEventListener("click", (e) => {
 const DEFAULT_APPEARANCE = {
   accent: {
     gold: ["#dfb347", "#dfb34733"], // default look
-    blue: null, // stylesheet default (#58a6ff)
+    blue: ["#58a6ff", "#1f6feb33"], // explicit so it always wins (was null → fell
+                                    // back to the legacy data-accent rule = gold)
     green: ["#3fb950", "#2ea04333"],
     cyan: ["#2dd4bf", "#2dd4bf33"],
     magenta: ["#d65bd6", "#d65bd633"],
