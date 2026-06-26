@@ -1,0 +1,63 @@
+{
+  "version": 6,
+  "renderer": [
+    "index.html",
+    "style.css",
+    "art_data.js",
+    "extensions.js",
+    "app.js"
+  ],
+  "plugins": [
+    {
+      "id": "answer-rules",
+      "name": "Answer Rules",
+      "file": "answer-rules.zip"
+    },
+    {
+      "id": "answerline-lab",
+      "name": "Answerline Lab",
+      "file": "answerline-lab.zip"
+    },
+    {
+      "id": "buzz-words",
+      "name": "Buzz Words",
+      "file": "buzz-words.zip"
+    },
+    {
+      "id": "coach-mode",
+      "name": "Coach Mode",
+      "file": "coach-mode.zip"
+    },
+    {
+      "id": "flashcards",
+      "name": "Flashcards",
+      "file": "flashcards.zip"
+    },
+    {
+      "id": "folders",
+      "name": "Question Folders",
+      "file": "folders.zip"
+    },
+    {
+      "id": "keyword-freq",
+      "name": "Keyword Frequency",
+      "file": "keyword-freq.zip"
+    },
+    {
+      "id": "multiplayer",
+      "name": "Multiplayer",
+      "file": "multiplayer.zip"
+    },
+    {
+      "id": "packet-builder",
+      "name": "Packet Builder",
+      "file": "packet-builder.zip"
+    },
+    {
+      "id": "tts",
+      "name": "System Voice TTS",
+      "file": "tts.zip"
+    }
+  ],
+  "main": true
+}
