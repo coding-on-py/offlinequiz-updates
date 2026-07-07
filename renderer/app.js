@@ -146,6 +146,49 @@ let _profileSyncTimer = null;
 function lsGet(key) {
   try { return window.localStorage.getItem(key); } catch (e) { return null; }
 }
+
+// Where the in-app update manifest is published (matches UPDATE_BASE_URL in
+// src/main/appUpdater.js). The renderer reads it directly so a version check
+// never depends on the packaged backend having a specific IPC handler.
+const APP_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/coding-on-py/offlinequiz-updates/main/manifest.json";
+
+// Compare dotted numeric versions ("8.1.0", "8.1.1.1.1", "9.2", "10"): returns
+// -1 / 0 / 1. Missing trailing segments count as 0, so "9" === "9.0.0".
+function cmpVer(a, b) {
+  const pa = String(a == null ? 0 : a).split(".");
+  const pb = String(b == null ? 0 : b).split(".");
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const d = (parseInt(pa[i], 10) || 0) - (parseInt(pb[i], 10) || 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+// Peek at the app update WITHOUT downloading: read the currently-installed
+// overlay version via IPC, then fetch the remote manifest and compare.
+async function peekAppUpdate() {
+  let info = null;
+  try { info = await API.get("/api/app-update-info"); } catch (e) {}
+  if (info && info.dev) return { dev: true };
+  if (info && info.configured === false) return { configured: false };
+  const have = info && info.version != null ? info.version : 0;
+  let manifest;
+  try {
+    const res = await fetch(APP_UPDATE_MANIFEST_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error("manifest " + res.status);
+    manifest = await res.json();
+  } catch (e) { return { error: e.message || String(e) }; }
+  const version = manifest.version != null ? String(manifest.version) : "0";
+  return {
+    configured: true,
+    available: cmpVer(version, have) > 0,
+    version,
+    haveVersion: String(have),
+    critical: !!manifest.critical,
+    notes: typeof manifest.notes === "string" ? manifest.notes.slice(0, 400) : "",
+  };
+}
 function lsSet(key, value) {
   window.localStorage.setItem(key, value);
   clearTimeout(_profileSyncTimer);
@@ -4901,20 +4944,17 @@ $("#btn-app-update")?.addEventListener("click", async () => {
   btn.disabled = true; btn.textContent = "Checking…";
   status.textContent = "Checking for updates…";
   try {
-    let r;
-    try { r = await API.get("/api/app-update-peek"); }
-    catch (e) { r = { unsupported: true }; } // pre-peek backend: invoke has no handler
-    if (r.unsupported) await downloadAppUpdate(status, "app-upd"); // legacy: checking installs directly
-    else if (r.dev) status.textContent = "App updates only run in the packaged app.";
+    const r = await peekAppUpdate();
+    if (r.dev) status.textContent = "App updates only run in the packaged app.";
     else if (r.error) status.textContent = "Update check failed: " + friendlyUpdateErr(r.error);
     else if (!r.configured) status.textContent = "App updates aren't set up in this build.";
     else if (!r.available) status.textContent = "You're on the latest version (v" + (r.haveVersion || r.version || "?") + ").";
     else {
-      // Checking never installs — updating is its own click.
+      // Checking never installs — a separate "Download update" button does.
       status.innerHTML = `<div style="margin-bottom:8px">Update available: <strong>v${escapeHtml(String(r.version))}</strong>${r.critical ? " (important)" : ""}</div>`;
       const install = document.createElement("button");
       install.className = "btn btn-sm btn-primary";
-      install.textContent = "Download & install";
+      install.textContent = "Download update";
       install.onclick = () => downloadAppUpdate(status, "app-upd");
       status.appendChild(install);
     }
@@ -6562,27 +6602,19 @@ async function applyStagedPluginUpdates() {
 async function maybeAutoCheckAppUpdate() {
   if (localStorage.getItem("qb-app-autoupdate") === "false") return;
   let r = null;
-  try { r = await API.get("/api/app-update-peek"); }
-  catch (e) { r = { unsupported: true }; } // pre-peek backend: invoke has no handler
-  if (!r || r.dev) return;
-  if (r.unsupported) {
-    // Old backend from an earlier DMG can only check-and-download in one step.
+  try { r = await peekAppUpdate(); } catch (e) { return; }
+  if (!r || r.dev || r.error || !r.configured || !r.available) return;
+  // Critical releases auto-install (unless the user turned that off); normal
+  // ones are only ever OFFERED — never downloaded without a click.
+  if (r.critical && localStorage.getItem("qb-app-critical-auto") !== "false") {
     try {
       const d = await API.post("/api/app-update-check", {});
-      if (d && d.updated) showUpdateDialog({ version: d.version }, { installed: true });
+      if (d && d.updated) showUpdateDialog(r, { installed: true });
     } catch {}
     return;
   }
-  if (r.error || !r.configured || !r.available) return;
-  try {
-    if (r.critical && localStorage.getItem("qb-app-critical-auto") !== "false") {
-      const d = await API.post("/api/app-update-check", {});
-      if (d && d.updated) showUpdateDialog(r, { installed: true });
-      return;
-    }
-    if (localStorage.getItem("qb-ignored-update") === String(r.version)) return;
-    showUpdateDialog(r, { installed: false });
-  } catch {}
+  if (localStorage.getItem("qb-ignored-update") === String(r.version)) return;
+  showUpdateDialog(r, { installed: false });
 }
 
 function showUpdateDialog(info, opts) {

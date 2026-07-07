@@ -2241,16 +2241,17 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .save-menu-item:hover { background: var(--accent-dim); color: var(--accent); }
 
 /* ── Review menu (age range + search + match count) ── */
-.rv-box { min-width: 480px; max-width: 92vw; }
+.rv-box { min-width: 620px; max-width: 94vw; }
 .rv-filter { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 10px; }
 .rv-row { display: flex; align-items: center; gap: 8px; }
 .rv-lbl { font-size: 11px; color: var(--text-secondary); flex: 0 0 72px; }
 .rv-dual { flex: 1; min-width: 160px; }
-.rv-difficulties { align-items: flex-start; }
-.rv-diff-grid { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.rv-difficulties { align-items: center; }
+/* All 11 difficulty chips stay on one line — no wrapping. */
+.rv-diff-grid { display: flex; flex-wrap: nowrap; gap: 5px; flex: 1; }
 .rv-diff-chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 12px; padding: 2px 8px; border: 1px solid var(--border);
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+  font-size: 12px; padding: 3px 0; flex: 1 1 0; min-width: 0; border: 1px solid var(--border);
   border-radius: 999px; background: var(--bg-tertiary); cursor: pointer;
 }
 .rv-diff-chip:has(input:checked) { border-color: var(--accent); color: var(--accent); }
