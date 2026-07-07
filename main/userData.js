@@ -60,7 +60,6 @@ export class UserData {
   }
 
   _migrate() {
-    // Add profile_id columns
     const sCol = this.db.prepare("PRAGMA table_info(sessions)").all();
     if (!sCol.some(c => c.name === "profile_id")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN profile_id TEXT DEFAULT 'default'");
@@ -78,18 +77,15 @@ export class UserData {
       CREATE INDEX IF NOT EXISTS idx_starred_profile ON starred(profile_id);
     `);
 
-    // Create unique index to deduplicate starred entries
     try {
       this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_starred_unique ON starred(question_id, type, profile_id)");
     } catch {}
 
-    // Ensure default profile exists
     this.db.prepare("INSERT OR IGNORE INTO profiles (id, name, created_at) VALUES (?, ?, ?)").run("default", "Default", Date.now());
   }
 
   close() { this.db.close(); }
 
-  // ── Generic config key/value ──────────────────────────
   getConfig(key) {
     const row = this.db.prepare("SELECT value FROM config WHERE key = ?").get(key);
     return row ? row.value : null;
@@ -99,16 +95,11 @@ export class UserData {
     this.db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run(key, value);
   }
 
-  // Per-profile set of question ids removed from the review queue.
-  // Dismissals are stored as { id: dismissedAtMs }. A question is only hidden
-  // from review while it was dismissed AT OR AFTER its last wrong attempt /
-  // manual add — so re-negging or re-adding it later brings it back.
   getReviewDismissedMap() {
     const pid = this.getActiveProfileId();
     let raw;
     try { raw = JSON.parse(this.getConfig("review_dismissed:" + pid) || "{}"); } catch { raw = {}; }
     if (Array.isArray(raw)) {
-      // migrate legacy id-array -> map dismissed "now" (so future negs resurface)
       const now = Date.now();
       const map = {};
       raw.forEach((id) => { map[id] = now; });
@@ -126,9 +117,6 @@ export class UserData {
     return { ok: true };
   }
 
-  // Per-profile, per-plugin key/value storage (JSON values). Lets plugin data
-  // (starred flashcards, coach stats, …) follow the active PROFILE instead of
-  // living in machine-wide localStorage.
   getPluginData(pluginId, key) {
     const pid = this.getActiveProfileId();
     const raw = this.getConfig("plug:" + pid + ":" + pluginId + ":" + key);
@@ -140,9 +128,6 @@ export class UserData {
     return { ok: true };
   }
 
-  // Per-plugin SQL: plugins may create and use their OWN tables (named
-  // plug_<pluginId>__<anything>) in user_data.db. Statements touching core
-  // tables or dangerous commands are rejected.
   pluginSql(pluginId, sql, params) {
     const src = String(sql || "");
     const safeId = String(pluginId || "").replace(/[^a-zA-Z0-9_-]/g, "");
@@ -150,7 +135,6 @@ export class UserData {
     const FORBIDDEN = /\b(sessions|starred|profiles|config|tossups|bonuses|sets|packets|sqlite_master|sqlite_sequence)\b/i;
     if (FORBIDDEN.test(src)) throw new Error("plugin SQL may only touch its own plug_" + safeId + "__* tables");
     if (/\b(attach|detach|pragma|vacuum)\b/i.test(src)) throw new Error("statement not allowed");
-    // every plug_ table referenced must belong to THIS plugin
     const tables = src.match(/\bplug_[a-zA-Z0-9_-]+__[a-zA-Z0-9_]+/g) || [];
     const prefix = "plug_" + safeId + "__";
     for (const t of tables) if (!t.startsWith(prefix)) throw new Error("table " + t + " belongs to another plugin");
@@ -161,7 +145,6 @@ export class UserData {
     return { ok: true };
   }
 
-  // Per-profile settings blob (JSON) — gameplay settings, hotkeys, identity.
   getProfileSettings() {
     const pid = this.getActiveProfileId();
     const raw = this.getConfig("settings:" + pid);
@@ -174,7 +157,6 @@ export class UserData {
     return { ok: true };
   }
 
-  // ── Profiles ──────────────────────────────────────────
 
   createProfile(name) {
     const id = "prof-" + Date.now();
@@ -211,7 +193,6 @@ export class UserData {
     return row || { id: "default", name: "Default" };
   }
 
-  // ── Starred ───────────────────────────────────────────
 
   starQuestion(questionId, type) {
     const pid = this.getActiveProfileId();
@@ -247,7 +228,6 @@ export class UserData {
     return row ? row.count : 0;
   }
 
-  // ── Sessions ──────────────────────────────────────────
 
   addSessionEntry(entry) {
     const pid = this.getActiveProfileId();
@@ -275,10 +255,6 @@ export class UserData {
     });
   }
 
-  // For an OVERRIDE (mark correct/incorrect after answering): update the most
-  // recent existing row for this (session, question) instead of inserting a
-  // duplicate. Falls back to insert when there's no prior row (dead/skip/MP
-  // first record). Prevents the same question being counted twice in stats.
   recordOverride(entry) {
     const pid = this.getActiveProfileId();
     const row = this.db.prepare(
@@ -319,7 +295,8 @@ export class UserData {
     const pid = this.getActiveProfileId();
     return this.db.prepare(`
       SELECT session_id, COUNT(*) as question_count, SUM(points) as total_points,
-             MIN(timestamp) as started_at, MAX(timestamp) as ended_at
+             MIN(timestamp) as started_at, MAX(timestamp) as ended_at,
+             GROUP_CONCAT(DISTINCT category) as categories
       FROM sessions WHERE profile_id = :pid
       GROUP BY session_id ORDER BY MIN(timestamp) DESC
     `).all({ pid });
@@ -330,8 +307,6 @@ export class UserData {
     return this.db.prepare("DELETE FROM sessions WHERE session_id = ? AND profile_id = ?").run(sessionId, pid);
   }
 
-  // Auto-cleanup: drop whole sessions whose most-recent entry is older than
-  // `days` days (the "delete sessions older than N" setting). days<=0 → no-op.
   deleteSessionsOlderThan(days) {
     const pid = this.getActiveProfileId();
     const n = parseInt(days, 10);
@@ -372,5 +347,12 @@ export class UserData {
   getAllSessionEntries() {
     const pid = this.getActiveProfileId();
     return this.db.prepare("SELECT * FROM sessions WHERE profile_id = ? ORDER BY timestamp").all(pid);
+  }
+
+  getPoweredAnswerIds() {
+    const pid = this.getActiveProfileId();
+    return this.db.prepare(
+      "SELECT question_id FROM sessions WHERE points >= 15 AND correct = 1 AND type = 'tossup' AND profile_id = ?"
+    ).all(pid).map((r) => r.question_id).filter(Boolean);
   }
 }

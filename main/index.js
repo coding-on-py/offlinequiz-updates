@@ -19,11 +19,11 @@ const DEFAULT_USER_DB_PATH = join(
 );
 
 export class App {
-  /**
-   * @param {object} [opts]
-   * @param {string} [opts.dbPath] - Path to questions database
-   * @param {string} [opts.userDbPath] - Path to user data database
-   */
+  
+
+
+
+
   constructor(opts = {}) {
     this.dbPath = opts.dbPath || DEFAULT_DB_PATH;
     this.userDbPath = opts.userDbPath || DEFAULT_USER_DB_PATH;
@@ -71,19 +71,16 @@ export class App {
     return this.questionDb.getRandomBonus(resolved);
   }
 
-  /**
-   * If filters.starredOnly is set, inject the active profile's starred question ids
-   * (for the given type) as an `ids` filter the question DB can apply. Returns the
-   * (possibly augmented) filters, or null when there are no starred questions to serve.
-   */
+  
+
+
+
+
   _resolveStarredFilter(filters = {}, type) {
     if (!filters.starredOnly) return filters;
     const starred = this.userData.getStarredQuestions(type);
     const ids = starred.map((s) => s.question_id);
     if (ids.length === 0) return null;
-    // Serve from the starred pool only. We deliberately DROP difficulty / year /
-    // standard / powermark filters (you explicitly starred these questions, so
-    // they shouldn't be filtered out); category/subcategory still apply.
     return {
       ids,
       random: filters.random,
@@ -129,7 +126,6 @@ export class App {
       rows = this.questionDb.getAnswerLinesForFreq(category, subcategory, alternateSubcategory);
     }
     if (qtype === "bonus" || qtype === "both") {
-      // Each bonus part's answer line counts as its own line.
       for (const r of this.questionDb.getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory)) {
         let raw, sani;
         try { raw = JSON.parse(r.answers || "[]"); } catch { raw = []; }
@@ -142,16 +138,9 @@ export class App {
     return this._countPrimaryAnswers(rows, limit);
   }
 
-  // ONE entry per question: the PRIMARY (underlined main) answer. Aliases in
-  // [or …] no longer create separate rows (no more China / Zhongguo / PRC
-  // triplets), and word forms fold together.
   _countPrimaryAnswers(rows, limit) {
-    // For each question, count EVERY acceptable answer (not just the primary),
-    // folding plural forms together so they're one entry.
-    // Instruction phrases that show up in "accept …" directives but aren't real
-    // answers (e.g. "accept word forms", "accept either underlined answer").
     const JUNK = /\b(word ?forms?|equivalents?|underlined|synonyms?|obvious|either|etc|portions?|reasonable|anything|spellings?|pronunciations?|descriptions?|abbreviations?|partial|answers?|orders?|variants?|the above|any of)\b/i;
-    const counts = new Map(); // key -> { display, count }
+    const counts = new Map();
     for (const r of rows) {
       const sani = r.answer_sanitized || "";
       let display;
@@ -165,8 +154,6 @@ export class App {
       e.count++;
       counts.set(key, e);
     }
-    // Merge similar entries (mitochondria/mitochondrion) only among the top
-    // candidates, bucketed by prefix so it stays fast regardless of `limit`.
     const sorted = [...counts.values()].sort((a, b) => b.count - a.count);
     const cand = sorted.slice(0, Math.min(sorted.length, limit + 400));
     const buckets = new Map();
@@ -190,6 +177,10 @@ export class App {
     return this.questionDb.getSubcategories(type, category);
   }
 
+  getAlternateSubcategories(type, category, subcategory) {
+    return this.questionDb.getAlternateSubcategories(type, category, subcategory);
+  }
+
   getCount(type, filters) {
     const resolved = this._resolveStarredFilter(filters, type === "tossups" ? "tossup" : "bonus");
     if (resolved === null) return 0;
@@ -209,15 +200,11 @@ export class App {
     return checkBonus(userAnswers, bonus);
   }
 
-  // Accept/prompt/reject evaluation without scoring or recording.
-  // buzzPosition (char index into the (*)-stripped sanitized text) makes
-  // "accept X until/before/after Y" and partial-answer prompts read-aware.
   evaluateTossup(userAnswer, tossup, strictness = 10, buzzPosition = null) {
     const pos = this._readPos(tossup, buzzPosition);
     return evaluateAnswer(userAnswer, tossup.answer, tossup.answer_sanitized, strictness, pos);
   }
 
-  // {readText, fullText, readLen} for word-exact until/after windows.
   _readPos(tossup, buzzPosition) {
     if (buzzPosition == null) return {};
     const text = (tossup.question_sanitized || tossup.question || "").replace(/\(\*\)/g, "");
@@ -225,7 +212,6 @@ export class App {
     return { readText: text.slice(0, n), fullText: text, readLen: n };
   }
 
-  // Evaluate an answer against an arbitrary answer line (e.g. one bonus part).
   evaluateAnswerLine(userAnswer, answerline, sanitized, strictness = 10) {
     return evaluateAnswer(userAnswer, answerline, sanitized, strictness);
   }
@@ -235,7 +221,6 @@ export class App {
   }
   addReviewManual(questionId, type) {
     const ids = this._normManual(this.userData.getReviewManual());
-    // The re-add must win even against a same-millisecond prior dismissal.
     const dAt = (this.userData.getReviewDismissedMap() || {})[questionId] || 0;
     const at = Math.max(Date.now(), dAt + 1);
     if (!ids.some((m) => m.id === questionId)) ids.unshift({ id: questionId, type: type || "tossup", at });
@@ -272,7 +257,6 @@ export class App {
     return this.userData.setPluginData(pluginId, key, value);
   }
 
-  // ── Per-profile settings (gameplay, hotkeys, identity) ──
   getProfileSettings() {
     return this.userData.getProfileSettings();
   }
@@ -281,15 +265,11 @@ export class App {
     return this.userData.saveProfileSettings(obj);
   }
 
-  /**
-   * Spaced-repetition review queue: tossups whose LAST attempt was wrong come
-   * back after 1 day (1 miss), 3 days (2 misses) or 7 days (3+ misses).
-   * Returns { count, ids } of currently-due tossups.
-   */
-  // Everything in review (no due-timing): every tossup you last got wrong
-  // (negged / unanswered per the Settings toggles) plus everything you added
-  // manually (tossups AND bonuses). Each item carries ageMs so the review menu
-  // can filter by how long ago it entered review.
+  
+
+
+
+
   getReviewQueue(opts = {}) {
     const wantNegs = opts.negs !== false;
     const wantUnanswered = opts.unanswered !== false;
@@ -298,7 +278,7 @@ export class App {
     const byQ = new Map();
     for (const e of entries) {
       if (e.type !== "tossup" || !e.question_id) continue;
-      const cur = byQ.get(e.question_id) || { last: 0, lastWrong: false, category: "", given: "", buzz: null, lastPoints: 0, lastGiven: "" };
+      const cur = byQ.get(e.question_id) || { last: 0, lastWrong: false, category: "", given: "", buzz: null, lastPoints: 0, lastGiven: "", difficulty: null };
       const t = new Date(e.timestamp).getTime() || 0;
       if (t >= cur.last) {
         cur.last = t; cur.lastWrong = !e.correct;
@@ -307,30 +287,27 @@ export class App {
         cur.category = e.category || cur.category;
         cur.given = e.given_answer || "";
         cur.buzz = e.buzz_position != null ? e.buzz_position : null;
+        if (e.difficulty != null) cur.difficulty = e.difficulty;
       }
       byQ.set(e.question_id, cur);
     }
     const now = Date.now();
     const dismissedMap = this.userData.getReviewDismissedMap();
     const items = [];
-    // manual item is hidden only if dismissed at/after it was (re-)added
     const manual = this._normManual(this.userData.getReviewManual()).filter((m) => {
       const dAt = dismissedMap[m.id];
       return !(dAt != null && dAt >= (m.at || 0));
     });
     const manualSet = new Set(manual.map((m) => m.id));
     for (const m of manual) {
-      let cat = "";
-      try { const q = m.type === "bonus" ? this.getBonus(m.id) : this.getTossup(m.id); cat = (q && q.category) || ""; } catch {}
-      items.push({ id: m.id, type: m.type || "tossup", category: cat, given: "", buzzPosition: null, manual: true, ageMs: Math.max(0, now - (m.at || 0)) });
+      let cat = "", diff = null;
+      try { const q = m.type === "bonus" ? this.getBonus(m.id) : this.getTossup(m.id); cat = (q && q.category) || ""; diff = q && q.difficulty != null ? q.difficulty : null; } catch {}
+      items.push({ id: m.id, type: m.type || "tossup", category: cat, difficulty: diff, given: "", buzzPosition: null, manual: true, ageMs: Math.max(0, now - (m.at || 0)) });
     }
     for (const [qid, st] of byQ) {
       if (manualSet.has(qid) || !st.lastWrong) continue;
-      // hidden only while dismissed AT OR AFTER the last wrong attempt
       const dAt = dismissedMap[qid];
       if (dAt != null && dAt >= st.last) continue;
-      // neg = buzzed wrong before the end; wrong-at-end = answered wrong after a
-      // full read (has a given answer, 0 pts); unanswered = never buzzed / dead.
       let kind;
       if (st.lastPoints < 0) kind = "neg";
       else if ((st.lastGiven || "").trim()) kind = "wrongEnd";
@@ -338,7 +315,7 @@ export class App {
       if (kind === "neg" && !wantNegs) continue;
       if (kind === "wrongEnd" && !wantWrongEnd) continue;
       if (kind === "unanswered" && !wantUnanswered) continue;
-      items.push({ id: qid, type: "tossup", category: st.category || "", given: st.given || "", buzzPosition: st.buzz, ageMs: Math.max(0, now - st.last) });
+      items.push({ id: qid, type: "tossup", category: st.category || "", difficulty: st.difficulty, given: st.given || "", buzzPosition: st.buzz, ageMs: Math.max(0, now - st.last) });
     }
     items.sort((a, b) => a.ageMs - b.ageMs);
     const limit = opts.limit || 400;
@@ -346,8 +323,6 @@ export class App {
     return { count: items.length, ids: top.map((i) => i.id), items: top };
   }
 
-  // The parsed accept / prompt / reject directives of an answer line
-  // (used by the Answerline Lab plugin to show how a line is read).
   parseAnswerline(answerline, sanitized) {
     return parseDirectives(answerline || "", sanitized || "");
   }
@@ -363,8 +338,6 @@ export class App {
         questionText: tossup.question_sanitized || tossup.question,
         fullyRead,
       },
-      // Only an outright "accept" scores as correct here; prompts are resolved
-      // (or declined) by the caller before scoring.
       (ua, al, sa) => ({ correct: evaluateAnswer(ua, al, sa, strictness, pos).status === "accept" })
     );
   }
@@ -393,7 +366,6 @@ export class App {
     return this.userData.getStarredQuestions(type);
   }
 
-  // ── Profiles ──
 
   getProfiles() {
     return this.userData.getProfiles();
@@ -415,7 +387,6 @@ export class App {
     return this.userData.setActiveProfile(id);
   }
 
-  // ── Sessions ──
 
   recordOverride(entry) {
     return this.userData.recordOverride(entry);
@@ -447,8 +418,6 @@ export class App {
 
   getOverallStats(since) {
     let entries = this.userData.getAllSessionEntries();
-    // Optional time-period filter (Statistics "period" dropdown): keep only
-    // entries at/after `since` (a Unix-ms cutoff). 0/undefined = all time.
     if (since) entries = entries.filter((e) => (e.timestamp || 0) >= since);
     return computeStats(entries);
   }
@@ -458,24 +427,46 @@ export class App {
     return computeStats(entries);
   }
 
+  getAnswerPowers() {
+    const ids = this.userData.getPoweredAnswerIds();
+    const counts = {};
+    const classes = {};
+    for (const qid of ids) {
+      let t;
+      try { t = this.questionDb.getTossup(qid); } catch (e) { t = null; }
+      if (!t) continue;
+      let head;
+      try { head = primaryAnswer(t.answer || "", t.answer_sanitized || ""); } catch (e) { head = ""; }
+      const norm = (head || t.answer_sanitized || t.answer || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (!norm) continue;
+      counts[norm] = (counts[norm] || 0) + 1;
+      const ck = (t.category || "") + "|" + (t.subcategory || "") + "|" + (t.alternate_subcategory || "");
+      const cm = classes[norm] || (classes[norm] = {});
+      cm[ck] = (cm[ck] || 0) + 1;
+    }
+    return { answer_counts: counts, answer_classes: classes };
+  }
+
   getSessionBreakdown(category, difficulty) {
     const sessions = this.userData.getSessionList();
     const allEntries = this.userData.getAllSessionEntries();
     return computeSessionBreakdown(sessions, allEntries, { category, difficulty });
   }
 
-  // ── Question DB updates (Google Drive snapshot) ──
 
   async checkForUpdate() {
-    const current = this.userData.getConfig("questions_version");
+    // Prefer the marker stamped inside questions.db (travels with the file);
+    // fall back to the per-machine config for DBs updated before the marker existed.
+    const inDb = this.questionDb && this.questionDb.getMeta ? this.questionDb.getMeta("snapshot_id") : null;
+    const current = inDb || this.userData.getConfig("questions_version");
     return updater.checkForUpdate(current);
   }
 
-  /**
-   * Download the newest (or given) snapshot and rebuild the question DB.
-   * @param {string} [folderId] - snapshot folder id; defaults to the latest available
-   * @param {(msg:string)=>void} [onProgress]
-   */
+  
+
+
+
+
   async applyUpdate(folderId, onProgress) {
     let target = folderId;
     if (!target) {
@@ -483,7 +474,6 @@ export class App {
       if (!info.latest) throw new Error("no snapshot found");
       target = info.latest.id;
     }
-    // Release the read-only handle so the file can be replaced.
     if (this.questionDb) { this.questionDb.close(); this.questionDb = null; }
     try {
       const result = await updater.applyUpdate(target, this.dbPath, onProgress);
@@ -540,7 +530,6 @@ export class App {
         imported++;
       }
 
-      // Rebuild FTS
       db.exec("DELETE FROM tossups_fts");
       db.exec("DELETE FROM bonuses_fts");
       db.exec(`
@@ -555,8 +544,6 @@ export class App {
       return { success: true, imported };
     } finally {
       db.close();
-      // Reopen the read-only question DB so subsequent queries keep working
-      // (the write connection above is separate and now closed).
       if (this.questionDb) this.questionDb.close();
       this.questionDb = new QuestionDatabase(this.dbPath);
     }

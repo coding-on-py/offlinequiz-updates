@@ -224,6 +224,10 @@ export async function applyUpdate(folderId, dbPath, onProgress = () => {}) {
 
     onProgress({ label: "Indexing for search…", pct: 92 });
     db.exec(FTS);
+    // Stamp the snapshot id INSIDE the database so "up to date" is detected no
+    // matter which profile/transport/user-data dir later asks.
+    db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('snapshot_id', ?)").run(folderId);
     db.exec("ANALYZE");
     db.close();
 

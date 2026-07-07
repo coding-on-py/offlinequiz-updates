@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld("qbreader", {
   getSubcategories: (type, category) =>
     ipcRenderer.invoke("get-subcategories", { type, category }),
 
+  getAlternateSubcategories: (type, category, subcategory) =>
+    ipcRenderer.invoke("get-alternate-subcategories", { type, category, subcategory }),
+
   getDifficultyRange: (type) =>
     ipcRenderer.invoke("get-difficulty-range", { type }),
 
@@ -75,6 +78,8 @@ contextBridge.exposeInMainWorld("qbreader", {
 
   getSessionEntries: (sessionId) => ipcRenderer.invoke("get-session-entries", { sessionId }),
 
+  getAnswerPowers: () => ipcRenderer.invoke("get-answer-powers"),
+
   pruneSessions: (days) => ipcRenderer.invoke("prune-sessions", { days }),
 
   importQuestions: (sets, tossups, bonuses) =>
@@ -115,6 +120,7 @@ contextBridge.exposeInMainWorld("qbreader", {
   // in-app CODE updater (renderer + plugins overlay)
   appUpdateInfo: () => ipcRenderer.invoke("app-update-info"),
   appUpdateCheck: () => ipcRenderer.invoke("app-update-check"),
+  appUpdatePeek: () => ipcRenderer.invoke("app-update-peek"),
   appUpdatePlugins: () => ipcRenderer.invoke("app-update-plugins"),
   onAppUpdateDownloaded: (cb) => {
     const handler = (_e, info) => cb(info);

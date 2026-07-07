@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "renderer": [
     "index.html",
     "style.css",
@@ -8,6 +8,16 @@
     "app.js"
   ],
   "plugins": [
+    {
+      "id": "achievement-icons",
+      "name": "Achievement Icons",
+      "file": "achievement-icons.zip"
+    },
+    {
+      "id": "achievement-lab",
+      "name": "Achievement Lab",
+      "file": "achievement-lab.zip"
+    },
     {
       "id": "answer-rules",
       "name": "Answer Rules",
@@ -52,11 +62,6 @@
       "id": "packet-builder",
       "name": "Packet Builder",
       "file": "packet-builder.zip"
-    },
-    {
-      "id": "tts",
-      "name": "System Voice TTS",
-      "file": "tts.zip"
     }
   ],
   "main": true

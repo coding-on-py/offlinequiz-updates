@@ -1,14 +1,14 @@
 {
-  "version": 7,
+  "version": 8,
   "files": {
-    "index.js": "fc42aadf46d715e23e1a67921a7780045ac8fac3d35e54218bb29266e8d532d9",
-    "database.js": "06f4fbe59e54d761a3dfa3e9175940e84375d1818e6c57a95ead6402da4d878d",
-    "userData.js": "df3cd36ac158a8c1b581dd51455008a30a2cd479f6d79455ed4dc6d92e8d2ff5",
-    "answerChecker.js": "803d56796a6b2985224c973ba3621071dd71cbc4ae09a1fe3617a4c4fcf5fa02",
+    "index.js": "0b405c03fbdae5f6aebb84581de7c4cc1aaf02d42d563c80969c3165c19b4315",
+    "database.js": "9966d9811778719d7a969e6d02ede710cbb412b559879f49ec57b41f31ffe5e4",
+    "userData.js": "1865e5beaf51896c82fa95b6ce3262ef513f190626a135de2ca5a079ea787110",
+    "answerChecker.js": "eddfaefd92207953efcff20c119ac658e5c0e367033c24e90eee769774575566",
     "scoring.js": "ddd77cebe56bc87fdc1676d8ea528342c9c2720a4357dfd809cea0a2a65369a6",
-    "stats.js": "2346742fcccbf11de823ce184bd72907bcb9e79c7c29920debc9932a69bb9930",
-    "updater.js": "77078ec1761170eebaee9129c5f784ebd1280f60de77d2297b48c0038fb8c32b",
-    "preload.js": "c4d0a16656fd2c5e42ab8b39cf78ee1915fbf104f6509031a3c66837b36a8a2c"
+    "stats.js": "fcf7bde002637e5c57dea7ed530e2b421253abdd4f438fd4bf9f3874724473a3",
+    "updater.js": "a293954fc28dcdd6412b61b5725d30720b1973a495eacba77a770c50a2d6c483",
+    "preload.js": "fe26a01676d7756c5180a2b92919ca612e1c31f45318f8dec6af885574f73db7"
   },
-  "signature": "C9SEddNr4e2anM8iXY05yznvfS3aJr83t/2CDrb4P/xl0b+Qt/GUxMfO7Yr9/A/mKrdL7fk2avCv0Un5sdozBQ=="
+  "signature": "Uf0Gu107iYKrpyG70XzI+BShOY9hYUPxHQ1R4M7sFtPK0Zgiivqd8wJu92Wt8DAhu+Tu+r3A7O6kq6wlTkHQAg=="
 }

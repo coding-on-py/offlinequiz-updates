@@ -214,11 +214,10 @@
             <div class="range-values" id="year-range-label">2010 – 2026</div>
           </div>
         </aside>
-        <div class="resize-handle" id="resize-handle"></div>
 
         <main class="question-area" id="question-area">
           <div class="question-placeholder" id="question-placeholder">
-            <div class="placeholder-icon">&#9670;</div>
+            <div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>
             <p>Select categories and difficulty, then start a session.</p>
             <p class="text-muted">Press <kbd id="placeholder-start-key">S</kbd> to start.</p>
           </div>
@@ -241,18 +240,8 @@
             <div class="result-answer" id="result-answer"></div>
           </div>
 
-          <div class="history-panel" id="history-panel">
-            <div class="history-panel-header">
-              <span class="history-panel-title">SESSION HISTORY</span>
-              <span class="history-view-buttons">
-                <button class="btn btn-sm btn-ghost" id="btn-history-export" title="Download this session's questions as JSON">Export</button>
-                <button class="btn btn-sm btn-ghost" id="btn-history-compact">Compact all</button>
-                <button class="btn btn-sm btn-ghost" id="btn-history-expand">Expand all</button>
-              </span>
-            </div>
-            <div class="history-list" id="history-list">
-              <div class="text-muted" style="padding:8px;font-size:12px">No questions answered yet this session.</div>
-            </div>
+          <div class="history-panel" id="history-panel" style="display:none">
+            <button class="btn btn-full" id="btn-history-open">Session history (<span id="history-count">0</span>)</button>
           </div>
         </main>
 
@@ -289,6 +278,13 @@
           <span class="top-bar-title">STATISTICS</span>
         </div>
         <div class="top-bar-right">
+          <select id="stats-period" title="Time period" style="font-family:var(--font);font-size:11px;padding:2px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
           <select id="stats-cat-filter" style="font-family:var(--font);font-size:11px;padding:2px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:4px;color:var(--text)">
             <option value="">All categories</option>
           </select>
@@ -381,19 +377,44 @@
         <div class="settings-container">
           <div class="stats-section" id="appearance-section">
             <div class="stats-section-title">APPEARANCE</div>
-            <p class="text-muted" id="appearance-empty" style="font-size:12px;margin:0">Enable a theme in <strong>Extensions</strong> to customize the look here. Themes can offer color palettes, fonts, glow, and HUD layout options.</p>
+            <p class="text-muted" id="appearance-empty" style="font-size:12px;margin:0">Enable a theme in <strong>Extensions</strong> to customize the look here.</p>
             <div id="default-appearance">
-              <div class="setting-row">
-                <span class="setting-label">Accent color</span>
-                <select id="app-accent" class="mode-input" style="width:140px">
-                  <option value="gold">Gold (default)</option>
-                  <option value="blue">Blue</option>
-                  <option value="green">Green</option>
-                  <option value="cyan">Cyan</option>
-                  <option value="magenta">Magenta</option>
-                  <option value="amber">Amber</option>
-                  <option value="red">Red</option>
+              <div class="setting-row" id="app-mode-row">
+                <span class="setting-label">Appearance mode</span>
+                <select id="app-mode" class="mode-input" style="width:140px">
+                  <option value="preset">Preset palette</option>
+                  <option value="custom">Custom color</option>
                 </select>
+              </div>
+              <div id="app-preset-controls">
+                <div class="setting-row">
+                  <span class="setting-label">Accent color</span>
+                  <select id="app-accent" class="mode-input" style="width:140px">
+                    <option value="gold">Gold (default)</option>
+                    <option value="blue">Blue</option>
+                    <option value="green">Green</option>
+                    <option value="cyan">Cyan</option>
+                    <option value="magenta">Magenta</option>
+                    <option value="amber">Amber</option>
+                    <option value="red">Red</option>
+                  </select>
+                </div>
+              </div>
+              <div id="app-custom-controls" class="hidden">
+                <div class="setting-row">
+                  <span class="setting-label">Accent color</span>
+                  <input type="color" id="app-custom-accent" class="mode-input" style="width:140px;height:32px;padding:2px;cursor:pointer">
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label">Font</span>
+                  <select id="app-font" class="mode-input" style="width:140px">
+                    <option value="default">Default</option>
+                    <option value="mono">Monospace</option>
+                    <option value="sans">Sans-serif</option>
+                    <option value="serif">Serif</option>
+                    <option value="rounded">Rounded</option>
+                  </select>
+                </div>
               </div>
               <div class="setting-row">
                 <span class="setting-label">Corner roundness</span>
@@ -448,6 +469,15 @@
             <span class="setting-label">Never buzzing (unanswered / dead)</span>
             <input type="checkbox" id="opt-review-unans" checked>
           </div>
+          <div class="setting-subhead">Auto-add to review when I get a tossup right but…</div>
+          <div class="setting-row">
+            <span class="setting-label">Don't power it (answered correctly, no power)</span>
+            <input type="checkbox" id="opt-review-nopower">
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">…except when the question has no power mark</span>
+            <input type="checkbox" id="opt-review-skipnomark" checked>
+          </div>
           <div class="setting-row">
             <span class="setting-label">Buzz Answer Timer</span>
             <div class="slider-group">
@@ -473,7 +503,7 @@
                 <option value="365">1 year</option>
               </select>
             </div>
-            <div class="text-muted" style="font-size:11px;margin-top:4px">Old practice/MP sessions are removed on launch to save space. "Never" keeps everything.</div>
+            
           </div>
           <div class="stats-section" id="app-update-section">
             <div class="stats-section-title">APP UPDATES</div>
@@ -485,6 +515,10 @@
               <span class="setting-label">Check automatically on launch</span>
               <input type="checkbox" id="opt-app-autoupdate" checked>
             </div>
+            <div class="setting-row">
+              <span class="setting-label">Install important updates automatically</span>
+              <input type="checkbox" id="opt-app-critical-auto" checked>
+            </div>
             <div id="app-update-status" class="text-muted" style="font-size:11px;margin-top:6px"></div>
           </div>
           <div class="stats-section" id="ext-settings-section">
@@ -493,7 +527,7 @@
           </div>
           <div class="stats-section hotkey-section">
             <div class="stats-section-title">HOTKEY BINDINGS</div>
-            <div class="text-muted" style="font-size:11px;margin-bottom:8px">Click a row to rebind — press Esc to cancel</div>
+            
             <div id="hotkey-table"></div>
           </div>
         </div>
@@ -505,30 +539,28 @@
 
     <!-- ── BONUS PARTS (used during bonus practice) ── -->
     <div class="bonus-parts hidden" id="bonus-parts-area">
+      <div class="bonus-next-hint hidden" id="bonus-next-hint"></div>
       <div class="bonus-part" id="bonus-part-0">
-        <div class="bonus-part-header">PART 1</div>
+        <div class="bonus-part-header">PART A</div>
         <div class="bonus-part-text" id="bonus-text-0"></div>
         <div class="buzz-prompt bonus-input">
-          <span class="prompt-symbol">></span>
-          <input type="text" class="bonus-answer-input" id="bonus-input-0" placeholder="answer for part 1..." autocomplete="off" autocorrect="off" spellcheck="false">
+          <input type="text" class="bonus-answer-input" id="bonus-input-0" placeholder="answer for part A..." autocomplete="off" autocorrect="off" spellcheck="false">
         </div>
         <div class="bonus-part-answer hidden" id="bonus-answer-0"></div>
       </div>
       <div class="bonus-part" id="bonus-part-1">
-        <div class="bonus-part-header">PART 2</div>
+        <div class="bonus-part-header">PART B</div>
         <div class="bonus-part-text" id="bonus-text-1"></div>
         <div class="buzz-prompt bonus-input">
-          <span class="prompt-symbol">></span>
-          <input type="text" class="bonus-answer-input" id="bonus-input-1" placeholder="answer for part 2..." autocomplete="off" autocorrect="off" spellcheck="false">
+          <input type="text" class="bonus-answer-input" id="bonus-input-1" placeholder="answer for part B..." autocomplete="off" autocorrect="off" spellcheck="false">
         </div>
         <div class="bonus-part-answer hidden" id="bonus-answer-1"></div>
       </div>
       <div class="bonus-part" id="bonus-part-2">
-        <div class="bonus-part-header">PART 3</div>
+        <div class="bonus-part-header">PART C</div>
         <div class="bonus-part-text" id="bonus-text-2"></div>
         <div class="buzz-prompt bonus-input">
-          <span class="prompt-symbol">></span>
-          <input type="text" class="bonus-answer-input" id="bonus-input-2" placeholder="answer for part 3..." autocomplete="off" autocorrect="off" spellcheck="false">
+          <input type="text" class="bonus-answer-input" id="bonus-input-2" placeholder="answer for part C..." autocomplete="off" autocorrect="off" spellcheck="false">
         </div>
         <div class="bonus-part-answer hidden" id="bonus-answer-2"></div>
       </div>

@@ -21,13 +21,10 @@ export function normalizeText(text) {
     .replace(/[æ]/g, "ae")
     .replace(/[ł]/g, "l")
     .replace(/[ß]/g, "ss")
-    // Fold any remaining combining diacritics (ř → r, ą → a, …).
     .normalize("NFD").replace(/[̀-ͯ]/g, "")
-    // Hyphenated words compare as separate words ("Beer-Lambert" ≡ "Beer Lambert"),
-    // otherwise "beer-lambert" would be one token that never matches "Beer".
+    .replace(/(^|[\s([{"“”'‘’])[-−–](?=\d)/g, "$1minus ")
+    .replace(/(^|[\s([{"“”'‘’])\+(?=\d)/g, "$1plus ")
     .replace(/[-–—‐]/g, " ")
-    // Keep every letter/digit (π, đ …) plus + and # — they distinguish
-    // answers ("C" vs "C++" vs "C#", "π").
     .replace(/[^\p{L}\p{N}\s+#]/gu, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -117,7 +114,6 @@ export function parseSanitizedAnswerline(sanitized) {
   return results;
 }
 
-// ── Fuzzy Word Matching ────────────────────────────────
 
 function levenshtein(a, b) {
   if (a.length === 0) return b.length;
@@ -138,7 +134,7 @@ function levenshtein(a, b) {
   return prev[b.length];
 }
 
-const FUZZY = /^[a-z]/; // word must start with a letter for fuzzy matching
+const FUZZY = /^[a-z]/;
 
 function stripWordSuffixes(w) {
   return w.replace(/[''](s|ll|re|ve|d|m|t)$/, "").replace(/(ing|ed|er|est|ly|ment)$/, "");
@@ -146,17 +142,14 @@ function stripWordSuffixes(w) {
 
 function hasDigits(w) { return /\d/.test(w); }
 
-// strictness: 0 (very lenient) … 20 (exact only). Controls typo tolerance.
 function fuzzyWordMatch(requiredText, userText, strictness = 10) {
   if (!requiredText || !userText) return false;
 
   const reqNorm = normalizeText(requiredText);
   const userNorm = normalizeText(userText);
 
-  // Full text exact match after normalization
   if (reqNorm === userNorm) return true;
 
-  // Check if concatenated user words match required (catches "Fuente Ovejuna" vs "Fuenteovejuna")
   const userJoined = userNorm.replace(/\s+/g, "");
   const reqJoined = reqNorm.replace(/\s+/g, "");
   if (reqJoined === userJoined) return true;
@@ -164,7 +157,6 @@ function fuzzyWordMatch(requiredText, userText, strictness = 10) {
   const reqWords = reqNorm.split(/\s+/);
   const userWords = userNorm.split(/\s+/);
 
-  // All-words exact string checks (after stripping suffixes)
   const reqStripped = reqWords.map(stripWordSuffixes);
   const userStripped = userWords.map(stripWordSuffixes);
 
@@ -178,22 +170,17 @@ function fuzzyWordMatch(requiredText, userText, strictness = 10) {
       if (lw.length < 1) continue;
       if (sw === lw) { found = true; break; }
 
-      // Short words (1-2 chars) must match exactly — no fuzz
       if (sw.length < 3 || lw.length < 3) continue;
 
-      // Digit-containing words must match exactly
       if (hasDigits(sw) || hasDigits(lw)) continue;
 
-      // Typos allowed scales with strictness: ~1 per 4 chars when lenient,
-      // capped at 1 when strict, +1 when very lenient.
       let maxDist = Math.max(1, Math.floor(Math.min(sw.length, lw.length) / 4));
       if (strictness >= 14) maxDist = 1;
-      if (strictness >= 20) maxDist = 0; // perfect typing — exact words only, no typos
+      if (strictness >= 20) maxDist = 0;
       if (strictness <= 4) maxDist += 1;
       const dist = levenshtein(sw, lw);
       if (dist <= maxDist) { found = true; break; }
 
-      // Partial contains (e.g. "revere" inside "reveres") — only when not strict
       if (strictness < 14 && sw.length >= 4 && lw.length >= 4) {
         if (lw.includes(sw) || sw.includes(lw)) { found = true; break; }
       }
@@ -203,10 +190,7 @@ function fuzzyWordMatch(requiredText, userText, strictness = 10) {
   return true;
 }
 
-// ── Main Check ─────────────────────────────────────────
 
-// Backwards-compatible boolean check (used by bonuses, which have no re-prompt
-// UI so a prompt-level match still counts as correct). Rejects are honored.
 export function checkAnswer(userAnswer, answerline, sanitizedAnswerline, strictness = 10) {
   const r = evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, strictness);
   return {
@@ -217,8 +201,6 @@ export function checkAnswer(userAnswer, answerline, sanitizedAnswerline, strictn
   };
 }
 
-// ── Accept / Prompt / Reject evaluation ────────────────
-// Parse an answerline into accept / prompt / reject directives.
 function stripQuotes(s) {
   return (s || "").replace(/^["“”'']+|["“”'']+$/g, "").trim();
 }
@@ -228,7 +210,6 @@ function splitAlts(content) {
     .map((a) => stripQuotes(stripTags(a).trim()))
     .filter(Boolean);
 }
-// Pull the text of every <u>…</u> (underline = the required/acceptable part).
 function extractUnderlined(html) {
   const out = [];
   const re = /<u>([\s\S]*?)<\/u>/gi;
@@ -237,10 +218,6 @@ function extractUnderlined(html) {
   return out;
 }
 
-// Visible text of an HTML fragment plus the [start,end) spans (in visible-text
-// coordinates) covered by <u> underlining. Needed because answer lines often
-// underline only part of a word ("<u>pleb</u>eians"): the stem is the minimum
-// acceptable answer, but the surrounding full word must be acceptable too.
 function underlineSpans(html) {
   let vis = "";
   const spans = [];
@@ -260,8 +237,6 @@ function underlineSpans(html) {
     }
   }
   if (depth > 0 && spanStart >= 0) spans.push([spanStart, vis.length]);
-  // Merge spans separated only by an apostrophe/space ("<u>Night</u>’<u>s
-  // Dream</u>" is ONE phrase, not two stems).
   const merged = [];
   for (const sp of spans) {
     const prev = merged[merged.length - 1];
@@ -273,11 +248,6 @@ function underlineSpans(html) {
 
 const WORD_CHAR = /[A-Za-z0-9'’]/;
 
-// Candidate acceptable strings for ONE answer phrase. If any part is underlined,
-// ONLY the underlined parts count (so non-underlined words like "Ludwig" in
-// "Ludwig Mies van der Rohe" are NOT accepted). A partially-underlined word
-// contributes both the underlined stem AND the full word ("<u>pleb</u>eians" →
-// "pleb" and "plebeians"). With no underlining, the whole visible text counts.
 function phraseTerms(html) {
   const terms = [];
   const { vis, spans } = underlineSpans(html);
@@ -294,84 +264,111 @@ function phraseTerms(html) {
     }
     const acronym = stems.length > 1 && stems.every((t) => t.length === 1);
     if (acronym) {
-      // First-letter underlining = the acronym + the full phrase only.
       terms.push(stems.join(""));
       terms.push(fulls.join(" "));
       terms.push(fulls.join(""));
     } else {
       stems.forEach((t) => { if (t.length > 1) terms.push(t); });
       fulls.forEach((t) => { if (t.length > 1 || stems.length === 1) terms.push(t); });
-      if (stems.length > 1) { terms.push(stems.join("")); terms.push(stems.join(" ")); }
-      if (fulls.length > 1) { terms.push(fulls.join("")); terms.push(fulls.join(" ")); }
+      if (stems.length > 1) terms.push(stems.join(" "));
+      if (fulls.length > 1) terms.push(fulls.join(" "));
     }
   } else {
     const full = stripQuotes(stripTags(html).trim());
     if (full) terms.push(full);
   }
-  // A term must contain something pronounceable — drops stray punctuation
-  // fragments (e.g. a lone "’" between two underline segments).
   return [...new Set(terms.filter((t) => t && /[a-zA-Z0-9]/.test(t)))];
 }
 
-// Terms inside a directive clause: split into "or"/comma alternates, expand each
-// via phraseTerms, and also pull out double-quoted substrings.
-// opts.fullPhrase: use each part's whole visible text instead of the
-// underlined-only rule. Prompt/reject directives need this — underlining there
-// is emphasis ("prompt on characters from <u>Midnight's Children</u>"), and
-// reducing the target to its underlined words would turn the real answer into
-// a prompt target.
-// Filler that means "and variations of the above", not an answer itself
-// ("…or keening or similar" must not make "similar" an acceptable answer).
-const FILLER_TERM = /^(or\s+)?(similar|equivalents?|word\s*forms?|forms?|etc\.?|so\s+on|the\s+like|and\s+so\s+forth|anything\s+similar|likewise)$/i;
+const FILLER_TERM = /^((or|and)\s+)?(just|only|merely|simply|plainly?|exactly|precisely|similar|(obvious|reasonable|clear)\s+equivalents?|equivalents?|synonyms?|(equivalent\s+)?descriptions?|word\s*forms?|forms?|etc\.?|so\s+on|the\s+like|and\s+so\s+forth|anything\s+similar|likewise)$/i;
 
-// Commentary, not a term: editor notes that leak into directive content.
 const COMMENTARY = /\b(accept|prompt|reject|do not|is read|in the question|not needed|if it is|before this|are totally|any of the above|by asking)\b/i;
+
+const INSTRUCTION_TERM = /\b(underlined|bolded|italici[sz]ed|highlighted|capitali[sz]ed)\b|^(?:either|any|both|each)\s+(?:of\s+(?:the\s+)?)?(?:parts?|answers?|names?|portions?|words?)$|^(?:similar|such|other)\s+answers?$/i;
+
+const NOTE_BRACKET = /\b(underlined|bolded|italici[sz]ed|highlighted|moderator|(writer|editor|ed)['’]?s?\s+note|read(er|ing)?\b.*\bnote|note\b.*\b(moderator|reader)|are\s+needed|is\s+needed|are\s+acceptable|is\s+acceptable|is\s+fine|are\s+fine|required|in\s+either\s+order)\b/i;
+
+function stripNoteBrackets(s) {
+  let out = s;
+  for (const c of findContainers(s)) {
+    const innerC = c.text.slice(1, -1);
+    if (!isDirectiveInner(innerC) && NOTE_BRACKET.test(stripTags(innerC))) {
+      out = out.replace(c.text, " ");
+    }
+  }
+  return out;
+}
+
+function stripInlineNote(s) {
+  return s.replace(
+    /\s*[;,.]?\s*\b(?:also\s+)?(?:accept|prompt|reject|do\s+not\s+(?:accept|prompt))\b[\s\S]*$/i,
+    (m) => (NOTE_BRACKET.test(m) || /\b(either|both|each)\b/i.test(m)) ? "" : m,
+  );
+}
 
 function extractTerms(content, opts = {}) {
   const out = [];
-  // Quoted phrases are ATOMIC — pull them out before comma/semicolon splitting
-  // so '"Alexandre Dumas, fils"' stays one term instead of being severed at
-  // the comma (which would wrongly reject "Alexandre Dumas" itself).
+  const quoted = new Set();
+  // Quoted spans become atomic terms, but their words also stay in place so a
+  // quote glued to neighbouring words ('"ultraviolet" singularity') still
+  // yields the full phrase instead of two unrelated terms.
   content = String(content).replace(/["“”]([^"“”]+)["“”]/g, (m, inner) => {
     const t = stripTags(inner).trim();
-    if (t) out.push(t);
-    return " ";
+    if (t) { out.push(t); quoted.add(t); }
+    return " " + inner.replace(/[,;]/g, " ") + " ";
   });
-  content.split(/\s+or\s+|,|;/i).forEach((part) => {
-    // "answers similar to X" / "similar to X" — the term is X, not the phrase.
+  // Underline membership is decided against the WHOLE content, not each
+  // comma/or fragment: a split inside "<u>Meg, Jo, Beth and Amy</u>" keeps the
+  // middle names (carry), and leading alternates BEFORE the first underline
+  // ("accept Allie, Phoebe, or Holden <u>Caulfield</u>") are explicit accepts —
+  // only trailing non-underlined fragments (title tails like "Escher", "Bach")
+  // are dropped.
+  const firstU = content.search(/<u[\s>]/i);
+  let uDepth = 0;
+  let segOffset = 0;
+  content.split(/(\s+or\s+|,|;)/i).forEach((part, segIdx) => {
+    const partStart = segOffset;
+    segOffset += (part || "").length;
+    if (segIdx % 2 === 1) return;
+    const opens = (part.match(/<u[\s>]/gi) || []).length;
+    const closes = (part.match(/<\/u\s*>/gi) || []).length;
+    const startDepth = uDepth;
+    uDepth = Math.max(0, uDepth + opens - closes);
+    if (opts.requireUnderline && !(opens > 0 || startDepth > 0 || (firstU >= 0 && partStart < firstU))) return;
     part = part.replace(/^\s*(answers?|anything|things?)\s+similar\s+to\s+/i, "")
                .replace(/^\s*similar\s+to\s+/i, "")
-               // Connective lead-ins ("logical equivalents like X", "specific
-               // derivations such as X", "things like X") are NOT terms — keep
-               // only what follows the connective. If a quoted term was already
-               // pulled out, what remains is just the lead-in and becomes empty.
+               .replace(/^\s*(?:such\s+as|e\.g\.?,?)\s+/i, "")
+               .replace(/^\s*any\s+(specific|particular)\s+/i, "")
+               .replace(/^\s*(just|only|merely|simply|plainly|exactly|precisely)\s+/i, "")
                .replace(/^.*?\b(equivalents?|derivations?|variants?|synonyms?|spellings?|abbreviations?|forms?|names?|titles?|versions?|things?|answers?|terms?|examples?)\s+(?:like|such as|including)\b[\s:,.–—-]*/i, "")
-               .replace(/^[\s:;,.–—-]+/, "");
+               .replace(/^(?:[\s:;,.–—]|-(?!\d))+/, "");
     if (opts.fullPhrase) {
-      const t = stripQuotes(stripTags(part).trim()).replace(/^[\s:;,.–—-]+/, "");
+      const t = stripQuotes(stripTags(part).trim()).replace(/^(?:[\s:;,.–—]|-(?!\d))+/, "");
       if (t) out.push(t);
     } else {
       phraseTerms(part).forEach((t) => out.push(t));
     }
   });
-  return [...new Set(out.filter((t) =>
-    t && /[a-zA-Z0-9]/.test(t) &&
-    !FILLER_TERM.test(t.trim()) &&
-    !/\b(like|such as|including)\s*$/i.test(t.trim()) &&  // bare connective lead-in
-    t.split(/\s+/).length <= 6 &&        // 7+ words = commentary, not an answer
-    !COMMENTARY.test(t)
-  ))];
+  return [...new Set(out.filter((t) => {
+    const tt = t.trim();
+    if (!tt || !/[a-zA-Z0-9]/.test(tt)) return false;
+    if (FILLER_TERM.test(tt) || INSTRUCTION_TERM.test(tt) || /^(the|a|an|or|and|of)$/i.test(tt)) return false;
+    if (quoted.has(t)) return true;
+    return !/\b(like|such as|including)\s*$/i.test(tt) && tt.split(/\s+/).length <= 6 && !COMMENTARY.test(t);
+  }))];
 }
 
-// A [..]/(..) container counts as a DIRECTIVE only if it has a directive keyword
-// (so "(Mary)", "(“beck-doo”)", "(5)" and "[AU]" stay part of the answer).
 function isDirectiveInner(inner) {
   return /\b(accept|prompt|reject|do not|anti-?prompt)\b/i.test(inner) || /^\s*or\b/i.test(inner);
 }
+function isDirectiveBoundary(c, raw) {
+  const inner = c.text.slice(1, -1);
+  if (c.text[0] === "[") return isDirectiveInner(inner);
+  if (/\b(accept|prompt|reject|do not|anti-?prompt)\b/i.test(inner)) return true;
+  if (/^\s*or\b/i.test(inner)) return !/<u[\s>]/i.test(raw.slice(c.start + c.text.length));
+  return false;
+}
 
-// All top-level [..] / (..) containers, with BALANCED nesting — a regex like
-// \([^)]*\) would truncate '(do not accept "Christopher (Robin) Milne")' at
-// the first ")", mangling the directive into a reject of the real answer.
 function findContainers(s) {
   const out = [];
   for (let i = 0; i < s.length; i++) {
@@ -393,46 +390,71 @@ function findContainers(s) {
 export function parseDirectives(answerline, sanitizedAnswerline) {
   const raw = (answerline && answerline.trim()) ? answerline : (sanitizedAnswerline || "");
   const accept = [];
-  const prompt = []; // { target, ask, until, after }
+  const prompt = [];
   const reject = [];
-  const antiprompt = []; // { target, ask } — answer was TOO SPECIFIC
-  const qualifiers = {}; // accept term -> { until, after } read-position rules
+  const antiprompt = [];
+  const qualifiers = {};
   const pushUniq = (arr, v) => { if (v && !arr.includes(v)) arr.push(v); };
 
-  // Main answer = everything before the first DIRECTIVE container.
+  // Norms of WHOLE answers (full main answer, whole underlined phrase, or an
+  // explicit accept-directive phrase). Only these outrank a reject directive —
+  // a lone stem of a multi-word underline ("Macbeth" in "Lady Macbeth") stays
+  // rejectable, because "do not accept 'Macbeth'" is deliberate.
+  // The key preserves a numeric minus sign, so accept "-1" cannot protect the
+  // explicitly rejected "1" (normalizeText folds both to "1").
+  const protectedNorms = new Set();
+  const protectKey = (t) => normalizeText(String(t || "").replace(/(^|[\s("“])-(?=\d)/g, "$1minus "));
+  const protect = (t) => { const n = protectKey(t); if (n) protectedNorms.add(n); };
+  // Protection from accept-directive content: quoted spans are commentary
+  // mentions ("…with 'salah' in place of 'prayer'"), and anything after a
+  // combination connective is not a standalone answer — neither may shield a
+  // deliberate reject of the bare term.
+  const protectFrom = (content) => {
+    const c = String(content).split(/\b(?:in\s+conjunction\s+with|in\s+place\s+of|instead\s+of|along\s+with|combined\s+with|only\s+(?:after|if|when))\b/i)[0];
+    const quotedKeys = new Set();
+    c.replace(/["“”]([^"“”]+)["“”]/g, (m, inner) => { const t = stripTags(inner).trim(); if (t) quotedKeys.add(protectKey(t)); return " "; });
+    extractTerms(c, { fullPhrase: true }).forEach((t) => { const n = protectKey(t); if (n && !quotedKeys.has(n)) protectedNorms.add(n); });
+  };
+
   const containers = findContainers(raw);
-  const firstDirC = containers.find((c) => isDirectiveInner(c.text.slice(1, -1)));
+  const firstDirC = containers.find((c) => isDirectiveBoundary(c, raw));
   const mainRaw = firstDirC ? raw.slice(0, firstDirC.start) : raw;
   phraseTerms(mainRaw).forEach((t) => pushUniq(accept, t));
-  // Typing the ENTIRE main answer always works, even when only part of it is
-  // underlined. All content words are required, so this never loosens what a
-  // partial answer can match.
-  const mainFull = stripQuotes(stripTags(mainRaw).trim());
+  {
+    const { vis, spans } = underlineSpans(mainRaw);
+    if (spans.length === 1) {
+      const [s0, e0] = spans[0];
+      protect(vis.slice(s0, e0));
+      let s = s0, e = e0;
+      while (s > 0 && WORD_CHAR.test(vis[s - 1])) s--;
+      while (e < vis.length && WORD_CHAR.test(vis[e])) e++;
+      protect(vis.slice(s, e));
+    } else if (spans.length > 1) {
+      protect(spans.map(([s0, e0]) => vis.slice(s0, e0).trim()).filter(Boolean).join(" "));
+    }
+  }
+  const mainFull = stripQuotes(stripInlineNote(stripTags(stripNoteBrackets(mainRaw))).trim());
   if (mainFull && /[a-zA-Z0-9]/.test(mainFull)) pushUniq(accept, mainFull);
-  // The sanitized line's spelling can differ from the raw one (e.g. "Für
-  // Elise" vs "Fur Elise") — accept the sanitized main answer too.
+  protect(mainFull);
   if (sanitizedAnswerline && sanitizedAnswerline !== raw) {
     const sContainers = findContainers(sanitizedAnswerline);
-    const sFirst = sContainers.find((c) => isDirectiveInner(c.text.slice(1, -1)));
-    const sMain = stripQuotes((sFirst ? sanitizedAnswerline.slice(0, sFirst.start) : sanitizedAnswerline).trim());
-    if (sMain && /[a-zA-Z0-9]/.test(sMain)) pushUniq(accept, sMain);
+    const sFirst = sContainers.find((c) => isDirectiveBoundary(c, sanitizedAnswerline));
+    const sMainRaw = sFirst ? sanitizedAnswerline.slice(0, sFirst.start) : sanitizedAnswerline;
+    const sMain = stripQuotes(stripInlineNote(stripTags(stripNoteBrackets(sMainRaw))).trim());
+    if (sMain && /[a-zA-Z0-9]/.test(sMain)) { pushUniq(accept, sMain); protect(sMain); }
   }
 
-  // "accept word forms" → looser stem matching for the accept terms.
   const wordForms = /accept\s+(\w+\s+)?word\s*forms?/i.test(raw) || /\(accept forms\)/i.test(raw);
 
   const DIR_RE = /\b(do not accept or prompt on|do not accept|do not prompt on|anti-?prompt on|antiprompt on|antiprompt|anti-?prompt|also accept|accept|prompt on|prompt|reject)\b/gi;
 
-  // "until X (is read)" / "before X" / "after X" → a read-position rule.
-  // Returns { content (clause stripped), until, after }.
   function takeQualifier(content) {
     const out = { content, until: null, after: null };
-    const m = content.match(/\b(before|until|after)\b\s*([\s\S]{0,80})$/i);
+    const m = content.match(/\b(before|until|after)\b\s*([\s\S]{0,80}?)(?=\s+by\s+asking\b|\s+with\b\s*["“”]|$)/i);
     if (!m) return out;
-    out.content = content.slice(0, m.index).trim();
+    out.content = (content.slice(0, m.index) + " " + content.slice(m.index + m[0].length)).trim();
     const kind = m[1].toLowerCase();
     let markerSrc = m[2] || "";
-    // "until read" / "until mentioned" → the marker is the term itself.
     let marker;
     if (/^(it\s+is\s+)?(read|mention(ed)?|given|said)\b/i.test(markerSrc.trim()) || !markerSrc.trim()) {
       marker = "__self__";
@@ -447,7 +469,6 @@ export function parseDirectives(answerline, sanitizedAnswerline) {
     return out;
   }
 
-  // A clean prompt question: prefer the quoted text, drop stray tails.
   function cleanAsk(askSrc) {
     if (!askSrc) return null;
     const q = String(askSrc).match(/["“”]([^"“”]+)["“”]/);
@@ -456,35 +477,35 @@ export function parseDirectives(answerline, sanitizedAnswerline) {
     return a || null;
   }
 
+  function takeAsk(content) {
+    let m = content.match(/\bby asking\b[:,]?\s*([\s\S]+)$/i);
+    if (!m) m = content.match(/\bwith\b\s+(?:the\s+question\s+)?(["“”][\s\S]+)$/i);
+    if (!m) return { ask: null, content };
+    const ask = cleanAsk(m[1]);
+    const rest = content.slice(0, content.indexOf(m[0])).trim();
+    return { ask, content: rest };
+  }
+
   function classify(dir, content) {
     dir = dir.toLowerCase().replace(/[-\s]+/g, " ");
     const qual = takeQualifier(content);
     content = qual.content;
     if (/^(accept|also accept|or)$/.test(dir)) {
-      // "accept Y in place of / instead of / for "X"" — X names the substituted
-      // part of the answer; it is NOT itself acceptable. Drop that phrasing.
       content = content.replace(/\b(in place of|instead of|for)\s+["“”][^"“”]*["“”]/gi, "").trim();
-      const terms = extractTerms(content);
+      const terms = extractTerms(content, { requireUnderline: /<u[\s>]/i.test(content) });
       terms.forEach((t) => {
         const isNew = !accept.includes(t);
         pushUniq(accept, t);
-        // An UNCONDITIONED accept always wins: if the term was already
-        // acceptable without a window, don't shackle it with one
-        // ("<u>Gestalt</u> psychology (accept Gestalt therapy before X)").
         if (isNew && (qual.until || qual.after)) qualifiers[t] = { until: qual.until, after: qual.after, group: terms };
       });
+      protectFrom(content);
     } else if (/^anti ?prompt/.test(dir)) {
-      let ask = null;
-      const askM = content.match(/\bby asking\b[:,]?\s*([\s\S]+)$/i);
-      if (askM) { ask = cleanAsk(askM[1]); content = content.slice(0, content.indexOf(askM[0])).trim(); }
-      extractTerms(content, { fullPhrase: true }).forEach((t) => antiprompt.push({ target: t, ask }));
+      const a = takeAsk(content); const ask = a.ask; content = a.content;
+      extractTerms(content, { fullPhrase: true }).forEach((t) => antiprompt.push({ target: t, ask, until: qual.until, after: qual.after }));
     } else if (/^prompt/.test(dir)) {
-      let ask = null;
-      const askM = content.match(/\bby asking\b[:,]?\s*([\s\S]+)$/i);
-      if (askM) { ask = cleanAsk(askM[1]); content = content.slice(0, content.indexOf(askM[0])).trim(); }
-      // "prompt to be less specific on X" / "prompt by asking for less
-      // specificity on X" — the target is X, the rest is phrasing.
+      const a = takeAsk(content); let ask = a.ask; content = a.content;
       content = content.replace(/^\s*(to\s+be|by\s+being|for)\s+less\s+specific(ity)?\s+(on|about)?\s*/i, "");
+      content = content.replace(/\s*\b(afterwards?|thereafter)\b\s*$/i, "").replace(/\s+(alone|by\s+itself)(?=\s*(?:$|[,;.]))/gi, "");
       if (/\b(partial|incomplete|less[- ]specific)\s+answers?\b/i.test(content)) {
         prompt.push({ target: "__partial__", ask, until: qual.until, after: qual.after });
         content = content.replace(/\b(such as|like|e\.g\.?,?)\b/i, ";").split(";").slice(1).join(";");
@@ -495,6 +516,8 @@ export function parseDirectives(answerline, sanitizedAnswerline) {
         pushUniq(reject, "__partial__");
         content = content.replace(/\b(such as|like|e\.g\.?,?)\b/i, ";").split(";").slice(1).join(";");
       }
+      content = content.split(/\b(?:unless|since|because|without)\b/i)[0];
+      content = content.replace(/\s*\b(afterwards?|thereafter)\b\s*$/i, "").replace(/\s+(alone|by\s+itself)(?=\s*(?:$|[,;.]))/gi, "");
       extractTerms(content, { fullPhrase: true }).forEach((t) => pushUniq(reject, t));
     }
   }
@@ -508,12 +531,13 @@ export function parseDirectives(answerline, sanitizedAnswerline) {
     const hm = head.match(/^\s*(also accept|accept|or)\b\s*/i);
     if (hm) {
       const headQual = takeQualifier(head.slice(hm[0].length).replace(/[;,\s]+$/, ""));
-      const headTerms = extractTerms(headQual.content);
+      const headTerms = extractTerms(headQual.content, { requireUnderline: /<u[\s>]/i.test(headQual.content) });
       headTerms.forEach((t) => {
         const isNew = !accept.includes(t);
         pushUniq(accept, t);
         if (isNew && (headQual.until || headQual.after)) qualifiers[t] = { until: headQual.until, after: headQual.after, group: headTerms };
       });
+      protectFrom(headQual.content);
     }
     for (let i = 0; i < matches.length; i++) {
       const start = matches[i].index + matches[i][0].length;
@@ -522,25 +546,29 @@ export function parseDirectives(answerline, sanitizedAnswerline) {
       classify(matches[i][1], content);
     }
   }
-  return { accept, prompt, reject, antiprompt, qualifiers, wordForms, mainAnswer: mainFull };
+  // A WHOLE answer (protectedNorms: full main answer, whole underline, or an
+  // explicit accept-directive phrase) can never double as a reject: those
+  // rejects come from commentary that quotes the correct answer ("…unless that
+  // name is 'Trajan'"). A lone stem of a multi-word underline is NOT protected
+  // ("do not accept 'Macbeth'" for Lady Macbeth is deliberate). Likewise an
+  // explicit "prompt on X" beats a reject of the same bare X — those rejects
+  // describe supersets ("reject 'X' with anything else before or after it").
+  const promptNorms = new Set(prompt.filter((p) => p.target && p.target !== "__partial__").map((p) => protectKey(p.target)).filter(Boolean));
+  const cleanReject = reject.filter((t) => t === "__partial__" || (!protectedNorms.has(protectKey(t)) && !promptNorms.has(protectKey(t))));
+  return { accept, prompt, reject: cleanReject, antiprompt, qualifiers, wordForms, mainAnswer: mainFull };
 }
 
-// ── Matching helpers ───────────────────────────────────
 const STOPWORDS = new Set(["the", "a", "an", "of", "and", "or", "de", "la", "le", "el", "il"]);
 function singularize(w) {
-  if (w.length > 4 && w.endsWith("ies")) return w.slice(0, -3) + "y";   // babies -> baby
-  if (w.length > 4 && /(s|x|z|ch|sh)es$/.test(w)) return w.slice(0, -2); // boxes -> box
-  if (w.length > 2 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1); // serbs -> serb, popes -> pope
+  if (w.length > 4 && w.endsWith("ies")) return w.slice(0, -3) + "y";
+  if (w.length > 4 && /(s|x|z|ch|sh)es$/.test(w)) return w.slice(0, -2);
+  if (w.length > 2 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
   return w;
 }
-// Content words: drop stopwords, singularize (so plural forms match).
 function contentWords(norm) {
   return norm.split(/\s+/).filter((w) => w && !STOPWORDS.has(w)).map(singularize);
 }
 
-// The PRIMARY display answer of a line: the (expanded) underlined part of the
-// main answer — aliases in [or …]/[accept …] are ignored, so "China",
-// "Zhongguo" and "People's Republic of China" don't make three entries.
 export function primaryAnswer(raw, sanitized) {
   const src = (raw && raw.trim()) ? raw : (sanitized || "");
   const containers = findContainers(src);
@@ -562,15 +590,10 @@ export function primaryAnswer(raw, sanitized) {
   return stripQuotes(stripTags(mainRaw).trim());
 }
 
-// A grouping key that folds plural forms together (for the frequency list).
 export function frequencyKey(answer) {
   return normalizeText(answer || "").split(/\s+/).filter(Boolean).map(singularize).join(" ");
 }
 
-// Are two answers "similar enough" to count as the same frequency entry
-// (e.g. mitochondria / mitochondrion, or singular/plural forms)?
-// Key with light verbal-suffix stemming, used to fold word forms together
-// in the frequency list ("weeping"/"weep", "mourning"/"mourn").
 function stemKey(answer) {
   return normalizeText(answer || "")
     .split(/\s+/).filter(Boolean).map(singularize)
@@ -585,13 +608,11 @@ export function answersSimilar(a, b) {
   if (ka === kb) return true;
   if (stemKey(a) === stemKey(b)) return true;
   const min = Math.min(ka.length, kb.length);
-  if (min < 5) return false; // short words must match exactly (after singularize)
-  // Long shared prefix differing only by a short suffix (mitochondri-a / -on).
+  if (min < 5) return false;
   if (ka.slice(0, min - 2) === kb.slice(0, min - 2) && Math.abs(ka.length - kb.length) <= 3) return true;
   return levenshtein(ka, kb) <= Math.max(1, Math.floor(min / 5));
 }
 
-// Spelled-out numbers equal their digits ("eight" ≡ "8", "thousand" ≡ "1000").
 const NUM_WORDS = {
   zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
   eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
@@ -610,11 +631,10 @@ const ROMAN = {
 function numVal(w) {
   if (/^\d+(st|nd|rd|th)?$/.test(w)) return parseInt(w, 10);
   if (w in NUM_WORDS) return NUM_WORDS[w];
-  if (w in ROMAN) return ROMAN[w]; // "Act III" ≡ "Act 3" ≡ "Act three"
+  if (w in ROMAN) return ROMAN[w];
   return null;
 }
 
-// One term word vs one user word: exact, or (below max strictness) a small typo.
 function wordMatches(tw, uw, strictness) {
   if (tw === uw) return true;
   const na = numVal(tw), nb = numVal(uw);
@@ -626,10 +646,6 @@ function wordMatches(tw, uw, strictness) {
   return false;
 }
 
-// ACCEPT: the user must have said (at least) every required word of the term.
-// Extra words are fine; plurals and (looser strictness) typos are tolerated.
-// Each user word can satisfy only ONE term word — otherwise "wang" alone would
-// fuzzily satisfy both words of "Wang Mang".
 function acceptMatch(term, userNorm, strictness, wordForms) {
   const t = normalizeText(term);
   if (!t) return false;
@@ -644,8 +660,6 @@ function acceptMatch(term, userNorm, strictness, wordForms) {
     for (let i = 0; i < userWords.length; i++) {
       if (used[i]) continue;
       if (wordMatches(tw, userWords[i], strictness)) { used[i] = true; found = true; break; }
-      // "(accept word forms)": Italian ≡ Italy ≡ Italians — shared stem of 4+
-      // letters with short differing suffixes.
       if (wordForms) {
         const a = tw, b = userWords[i];
         const pre = Math.min(a.length, b.length);
@@ -658,27 +672,10 @@ function acceptMatch(term, userNorm, strictness, wordForms) {
   return true;
 }
 
-// PROMPT: lenient — prompt when the user's answer matches the target outright,
-// or contains a significant part of it (at least half the target's content
-// words), e.g. "water polo game" includes the promptable "water polo matches".
 function promptMatch(target, userNorm, strictness) {
-  if (acceptMatch(target, userNorm, strictness)) return true;
-  const tw = contentWords(normalizeText(target));
-  const uw = contentWords(userNorm);
-  if (tw.length < 2 || !uw.length) return false;
-  const used = new Array(uw.length).fill(false);
-  let found = 0;
-  for (const t of tw) {
-    for (let i = 0; i < uw.length; i++) {
-      if (used[i]) continue;
-      if (wordMatches(t, uw[i], strictness)) { used[i] = true; found++; break; }
-    }
-  }
-  return found >= Math.ceil(tw.length / 2);
+  return acceptMatch(target, userNorm, strictness);
 }
 
-// PROMPT / REJECT: the user's answer must essentially BE the term (plural-aware,
-// no "extra words" leniency) so partials/real answers aren't wrongly caught.
 function strictMatch(target, userNorm) {
   const t = normalizeText(target);
   if (!t || !userNorm) return false;
@@ -692,11 +689,6 @@ function strictMatch(target, userNorm) {
   return false;
 }
 
-// Returns { status: "accept" | "prompt" | "reject", matchedAnswer, prompt }.
-// Order: explicit rejects (strict), then accepts (but a bare prompt-target is not
-// auto-accepted), then prompts (lenient — if the answer INCLUDES a promptable
-// part, prompt on it).
-// Words/bigrams of the main answer, for "prompt on partial answer" lines.
 function partialTargets(d) {
   const main = normalizeText(d.mainAnswer || (d.accept[0] || ""));
   const words = contentWords(main);
@@ -706,23 +698,21 @@ function partialTargets(d) {
   return [...out];
 }
 
-// opts.readText / opts.fullText / opts.readLen: how much of the question has
-// been read at buzz time (null = unknown). Window semantics are WORD-EXACT:
-// "before X" dies the moment X STARTS being read; "after X" only lives once X
-// has FINISHED being read.
 export function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, strictness = 10, opts = {}) {
   if (!userAnswer || !userAnswer.trim()) return { status: "reject", matchedAnswer: null, prompt: null };
   const userNorm = normalizeText(userAnswer.trim());
   if (!userNorm) return { status: "reject", matchedAnswer: null, prompt: null };
   const d = parseDirectives(answerline, sanitizedAnswerline);
   const rejectNorms = new Set(d.reject.map((r) => normalizeText(r)));
+  // A verbatim reject term always rejects — including when a squished accept
+  // form would otherwise collide ("3-4" must not make "34" acceptable when the
+  // answerline explicitly rejects "34").
+  if (rejectNorms.has(userNorm)) return { status: "reject", matchedAnswer: null, prompt: null };
   const hasPos = opts.readText != null;
   const readNorm = hasPos ? normalizeText(opts.readText) : null;
   const fullLower = hasPos && opts.fullText ? String(opts.fullText).toLowerCase() : null;
   const readLen = hasPos ? (opts.readLen != null ? opts.readLen : String(opts.readText).length) : null;
 
-  // Has `marker` STARTED / FINISHED being read? Prefer exact positions in the
-  // full question text; fall back to a contains check on the read part.
   function markerStarted(marker) {
     const m = String(marker).toLowerCase().trim();
     if (!m) return false;
@@ -742,7 +732,7 @@ export function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, stri
     return readNorm.includes(normalizeText(m));
   }
   function termLive(term, until, after, group) {
-    if (!hasPos) return true; // no position info — be generous
+    if (!hasPos) return true;
     if (until) {
       const variants = until === "__self__" ? (group && group.length ? group : [term]) : [until];
       for (const v of variants) if (markerStarted(v)) return false;
@@ -759,8 +749,6 @@ export function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, stri
     return !q || termLive(a, q.until, q.after, q.group);
   }
 
-  // ── 1) REJECT (strict, plural-aware) — explicit rejects always win, except
-  //       a verbatim accept beats a fuzzy-near reject.
   const userJoined = userNorm.replace(/\s+/g, "");
   const exactAccept = d.accept.find((a) => {
     if (!acceptLive(a)) return false;
@@ -769,18 +757,34 @@ export function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, stri
   });
   if (!exactAccept) {
     const rejTargets = [];
+    // "reject partial answers" never overrides an explicitly named prompt
+    // target ("prompt on forest; reject partial answers" → "forest" prompts).
+    const explicitPromptNorms = new Set(
+      d.prompt.filter((p) => p.target && p.target !== "__partial__").map((p) => normalizeText(p.target)).filter(Boolean)
+    );
     for (const r of d.reject) {
-      if (r === "__partial__") partialTargets(d).forEach((t) => rejTargets.push(t));
+      if (r === "__partial__") partialTargets(d).forEach((t) => { if (!explicitPromptNorms.has(normalizeText(t))) rejTargets.push(t); });
       else rejTargets.push(r);
     }
+    // An answer that IS a live prompt target (verbatim) prompts even when a
+    // reject term happens to be a fuzzy/partial match for it ("Bosniaks" must
+    // not swallow "prompt on Bosnians"). An exact reject still wins.
+    const promptExact = d.prompt.some((p) => {
+      if (!p.target || p.target === "__partial__") return false;
+      const tn = normalizeText(p.target);
+      if (!tn || !termLive(p.target, p.until, p.after)) return false;
+      return tn === userNorm || tn.replace(/\s+/g, "") === userJoined;
+    });
     for (const r of rejTargets) {
-      if (strictMatch(r, userNorm)) return { status: "reject", matchedAnswer: null, prompt: null };
+      if (!strictMatch(r, userNorm)) continue;
+      const rn = normalizeText(r);
+      if (promptExact && rn !== userNorm && rn.replace(/\s+/g, "") !== userJoined) continue;
+      return { status: "reject", matchedAnswer: null, prompt: null };
     }
   } else {
     return { status: "accept", matchedAnswer: exactAccept, prompt: null };
   }
 
-  // ── 2) ACCEPT — unconditioned terms first, then windowed ones ──
   for (const a of d.accept) {
     if (isConditioned(a)) continue;
     if (acceptMatch(a, userNorm, strictness, d.wordForms)) return { status: "accept", matchedAnswer: a, prompt: null };
@@ -790,15 +794,6 @@ export function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, stri
     if (acceptMatch(a, userNorm, strictness, d.wordForms)) return { status: "accept", matchedAnswer: a, prompt: null };
   }
 
-  // ── 2.5) A windowed accept whose window EXPIRED is a dead answer — reject. ──
-  for (const a of d.accept) {
-    if (!isConditioned(a) || acceptLive(a)) continue;
-    if (strictMatch(a, userNorm) || acceptMatch(a, userNorm, strictness, d.wordForms)) {
-      return { status: "reject", matchedAnswer: null, prompt: null };
-    }
-  }
-
-  // ── 3) PROMPT — unconditioned targets first, then windowed ones ──
   const mainNorm = normalizeText(d.mainAnswer || "");
   function promptDead(target) {
     if (!hasPos) return false;
@@ -817,19 +812,39 @@ export function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, stri
     }
     return null;
   }
-  for (const p of d.prompt) {
-    if (p.until || p.after) continue;
-    const r = tryPrompt(p);
-    if (r) return r;
-  }
-  for (const p of d.prompt) {
-    if (!p.until && !p.after) continue;
-    const r = tryPrompt(p);
-    if (r) return r;
+  function anyPrompt() {
+    for (const p of d.prompt) {
+      if (p.until || p.after) continue;
+      const r = tryPrompt(p);
+      if (r) return r;
+    }
+    for (const p of d.prompt) {
+      if (!p.until && !p.after) continue;
+      const r = tryPrompt(p);
+      if (r) return r;
+    }
+    return null;
   }
 
-  // ── 4) ANTI-PROMPT (answer too specific — prompt them back up) ──
+  // A matching accept whose read-position window has closed rejects — unless
+  // an explicit prompt directive still covers the answer ("accept sea before
+  // 'railroad', after that prompt on sea").
+  for (const a of d.accept) {
+    if (!isConditioned(a) || acceptLive(a)) continue;
+    if (strictMatch(a, userNorm) || acceptMatch(a, userNorm, strictness, d.wordForms)) {
+      const pr = anyPrompt();
+      if (pr) return pr;
+      return { status: "reject", matchedAnswer: null, prompt: null };
+    }
+  }
+
+  {
+    const pr = anyPrompt();
+    if (pr) return pr;
+  }
+
   for (const ap of d.antiprompt) {
+    if (!termLive(ap.target, ap.until, ap.after)) continue;
     if (strictMatch(ap.target, userNorm) || acceptMatch(ap.target, userNorm, strictness)) {
       return {
         status: "prompt", antiprompt: true, matchedAnswer: ap.target,

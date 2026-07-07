@@ -1,20 +1,16 @@
-/**
- * OfflineQuiz v1.0 — Frontend App
- * Terminal-style quizbowl practice interface.
- */
+
+
+
+
 
 const isElectron = !!(window.qbreader);
 
-// Emit a lifecycle event to the extensions runtime (plugins). Safe no-op if absent.
 function qbEmit(ev, data) {
   try { if (window.QB) window.QB._emit(ev, data); } catch {}
 }
 
-// When a plugin (e.g. TTS) is "holding" a question (reading it aloud), suppress
-// the auto-dead timer so the question waits for the user instead of timing out.
 let ttsHold = false;
 
-// ART data - loaded via art_data.js (window.ART) or IPC fallback
 function getArt(name) {
   if (typeof ART !== "undefined" && ART[name]) return ART[name];
   if (window.ART && window.ART[name]) return window.ART[name];
@@ -51,6 +47,7 @@ const API = isElectron
         if (path === "/api/sets") return window.qbreader.getSets();
         if (path === "/api/categories") return window.qbreader.getCategories(q.type);
         if (path === "/api/subcategories") return window.qbreader.getSubcategories(q.type, q.category);
+        if (path === "/api/alternate-subcategories") return window.qbreader.getAlternateSubcategories(q.type || "tossups", q.category, q.subcategory);
         if (path === "/api/difficulty-range") return window.qbreader.getDifficultyRange(q.type);
         if (path === "/api/tossups/count") return window.qbreader.getCount("tossups", q);
         if (path === "/api/bonuses/count") return window.qbreader.getCount("bonuses", q);
@@ -68,10 +65,12 @@ const API = isElectron
         if (path === "/api/sessions") return window.qbreader.getSessions();
         if (path === "/api/sessions/breakdown") return window.qbreader.getSessionBreakdown(q.category, q.difficulty);
         if (path === "/api/sessions/entries") return window.qbreader.getSessionEntries(q.sessionId);
+        if (path === "/api/answer-powers") return window.qbreader.getAnswerPowers();
         if (path === "/api/profiles") return window.qbreader.getProfiles();
         if (path === "/api/profiles/active") return window.qbreader.getActiveProfile();
         if (path === "/api/check-update") return window.qbreader.checkUpdate();
         if (path === "/api/app-update-info") return window.qbreader.appUpdateInfo ? window.qbreader.appUpdateInfo() : { configured: false, active: false, version: 0, dev: true };
+        if (path === "/api/app-update-peek") return window.qbreader.appUpdatePeek ? window.qbreader.appUpdatePeek() : { unsupported: true };
         if (path === "/api/app-update-plugins") return window.qbreader.appUpdatePlugins ? window.qbreader.appUpdatePlugins() : { version: 0, plugins: [] };
         if (path === "/api/set-packets") return window.qbreader.getSetPackets(q.setName);
         if (path === "/api/packets-for-set") return window.qbreader.getPacketsForSet(q.setName);
@@ -106,7 +105,6 @@ const API = isElectron
       },
       delete(url) {
         const path = url.split("?")[0];
-        // Callers URL-encode the id segment — decode it before hitting the DB.
         if (path.startsWith("/api/sessions/")) return window.qbreader.deleteSession(decodeURIComponent(path.split("/")[3]));
         if (path.startsWith("/api/profiles/")) return window.qbreader.deleteProfile(decodeURIComponent(path.split("/")[3]));
         throw new Error("Unknown API route: " + path);
@@ -144,11 +142,10 @@ const API = isElectron
       },
     };
 
-// ── Per-profile settings sync ────────────────────────────
-// Every qb-* localStorage write goes through lsSet(), which also pushes a
-// debounced snapshot of the user's settings to user_data.db keyed by the
-// ACTIVE PROFILE — so settings follow the profile, not the machine.
 let _profileSyncTimer = null;
+function lsGet(key) {
+  try { return window.localStorage.getItem(key); } catch (e) { return null; }
+}
 function lsSet(key, value) {
   window.localStorage.setItem(key, value);
   clearTimeout(_profileSyncTimer);
@@ -166,7 +163,6 @@ function collectProfileSettings() {
 async function pushProfileSettings() {
   try { await API.post("/api/profile-settings", { settings: collectProfileSettings() }); } catch {}
 }
-// Mirror state.settings back into localStorage (after loading from a profile).
 function persistSettingsToLocalStorage() {
   const st = state.settings;
   const map = {
@@ -176,6 +172,7 @@ function persistSettingsToLocalStorage() {
     "qb-stop-on-power": st.stopOnPower, "qb-allow-skips": st.allowSkips,
     "qb-show-qmeta": st.showQuestionMeta, "qb-hide-pron": st.hidePronunciations, "qb-use-weights": st.useWeights,
     "qb-app-accent": st.appAccent, "qb-app-radius": st.appRadius, "qb-app-btngap": st.appBtnGap,
+    "qb-app-mode": st.appAppearanceMode, "qb-app-custom-accent": st.appCustomAccent, "qb-app-font": st.appFont,
     "qb-review-wrongend": st.reviewWrongEnd, "qb-session-retention": st.sessionRetentionDays,
     "qb-hotkeys": JSON.stringify(st.hotkeys || {}), "qb-viewmode": state.viewMode,
     "qb-username": state.username, "qb-avatar": state.avatar,
@@ -186,14 +183,13 @@ async function loadProfileSettings() {
   try {
     const d = await API.get("/api/profile-settings");
     const p = d && d.settings;
-    if (!p) { pushProfileSettings(); return; } // first run: seed from localStorage
+    if (!p) { pushProfileSettings(); return; }
     if (p.settings) Object.assign(state.settings, p.settings);
     if (p.username != null) state.username = p.username;
     if (p.avatar != null) state.avatar = p.avatar;
     if (p.viewMode) state.viewMode = p.viewMode;
     if (p.filters) window.localStorage.setItem("qb-filters", p.filters);
     persistSettingsToLocalStorage();
-    // Refresh every control that mirrors a setting.
     initSettings();
     initGameplayControls();
     setRevealSpeed(state.settings.revealSpeed);
@@ -203,7 +199,6 @@ async function loadProfileSettings() {
   } catch {}
 }
 
-// ── State ────────────────────────────────────────────────
 
 const state = {
   mode: null,
@@ -226,7 +221,7 @@ const state = {
   bonusAnswers: [],
   lastResult: null,
   resultOverridden: false,
-  histories: { tossups: [], bonuses: [] }, // separate session history per mode
+  histories: { tossups: [], bonuses: [] },
   viewMode: localStorage.getItem("qb-viewmode") || "expanded",
   username: localStorage.getItem("qb-username") || "",
   avatar: localStorage.getItem("qb-avatar") || "(◕‿◕)",
@@ -243,8 +238,8 @@ const state = {
     accent: localStorage.getItem("qb-accent") || "blue",
     revealSpeed: parseInt(localStorage.getItem("qb-speed") || "50"),
     autoReveal: localStorage.getItem("qb-auto-reveal") !== "false",
-    buzzTimeout: parseInt(localStorage.getItem("qb-buzz-timeout") || "10"),   // answer after buzz
-    buzzWindow: parseInt(localStorage.getItem("qb-buzz-window") || "10"),     // buzz after reading ends
+    buzzTimeout: parseInt(localStorage.getItem("qb-buzz-timeout") || "10"),
+    buzzWindow: parseInt(localStorage.getItem("qb-buzz-window") || "10"),
     bonusTimer: parseInt(localStorage.getItem("qb-bonus-timer") || "15"),
     strictness: parseInt(localStorage.getItem("qb-strictness") || "20"),
     allowRebuzzes: localStorage.getItem("qb-allow-rebuzzes") === "true",
@@ -253,31 +248,32 @@ const state = {
     showQuestionMeta: localStorage.getItem("qb-show-qmeta") !== "false",
     hidePronunciations: localStorage.getItem("qb-hide-pron") === "true",
     appAccent: localStorage.getItem("qb-app-accent") || "gold",
+    appAppearanceMode: localStorage.getItem("qb-app-mode") || "preset",
+    appCustomAccent: localStorage.getItem("qb-app-custom-accent") || "#dfb347",
+    appFont: localStorage.getItem("qb-app-font") || "default",
     bonusAfter: localStorage.getItem("qb-bonus-after") === "true",
     reviewNegs: localStorage.getItem("qb-review-negs") !== "false",
     reviewUnans: localStorage.getItem("qb-review-unans") !== "false",
     reviewWrongEnd: localStorage.getItem("qb-review-wrongend") !== "false",
+    autoReviewNoPower: localStorage.getItem("qb-review-nopower") === "true",
+    autoReviewSkipNoMark: localStorage.getItem("qb-review-skipnomark") !== "false",
     appRadius: localStorage.getItem("qb-app-radius") || "default",
     appBtnGap: localStorage.getItem("qb-app-btngap") || "default",
     useWeights: localStorage.getItem("qb-use-weights") === "true",
-    sessionRetentionDays: parseInt(localStorage.getItem("qb-session-retention") || "0"), // 0 = never auto-delete
+    sessionRetentionDays: parseInt(localStorage.getItem("qb-session-retention") || "0"),
     hotkeys: JSON.parse(localStorage.getItem("qb-hotkeys") || "{}"),
   },
   hotkeyRebinding: null,
 };
 
-// `state.sessionHistory` transparently maps to the current mode's history,
-// so tossups and bonuses keep separate logs.
 Object.defineProperty(state, "sessionHistory", {
   get() { return state.histories[_historyKey()]; },
   set(v) { state.histories[_historyKey()] = v; },
 });
-// Packet game mixes tossups and bonuses — keep ONE combined log for it.
 function _historyKey() {
   return state.mode === "bonuses" ? "bonuses" : "tossups";
 }
 
-// ── Hotkey Registry ──────────────────────────────────────
 
 const DEFAULT_HOTKEYS = {
   "buzz": "Space",
@@ -324,7 +320,6 @@ function getHotkey(action) {
 function matchesHotkey(e, action) {
   const binding = getHotkey(action);
   if (!binding || binding === "Not Set") return false;
-  // Never hijack OS/browser combos (Cmd+1, Alt+key, …).
   if (e.metaKey || e.altKey) return false;
   const parts = binding.toLowerCase().split("+");
   const ctrl = parts.includes("ctrl");
@@ -337,30 +332,33 @@ function matchesHotkey(e, action) {
   );
 }
 
-// Human-readable display of a binding (e.g. "Space", "S", "Ctrl+Shift+X", "—").
+const KEY_GLYPHS = {
+  ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
+  Enter: "↵", " ": "Space", Escape: "Esc",
+};
 function keyDisplay(action) {
   const b = getHotkey(action);
   if (!b || b === "Not Set") return "—";
-  return b.split("+").map((p) => (p.length === 1 ? p.toUpperCase() : p)).join("+");
+  return b.split("+").map((p) => KEY_GLYPHS[p] || (p.length === 1 ? p.toUpperCase() : p)).join("+");
 }
 
-// Refresh all on-screen "[key]" indicators to match the current bindings.
+function keyLabelHtml(action, label) {
+  return `<span class="key">[${escapeHtml(keyDisplay(action))}]</span> ${escapeHtml(label)}`;
+}
 function updateKeyLabels() {
   const startBtn = $("#btn-start-session");
-  if (startBtn && !state.sessionActive) startBtn.textContent = `[${keyDisplay("start-skip")}] Start Session`;
+  if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
-  if (endBtn) endBtn.textContent = `[${keyDisplay("end-session")}] End`;
+  if (endBtn) endBtn.innerHTML = keyLabelHtml("end-session", "End");
   [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"]]
-    .forEach(([sel]) => { const el = $(sel); if (el) el.textContent = `[${keyDisplay("home")}] Back`; });
+    .forEach(([sel]) => { const el = $(sel); if (el) el.innerHTML = keyLabelHtml("home", "Back"); });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
 
-// ── DOM References ───────────────────────────────────────
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
-// Cached DOM references (populated after DOM ready)
 let _dom = {};
 function dom(id) { return _dom[id] || (_dom[id] = document.getElementById(id)); }
 function refreshDom() {
@@ -375,7 +373,6 @@ function refreshDom() {
   ].forEach(id => { _dom[id] = document.getElementById(id); });
 }
 
-// ── Sound Effects ──────────────────────────────────────
 
 const Sound = {
   _ctx: null,
@@ -395,36 +392,54 @@ const Sound = {
     o.connect(g); g.connect(this._ctx.destination);
     o.start(); o.stop(this._ctx.currentTime + len);
   },
-  menu()   { this._beep(800, 0.04, "square", 0.04); },
+  _clickAt: 0,
+  _recentClick() { try { return this._clickAt && (performance.now() - this._clickAt) < 180; } catch (e) { return false; } },
+  menu()   { if (this._recentClick()) return; this._beep(800, 0.04, "square", 0.04); },
   buzz()   { this._beep(600, 0.1, "square", 0.06); setTimeout(() => this._beep(900, 0.08, "square", 0.06), 100); },
   correct(){ this._beep(660, 0.08, "square", 0.06); setTimeout(() => this._beep(880, 0.12, "sine", 0.07), 80); },
   power()  { this._beep(880, 0.06, "square", 0.06); setTimeout(() => this._beep(1100, 0.06, "square", 0.06), 60); setTimeout(() => this._beep(1320, 0.12, "sine", 0.07), 120); },
   incorrect(){ this._beep(250, 0.18, "sawtooth", 0.05); },
   next()   { this._beep(500, 0.03, "square", 0.03); },
   skip()   { this._beep(180, 0.12, "triangle", 0.04); },
-  star()   { this._beep(1200, 0.05, "sine", 0.04); },
-  toggle() { this._beep(700, 0.04, "triangle", 0.05); },
+  star()   { if (this._recentClick()) return; this._beep(1200, 0.05, "sine", 0.04); },
+  toggle() { if (this._recentClick()) return; this._beep(700, 0.04, "triangle", 0.05); },
   pause()  { this._beep(400, 0.05, "triangle", 0.03); },
+  achievement(){ this._beep(660, 0.08, "sine", 0.06); setTimeout(() => this._beep(880, 0.08, "sine", 0.06), 90); setTimeout(() => this._beep(1320, 0.18, "sine", 0.07), 180); },
+  click()  { this._beep(620, 0.02, "square", 0.022); },
 };
 
-// ── Resize Handle ──────────────────────────────────────
+(function initGlobalClickSound() {
+  const SEL = "button,a,input,select,textarea,label,.btn,.pill,.menu-item,.filter-item," +
+    ".avatar-option,[role='button'],.session-row,.qh-row,.ext-card,.mode-input,.checkbox-row," +
+    ".cat-checkbox,.subcat-checkbox,.diff-checkbox,.tab,.chip,.fo-folder,summary,.clickable";
+  let last = 0;
+  document.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const t = e.target.closest && e.target.closest(SEL);
+    if (!t || t.disabled) return;
+    const now = (e.timeStamp || 0);
+    if (now - last < 40) return;
+    last = now;
+    try { Sound._clickAt = performance.now(); Sound.click(); } catch (err) {}
+  }, true);
+})();
 
-// Delegated so it works for ANY .resize-handle whose previous sibling is a
-// .filters-panel — including the multiplayer page's borrowed panel.
+
 (function initResize() {
-  let drag = null; // { handle, panel, startX, startW }
+  const EDGE = 8;
+  let drag = null;
   document.addEventListener("mousedown", (e) => {
-    const handle = e.target.closest(".resize-handle");
-    if (!handle) return;
-    const next = handle.dataset.resize === "next";
-    const panel = next ? handle.nextElementSibling : handle.previousElementSibling;
+    if (e.button !== 0) return;
+    if (e.target.closest("input,select,button,textarea,a,.dual-range")) return;
+    const panel = e.target.closest(".filters-panel");
     if (!panel) return;
-    if (!next && !panel.classList.contains("filters-panel")) return;
-    // Drag direction follows the panel's VISUAL side (themes may flip the
-    // layout with row-reverse — e.g. Daylight's right-hand panel option).
-    const invert = panel.getBoundingClientRect().left > handle.getBoundingClientRect().left;
-    drag = { handle, panel, startX: e.clientX, startW: panel.offsetWidth, invert };
-    handle.classList.add("active");
+    const r = panel.getBoundingClientRect();
+    const sbW = panel.offsetWidth - panel.clientWidth;
+    const onScrollbar = sbW > 0 && e.clientX >= r.left + panel.clientWidth;
+    const nearRight = !onScrollbar && Math.abs(e.clientX - r.right) <= EDGE;
+    const nearLeft = Math.abs(e.clientX - r.left) <= EDGE;
+    if (!nearRight && !nearLeft) return;
+    drag = { panel, startX: e.clientX, startW: panel.offsetWidth, edge: nearRight ? 1 : -1 };
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
     e.preventDefault();
@@ -432,26 +447,22 @@ const Sound = {
   document.addEventListener("mousemove", (e) => {
     if (!drag) return;
     const delta = e.clientX - drag.startX;
-    const newW = Math.max(180, Math.min(620, drag.startW + (drag.invert ? -delta : delta)));
+    const newW = Math.max(180, Math.min(620, drag.startW + drag.edge * delta));
     drag.panel.style.width = newW + "px";
     drag.panel.style.flex = "0 0 auto";
   });
   document.addEventListener("mouseup", () => {
     if (!drag) return;
-    drag.handle.classList.remove("active");
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
     drag = null;
   });
 })();
 
-// ── Screens ──────────────────────────────────────────────
 
-// ── Back navigation: Esc returns to the PREVIOUS page, not straight home.
-// The stack holds where you came from; arriving at the title clears it.
 let _navStack = [];
 let _navCurrent = "title";
-let _navBack = false;   // true while navigating backwards (don't re-push)
+let _navBack = false;
 function recordNav(name) {
   if (name === "starred") name = "database";
   if (name === _navCurrent) return;
@@ -462,9 +473,9 @@ function recordNav(name) {
   _navCurrent = name;
 }
 function navigateTo(name) {
-  if (name.includes("::")) {   // a plugin page's combined id
+  if (name.includes("::")) {
     if (window.QB?.showPage?.(name)) return;
-    name = "title";            // plugin gone — fall back home
+    name = "title";
   }
   showScreen(name);
   if (name === "practice-tossups") setMode("tossups");
@@ -476,10 +487,8 @@ function navigateTo(name) {
   else if (name === "extensions") window.QB?.renderScreen();
 }
 function goBack() {
-  // In-page sub-views consume Esc first: plugin views (e.g. Keyword
-  // Frequency drill-downs)…
   if (window.QB?.handleBack?.()) return;
-  // …then the per-session statistics view, which returns to the overview.
+  if (dbBrowseBack()) return;
   if (_navCurrent === "stats" && state.statsSessionId) { state.statsSessionId = null; loadStats(); return; }
   if (state.sessionActive) endSession();
   state.escOnce = false;
@@ -499,8 +508,18 @@ function showScreen(name) {
   const screen = $(`#${mapped}-screen`);
   if (screen) screen.classList.add("active");
   state.mode = name === "practice-tossups" ? "tossups" : name === "practice-bonuses" ? "bonuses" : null;
+  // Pin the practice base to the screen being opened — a stale base from an
+  // earlier tossup+bonus interleave must never make bonus practice serve tossups.
+  if (state.mode) state._practiceBase = state.mode;
+  if (mapped === "practice") collapseFilterSections();
   if (mapped === "title") { loadTitleArt(); refreshReviewBadge(); }
   qbEmit("screen:change", { name });
+}
+
+// Opening a screen with the settings bar always starts with every collapsible
+// section closed.
+function collapseFilterSections() {
+  $$("#filters-panel .filter-section.collapsible").forEach((s) => s.classList.add("collapsed"));
 }
 
 function crtFlash() {
@@ -537,7 +556,6 @@ function hideEscHint() {
   if (el) el.remove();
 }
 
-// ── Hotkey cheat sheet (?) ───────────────────────────────
 
 function toggleHotkeySheet() {
   let el = document.getElementById("hotkey-sheet");
@@ -558,13 +576,10 @@ function toggleHotkeySheet() {
   document.body.appendChild(el);
 }
 
-// ── Navigation ───────────────────────────────────────────
 
 document.addEventListener("keydown", (e) => {
-  // If rebinding a hotkey, capture the key
   if (state.hotkeyRebinding) {
     e.preventDefault();
-    // Esc cancels the rebind; bare modifier presses are ignored.
     if (e.key === "Escape") {
       state.hotkeyRebinding = null;
       renderHotkeySettings();
@@ -580,7 +595,6 @@ document.addEventListener("keydown", (e) => {
     state.hotkeyRebinding = null;
     const conflict = bindingConflict(action, newBinding);
     if (conflict) {
-      // Already used elsewhere — keep the previous binding and flag the error.
       state._hotkeyError = action;
       window.QB?.toast?.(`"${newBinding}" is already used by "${conflict.label}"`, "error");
       renderHotkeySettings();
@@ -594,7 +608,6 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // "?" toggles the hotkey cheat sheet (any screen, not while typing).
   {
     const tag = e.target.tagName;
     if (e.key === "?" && tag !== "INPUT" && tag !== "TEXTAREA") {
@@ -605,23 +618,17 @@ document.addEventListener("keydown", (e) => {
   }
 
   if (e.key === "Escape") {
-    // Esc closes the TOPMOST open overlay first (review menu/viewer, save menu,
-    // hotkey sheet, and any plugin overlay tagged .qb-overlay). This guarantees
-    // every popup can be dismissed with the back key.
     const overlays = [
-      ...document.querySelectorAll("#confirm-dialog, #save-menu, #review-menu, #review-viewer, #hotkey-sheet, .qb-overlay, .fo-overlay, .ar-overlay"),
+      ...document.querySelectorAll("#confirm-dialog, #save-menu, #review-menu, #review-viewer, #history-overlay, #hotkey-sheet, .qb-overlay, .fo-overlay, .ar-overlay"),
     ];
     if (overlays.length) { e.preventDefault(); overlays[overlays.length - 1].remove(); return; }
-    // Double-esc when in a session
     if (state.sessionActive) {
       if (state.escOnce) {
-        // Second press — actually leave
         clearTimeout(state.escTimer);
         state.escOnce = false;
         endSession();
         goBack();
       } else {
-        // First press — show warning
         e.preventDefault();
         state.escOnce = true;
         showEscHint();
@@ -636,7 +643,6 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // Plugin hotkeys (only from enabled plugins) work on any screen.
   {
     const isInputG = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA";
     if (!isInputG) {
@@ -649,7 +655,6 @@ document.addEventListener("keydown", (e) => {
   const activeScreen = document.querySelector(".screen.active");
   if (!activeScreen) return;
 
-  // Title screen shortcuts
   if (activeScreen.id === "title-screen") {
     if (matchesHotkey(e, "nav-tossups")) { showScreen("practice-tossups"); setMode("tossups"); }
     if (matchesHotkey(e, "nav-bonuses")) { showScreen("practice-bonuses"); setMode("bonuses"); }
@@ -661,19 +666,17 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // Practice screen shortcuts (skip if typing in an input, except for special keys)
   if (activeScreen.id === "practice-screen") {
     const isInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA";
 
-    // Space = buzz only (during a live tossup; bonuses have no buzzing)
     if (matchesHotkey(e, "buzz") && !isInput) {
       e.preventDefault();
       if (state.sessionActive && !state.isBuzzed && state.mode === "tossups") buzz();
     }
-    // s = start session; after a result it advances; mid-question it skips
     if (matchesHotkey(e, "start-skip") && !isInput) {
       e.preventDefault();
       if (!state.sessionActive) startSession();
+      else if (advanceBonusPart()) { /* revealed the next bonus part */ }
       else if (state.resultAreaVisible) nextQuestion();
       else if (state.settings.allowSkips) skipQuestion();
     }
@@ -681,9 +684,10 @@ document.addEventListener("keydown", (e) => {
       if (state.sessionActive) endSession();
       goHome();
     }
-    // n = next question (after a result), or an instant skip mid-question
     if (matchesHotkey(e, "next-question") && !isInput) {
-      if (state.resultAreaVisible) {
+      if (state.sessionActive && advanceBonusPart()) {
+        e.preventDefault();
+      } else if (state.resultAreaVisible) {
         e.preventDefault();
         nextQuestion();
       } else if (state.sessionActive && state.settings.allowSkips && state.currentQuestion && !state.isBuzzed) {
@@ -700,13 +704,10 @@ document.addEventListener("keydown", (e) => {
       togglePause();
     }
 
-    // Mark correct / incorrect after answering (rebindable; default ↑/↓).
     if (state.resultAreaVisible && state.mode === "tossups" && state.lastResult) {
       if (matchesHotkey(e, "mark-correct")) { e.preventDefault(); toggleResultOverride(true); }
       else if (matchesHotkey(e, "mark-incorrect")) { e.preventDefault(); toggleResultOverride(false); }
     }
-    // Enter advances to the next question once a result is showing (the visible
-    // Next button was removed — advancing is keyboard-driven).
     if (e.key === "Enter" && state.resultAreaVisible && !isInput) {
       e.preventDefault();
       nextQuestion();
@@ -714,7 +715,6 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// ── Theme ────────────────────────────────────────────────
 
 function applyTheme() {
   document.documentElement.setAttribute("data-theme", state.settings.theme);
@@ -723,10 +723,7 @@ function applyTheme() {
 
 applyTheme();
 
-// ── Title Screen ─────────────────────────────────────────
 
-// Consecutive-day practice streak from stats questionsByDate. The chain must
-// reach today or yesterday — an old streak that already lapsed counts as 0.
 function computeDailyStreak(byDate) {
   const days = Object.keys(byDate || {}).sort();
   if (!days.length) return 0;
@@ -759,7 +756,6 @@ async function initTitle() {
   if (greeting) {
     greeting.textContent = state.username ? `HELLO, ${state.username.toUpperCase()}!` : "";
   }
-  // Daily streak badge (only shown from 2+ days).
   try {
     const sd = await API.get("/api/stats");
     const streak = computeDailyStreak(sd.stats?.questionsByDate);
@@ -769,9 +765,6 @@ async function initTitle() {
   refreshReviewBadge();
 }
 
-// Review queue: open it ANY time. Questions you missed (negged / unanswered,
-// per Settings) and ones you added manually live here until you remove them.
-// The review menu filters them by AGE (how long ago they entered review).
 var AGE_STOPS = [0, 3600e3, 6 * 3600e3, 12 * 3600e3, 86400e3, 3 * 86400e3, 7 * 86400e3, 14 * 86400e3, 30 * 86400e3, Infinity];
 var AGE_LABELS = ["Now", "1h", "6h", "12h", "1d", "3d", "7d", "14d", "30d", "\u221e"];
 let _reviewItems = [];
@@ -797,19 +790,17 @@ function fmtAge(ms) {
   return Math.floor(h / 24) + "d ago";
 }
 
-// Chooser for the review queue: play, study as flashcards, or just view.
 function reviewRemoveAfter() { return localStorage.getItem("qb-review-remove") === "true"; }
 
-// The review menu: filter the queue by AGE and a text search, then play /
-// study / view the matching questions.
 function openReviewMenu(items) {
   document.getElementById("review-menu")?.remove();
   const hasFlashcards = (window.QB?.getActivePages?.() || []).some((pg) => pg.id.startsWith("flashcards::"));
+  const catSet = [...new Set(items.map((it) => it.category).filter(Boolean))].sort();
   const el = document.createElement("div");
   el.id = "review-menu";
   el.className = "hotkey-sheet";
   el.innerHTML = `
-    <div class="hotkey-sheet-box" style="min-width:360px">
+    <div class="hotkey-sheet-box rv-box">
       <div class="hotkey-sheet-title">REVIEW</div>
       <div class="rv-filter">
         <div class="rv-row"><span class="rv-lbl">Age range</span>
@@ -818,7 +809,25 @@ function openReviewMenu(items) {
             <input type="range" id="rv-hi" min="0" max="9" step="1" value="9"></div>
           <span class="rv-lbl" id="rv-rangeval" style="min-width:96px;text-align:right"></span>
         </div>
-        <div class="rv-row"><input type="text" id="rv-search" class="mode-input" placeholder="Filter by category / your answer\u2026" style="flex:1" autocomplete="off"></div>
+        <div class="rv-row"><span class="rv-lbl">Category</span>
+          <select id="rv-cat" class="mode-input" style="flex:1">
+            <option value="">All categories</option>
+            ${catSet.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="rv-row"><span class="rv-lbl">Type</span>
+          <select id="rv-type" class="mode-input" style="flex:1">
+            <option value="">Tossups &amp; bonuses</option>
+            <option value="tossup">Tossups only</option>
+            <option value="bonus">Bonuses only</option>
+          </select>
+        </div>
+        <div class="rv-row rv-difficulties"><span class="rv-lbl">Difficulty</span>
+          <div class="rv-diff-grid" id="rv-diffs">
+            ${[0,1,2,3,4,5,6,7,8,9,10].map((d) => `<label class="rv-diff-chip"><input type="checkbox" class="rv-diff" value="${d}"> ${d}</label>`).join("")}
+          </div>
+          <span class="rv-lbl text-muted" style="font-size:10px">none = all</span>
+        </div>
         <label class="checkbox-row" style="font-size:12px"><input type="checkbox" id="rv-remove"${reviewRemoveAfter() ? " checked" : ""}> Remove from review after I get it right</label>
         <div class="rv-count text-muted" id="rv-matchcount"></div>
       </div>
@@ -826,29 +835,37 @@ function openReviewMenu(items) {
         <button class="btn btn-primary btn-full" id="rv-play">Play matching as tossups</button>
         ${hasFlashcards ? '<button class="btn btn-full" id="rv-cards">Study matching as flashcards</button>' : ""}
         <button class="btn btn-full" id="rv-view">View matching questions</button>
+        <button class="btn btn-full" id="rv-saved">Saved items (keywords, buzz words, cards) — ${itemReviewList().length}</button>
         <button class="btn btn-ghost btn-full" id="rv-clearall">Remove all from review</button>
       </div>
     </div>`;
   el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
   document.body.appendChild(el);
 
-  const lo = el.querySelector("#rv-lo"), hi = el.querySelector("#rv-hi"), search = el.querySelector("#rv-search");
+  const lo = el.querySelector("#rv-lo"), hi = el.querySelector("#rv-hi");
+  const catSel = el.querySelector("#rv-cat");
   function ageBand() {
     let mn = Math.min(parseInt(lo.value), parseInt(hi.value));
     let mx = Math.max(parseInt(lo.value), parseInt(hi.value));
-    if (mn === mx) { if (mx < 9) mx++; else mn--; }   // never a zero-width window
+    if (mn === mx) { if (mx < 9) mx++; else mn--; }
     return { lo: AGE_STOPS[mn], hi: AGE_STOPS[mx], mnI: mn, mxI: mx };
   }
+  function selectedDiffs() {
+    return new Set([...el.querySelectorAll(".rv-diff:checked")].map((cb) => parseInt(cb.value)));
+  }
+  const typeSel = el.querySelector("#rv-type");
   function matching() {
     const band = ageBand();
-    const q = (search.value || "").toLowerCase().trim();
+    const cat = catSel ? catSel.value : "";
+    const typ = typeSel ? typeSel.value : "";
+    const diffs = selectedDiffs();
+    const noDiffFilter = diffs.size === 0;
     return items.filter((it) => {
       const age = it.ageMs == null ? 0 : it.ageMs;
       if (age < band.lo || age > band.hi) return false;
-      if (q) {
-        const hay = ((it.category || "") + " " + (it.given || "")).toLowerCase();
-        if (hay.indexOf(q) < 0) return false;
-      }
+      if (cat && it.category !== cat) return false;
+      if (typ && (it.type || "tossup") !== typ) return false;
+      if (!noDiffFilter && it.difficulty != null && !diffs.has(it.difficulty)) return false;
       return true;
     });
   }
@@ -861,7 +878,11 @@ function openReviewMenu(items) {
     const m = matching();
     el.querySelector("#rv-matchcount").textContent = m.length + " of " + items.length + " match";
   }
-  lo.addEventListener("input", paint); hi.addEventListener("input", paint); search.addEventListener("input", paint); paint();
+  lo.addEventListener("input", paint); hi.addEventListener("input", paint);
+  if (catSel) catSel.addEventListener("change", paint);
+  if (typeSel) typeSel.addEventListener("change", paint);
+  el.querySelectorAll(".rv-diff").forEach((cb) => cb.addEventListener("change", paint));
+  paint();
   el.querySelector("#rv-remove").addEventListener("change", (e) => localStorage.setItem("qb-review-remove", e.target.checked.toString()));
 
   el.querySelector("#rv-play").onclick = () => {
@@ -872,6 +893,7 @@ function openReviewMenu(items) {
   const rc = el.querySelector("#rv-cards");
   if (rc) rc.onclick = () => { const ids = matching().filter((it) => (it.type || "tossup") === "tossup").map((it) => it.id); el.remove(); reviewAsFlashcards(ids); };
   el.querySelector("#rv-view").onclick = () => { el.remove(); openReviewViewer(matching()); };
+  el.querySelector("#rv-saved").onclick = () => { el.remove(); openItemReviewViewer(); };
   el.querySelector("#rv-clearall").onclick = () => {
     confirmDialog(`Remove all ${items.length} questions from review? This can't be undone.`, async () => {
       try { await API.post("/api/review/clear", {}); } catch {}
@@ -881,7 +903,6 @@ function openReviewMenu(items) {
   };
 }
 
-// Hand the due questions to the Flashcards plugin (if it's enabled).
 function reviewAsFlashcards(ids) {
   const pages = window.QB?.getActivePages?.() || [];
   const page = pages.find((p) => p.id.startsWith("flashcards::"));
@@ -890,8 +911,6 @@ function reviewAsFlashcards(ids) {
   window.QB.showPage(page.id);
 }
 
-// Read-only viewer: the due questions as expanded cards, each showing where
-// you buzzed, what you answered, and a "Remove from review" action.
 async function openReviewViewer(items) {
   document.getElementById("review-viewer")?.remove();
   const el = document.createElement("div");
@@ -908,6 +927,7 @@ async function openReviewViewer(items) {
         </span>
       </div>
       <div class="rv-filterbar">
+        <select id="rv-ftype" class="mode-input"><option value="">All types</option><option value="tossup">Tossups</option><option value="bonus">Bonuses</option></select>
         <select id="rv-fcat" class="mode-input"><option value="">All categories</option></select>
         <select id="rv-fsub" class="mode-input"><option value="">All subcategories</option></select>
         <select id="rv-falt" class="mode-input"><option value="">All alternate subcategories</option></select>
@@ -934,15 +954,13 @@ async function openReviewViewer(items) {
   }
   function cardHtml({ q, it, type }) {
     const starred = _dbStarred && _dbStarred.has(type + ":" + q.id);
-    // Searchable text: category + answer(s) + the full question/leadin+parts,
-    // so you can find a review question by a word, phrase, sentence, or answer.
     const search = ((q.category || "") + " " + (q.subcategory || "") + " " + (q.alternate_subcategory || "") + " " +
       (q.answer_sanitized || "") + " " + (q.question_sanitized || q.leadin_sanitized || "") + " " +
       ((() => { try { return JSON.parse(q.answers_sanitized || "[]").join(" ") + " " + JSON.parse(q.parts_sanitized || "[]").join(" "); } catch { return ""; } })())).toLowerCase();
     const side = `<span class="star-btn rv-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders" style="font-size:16px">+</span>` +
       `<button class="btn btn-sm btn-ghost rv-remove" data-qid="${escapeHtml(q.id)}" title="Stop showing this question in Review">Remove from review</button>` +
       `<span class="qb-star${starred ? " on" : ""}" data-qid="${q.id}" data-type="${type}">${starred ? "\u2605" : "\u2606"}</span>`;
-    const dataAttrs = ` data-rvqid="${escapeHtml(q.id)}" data-rvsearch="${escapeHtml(search)}" data-cat="${escapeHtml(q.category || "")}" data-sub="${escapeHtml(q.subcategory || "")}" data-alt="${escapeHtml(q.alternate_subcategory || "")}"`;
+    const dataAttrs = ` data-rvqid="${escapeHtml(q.id)}" data-rvtype="${type}" data-rvsearch="${escapeHtml(search)}" data-cat="${escapeHtml(q.category || "")}" data-sub="${escapeHtml(q.subcategory || "")}" data-alt="${escapeHtml(q.alternate_subcategory || "")}"`;
     if (type === "bonus") {
       let parts = [], answers = [], raws = [];
       try { parts = JSON.parse(q.parts_sanitized || "[]"); } catch {}
@@ -971,7 +989,7 @@ async function openReviewViewer(items) {
   const html = cards.map(cardHtml).join("") || '<div class="text-muted" style="padding:12px">Nothing to show.</div>';
   const list = el.querySelector(".review-viewer-list");
   if (list) list.innerHTML = html;
-  const fcat = el.querySelector("#rv-fcat"), fsub = el.querySelector("#rv-fsub"), falt = el.querySelector("#rv-falt"), vs = el.querySelector("#rv-vsearch");
+  const fcat = el.querySelector("#rv-fcat"), fsub = el.querySelector("#rv-fsub"), falt = el.querySelector("#rv-falt"), vs = el.querySelector("#rv-vsearch"), ftype = el.querySelector("#rv-ftype");
   const meta = cards.map(({ q }) => ({ cat: q.category || "", sub: q.subcategory || "", alt: q.alternate_subcategory || "" }));
   function fill(sel, values) { const cur = sel.value; const opts = [...new Set(values.filter(Boolean))].sort(); sel.innerHTML = sel.options[0].outerHTML + opts.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join(""); if (opts.includes(cur)) sel.value = cur; }
   fill(fcat, meta.map((m) => m.cat));
@@ -979,8 +997,10 @@ async function openReviewViewer(items) {
   refillSub();
   function applyFilters() {
     const c = fcat.value, su = fsub.value, al = falt.value, q = (vs.value || "").toLowerCase().trim();
+    const ty = ftype ? ftype.value : "";
     list.querySelectorAll(".qcard[data-rvqid]").forEach((card) => {
       let show = true;
+      if (ty && (card.getAttribute("data-rvtype") || "tossup") !== ty) show = false;
       if (c && (card.getAttribute("data-cat") || "") !== c) show = false;
       if (su && (card.getAttribute("data-sub") || "") !== su) show = false;
       if (al && (card.getAttribute("data-alt") || "") !== al) show = false;
@@ -991,6 +1011,7 @@ async function openReviewViewer(items) {
   fcat.addEventListener("change", () => { refillSub(); applyFilters(); });
   fsub.addEventListener("change", applyFilters);
   falt.addEventListener("change", applyFilters);
+  if (ftype) ftype.addEventListener("change", applyFilters);
   if (vs) vs.addEventListener("input", applyFilters);
   list.querySelectorAll(".rv-save").forEach((b) => {
     b.addEventListener("click", async (ev) => {
@@ -1013,7 +1034,6 @@ async function openReviewViewer(items) {
     el.querySelectorAll(".qcard").forEach((c) => { c.classList.remove("compact"); c.classList.add("expanded"); });
 }
 
-// Start a tossup session that serves only the due review questions, in order.
 function startReviewSession(ids) {
   if (!ids.length) return;
   state.reviewIds = [...ids];
@@ -1022,17 +1042,23 @@ function startReviewSession(ids) {
   setMode("tossups");
   startSession();
 }
+function startBonusIdsSession(ids) {
+  if (!ids || !ids.length) return;
+  state.bonusIds = [...ids];
+  showScreen("practice-bonuses");
+  setMode("bonuses");
+  startSession();
+}
 
-// Menu clicks
 $$(".menu-item").forEach((item) => {
   item.addEventListener("click", () => {
     const screen = item.dataset.screen;
-    if (!screen) return; // special items (e.g. Review) wire their own handler
+    if (!screen) return;
     showScreen(screen);
     if (screen === "practice-tossups") setMode("tossups");
     if (screen === "practice-bonuses") setMode("bonuses");
     if (screen === "stats") { state.statsSessionId = null; loadStats(); }
-    if (screen === "starred") loadDatabase(); // legacy compat
+    if (screen === "starred") loadDatabase();
     if (screen === "database") loadDatabase();
     if (screen === "settings") initSettings();
     if (screen === "player") loadPlayer();
@@ -1040,12 +1066,9 @@ $$(".menu-item").forEach((item) => {
   });
 });
 
-// ── Filters ──────────────────────────────────────────────
 
 let allCategories = [];
 
-// Full category list (union of tossup + bonus categories), cached. Used to
-// populate the category dropdowns so they always show every category.
 let _allCategoryNames = null;
 async function getAllCategoryNames() {
   if (_allCategoryNames) return _allCategoryNames;
@@ -1064,7 +1087,6 @@ async function getAllCategoryNames() {
   return _allCategoryNames;
 }
 
-// Fill a <select> with all categories, preserving its first ("All…") option and current value.
 async function fillCategoryDropdown(sel) {
   if (!sel) return;
   const cats = await getAllCategoryNames();
@@ -1076,6 +1098,18 @@ async function fillCategoryDropdown(sel) {
   if ([...sel.options].some((o) => o.value === current)) sel.value = current;
 }
 
+function filtersMode() { return state.mode === "bonuses" ? "bonuses" : "tossups"; }
+function loadFilterBlob() {
+  let obj; try { obj = JSON.parse(localStorage.getItem("qb-filters")); } catch (e) { obj = null; }
+  if (!obj || typeof obj !== "object") return {};
+  if (obj.categories || obj.difficulties || obj.subcategories) {
+    return { tossups: { ...obj }, bonuses: { ...obj } };
+  }
+  return obj;
+}
+function getModeFilters() { const b = loadFilterBlob(); return b[filtersMode()] || null; }
+function saveModeFilters(fs) { const b = loadFilterBlob(); b[filtersMode()] = fs; lsSet("qb-filters", JSON.stringify(b)); }
+
 function saveFilterState() {
   const cats = getSelectedCategories();
   const subs = {};
@@ -1083,7 +1117,6 @@ function saveFilterState() {
     const catCheck = group.querySelector(".cat-checkbox");
     if (!catCheck?.checked) return;
     const catName = catCheck.value;
-    // Store both real subcategory and alternate-subcategory selections by name.
     const checkedSubs = [
       ...[...group.querySelectorAll(".subcat-checkbox:checked")].map(cb => cb.value),
       ...[...group.querySelectorAll(".altsub-checkbox:checked")].map(cb => cb.value),
@@ -1102,13 +1135,21 @@ function saveFilterState() {
     powermarkOnly: $("#filter-powermark")?.checked,
     yearMin: $("#year-min")?.value,
     yearMax: $("#year-max")?.value,
+    settings: Object.fromEntries(PER_MODE_SETTING_KEYS.map((k) => [k, state.settings[k]])),
   };
-  lsSet("qb-filters", JSON.stringify(filterState));
+  saveModeFilters(filterState);
+}
+const PER_MODE_SETTING_KEYS = ["allowRebuzzes", "stopOnPower", "allowSkips", "strictness", "useWeights", "buzzTimeout", "buzzWindow", "bonusTimer", "revealSpeed", "autoReveal", "bonusAfter", "hidePronunciations", "showQuestionMeta"];
+function applyModeSettings(saved) {
+  if (!saved || typeof saved.settings !== "object") return;
+  for (const k of PER_MODE_SETTING_KEYS) if (k in saved.settings) state.settings[k] = saved.settings[k];
+  try { initGameplayControls(); } catch (e) {}
+  try { setRevealSpeed(state.settings.revealSpeed); } catch (e) {}
 }
 
 function restoreFilterState() {
   try {
-    const saved = JSON.parse(localStorage.getItem("qb-filters"));
+    const saved = getModeFilters();
     if (!saved) return false;
     if (saved.standard !== undefined && $("#filter-standard"))
       $("#filter-standard").checked = saved.standard;
@@ -1123,11 +1164,9 @@ function restoreFilterState() {
     }
     if (saved.yearMin !== undefined) $("#year-min").value = saved.yearMin;
     if (saved.yearMax !== undefined) $("#year-max").value = saved.yearMax;
-    // Mode always DEFAULTS to "random questions" on launch (we deliberately do
-    // not restore a saved "set" mode); the set name/packet fields are restored
-    // so switching back to set mode is one click.
     if (saved.setName !== undefined && $("#mode-set-name")) $("#mode-set-name").value = saved.setName;
     if (saved.packet !== undefined && $("#mode-packet")) $("#mode-packet").value = saved.packet;
+    applyModeSettings(saved);
     updateModeFields();
     updateYearLabel();
     return saved;
@@ -1143,7 +1182,6 @@ function restoreCategorySelections(saved) {
     const subList = group?.querySelector(".subcategory-list");
     const expand = group?.querySelector(".cat-expand");
     if (!cb.checked) {
-      // Uncheck all subcategories when category is unchecked
       if (subList) {
         subList.querySelectorAll(".subcat-checkbox").forEach(sc => sc.checked = false);
         subList.classList.add("hidden");
@@ -1156,12 +1194,10 @@ function restoreCategorySelections(saved) {
       const group = [...$$("#category-filters .category-group")].find(g => g.querySelector(".cat-checkbox")?.value === cat);
       if (!group) continue;
       const catCheck = group.querySelector(".cat-checkbox");
-      // Only restore subcategories if the parent category is actually checked
       if (!catCheck?.checked) continue;
       group.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach(sc => { sc.checked = subs.includes(sc.value); });
     }
   }
-  // Verify: uncheck subcategories of any unchecked category
   catChecks.forEach(cb => {
     if (!cb.checked) {
       const subList = cb.closest(".category-group")?.querySelector(".subcategory-list");
@@ -1172,17 +1208,12 @@ function restoreCategorySelections(saved) {
   });
 }
 
-// qbreader alternate subcategories (these match the `alternate_subcategory` tags
-// in the question data, so they filter for real).
 const ALT_SUBCATS = {
   "Other Science": ["Astronomy", "Computer Science", "Earth Science", "Engineering", "Math", "Misc Science"],
   "Other Literature": ["Drama", "Long Fiction", "Poetry", "Short Fiction", "Misc Literature"],
   "Other Fine Arts": ["Architecture", "Dance", "Film", "Jazz", "Musicals", "Opera", "Photography", "Misc Arts"],
-  // Social Science's only subcategory is itself, so its alternates ARE the
-  // subcategory-level list shown to the user.
   "Social Science": ["Anthropology", "Economics", "Linguistics", "Psychology", "Sociology", "Other Social Science"],
 };
-// Sort so "Other …" subcategories sink to the bottom of their category.
 function sortSubcats(subs) {
   return subs.slice().sort((a, b) => {
     const ao = /^Other /.test(a.subcategory) ? 1 : 0;
@@ -1206,14 +1237,11 @@ async function loadCategories(type) {
     const typeKey = state.mode === "tossups" ? "tossups" : "bonuses";
     container.innerHTML = "";
 
-    // Read the saved filter state ONCE (it also syncs mode/year UI; calling it
-    // per category re-applied those side effects N times).
     const saved = restoreFilterState();
 
     for (const c of allCategories) {
       const catDiv = document.createElement("div");
       catDiv.className = "category-group";
-      // Default to unchecked — user must manually select
       const isChecked = saved?.categories ? saved.categories.includes(c.category) : false;
       catDiv.innerHTML = `
         <label class="filter-item">
@@ -1233,7 +1261,6 @@ async function loadCategories(type) {
       checkbox.addEventListener("change", () => {
         if (checkbox.checked) {
           expand.textContent = "\u25BE";
-          // Enabling a category auto-enables all of its subcategories.
           loadSubcategories(c.category, typeKey, subList, false, true).then(saveFilterState);
         } else {
           expand.textContent = "\u25B8";
@@ -1256,7 +1283,6 @@ async function loadCategories(type) {
 
       container.appendChild(catDiv);
 
-      // Pre-load subcategories silently
       if (checkbox.checked) {
         setTimeout(() => loadSubcategories(c.category, typeKey, subList, true), 50);
       }
@@ -1316,24 +1342,19 @@ function renderSubcategoryList(container, category, subs) {
   const expand = group?.querySelector(".cat-expand");
   if (expand) expand.style.visibility = "visible";
 
-  // Check saved filter state for this category's subcategories
   let savedSubs = null;
   try {
-    const saved = JSON.parse(localStorage.getItem("qb-filters"));
+    const saved = getModeFilters();
     if (saved?.subcategories?.[category]) {
       savedSubs = saved.subcategories[category];
     }
   } catch {}
 
-  // Also check if the parent category is checked
   const catCheck = group?.querySelector(".cat-checkbox");
   const parentChecked = catCheck?.checked;
 
   const isSubChecked = (name) => (!parentChecked || !savedSubs) ? false : savedSubs.includes(name);
 
-  // Social Science: its only subcategory is "Social Science" — show that
-  // subcategory's alternate subcategories as the list instead of the redundant
-  // "Social Science > Social Science".
   if (category === "Social Science" && ALT_SUBCATS["Social Science"]) {
     container.innerHTML = ALT_SUBCATS["Social Science"]
       .map((alt) => altItemHtml(alt, "Social Science", category, isSubChecked(alt) || isSubChecked("Social Science")))
@@ -1341,7 +1362,6 @@ function renderSubcategoryList(container, category, subs) {
     return;
   }
 
-  // "Other …" subcategories sink to the bottom of the category.
   container.innerHTML = sortSubcats(subs)
     .map((s) => {
       const isChecked = isSubChecked(s.subcategory);
@@ -1355,7 +1375,6 @@ function renderSubcategoryList(container, category, subs) {
       <input type="number" class="subcat-weight" value="${isChecked ? 10 : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
     </label>`;
       if (hasAlts) {
-        // Enabling an "Other …" subcategory reveals + checks all its alternates.
         html += `<div class="altsub-list ${isChecked ? "" : "hidden"}" data-parent="${escapeHtml(s.subcategory)}">` +
           ALT_SUBCATS[s.subcategory].map((alt) => altItemHtml(alt, s.subcategory, category, isChecked)).join("") +
           "</div>";
@@ -1365,8 +1384,6 @@ function renderSubcategoryList(container, category, subs) {
     .join("");
 }
 
-// One alternate-subcategory row. Its checkbox value is the alternate name, but
-// it carries data-parent so filtering resolves to the real subcategory.
 function altItemHtml(alt, parentSub, category, checked) {
   return `
     <label class="filter-item altsub-item">
@@ -1376,8 +1393,6 @@ function altItemHtml(alt, parentSub, category, checked) {
     </label>`;
 }
 
-// Reset every practice filter/control to the app defaults (used for new
-// multiplayer rooms; exposed to plugins via ctx.host.resetPracticeFilters).
 function resetPracticeFiltersToDefaults() {
   const ms = $("#mode-select"); if (ms) ms.value = "random";
   updateModeFields();
@@ -1412,21 +1427,15 @@ function getSelectedSubcategories() {
   return collectSubcatFilters().subcategories;
 }
 
-// Returns { subcategories, alternateSubcategories } for the checked filters.
-// A subcategory with alternates contributes the whole subcategory when ALL its
-// alternates are checked, or just the checked alternates when partially chosen
-// (so "Other Science → only Math" yields alternateSubcategories: ["Math"]).
 function collectSubcatFilters() {
   const subs = new Set();
   const alts = new Set();
   $$("#category-filters .category-group").forEach((group) => {
     const catCheck = group.querySelector(".cat-checkbox");
     if (!catCheck?.checked) return;
-    // Plain subcategories (no alternates).
     group.querySelectorAll(".subcat-checkbox").forEach((cb) => {
       if (cb.checked && !ALT_SUBCATS[cb.value]) subs.add(cb.value);
     });
-    // Alternate-bearing subcategories (incl. Social Science), grouped by parent.
     const byParent = {};
     group.querySelectorAll(".altsub-checkbox").forEach((a) => {
       const p = a.dataset.parentSub;
@@ -1436,14 +1445,13 @@ function collectSubcatFilters() {
       const boxes = byParent[parent];
       const checked = boxes.filter((b) => b.checked);
       if (checked.length === 0) return;
-      if (checked.length === boxes.length) subs.add(parent);       // whole bucket
-      else checked.forEach((b) => alts.add(b.value));              // narrowed
+      if (checked.length === boxes.length) subs.add(parent);
+      else checked.forEach((b) => alts.add(b.value));
     });
   });
   return { subcategories: [...subs], alternateSubcategories: [...alts] };
 }
 
-// ── Mode: random vs select-by-set-name (+ packet) ────────
 let _allSets = null;
 
 async function loadSets() {
@@ -1465,12 +1473,7 @@ function updateModeFields() {
   const isImport = modeVal === "import";
   $("#set-mode-fields")?.classList.toggle("hidden", !isSet);
   $("#import-mode-fields")?.classList.toggle("hidden", !isImport);
-  // The TU/TU+B choice only applies on the tossups screen — the bonuses
-  // screen always serves the file's bonuses.
   state._gameSig = null;
-  // Set-by-name / imported files serve the packet as written — category and
-  // difficulty filters don't apply, so collapse those sections and make them
-  // unclickable.
   const packetMode = isSet || isImport;
   ["#sec-categories", "#sec-difficulty"].forEach((sel) => {
     const el = $(sel);
@@ -1478,8 +1481,6 @@ function updateModeFields() {
     el.classList.toggle("filter-disabled", packetMode);
     if (packetMode) el.classList.add("collapsed");
   });
-  // A chosen set / imported file is served as written, so year range,
-  // powermark-only and starred-only don't apply — grey them out + disable.
   $$(".packet-disable").forEach((el) => el.classList.toggle("filter-disabled", packetMode));
   ["#year-min", "#year-max", "#filter-powermark", "#filter-starred"].forEach((sel) => {
     const el = $(sel); if (el) el.disabled = packetMode;
@@ -1487,7 +1488,6 @@ function updateModeFields() {
   if (isSet) loadSetPackets();
 }
 
-// "1-24" → [1..24]; "1,3,5" → [1,3,5]; "" → []
 function parsePacketNumbers(str) {
   const out = [];
   (str || "").split(",").forEach((part) => {
@@ -1508,7 +1508,6 @@ async function loadSetPackets() {
   catch { _setPackets = []; }
   validatePacketInput();
 }
-// Clamp out-of-range packet numbers to the set's available range; flag in red if clamped.
 function validatePacketInput() {
   const el = $("#mode-packet"); if (!el) return;
   el.classList.remove("input-error");
@@ -1551,7 +1550,6 @@ $("#mode-packet")?.addEventListener("change", () => { state._gameSig = null; val
 $("#mode-packet")?.addEventListener("input", debounceSaveFilters);
 
 function getActiveFilters() {
-  // "Select set by name" / packet-game mode: read only from that set.
   const modeVal = $("#mode-select")?.value;
   if (modeVal === "import") return { random: true };
   if (modeVal === "set") {
@@ -1566,8 +1564,6 @@ function getActiveFilters() {
   const selectedCats = getSelectedCategories();
   const { subcategories: selectedSubs, alternateSubcategories: selectedAlts } = collectSubcatFilters();
 
-  // The broad category filter is usable only when EVERY subcategory and
-  // alternate-subcategory under each selected category is checked.
   const fullyChecked = [...$$("#category-filters .category-group")]
     .filter(g => g.querySelector(".cat-checkbox")?.checked)
     .every(g =>
@@ -1577,7 +1573,6 @@ function getActiveFilters() {
 
   const difficulties = getSelectedDifficulties();
 
-  // Thumbs may cross — always use the smaller as min and larger as max.
   const _ya = parseInt($("#year-min")?.value || 2000), _yb = parseInt($("#year-max")?.value || 2026);
   const yearMin = Math.min(_ya, _yb);
   const yearMax = Math.max(_ya, _yb);
@@ -1592,7 +1587,6 @@ function getActiveFilters() {
     yearMax,
   };
 
-  // Weighted mode: pick a single category (and subcategory/alternate) by ratio.
   if (state.settings.useWeights) {
     const picked = weightedPickCategoryFilter();
     if (picked) {
@@ -1608,21 +1602,22 @@ function getActiveFilters() {
   } else if (selectedSubs.length > 0 || selectedAlts.length > 0) {
     if (selectedSubs.length > 0) filters.subcategories = selectedSubs;
     if (selectedAlts.length > 0) filters.alternateSubcategories = selectedAlts;
-  } else {
+  } else if (selectedCats.length > 0) {
     filters.categories = selectedCats;
   }
+  // No selection = no category constraint: questions are drawn uniformly from
+  // the whole pool, so each category appears at its natural database frequency.
 
   return filters;
 }
 
-// Short human-readable summary of the current practice filters (for plugins).
 function describeActiveFilters() {
   const f = getActiveFilters();
   const parts = [];
   if (f.setNames) parts.push("Set: " + f.setNames.join(", ") + (f.packetNumbers ? " (packets " + f.packetNumbers.join(",") + ")" : ""));
   if (f.categories) parts.push("Categories: " + f.categories.join(", "));
   if (f.subcategories) parts.push("Subcats: " + f.subcategories.join(", "));
-  if (!f.categories && !f.subcategories && !f.setNames) parts.push("All categories");
+  if (!f.categories && !f.subcategories && !f.setNames) parts.push("All categories (natural mix)");
   if (f.difficulties && f.difficulties.length) parts.push("Difficulty: " + f.difficulties.join(", "));
   if (f.yearMin || f.yearMax) parts.push("Years: " + (f.yearMin || 2000) + "–" + (f.yearMax || 2026));
   if (state.settings.useWeights) parts.push("weighted");
@@ -1631,8 +1626,6 @@ function describeActiveFilters() {
   return parts.join(" · ");
 }
 
-// Pick one category by weight, then one of its checked subcategories by weight.
-// Weights are ratios (need not sum to 100). Returns {category, subcategory?} or null.
 function weightedPick(items) {
   const positive = items.filter((i) => i.weight > 0);
   const pool = positive.length ? positive : items.map((i) => ({ ...i, weight: 1 }));
@@ -1658,8 +1651,6 @@ function weightedPickCategoryFilter() {
   const g = pickedCat.el;
   const wOf = (cb) => parseFloat(cb.closest(".filter-item")?.querySelector(".subcat-weight, .altsub-weight")?.value) || 0;
 
-  // Build selectable "units": plain subcategories, whole alt-buckets, or single
-  // alternates (when a bucket is only partly selected).
   const units = [];
   g.querySelectorAll(".subcat-checkbox:checked").forEach((cb) => {
     if (!ALT_SUBCATS[cb.value]) units.push({ kind: "sub", value: cb.value, weight: wOf(cb) });
@@ -1685,7 +1676,6 @@ function weightedPickCategoryFilter() {
   return { category: pickedCat.value, subcategory: picked.value };
 }
 
-// Selected difficulties (multiselect). Empty = no difficulty filter (all).
 function getSelectedDifficulties() {
   return [...$$("#difficulty-filters .diff-checkbox:checked")].map((cb) => parseInt(cb.value));
 }
@@ -1697,9 +1687,10 @@ function getFilters() {
 $("#difficulty-filters")?.addEventListener("change", debounceSaveFilters);
 $("#year-min")?.addEventListener("input", () => { clampYearDual("min"); debounceSaveFilters(); });
 $("#year-max")?.addEventListener("input", () => { clampYearDual("max"); debounceSaveFilters(); });
+["#filter-starred", "#filter-powermark", "#filter-standard"].forEach((sel) => {
+  $(sel)?.addEventListener("change", debounceSaveFilters);
+});
 
-// Raise whichever thumb is nearer the cursor so you can grab either one — even
-// when they overlap (lets you drag left OR right out of an overlap).
 document.addEventListener("mousemove", (e) => {
   const host = e.target.closest?.(".dual-range");
   if (!host) return;
@@ -1713,8 +1704,6 @@ document.addEventListener("mousemove", (e) => {
   else { b.style.zIndex = 5; a.style.zIndex = 4; }
 });
 
-// The two year thumbs may cross; the range is always read smallest→largest, so
-// the thumbs can swap min/max roles. Just repaint the fill + label.
 function clampYearDual() { updateYearLabel(); }
 
 let _debounceTimer = null;
@@ -1726,7 +1715,7 @@ function debounceSaveFilters() {
 function updateYearLabel() {
   const lo = $("#year-min"), hi = $("#year-max");
   const a = parseInt(lo?.value || 2000), b = parseInt(hi?.value || 2026);
-  const mn = Math.min(a, b), mx = Math.max(a, b);   // always smallest \u2192 largest
+  const mn = Math.min(a, b), mx = Math.max(a, b);
   const el = $("#year-range-label");
   if (el) el.textContent = `${mn} \u2013 ${mx}`;
   const fill = $("#year-fill");
@@ -1737,14 +1726,11 @@ function updateYearLabel() {
   }
 }
 
-// Delegate to catch all checkbox + weight changes inside filters
 document.addEventListener("change", (e) => {
   const cb = e.target.closest(".cat-checkbox, .subcat-checkbox, .altsub-checkbox");
   if (cb) {
-    // Weight follows the toggle: on = 10 (ratio), off = 0.
     const w = cb.closest(".filter-item")?.querySelector(".cat-weight, .subcat-weight, .altsub-weight");
     if (w) w.value = cb.checked ? "10" : "0";
-    // Toggling an "Other …" subcategory reveals + (un)checks all its alternates.
     if (cb.classList.contains("subcat-checkbox") && ALT_SUBCATS[cb.value]) {
       const list = cb.closest(".filter-item")?.nextElementSibling;
       if (list && list.classList.contains("altsub-list")) {
@@ -1758,7 +1744,6 @@ document.addEventListener("change", (e) => {
         if (exp) exp.textContent = cb.checked ? "▾" : "▸";
       }
     }
-    // Checking an alternate makes sure its parent "Other …" subcat is on.
     if (cb.classList.contains("altsub-checkbox") && cb.checked) {
       const list = cb.closest(".altsub-list");
       const parentItem = list?.previousElementSibling;
@@ -1769,7 +1754,6 @@ document.addEventListener("change", (e) => {
       }
     }
   }
-  // Editing a weight to 0 auto-untoggles the item (and vice-versa).
   const wInput = e.target.closest(".cat-weight, .subcat-weight, .altsub-weight");
   if (wInput) {
     const item = wInput.closest(".filter-item");
@@ -1783,7 +1767,6 @@ document.addEventListener("change", (e) => {
   }
 });
 
-// Expand/collapse a subcategory's alternate-subcategory list.
 document.addEventListener("click", (e) => {
   const exp = e.target.closest(".altsub-expand");
   if (!exp) return;
@@ -1797,7 +1780,6 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// Reading-speed control inside the practice panel (mirrors the Settings slider).
 function setRevealSpeed(val) {
   state.settings.revealSpeed = val;
   lsSet("qb-speed", String(val));
@@ -1810,8 +1792,6 @@ function setRevealSpeed(val) {
 
 $("#panel-speed-slider")?.addEventListener("input", (e) => setRevealSpeed(parseInt(e.target.value)));
 
-// Side-panel timer controls (mirror the Settings sliders; apply to tossups +
-// bonuses). Buzz timer = tossup answer window; Bonus part timer = per-part.
 function setBuzzTimer(val) {
   state.settings.buzzTimeout = val;
   lsSet("qb-buzz-timeout", String(val));
@@ -1837,7 +1817,6 @@ function setBonusTimer(val) {
 $("#panel-buzz-timer")?.addEventListener("input", (e) => setBuzzTimer(parseInt(e.target.value)));
 $("#panel-bonus-timer")?.addEventListener("input", (e) => setBonusTimer(parseInt(e.target.value)));
 
-// ── Collapsible filter sections ──────────────────────────
 document.addEventListener("click", (e) => {
   const header = e.target.closest(".collapse-header");
   if (!header) return;
@@ -1845,7 +1824,6 @@ document.addEventListener("click", (e) => {
   if (section) section.classList.toggle("collapsed");
 });
 
-// ── Gameplay option toggles + strictness ─────────────────
 function initGameplayControls() {
   const map = {
     "opt-allow-rebuzzes": "allowRebuzzes",
@@ -1863,12 +1841,19 @@ function initGameplayControls() {
   }
   const ew = $("#enable-cat-weights");
   if (ew) ew.checked = !!state.settings.useWeights;
-  // Reflect timer settings in the side panel.
   const bt = $("#panel-buzz-timer"); if (bt) { bt.value = state.settings.buzzTimeout; const l = $("#panel-buzz-timer-label"); if (l) l.textContent = state.settings.buzzTimeout === 0 ? "off" : `${state.settings.buzzTimeout}s`; }
   const bw = $("#panel-buzz-window"); if (bw) { bw.value = state.settings.buzzWindow; const l = $("#panel-buzz-window-label"); if (l) l.textContent = state.settings.buzzWindow === 0 ? "off" : `${state.settings.buzzWindow}s`; }
   const bnt = $("#panel-bonus-timer"); if (bnt) { bnt.value = state.settings.bonusTimer; const l = $("#panel-bonus-timer-label"); if (l) l.textContent = state.settings.bonusTimer === 0 ? "off" : `${state.settings.bonusTimer}s`; }
 }
 
+const _MODE_SETTING_IDS = new Set(["opt-allow-rebuzzes", "opt-stop-on-power", "opt-allow-skips", "strictness-slider", "enable-cat-weights", "panel-buzz-timer", "panel-buzz-window", "panel-bonus-timer", "panel-speed-slider", "speed-slider", "opt-bonus-after", "opt-hide-pron", "opt-show-qmeta", "filter-hide-pron", "auto-reveal"]);
+let _modeSettingTimer = null;
+function scheduleModeSettingSave() {
+  clearTimeout(_modeSettingTimer);
+  _modeSettingTimer = setTimeout(() => { if ($("#category-filters .category-group")) saveFilterState(); }, 250);
+}
+document.addEventListener("change", (e) => { if (e.target && _MODE_SETTING_IDS.has(e.target.id)) scheduleModeSettingSave(); });
+document.addEventListener("input", (e) => { if (e.target && (e.target.id === "strictness-slider" || e.target.id === "panel-speed-slider" || e.target.id === "speed-slider")) scheduleModeSettingSave(); });
 $("#opt-allow-rebuzzes")?.addEventListener("change", (e) => { state.settings.allowRebuzzes = e.target.checked; lsSet("qb-allow-rebuzzes", e.target.checked); });
 $("#opt-stop-on-power")?.addEventListener("change", (e) => { state.settings.stopOnPower = e.target.checked; lsSet("qb-stop-on-power", e.target.checked); });
 $("#opt-allow-skips")?.addEventListener("change", (e) => { state.settings.allowSkips = e.target.checked; lsSet("qb-allow-skips", e.target.checked); });
@@ -1886,24 +1871,22 @@ $("#session-retention")?.addEventListener("change", (e) => {
   const days = parseInt(e.target.value) || 0;
   state.settings.sessionRetentionDays = days;
   lsSet("qb-session-retention", days);
-  pruneOldSessions(); // apply immediately so the user sees space reclaimed
+  pruneOldSessions();
 });
 
-// Delete sessions older than the configured retention (0 = never). Fire-and-forget.
 function pruneOldSessions() {
   const days = parseInt(state.settings.sessionRetentionDays) || 0;
   if (days > 0) API.post("/api/sessions/prune", { days }).catch(() => {});
 }
 
-// ── Mode Switch ──────────────────────────────────────────
 
 function setMode(mode) {
+  if (state.mode && state.mode !== mode && $("#category-filters .category-group")) saveFilterState();
   state.mode = mode;
   state._practiceBase = mode;
   const type = mode === "tossups" ? "tossups" : "bonuses";
   $("#practice-title").textContent =
     `PRACTICE: ${mode.toUpperCase()}`;
-  // Populate the set-name dropdown (mode selector), then restore saved mode fields.
   loadSets().then(() => restoreFilterState());
   updateModeFields();
 
@@ -1920,23 +1903,20 @@ function setMode(mode) {
   const questionArea = $("#question-area");
 
   if (mode === "bonuses") {
-    bonusArea.classList.remove("hidden");
-    // Put the bonus parts (and their revealed answers) ABOVE the session history.
+    // Keep the parts skeleton hidden until an actual bonus is rendered.
+    bonusArea.classList.toggle("hidden", !(state.sessionActive && state.currentQuestion));
     const hist = document.getElementById("history-panel");
     if (hist && hist.parentElement === questionArea) questionArea.insertBefore(bonusArea, hist);
     else questionArea.appendChild(bonusArea);
   } else {
     bonusArea.classList.add("hidden");
   }
-  // Bonuses have no powers — hide the PWR counter in bonus mode.
   const pwrItem = $("#stat-pwr")?.closest(".stat-item");
   if (pwrItem) pwrItem.style.display = mode === "bonuses" ? "none" : "";
   applyModeVisibility(mode);
-  renderHistoryPanel(); // show this mode's history (tossups/bonuses are separate)
+  renderHistoryPanel();
 }
 
-// Show only the settings relevant to the current mode (e.g. reading speed and
-// buzz timer are tossup-only; the bonus part timer is bonus-only).
 function applyModeVisibility(mode) {
   const tossup = mode === "tossups";
   const hide = (sel, container, show) => {
@@ -1945,22 +1925,20 @@ function applyModeVisibility(mode) {
     const row = el.closest(container) || el;
     row.style.display = show ? "" : "none";
   };
-  hide("#panel-speed-slider", ".filter-section", tossup);      // reading speed (tossup-only)
-  hide("#panel-buzz-timer", ".slider-group", tossup);          // answer-after-buzz timer (tossup)
-  hide("#panel-buzz-window", ".slider-group", tossup);         // buzz-window timer (tossup)
-  hide("#panel-bonus-timer", ".slider-group", !tossup);        // bonus part timer (bonus)
+  hide("#panel-speed-slider", ".filter-section", tossup);
+  hide("#panel-buzz-timer", ".slider-group", tossup);
+  hide("#panel-buzz-window", ".slider-group", tossup);
+  hide("#panel-bonus-timer", ".slider-group", !tossup);
   hide("#opt-allow-rebuzzes", ".checkbox-row", tossup);
   hide("#opt-stop-on-power", ".checkbox-row", tossup);
-  hide("#filter-powermark", ".checkbox-row", tossup);          // powermark only (tossup)
-  // Live stats panel: celerity and negs are tossup concepts; in bonus mode the
-  // points column reads as PPB (points per bonus).
+  hide("#opt-bonus-after", ".checkbox-row", tossup);
+  hide("#filter-powermark", ".checkbox-row", tossup);
   hide("#stat-cel", ".stat-item", tossup);
   hide("#stat-neg", ".stat-item", tossup);
   const ppqLabel = $("#stat-ppq")?.closest(".stat-item")?.querySelector(".stat-label");
   if (ppqLabel) ppqLabel.textContent = tossup ? "PTS/Q" : "PPB";
 }
 
-// ── Session ──────────────────────────────────────────────
 
 function startSession() {
   state.sessionActive = true;
@@ -1976,15 +1954,14 @@ function startSession() {
   state.lastResult = null;
   state.resultOverridden = false;
   state.sessionHistory = [];
-  // Packet/ordered state never carries across sessions — always restart at q1.
   state._gameSig = null; state._gameQueue = null; state._gamePaired = null; state._gameIdx = 0;
   state._wantBonus = false; state._pendingPairedBonus = null; state._currentPaired = null;
   state._starredQueue = null; state._starredSig = null; state._starredIdx = 0;
 
   updateLiveStats();
-  $("#btn-start-session").textContent = state.mode === "tossups"
-    ? `[${keyDisplay("buzz")}] Buzz`
-    : `[${keyDisplay("start-skip")}] Skip`;
+  $("#btn-start-session").innerHTML = state.mode === "tossups"
+    ? keyLabelHtml("buzz", "Buzz")
+    : keyLabelHtml("start-skip", "Skip");
   qbEmit("session:start", { sessionId: state.sessionId, mode: state.mode });
   nextQuestion();
 }
@@ -1992,10 +1969,11 @@ function startSession() {
 function endSession() {
   state.sessionActive = false;
   state.reviewIds = null;
+  state.bonusIds = null;
   state._gameSig = null; state._gameQueue = null; state._gameIdx = 0;
   state._wantBonus = false; state._pendingPairedBonus = null; state._currentPaired = null;
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
-  $("#btn-start-session").textContent = `[${keyDisplay("start-skip")}] Start Session`;
+  $("#btn-start-session").innerHTML = keyLabelHtml("start-skip", "Start Session");
   resetQuestionUI();
   updateLiveStats();
   qbEmit("session:end", { sessionId: state.sessionId });
@@ -2023,9 +2001,8 @@ async function nextQuestion() {
 
   const placeholder = $("#question-placeholder");
   placeholder.classList.remove("hidden");
-  placeholder.innerHTML = '<div class="placeholder-icon">&#9670;</div><p class="text-muted">Loading next question…</p>';
+  placeholder.innerHTML = '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div><p class="text-muted">Loading next question…</p>';
 
-  // Review session: serve the due questions by id, in order.
   if (state.reviewIds && state.mode === "tossups") {
     if (!state.reviewIds.length) {
       state.reviewIds = null;
@@ -2042,38 +2019,44 @@ async function nextQuestion() {
         return;
       }
     } catch {}
-    return nextQuestion(); // skip a missing id
+    return nextQuestion();
   }
 
-  // Bonus after a correct tossup (any mode, when enabled): serve it now.
+  if (state.bonusIds && state.mode === "bonuses") {
+    if (!state.bonusIds.length) { state.bonusIds = null; showError("Done — Press Esc to leave."); return; }
+    const id = state.bonusIds.shift();
+    try {
+      const d = await API.get("/api/bonuses/" + encodeURIComponent(id));
+      if (d.bonus) { state.currentQuestion = d.bonus; renderQuestion(d.bonus); $("#session-counter").textContent = `${state.questionCount}`; return; }
+    } catch {}
+    return nextQuestion();
+  }
+
   if (state._wantBonus) {
     state._wantBonus = false;
-    let b = state._pendingPairedBonus || null;
+    const b0 = state._pendingPairedBonus || null;
     state._pendingPairedBonus = null;
-    if (!b) b = await fetchMatchingBonus(state._bonusFromQ);
-    if (b) {
-      switchPracticeType("bonuses", "PRACTICE");
-      state.currentQuestion = b;
-      renderQuestion(b);
-      $("#session-counter").textContent = `${state.questionCount}`;
-      return;
+    // Bonus-after-correct-tossup only exists in tossup practice.
+    if (state._practiceBase === "tossups") {
+      let b = b0;
+      if (!b) b = await fetchMatchingBonus(state._bonusFromQ);
+      if (b) {
+        switchPracticeType("bonuses", "PRACTICE");
+        state.currentQuestion = b;
+        renderQuestion(b);
+        $("#session-counter").textContent = `${state.questionCount}`;
+        return;
+      }
     }
-    // no bonus available — fall through to a normal tossup
   }
 
-  // Ordered modes: "select set by name" and "imported packet file" read in
-  // order (q1 → qN), reset per session and on switching the set/file.
   const _mv = $("#mode-select")?.value;
   if (_mv === "import" || _mv === "set") { await serveOrdered(); return; }
 
-  // Random mode: make sure we are back on the tossup display if a bonus-after
-  // just showed a bonus.
   restoreTossupDisplay();
 
   const filters = getFilters();
 
-  // Starred-only: go through every starred question ONCE (shuffled), then say
-  // you've hit them all — instead of re-serving random starred questions.
   if (filters.starredOnly) { await serveStarredQuestion(filters); return; }
 
   const endpoint =
@@ -2111,8 +2094,6 @@ async function nextQuestion() {
     showError("No questions match your filters. Try broadening your criteria.");
     return;
   }
-  // Plugin question filters may veto this question — refetch a few times,
-  // then serve whatever we have rather than spin forever.
   if (window.QB?.passesQuestionFilters) {
     for (let tries = 0; tries < 5 && !window.QB.passesQuestionFilters(question, { mode: state.mode }); tries++) {
       try {
@@ -2135,10 +2116,8 @@ async function nextQuestion() {
 }
 
 async function skipQuestion() {
-  // Never skip a question that's already resolved — that would log it twice.
   if (!state.currentQuestion || state.resultAreaVisible) return;
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
-  // Skipping while paused should clear the paused state/overlay.
   if (state.isPaused) {
     state.isPaused = false;
     state._stoppedAtPower = false;
@@ -2150,7 +2129,6 @@ async function skipQuestion() {
 
   const question = state.currentQuestion;
 
-  // Record the skip as a 0-point attempt so stats reflect it
   if (state.sessionId && question) {
     if (state.mode === "tossups") {
       API.post("/api/check-tossup", {
@@ -2172,7 +2150,6 @@ async function skipQuestion() {
     }
   }
 
-  // Log the skip in session history (0 points).
   state.sessionHistory.push({
     id: question.id,
     type: state.mode === "tossups" ? "tossup" : "bonus",
@@ -2182,7 +2159,7 @@ async function skipQuestion() {
     isPower: false,
     points: 0,
     celerity: 1,
-    buzzPosition: 0, // a skip is NOT a buzz — no (#) mark in history
+    buzzPosition: 0,
     answer: question.answer_sanitized,
     answers: state.mode === "bonuses"
       ? (() => { try { return JSON.parse(question.answers_sanitized || "[]"); } catch { return []; } })()
@@ -2198,14 +2175,9 @@ async function skipQuestion() {
   if (buzzMarker) buzzMarker.remove();
   $("#buzz-area").classList.add("hidden");
   $("#buzz-input").value = "";
-  // Skips advance INSTANTLY — the skipped question is already in the history.
   nextQuestion();
 }
 
-// ── Ordered serving for "select set by name" and "imported packet file" ───
-// The queue is (re)built when the source signature changes — which we force on
-// session start and on switching the set/file, so reading always restarts at
-// q1 and never carries across sessions or screens.
 async function ensureOrderedQueue() {
   const wantBonuses = state._practiceBase === "bonuses";
   const modeVal = $("#mode-select")?.value;
@@ -2240,7 +2212,7 @@ async function ensureOrderedQueue() {
     state._gameSig = sig;
     state._gameIdx = 0;
     state._gameQueue = wantBonuses ? bonuses : tossups;
-    state._gamePaired = bonuses || [];   // same-index bonus for tossup pairing
+    state._gamePaired = bonuses || [];
   }
   return { queue: state._gameQueue || [] };
 }
@@ -2264,8 +2236,6 @@ async function serveOrdered() {
   $("#session-counter").textContent = `${state.questionCount}`;
 }
 
-// Starred-only practice: build a one-time shuffled queue of the starred
-// questions (respecting category/difficulty/year filters) and serve each once.
 function _starredPasses(q, f) {
   if (f.categories && f.categories.length && q.category && f.categories.indexOf(q.category) < 0) return false;
   if (f.subcategories && f.subcategories.length && q.subcategory && f.subcategories.indexOf(q.subcategory) < 0) return false;
@@ -2287,7 +2257,6 @@ async function serveStarredQuestion(filters) {
       const d = await API.get("/api/starred?type=" + type);
       list = (d.starred || []).map((s) => s.question).filter(Boolean).filter((q) => _starredPasses(q, filters));
     } catch { failed = true; }
-    // B: a failed fetch must NOT cache an empty queue (it would never retry).
     if (failed) { showError("Couldn't load your starred questions \u2014 check your connection and try again."); return; }
     for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
     state._starredQueue = list;
@@ -2306,8 +2275,6 @@ async function serveStarredQuestion(filters) {
   $("#session-counter").textContent = `${state.questionCount}`;
 }
 
-// A random bonus that matches the just-answered tossup (category + difficulty;
-// also the set, in set mode). Used by "Bonus after correct tossup".
 async function fetchMatchingBonus(q) {
   if (!q) return null;
   const params = new URLSearchParams();
@@ -2318,22 +2285,20 @@ async function fetchMatchingBonus(q) {
   try { const d = await API.get("/api/bonuses/random?" + params.toString()); return d.bonus || null; } catch { return null; }
 }
 
-// Return the tossup display after a bonus-after bonus was shown.
 function restoreTossupDisplay() {
   if (state._practiceBase === "tossups" && state.mode === "bonuses") {
     switchPracticeType("tossups", "PRACTICE");
   }
 }
 
-// Flip the practice screen between tossup and bonus presentation mid-session
-// (used only by packet game mode).
 function switchPracticeType(type, label) {
   state.mode = type;
   $("#practice-title").textContent = (label || "PACKET GAME") + " \u2014 " + (type === "bonuses" ? "BONUS" : "TOSSUP");
   const bonusArea = $("#bonus-parts-area");
   const questionArea = $("#question-area");
   if (type === "bonuses") {
-    bonusArea.classList.remove("hidden");
+    // Stay hidden until renderQuestion fills the parts — no empty PART A/B/C skeleton.
+    bonusArea.classList.add("hidden");
     const hist = document.getElementById("history-panel");
     if (hist && hist.parentElement === questionArea) questionArea.insertBefore(bonusArea, hist);
     else questionArea.appendChild(bonusArea);
@@ -2345,7 +2310,6 @@ function switchPracticeType(type, label) {
   applyModeVisibility(type);
 }
 
-// ── Render Question ──────────────────────────────────────
 
 function renderQuestion(question) {
   resetQuestionUI();
@@ -2355,7 +2319,6 @@ function renderQuestion(question) {
   const content = $("#question-content");
   content.classList.remove("hidden");
 
-  // Meta info
   const setInfo = question.set_name
     ? `${question.set_name} (${question.set_year || "?"})`
     : "Unknown set";
@@ -2401,7 +2364,7 @@ function renderTossup(q) {
   state.buzzPosition = 0;
 
   if (powerIdx >= 0) {
-    state.prePowerEnd = powerIdx; // index in displayText where power ends (after removed "(*)")
+    state.prePowerEnd = powerIdx;
   } else {
     state.prePowerEnd = -1;
   }
@@ -2409,7 +2372,6 @@ function renderTossup(q) {
   $("#power-mark").classList.add("hidden");
   $("#bonus-parts-area").classList.add("hidden");
 
-  // If reveal speed is 0, show everything instantly
   if (state.settings.revealSpeed === 0 && state.settings.autoReveal) {
     state.revealIndex = displayText.length;
     state.questionFullyRead = true;
@@ -2418,9 +2380,6 @@ function renderTossup(q) {
     return;
   }
 
-  // Start reveal. The buzz input only appears once you actually buzz (Space).
-  // (A single reveal loop handles the whole question; "stop on power" pauses it
-  // at the power mark, and "auto-reveal past power" governs instant mode above.)
   $("#question-text").textContent = "";
   state.revealIndex = 0;
   revealText(displayText);
@@ -2448,7 +2407,6 @@ async function renderBonus(q) {
   state.revealIndex = leadin.length;
   $("#buzz-area").classList.add("hidden");
 
-  // Show all parts but only first is editable
   const bonusArea = $("#bonus-parts-area");
   bonusArea.classList.remove("hidden");
 
@@ -2461,18 +2419,36 @@ async function renderBonus(q) {
     partText = window.QB?.applyTextTransforms?.(partText, { type: "bonus-part", question: q, part: i }) ?? partText;
     $(`#bonus-text-${i}`).textContent = partText;
     $(`#bonus-input-${i}`).value = "";
-    $(`#bonus-part-${i}`).classList.toggle("hidden", i >= 1);
-    $(`#bonus-input-${i}`).disabled = i >= 1;
+    $(`#bonus-part-${i}`).classList.add("hidden");
+    $(`#bonus-input-${i}`).disabled = true;
+    $(`#bonus-part-${i}`)?.querySelector(".bonus-input")?.classList.remove("hidden");
     const ansEl = $(`#bonus-answer-${i}`);
     if (ansEl) { ansEl.classList.add("hidden"); ansEl.innerHTML = ""; }
   }
   $("#btn-submit-bonus").classList.add("hidden");
 
-  // Each bonus part has its OWN timer (default 15s); start the first one.
-  startBonusPart(0);
+  // Parts reveal one at a time: read the leadin, then the next key steps
+  // through A → B → C (each part's timer starts when it appears).
+  state.bonusAwait = 0;
+  showBonusNextHint(0);
 }
 
-// Show bonus part `idx`, focus it, and start its own countdown.
+function showBonusNextHint(idx) {
+  const el = $("#bonus-next-hint");
+  if (!el) return;
+  el.innerHTML = keyLabelHtml("next-question", `Reveal Part ${"ABC"[idx] || idx + 1}`);
+  el.classList.remove("hidden");
+}
+
+function advanceBonusPart() {
+  if (state.mode !== "bonuses" || !state.currentQuestion || state.bonusAwait == null) return false;
+  const idx = state.bonusAwait;
+  state.bonusAwait = null;
+  $("#bonus-next-hint")?.classList.add("hidden");
+  startBonusPart(idx);
+  return true;
+}
+
 function startBonusPart(idx) {
   $(`#bonus-part-${idx}`)?.classList.remove("hidden");
   const inp = $(`#bonus-input-${idx}`);
@@ -2482,38 +2458,31 @@ function startBonusPart(idx) {
   if (t > 0) startEventTimer(t, "Part " + (idx + 1), () => bonusPartTimeUp(idx));
 }
 
-// A part's time ran out — record whatever's typed and move on.
 function bonusPartTimeUp(idx) {
   const inp = $(`#bonus-input-${idx}`);
   if (inp && !inp.disabled) { state.bonusUserAnswers[idx] = inp.value.trim(); inp.disabled = true; }
   finalizeBonusPart(idx);
 }
 
-// Reveal this part's answer and advance to the next part (or submit if it was
-// the last one).
 function finalizeBonusPart(idx) {
   stopEventTimer();
   revealBonusPartAnswer(idx);
-  if (idx < 2) startBonusPart(idx + 1);
+  if (idx < 2) { state.bonusAwait = idx + 1; showBonusNextHint(idx + 1); }
   else { $("#btn-submit-bonus").classList.add("hidden"); submitBonusAnswers(); }
 }
 
-// Bonus part Enter → record that part, reveal its answer, advance.
 document.addEventListener("keydown", (e) => {
   if (!e.target?.classList?.contains("bonus-answer-input")) return;
   if (e.key !== "Enter") return;
   e.preventDefault();
   const idx = parseInt(e.target.id.replace("bonus-input-", ""));
   const answer = e.target.value.trim();
-  if (!answer) return;
   state.bonusUserAnswers[idx] = answer;
   state.bonusPartsAnswered = Math.max(state.bonusPartsAnswered, idx + 1);
   e.target.disabled = true;
   finalizeBonusPart(idx);
 });
 
-// Reveal the correct answer for a single bonus part inline, with a ✓/✗ verdict
-// for the player's answer. Scoring still happens at the end.
 async function revealBonusPartAnswer(idx) {
   const el = $(`#bonus-answer-${idx}`);
   if (!el) return;
@@ -2521,13 +2490,15 @@ async function revealBonusPartAnswer(idx) {
   if (!ans) { el.classList.add("hidden"); return; }
   const userAns = (state.bonusUserAnswers && state.bonusUserAnswers[idx]) || "";
   const rawAns = (state.bonusAnswersRaw && state.bonusAnswersRaw[idx]) || "";
-  const show = (verdict) => { el.innerHTML = `${verdict}ANSWER: <span class="bonus-answer-text">${answerLineHtml(rawAns, ans)}</span>`; el.classList.remove("hidden"); };
-  show(""); // show the answer immediately; the verdict fills in once checked
+  const inputRow = $(`#bonus-part-${idx}`)?.querySelector(".bonus-input");
+  if (inputRow) inputRow.classList.add("hidden");
+  const yourLine = `<div class="bonus-your-answer">Your Answer: <strong>${userAns ? escapeHtml(userAns) : '<span class="text-muted">(no answer)</span>'}</strong></div>`;
+  const show = (verdict) => { el.innerHTML = `${yourLine}<div>${verdict}ANSWER: <span class="bonus-answer-text">${answerLineHtml(rawAns, ans)}</span></div>`; el.classList.remove("hidden"); };
+  show("");
   let verdict = '<span class="bonus-verdict incorrect">✗ </span>';
   if (userAns) {
     try {
       const r = await API.post("/api/evaluate-answer", { answerline: state.bonusAnswersRaw?.[idx] || ans, sanitized: ans, answer: userAns, strictness: state.settings.strictness });
-      // For bonuses a prompt still scores, so accept/prompt = correct.
       verdict = (r.status === "accept" || r.status === "prompt") ? '<span class="bonus-verdict correct">✓ </span>' : '<span class="bonus-verdict incorrect">✗ </span>';
     } catch {}
   }
@@ -2537,7 +2508,6 @@ async function revealBonusPartAnswer(idx) {
 async function submitBonusAnswers() {
   if (!state.currentQuestion || state.mode !== "bonuses") return;
   stopEventTimer();
-  // Reveal answers for any parts the player didn't get to (e.g. timer expired).
   for (let i = 0; i < 3; i++) revealBonusPartAnswer(i);
 
   const answers = [
@@ -2562,7 +2532,6 @@ async function submitBonusAnswers() {
   $("#btn-submit-bonus").classList.add("hidden");
 }
 
-// ── Text Reveal ──────────────────────────────────────────
 
 function revealText(text) {
   if (!state.sessionActive || state.isBuzzed || state.isPaused) return;
@@ -2580,8 +2549,6 @@ function revealText(text) {
   function step(ts) {
     if (!state.sessionActive || state.isBuzzed || state.isPaused) return;
     if (state.revealIndex >= text.length) return;
-    // Read the speed fresh each frame so moving the slider mid-question takes
-    // effect instantly (0 = reveal the rest immediately).
     const curSpeed = state.settings.revealSpeed;
     if (curSpeed === 0) {
       state.revealIndex = text.length;
@@ -2599,7 +2566,6 @@ function revealText(text) {
     state.revealIndex++;
     state.buzzPosition = state.revealIndex;
     $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
-    // Stop on power: pause reading at the power mark until the player resumes (P).
     if (state.settings.stopOnPower && state.prePowerEnd > 0 && state.revealIndex >= state.prePowerEnd && !state._stoppedAtPower) {
       state._stoppedAtPower = true;
       state.isPaused = true;
@@ -2610,7 +2576,6 @@ function revealText(text) {
       return;
     }
     if (state.revealIndex >= text.length) {
-      // Question finished reading — reveal the power line and open the buzz window.
       state.questionFullyRead = true;
       startBuzzWindow();
     } else {
@@ -2622,7 +2587,7 @@ function revealText(text) {
 
 function markDeadQuestion(text) {
   if (state.isBuzzed || !state.sessionActive) return;
-  if (ttsHold) return; // a TTS plugin is reading — don't auto-dead; wait for the user
+  if (ttsHold) return;
   state.isBuzzed = true;
   $("#question-text").innerHTML = formatQuestionText(text, text.length, state.prePowerEnd, null, true);
   const area = $("#result-area");
@@ -2637,7 +2602,6 @@ function markDeadQuestion(text) {
   state.resultAreaVisible = true;
   state.lastResult = { correct: false, isPower: false, points: 0, celerity: 1, answer: state.currentQuestion?.answer_sanitized, userAnswer: "", questionId: state.currentQuestion?.id, buzzPosition: state.buzzPosition, category: state.currentQuestion?.category };
 
-  // Record as dead (0 pts) in session
   state.sessionHistory.push({
     id: state.currentQuestion?.id, type: "tossup",
     question: state.currentQuestion, userAnswer: "",
@@ -2647,7 +2611,6 @@ function markDeadQuestion(text) {
   });
   renderHistoryPanel();
 
-  // Persist the dead tossup as a 0-point attempt so stats reflect it
   if (state.sessionId && state.currentQuestion) {
     API.post("/api/check-tossup", {
       questionId: state.currentQuestion.id,
@@ -2661,7 +2624,6 @@ function markDeadQuestion(text) {
     }).catch(() => {});
   }
 
-  // Wait for the player to advance (no auto-next).
   setTimeout(() => { try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {} }, 50);
 }
 
@@ -2672,6 +2634,7 @@ function togglePause() {
 
   if (state.isPaused) {
     if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+    pauseEventTimer();
     $("#question-text")?.classList.add("paused-text");
     const el = document.createElement("div");
     el.className = "pause-overlay";
@@ -2682,6 +2645,7 @@ function togglePause() {
     $("#question-text")?.classList.remove("paused-text");
     const el = document.getElementById("pause-overlay");
     if (el) el.remove();
+    resumeEventTimer();
     resumeReveal();
   }
 }
@@ -2694,16 +2658,12 @@ function resumeReveal() {
   }
 }
 
-// Renders a question with revealed/unrevealed spans. The power mark is never
-// indicated. `marks` is an array of char indices where a (#) buzz marker is
-// inserted (used when rebuzzes are on / in session history).
 function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) {
   const buzzMarks = marks || state.buzzMarks || [];
   function withMarks(segEnd) {
     const inserts = buzzMarks
       .filter((i) => i >= 0 && i <= segEnd)
       .map((i) => ({ i, html: '<span class="buzz-mark">(#)</span>' }));
-    // Once the question is over, show where the power mark was.
     if (showPower && _prePowerEnd > 0 && _prePowerEnd <= segEnd) {
       inserts.push({ i: _prePowerEnd, html: '<span class="power-mark-inline">(*)</span>' });
     }
@@ -2714,14 +2674,10 @@ function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) 
     return out;
   }
   const pre = withMarks(revealedUpTo);
-  // Mask the not-yet-read text: replace every visible character with a filler so
-  // it can't be read by highlighting / select-all. The font is monospace and
-  // whitespace is preserved, so the line wrapping stays identical.
   const post = escapeHtml(text.substring(revealedUpTo).replace(/\S/g, "·"));
   return `<span class="revealed">${pre}</span><span class="unrevealed" aria-hidden="true">${post}</span>`;
 }
 
-// ── Buzz ─────────────────────────────────────────────────
 
 function buzz() {
   if (state.isBuzzed || !state.sessionActive) return;
@@ -2733,53 +2689,64 @@ function buzz() {
 
   Sound.buzz();
 
-  // Record where you buzzed so a (#) mark shows at that spot.
   state.buzzPosition = state.revealIndex;
   (state.buzzMarks = state.buzzMarks || []).push(state.revealIndex);
 
-  // Stop text at current position — do NOT reveal remaining
   const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
   $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
 
-  // Add buzz marker
   const marker = document.createElement("div");
   marker.className = "buzz-marker";
   marker.textContent = "▼ BUZZED ▼";
   $("#question-text").appendChild(marker);
 
-  // Focus the buzz input
   clearPromptBanner();
   $("#buzz-area").classList.remove("hidden");
   setTimeout(() => $("#buzz-input")?.focus(), 50);
 
-  // Start answer timer
   startBuzzTimer();
 
   qbEmit("buzz", { question: state.currentQuestion, position: state.buzzPosition });
 }
 
-// ── Event timers (visible countdown for buzz / answer / bonus) ──
-let _eventTimer = { id: null, end: 0, total: 0, onExpire: null };
+let _eventTimer = { id: null, end: 0, total: 0, onExpire: null, label: "", paused: false, remaining: 0 };
 
+function _eventTimerTick() {
+  renderEventTimer(_eventTimer.label);
+  if (_eventTimer.end - Date.now() <= 0) {
+    const cb = _eventTimer.onExpire;
+    stopEventTimer();
+    if (cb) cb();
+  }
+}
 function startEventTimer(seconds, label, onExpire) {
   stopEventTimer();
-  if (!seconds || seconds <= 0) return; // 0 = timer off
+  if (!seconds || seconds <= 0) return;
   _eventTimer.total = seconds;
   _eventTimer.end = Date.now() + seconds * 1000;
   _eventTimer.onExpire = onExpire || null;
+  _eventTimer.label = label || "";
+  _eventTimer.paused = false;
   renderEventTimer(label);
-  _eventTimer.id = setInterval(() => {
-    renderEventTimer(label);
-    if (_eventTimer.end - Date.now() <= 0) {
-      const cb = _eventTimer.onExpire;
-      stopEventTimer();
-      if (cb) cb();
-    }
-  }, 100);
+  _eventTimer.id = setInterval(_eventTimerTick, 100);
+}
+
+function pauseEventTimer() {
+  if (!_eventTimer.id || _eventTimer.paused) return;
+  _eventTimer.remaining = Math.max(0, _eventTimer.end - Date.now());
+  clearInterval(_eventTimer.id); _eventTimer.id = null;
+  _eventTimer.paused = true;
+}
+function resumeEventTimer() {
+  if (!_eventTimer.paused) return;
+  _eventTimer.end = Date.now() + _eventTimer.remaining;
+  _eventTimer.paused = false;
+  _eventTimer.id = setInterval(_eventTimerTick, 100);
 }
 
 function stopEventTimer() {
   if (_eventTimer.id) { clearInterval(_eventTimer.id); _eventTimer.id = null; }
+  _eventTimer.paused = false;
   const el = document.getElementById("event-timer");
   if (el) el.remove();
 }
@@ -2801,7 +2768,6 @@ function renderEventTimer(label) {
   el.classList.toggle("low", remaining <= 3);
 }
 
-// Time to type an answer after buzzing (tossups).
 function startBuzzTimer() {
   startEventTimer(state.settings.buzzTimeout, "Answer", () => {
     if (state.isBuzzed && state.resultAreaVisible === false && state.mode === "tossups") {
@@ -2811,15 +2777,13 @@ function startBuzzTimer() {
 }
 function stopBuzzTimer() { stopEventTimer(); }
 
-// Time to buzz once the question has finished being read (tossups).
 function startBuzzWindow() {
-  if (ttsHold) return; // a TTS plugin is reading — wait for the user
+  if (ttsHold) return;
   startEventTimer(state.settings.buzzWindow, "Buzz", () => {
     markDeadQuestion(state.currentDisplayText || state.currentQuestion?.question_sanitized || "");
   });
 }
 
-// ── Answer Submission ────────────────────────────────────
 
 $("#buzz-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
@@ -2833,9 +2797,6 @@ $("#buzz-input").addEventListener("keydown", (e) => {
 
 $("#btn-submit-bonus")?.addEventListener("click", submitBonusAnswers);
 
-// Prompt banner shown above the buzz input while a prompt is pending. Kept as a
-// separate element so it can be removed cleanly (and never lingers after the
-// question ends).
 function showPromptBanner(ask) {
   const area = $("#buzz-area");
   if (!area) return;
@@ -2871,10 +2832,8 @@ async function submitTossupAnswer(answer) {
         strictness: state.settings.strictness,
         allowPrompt: !state.promptActive,
       });
-    if (!result) return; // plugin-rule path hit an error and already reported
+    if (!result) return;
 
-    // Prompt: the answer matched a "[prompt on …]" directive — ask for more
-    // specificity and let the player answer again (no score yet).
     if (result.prompted) {
       state.promptActive = true;
       state.resultAreaVisible = false;
@@ -2889,12 +2848,9 @@ async function submitTossupAnswer(answer) {
     state.promptActive = false;
     clearPromptBanner();
 
-    // Rebuzz: a wrong answer before the question finishes lets you keep reading
-    // and buzz again, instead of ending the question.
     if (!result.correct && state.settings.allowRebuzzes && !state.questionFullyRead) {
       updateSessionStats(result);
       Sound.incorrect();
-      // (buzz position was already recorded in buzz(); don't double-add a (#) mark)
       state.isBuzzed = false;
       state.resultAreaVisible = false;
       $("#buzz-area").classList.add("hidden");
@@ -2907,8 +2863,6 @@ async function submitTossupAnswer(answer) {
 
     displayTossupResult(result, answer);
     updateSessionStats(result);
-    // In a review session: when "remove after correct" is on, a correct answer
-    // takes the question out of review. Otherwise it stays.
     if (state.reviewIds && state._reviewRemoveAfter && result.correct && state.currentQuestion?.id) {
       API.post("/api/review/dismiss", { questionId: state.currentQuestion.id }).catch(() => {});
     }
@@ -2921,10 +2875,6 @@ async function submitTossupAnswer(answer) {
   $("#buzz-input").value = "";
 }
 
-// When a plugin has registered answer or scoring rules, judging happens in
-// two steps: evaluate WITHOUT recording, run the plugin rule chains, then
-// record the final verdict through the override path. Returns a result shaped
-// exactly like /api/check-tossup's, or null on failure.
 async function judgeWithPluginRules(answer) {
   const q = state.currentQuestion;
   const fullyRead = !!state.questionFullyRead;
@@ -2951,12 +2901,8 @@ async function judgeWithPluginRules(answer) {
   };
   verdict = window.QB.applyAnswerRules(verdict, ruleCtx);
 
-  // A second prompt while already prompted counts as wrong (same as base).
   if (verdict.status === "prompt" && state.promptActive) verdict.status = "reject";
   if (verdict.status === "prompt") {
-    // A plugin rule can force "prompt" even when the engine's real verdict was
-    // accept/reject (so ev.prompt is null) — give the banner a default ask so
-    // it never renders an empty "PROMPT" with no guidance.
     return { prompted: true, prompt: verdict.prompt || { ask: "be more specific" }, answer: q.answer_sanitized };
   }
 
@@ -2986,7 +2932,6 @@ async function judgeWithPluginRules(answer) {
   }
 }
 
-// ── Display Results ──────────────────────────────────────
 
 function displayTossupResult(result, userAnswer) {
   const area = $("#result-area");
@@ -3000,7 +2945,6 @@ function displayTossupResult(result, userAnswer) {
   const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
   $("#question-text").innerHTML = formatQuestionText(text, text.length, state.prePowerEnd, null, true);
 
-  // Add to session history
   state.sessionHistory.push({
     id: state.currentQuestion?.id,
     type: "tossup",
@@ -3011,12 +2955,11 @@ function displayTossupResult(result, userAnswer) {
     points: result.points,
     celerity: result.celerity,
     answer: result.answer,
-    buzzPosition: state.buzzPosition || 0, // where the (#) mark goes
+    buzzPosition: state.buzzPosition || 0,
     starred: state.currentQuestion ? isStarredLocal(state.currentQuestion.id, "tossup") : false,
   });
   renderHistoryPanel();
 
-  // Track celerity in the correct bucket
   const celVal = 1 - result.celerity;
   if (result.correct) {
     state.correctCelerityHistory.push(celVal);
@@ -3041,8 +2984,7 @@ function displayTossupResult(result, userAnswer) {
 
   renderTossupResult();
 
-  // Bonus after correct tossup (any mode, when the toggle is on): queue a bonus.
-  if (state.settings.bonusAfter && result.correct) {
+  if (state.settings.bonusAfter && result.correct && state.mode === "tossups" && state._practiceBase === "tossups") {
     state._wantBonus = true;
     state._bonusFromQ = state.currentQuestion;
     const _mv = $("#mode-select")?.value;
@@ -3055,16 +2997,39 @@ function displayTossupResult(result, userAnswer) {
 
   renderResultPanels({ type: "tossup", result, question: state.currentQuestion, userAnswer });
   qbEmit("answer:result", { type: "tossup", result, userAnswer });
+
+  scheduleAchievementCheck();
+
+  if (state.settings.autoReviewNoPower && result.correct && !result.isPower && state.currentQuestion?.id) {
+    const hasMark = state.prePowerEnd > 0;
+    if (hasMark || !state.settings.autoReviewSkipNoMark) {
+      API.post("/api/review/manual", { questionId: state.currentQuestion.id, add: true, type: "tossup" })
+        .then(() => refreshReviewBadge()).catch(() => {});
+    }
+  }
 }
 
 function isStarredLocal(qId, type) {
+  const t = type || "tossup";
+  if (state.starredIds && state.starredIds.has(t + ":" + qId)) return true;
   return state.sessionHistory.some(e => e.id === qId && e.type === type && e.starred);
 }
+function setStarredLocal(qId, type, on) {
+  if (!state.starredIds) state.starredIds = new Set();
+  const k = (type || "tossup") + ":" + qId;
+  if (on) state.starredIds.add(k); else state.starredIds.delete(k);
+}
+async function loadStarredIds() {
+  try {
+    const [t, b] = await Promise.all([API.get("/api/starred?type=tossup"), API.get("/api/starred?type=bonus")]);
+    const set = new Set();
+    (t.starred || []).forEach((s) => { const id = (s.question && s.question.id) || s.questionId || s.question_id; if (id) set.add("tossup:" + id); });
+    (b.starred || []).forEach((s) => { const id = (s.question && s.question.id) || s.questionId || s.question_id; if (id) set.add("bonus:" + id); });
+    state.starredIds = set;
+    renderHistoryPanel();
+  } catch {}
+}
 
-// ── Unified question cards (used app-wide) ───────────────
-// Compact = answer + category / year / difficulty on one card. Expanded = the
-// ENTIRE question text (never cropped) plus context extras. Clicking a compact
-// card expands it; clicking an expanded card's header collapses it again.
 function qcardHtml(o) {
   const cls = "qcard " + (o.compact ? "compact" : "expanded") + (o.extraClass ? " " + o.extraClass : "");
   const meta = [
@@ -3087,8 +3052,6 @@ function qcardHtml(o) {
   </div>`;
 }
 
-// One delegated toggle for every .qcard in the app (cards with
-// data-self-toggle manage their own state, e.g. the multiplayer log).
 document.addEventListener("click", (e) => {
   if (e.target.closest(".qb-star, .star-toggle, button, a, input, select, textarea, kbd")) return;
   const card = e.target.closest(".qcard");
@@ -3102,16 +3065,10 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// Remove pronunciation guides — ("bah-CHEE-nee"), [mar-say-YEHZ],
-// (EGG-thur), [ah-loosh], (pronounced …) — from text being READ. History and
-// saved questions always keep the original.
-// ── Default-look appearance (active only when NO theme is enabled; an
-// enabled theme owns the CSS vars and these controls hide) ─────────────────
 const DEFAULT_APPEARANCE = {
   accent: {
-    gold: ["#dfb347", "#dfb34733"], // default look
-    blue: ["#58a6ff", "#1f6feb33"], // explicit so it always wins (was null → fell
-                                    // back to the legacy data-accent rule = gold)
+    gold: ["#dfb347", "#dfb34733"],
+    blue: ["#58a6ff", "#1f6feb33"],
     green: ["#3fb950", "#2ea04333"],
     cyan: ["#2dd4bf", "#2dd4bf33"],
     magenta: ["#d65bd6", "#d65bd633"],
@@ -3120,28 +3077,101 @@ const DEFAULT_APPEARANCE = {
   },
   radius: { default: null, sharp: "2px", round: "12px" },
   gap: { default: null, compact: "4px", spacious: "16px" },
+  fonts: {
+    default: null,
+    mono: "'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace",
+    sans: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    serif: "Georgia, 'Iowan Old Style', 'Times New Roman', serif",
+    rounded: "'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', system-ui, sans-serif",
+  },
 };
+
+function hexToDim(hex) {
+  const h = String(hex || "").trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(h)) return h + "33";
+  if (/^#[0-9a-fA-F]{3}$/.test(h)) { return "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3] + "33"; }
+  return h;
+}
+
+function activeTheme() {
+  return ((window.QB && window.QB._themes) || []).find((t) => t.enabled) || null;
+}
+function themeAppearanceMode(theme) {
+  const m = theme && theme._manifest && theme._manifest.appearance;
+  return (m === "preset" || m === "custom") ? m : null;
+}
+
 function applyDefaultAppearance() {
-  const themed = !!((window.QB && window.QB._themes) || []).some((t) => t.enabled);
-  $("#default-appearance")?.classList.toggle("hidden", themed);
-  if (!themed) { const hint = $("#appearance-empty"); if (hint) hint.style.display = "none"; }
-  if (themed) return; // the theme owns the vars
+  const theme = activeTheme();
+  if (window.QB?.hasAppearancePanel?.()) {
+    $("#default-appearance")?.classList.add("hidden");
+    const h = $("#appearance-empty"); if (h) h.style.display = "none";
+    return;
+  }
+  let mode;
+  if (theme) mode = themeAppearanceMode(theme);
+  else mode = state.settings.appAppearanceMode === "custom" ? "custom" : "preset";
+
+  const panel = $("#default-appearance");
+  panel?.classList.toggle("hidden", mode == null);
+  $("#app-mode-row")?.classList.toggle("hidden", !!theme || mode == null);
+  $("#app-preset-controls")?.classList.toggle("hidden", mode !== "preset");
+  $("#app-custom-controls")?.classList.toggle("hidden", mode !== "custom");
+
+  const hint = $("#appearance-empty");
+  if (hint) hint.style.display = (theme && mode == null) ? "" : "none";
+
+  if (mode == null) return;
+
   const root = document.documentElement.style;
-  const acc = DEFAULT_APPEARANCE.accent[state.settings.appAccent];
-  if (acc) { root.setProperty("--accent", acc[0]); root.setProperty("--accent-dim", acc[1]); }
-  else { root.removeProperty("--accent"); root.removeProperty("--accent-dim"); }
   const rad = DEFAULT_APPEARANCE.radius[state.settings.appRadius];
   if (rad) root.setProperty("--radius", rad); else root.removeProperty("--radius");
   const gap = DEFAULT_APPEARANCE.gap[state.settings.appBtnGap];
   if (gap) root.setProperty("--btn-gap", gap); else root.removeProperty("--btn-gap");
+
+  if (mode === "preset") {
+    const acc = DEFAULT_APPEARANCE.accent[state.settings.appAccent];
+    if (acc) { root.setProperty("--accent", acc[0]); root.setProperty("--accent-dim", acc[1]); }
+    else { root.removeProperty("--accent"); root.removeProperty("--accent-dim"); }
+    if (!theme) root.removeProperty("--font");
+  } else {
+    const hex = state.settings.appCustomAccent || "#dfb347";
+    root.setProperty("--accent", hex);
+    root.setProperty("--accent-dim", hexToDim(hex));
+    const font = DEFAULT_APPEARANCE.fonts[state.settings.appFont];
+    if (font) root.setProperty("--font", font); else root.removeProperty("--font");
+  }
 }
+$("#app-mode")?.addEventListener("change", (e) => { state.settings.appAppearanceMode = e.target.value; lsSet("qb-app-mode", e.target.value); applyDefaultAppearance(); });
 $("#app-accent")?.addEventListener("change", (e) => { state.settings.appAccent = e.target.value; lsSet("qb-app-accent", e.target.value); applyDefaultAppearance(); });
+$("#app-custom-accent")?.addEventListener("input", (e) => { state.settings.appCustomAccent = e.target.value; lsSet("qb-app-custom-accent", e.target.value); applyDefaultAppearance(); });
+$("#app-font")?.addEventListener("change", (e) => { state.settings.appFont = e.target.value; lsSet("qb-app-font", e.target.value); applyDefaultAppearance(); });
 $("#app-radius")?.addEventListener("change", (e) => { state.settings.appRadius = e.target.value; lsSet("qb-app-radius", e.target.value); applyDefaultAppearance(); });
 $("#app-btngap")?.addEventListener("change", (e) => { state.settings.appBtnGap = e.target.value; lsSet("qb-app-btngap", e.target.value); applyDefaultAppearance(); });
+function appearanceLabel(k, kind) {
+  const fontLabels = { default: "Default", mono: "Monospace", sans: "Sans-serif", serif: "Serif", rounded: "Rounded" };
+  if (kind === "font" && fontLabels[k]) return fontLabels[k];
+  if (k === "gold") return "Gold (default)";
+  return k.charAt(0).toUpperCase() + k.slice(1);
+}
+function rebuildAppearanceOptions() {
+  const acc = $("#app-accent");
+  if (acc) { const cur = acc.value; acc.innerHTML = Object.keys(DEFAULT_APPEARANCE.accent).map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(appearanceLabel(k, "accent"))}</option>`).join(""); if ([...acc.options].some((o) => o.value === cur)) acc.value = cur; }
+  const fnt = $("#app-font");
+  if (fnt) { const cur = fnt.value; fnt.innerHTML = Object.keys(DEFAULT_APPEARANCE.fonts).map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(appearanceLabel(k, "font"))}</option>`).join(""); if ([...fnt.options].some((o) => o.value === cur)) fnt.value = cur; }
+}
+function addAppearanceOptions(opts) {
+  opts = opts || {};
+  const addedAcc = [], addedFont = [];
+  if (opts.accents) for (const k in opts.accents) { if (!(k in DEFAULT_APPEARANCE.accent)) addedAcc.push(k); const v = opts.accents[k]; DEFAULT_APPEARANCE.accent[k] = Array.isArray(v) ? v : [v, hexToDim(v)]; }
+  if (opts.fonts) for (const k in opts.fonts) { if (!(k in DEFAULT_APPEARANCE.fonts)) addedFont.push(k); DEFAULT_APPEARANCE.fonts[k] = opts.fonts[k]; }
+  rebuildAppearanceOptions();
+  return () => { addedAcc.forEach((k) => delete DEFAULT_APPEARANCE.accent[k]); addedFont.forEach((k) => delete DEFAULT_APPEARANCE.fonts[k]); rebuildAppearanceOptions(); applyDefaultAppearance(); };
+}
 window.QB?.on?.("theme:change", () => applyDefaultAppearance());
+rebuildAppearanceOptions();
 applyDefaultAppearance();
 
-// In-app confirmation dialog (replaces browser confirm()). Esc-dismissable.
 function confirmDialog(message, onYes, opts) {
   opts = opts || {};
   document.getElementById("confirm-dialog")?.remove();
@@ -3157,9 +3187,35 @@ function confirmDialog(message, onYes, opts) {
   el.querySelector("#cf-no").onclick = () => el.remove();
 }
 
-// ---- "Save to..." menu (the + next to the star): Add to Review plus whatever
-// enabled plugins contribute via ctx.registerSaveAction (e.g. Folders). ----
 function closeSaveMenu() { document.getElementById("save-menu")?.remove(); }
+function _renderSaveMenu(items, anchor) {
+  const menu = document.createElement("div");
+  menu.className = "save-menu";
+  menu.id = "save-menu";
+  menu.innerHTML = items.map((it, i) => `<div class="save-menu-item" data-i="${i}">${escapeHtml(it.label)}</div>`).join("");
+  document.body.appendChild(menu);
+  // Position by the anchor when it has a real on-screen box; otherwise fall
+  // back to the upper third of the viewport (never the body-flow corner).
+  let left = null, top = null;
+  try {
+    const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+    if (r && (r.width || r.height || r.top || r.left)) { left = r.left; top = r.bottom + 4; }
+  } catch (e) {}
+  if (left == null) {
+    left = (window.innerWidth - menu.offsetWidth) / 2;
+    top = (window.innerHeight - menu.offsetHeight) / 3;
+  }
+  menu.style.left = Math.max(8, Math.min(left, window.innerWidth - menu.offsetWidth - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(top, window.innerHeight - menu.offsetHeight - 8)) + "px";
+  menu.querySelectorAll(".save-menu-item").forEach((el) => {
+    el.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      closeSaveMenu();
+      try { await items[+el.dataset.i].fn(); } catch (e) { console.error(e); }
+    });
+  });
+  setTimeout(() => document.addEventListener("click", closeSaveMenu, { once: true }), 0);
+}
 function openSaveMenu(question, type, anchor) {
   closeSaveMenu();
   const items = [];
@@ -3173,53 +3229,125 @@ function openSaveMenu(question, type, anchor) {
   });
   (window.QB?.getSaveActions?.(question, type) || []).forEach((a) => items.push({ label: a.label, fn: a.onClick }));
   if (!items.length) items.push({ label: "Nothing to add to (enable the Folders plugin)", fn: () => {} });
-  const menu = document.createElement("div");
-  menu.className = "save-menu";
-  menu.id = "save-menu";
-  menu.innerHTML = items.map((it, i) => `<div class="save-menu-item" data-i="${i}">${escapeHtml(it.label)}</div>`).join("");
-  document.body.appendChild(menu);
-  const r = anchor.getBoundingClientRect();
-  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + "px";
-  menu.style.top = Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8) + "px";
-  menu.querySelectorAll(".save-menu-item").forEach((el) => {
-    el.addEventListener("click", async (ev) => {
-      ev.stopPropagation();
-      closeSaveMenu();
-      try { await items[+el.dataset.i].fn(); } catch (e) { console.error(e); }
-    });
-  });
-  setTimeout(() => document.addEventListener("click", closeSaveMenu, { once: true }), 0);
+  _renderSaveMenu(items, anchor);
 }
 
-// Review queue URL honoring the Settings -> Review toggles.
+// Unified "Saved for Review" list — cross-type (keywords, buzz words, flashcards).
+function itemReviewKey(it) { return (it.kind || "") + "|" + (it.front || "") + "|" + (it.back || ""); }
+function itemReviewList() { try { return JSON.parse(localStorage.getItem("qb-item-review") || "[]") || []; } catch (e) { return []; } }
+function itemReviewSave(arr) { try { localStorage.setItem("qb-item-review", JSON.stringify(arr)); } catch (e) {} }
+function itemReviewHas(it) { const k = itemReviewKey(it); return itemReviewList().some((x) => itemReviewKey(x) === k); }
+function itemReviewAdd(it) {
+  if (!it || (!it.front && !it.back)) return false;
+  const arr = itemReviewList();
+  const k = itemReviewKey(it);
+  if (arr.some((x) => itemReviewKey(x) === k)) { window.QB?.toast?.("Already in review"); return false; }
+  arr.push({ kind: it.kind || "item", front: it.front || "", back: it.back || "", meta: it.meta || "", ts: Date.now() });
+  itemReviewSave(arr);
+  window.QB?.toast?.("Added to review");
+  return true;
+}
+function itemReviewRemove(key) { itemReviewSave(itemReviewList().filter((x) => itemReviewKey(x) !== key)); }
+function openItemSaveMenu(spec, anchor) {
+  closeSaveMenu();
+  const items = [];
+  if (spec && spec.review) items.push({ label: itemReviewHas(spec.review) ? "In review ✓" : "Add to Review", fn: () => itemReviewAdd(spec.review) });
+  if (spec && spec.folder && window.QBFolders) items.push({ label: "Add to folder…", fn: () => window.QBFolders.pick(spec.folder.type, spec.folder.item, anchor) });
+  if (!items.length) items.push({ label: "Enable the Folders plugin to save here", fn: () => {} });
+  _renderSaveMenu(items, anchor);
+}
+function reviewItemsAsFlashcards() {
+  const cards = itemReviewList().map((it) => ({ front: it.front, back: it.back, meta: it.meta || it.kind || "review" }));
+  if (!cards.length) { window.QB?.toast?.("Nothing saved to review"); return; }
+  try { localStorage.setItem("qb-flashcards-cards", JSON.stringify({ cards, ts: Date.now() })); } catch (e) {}
+  if (!(window.QB && window.QB.showPage && window.QB.showPage("flashcards::cards"))) {
+    try { localStorage.removeItem("qb-flashcards-cards"); } catch (e) {}
+    window.QB?.toast?.("Enable the Flashcards plugin first", "error");
+  }
+}
+function openItemReviewViewer() {
+  document.getElementById("review-viewer")?.remove();
+  const list = itemReviewList();
+  const el = document.createElement("div");
+  el.id = "review-viewer";
+  el.className = "review-viewer";
+  const cards = list.map((it) => {
+    const k = itemReviewKey(it);
+    return `<div class="qcard expanded" data-irkey="${escapeHtml(k)}"><div class="qcard-head"><span class="qcard-chev" aria-hidden="true"></span>` +
+      `<span class="qcard-meta"><span>${escapeHtml(it.meta || it.kind || "")}</span></span>` +
+      `<span class="qcard-side"><button class="btn btn-sm btn-ghost ir-remove" data-irkey="${escapeHtml(k)}">Remove</button></span></div>` +
+      `<div class="qcard-answer">${escapeHtml(it.front || "")} → <span class="ans">${escapeHtml(it.back || "")}</span></div></div>`;
+  }).join("");
+  el.innerHTML = `
+    <div class="review-viewer-box">
+      <div class="review-viewer-head">
+        <span class="hotkey-sheet-title" style="margin:0">SAVED FOR REVIEW (${list.length})</span>
+        <span style="display:flex;gap:6px">
+          ${list.length ? '<button class="btn btn-sm btn-primary" id="ir-flash">Review as flashcards</button>' : ""}
+          ${list.length ? '<button class="btn btn-sm btn-ghost" id="ir-clear">Clear all</button>' : ""}
+          <button class="btn btn-sm btn-ghost" id="ir-close">Close</button>
+        </span>
+      </div>
+      <div class="review-viewer-list">${list.length ? cards : '<div class="text-muted" style="padding:12px">No saved items yet — use the + on a keyword, buzz word, or flashcard.</div>'}</div>
+    </div>`;
+  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  document.body.appendChild(el);
+  el.querySelector("#ir-close").onclick = () => el.remove();
+  const fl = el.querySelector("#ir-flash"); if (fl) fl.onclick = () => { el.remove(); reviewItemsAsFlashcards(); };
+  const cl = el.querySelector("#ir-clear"); if (cl) cl.onclick = () => confirmDialog("Clear all saved review items?", () => { itemReviewSave([]); el.remove(); }, { yes: "Clear" });
+  el.querySelectorAll(".ir-remove").forEach((b) => {
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); itemReviewRemove(b.dataset.irkey); el.querySelector(`[data-irkey="${CSS.escape(b.dataset.irkey)}"]`)?.remove(); });
+  });
+}
+
 function reviewDueUrl() {
   return "/api/review/due?negs=" + (state.settings.reviewNegs ? 1 : 0) +
     "&unanswered=" + (state.settings.reviewUnans ? 1 : 0) +
     "&wrongEnd=" + (state.settings.reviewWrongEnd ? 1 : 0);
 }
 
+const PRON_ACRONYMS = new Set(["USA", "USSR", "NATO", "DNA", "RNA", "UN", "US", "UK", "EU", "TV", "FBI", "CIA", "NASA", "WWI", "WWII", "NBA", "NFL", "MLB", "NHL", "NCAA", "GDP", "AIDS", "HIV", "BC", "AD", "BCE", "CE", "II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "MVP", "CEO", "PhD", "JFK", "FDR", "POW", "AI", "IQ", "OK"]);
 function stripPronunciations(text) {
-  return String(text || "")
-    .replace(/\s*[\[(]\s*["“][^\])]*?["”]\s*[\])]/g, "")
-    .replace(/\s*[\[(][^\])]*pronounc[^\])]*[\])]/gi, "")
-    .replace(/\s*[\[(]\s*[A-Za-z]+(?:-[A-Za-z]+)+(?:[\s-][A-Za-z-]+)*\s*[\])]/g, "")
-    .replace(/\s*\((?!\*\))[^()]*\)/g, "")
-    .replace(/  +/g, " ");
+  let t = String(text || "");
+  // Quoted guide in brackets/parens: ("kee-HO-tay"), ['zhawnr']
+  t = t.replace(/\s*[\[(]\s*["“'‘][^\])]*?["”'’]\s*[\])]/g, "");
+  // Anything that says it's a pronunciation
+  t = t.replace(/\s*[\[(][^\])]*pronounc[^\])]*[\])]/gi, "");
+  // Moderator / reader instructions in brackets (notes addressed to PLAYERS stay)
+  t = t.replace(/\s*\[\s*(?:notes?\s+to\s+(?:the\s+)?(?:moderators?|readers?)\b[^\]]*|moderators?\s+notes?\b[^\]]*|moderators?\s*[:,][^\]]*|emphasi[sz]e[^\]]*|read\s+slowly[^\]]*|read\s+(?:the\s+)?answerline[^\]]*|pause\b[^\]]*|spell\s+(?:it|out)\b[^\]]*|slowly\s*:?[^\]]*)\]/gi, "");
+  // Phonetic-looking brackets: short runs of letter tokens where a token is
+  // hyphenated ("eel duh lah see-tay") or a CAPS syllable sits beside a
+  // lowercase one ("mool AHN"). Editorial inserts like [this man], [s], [10],
+  // [*] and [...] never match.
+  t = t.replace(/\[([^\][]{1,80})\]/g, (m, inner) => {
+    const tokens = inner.trim().replace(/\s*-\s+|\s+-\s*/g, "-").split(/\s+/);
+    if (!tokens.length || tokens.length > 7) return m;
+    if (!tokens.every((w) => /^["“”'‘’(]?[A-Za-z][A-Za-z0-9'’"“”()-]*[.,;:]?$/.test(w))) return m;
+    const bare = tokens.map((w) => w.replace(/^["“”'‘’(]+|["“”'‘’().,;:]+$/g, ""));
+    // Determiner-led brackets are editorial placeholders ([this two-word
+    // phrase], [his best-known novel]) — never pronunciation guides.
+    if (/^(this|these|that|those|his|her|their|its|the|a|an)$/i.test(bare[0])) return m;
+    // Quoted syllables glued by hyphens ('"SAY"-tur') count as hyphenated.
+    const dequoted = bare.map((w) => w.replace(/["“”'‘’]/g, ""));
+    const hyphenated = dequoted.some((w) => /[A-Za-z0-9]-[A-Za-z0-9]/.test(w));
+    const capsSyllable = dequoted.some((w) => /^[A-Z]{2,}$/.test(w) && !PRON_ACRONYMS.has(w)) && dequoted.some((w) => /^[a-z]{2,}$/.test(w));
+    return hyphenated || capsSyllable ? "" : m;
+  });
+  // Parentheticals except the power mark; twice for one level of nesting
+  t = t.replace(/\s*\((?!\*\))[^()]*\)/g, "");
+  t = t.replace(/\s*\((?!\*\))[^()]*\)/g, "");
+  // Residue: empty brackets (present in source data or left by inner strips)
+  t = t.replace(/\s*\[\s*\]/g, "");
+  return t.replace(/  +/g, " ");
 }
 
-// Colorize "(*)" power marks inside already-escaped question text so they
-// stand out (color comes from --power-mark, themeable).
 function colorizePowerMarks(escapedHtml) {
   return escapedHtml.replace(/\(\*\)/g, '<span class="power-mark-inline">(*)</span>');
 }
 
-// Question text for a history entry, with a (#) at the buzz position and a
-// highlighted (*) power mark (tossups).
 function historyQuestionHtml(e) {
   const raw = e.question?.question_sanitized || e.question?.leadin_sanitized || "";
   const isTossup = e.type === "tossup";
-  // Buzz positions were recorded against the text WITHOUT "(*)", so strip it
-  // for position math and re-insert a colored marker at its original index.
   const powerIdx = isTossup ? raw.indexOf("(*)") : -1;
   const text = isTossup ? raw.replace(/\(\*\)/g, "") : raw;
   const marks = [];
@@ -3236,18 +3364,18 @@ function historyQuestionHtml(e) {
 
 function renderHistoryPanel() {
   const panel = document.getElementById("history-panel");
-  if (!panel) return;
+  if (panel) {
+    panel.style.display = state.sessionHistory.length ? "" : "none";
+    const cnt = document.getElementById("history-count");
+    if (cnt) cnt.textContent = String(state.sessionHistory.length);
+  }
   const list = document.getElementById("history-list");
   if (!list) return;
 
-  // Hide the whole panel until the session has at least one answered question
-  // (so a fresh/just-started session isn't cluttered with an empty history box).
   if (state.sessionHistory.length === 0) {
-    panel.style.display = "none";
     list.innerHTML = "";
     return;
   }
-  panel.style.display = "";
 
   const entries = [...state.sessionHistory].reverse();
   const isCompact = state.viewMode === "compact";
@@ -3278,7 +3406,7 @@ function renderHistoryPanel() {
       altSub: e.question?.alternate_subcategory,
       year: e.question?.set_year,
       difficulty: e.question?.difficulty,
-      sideHtml: `${celMarker}${badge}<span class="star-btn hist-save" data-idx="${i}" title="Save to review / folders" style="font-size:16px">+</span><span class="star-toggle${e.starred ? " on" : ""}" data-qid="${e.id}" data-type="${e.type}">${e.starred ? "\u2605" : "\u2606"}</span>`,
+      sideHtml: (() => { const st = isStarredLocal(e.id, e.type); return `${celMarker}${badge}<span class="star-btn hist-save" data-idx="${i}" title="Save to review / folders" style="font-size:16px">+</span><span class="star-toggle${st ? " on" : ""}" data-qid="${e.id}" data-type="${e.type}">${st ? "\u2605" : "\u2606"}</span>`; })(),
       answerHtml: `Answer: <span class="ans">${answer}</span>`,
       bodyHtml: `
         <div class="qcard-text">${historyQuestionHtml(e)}</div>
@@ -3289,14 +3417,12 @@ function renderHistoryPanel() {
     });
   }).join("");
 
-  // Star toggle listeners (these also sync state.sessionHistory.starred)
   list.querySelectorAll(".star-toggle").forEach(el => {
     el.addEventListener("click", (ev) => {
       ev.stopPropagation();
       toggleStarInHistory(el.dataset.qid, el.dataset.type, el);
     });
   });
-  // +save (folder/review) on each history card
   list.querySelectorAll(".hist-save").forEach(el => {
     el.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -3307,8 +3433,6 @@ function renderHistoryPanel() {
 }
 
 
-// Generic star toggle — any element with class .qb-star + data-qid + data-type
-// works anywhere (database results, packet browser, plugins, etc.).
 document.addEventListener("click", async (e) => {
   const star = e.target.closest(".qb-star");
   if (!star) return;
@@ -3318,15 +3442,32 @@ document.addEventListener("click", async (e) => {
   if (!qId) return;
   try {
     const result = await API.post("/api/starred/toggle", { questionId: qId, type });
+    setStarredLocal(qId, type, result.starred);
     star.textContent = result.starred ? "★" : "☆";
     star.classList.toggle("on", !!result.starred);
     Sound.star();
+    renderHistoryPanel();
+  } catch {}
+});
+
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".db-save");
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const qId = btn.dataset.qid, type = btn.dataset.type || "tossup";
+  if (!qId) return;
+  try {
+    const d = await API.get((type === "bonus" ? "/api/bonuses/" : "/api/tossups/") + encodeURIComponent(qId));
+    const q = d.tossup || d.bonus;
+    if (q) openSaveMenu(q, type, btn);
   } catch {}
 });
 
 async function toggleStarInHistory(qId, type, el) {
   try {
     const result = await API.post("/api/starred/toggle", { questionId: qId, type });
+    setStarredLocal(qId, type, result.starred);
     if (el) { el.textContent = result.starred ? "\u2605" : "\u2606"; el.classList.toggle("on", !!result.starred); }
     state.sessionHistory.forEach(e => {
       if (e.id === qId && e.type === type) e.starred = result.starred;
@@ -3352,7 +3493,6 @@ function renderTossupResult() {
     banner.classList.add("incorrect");
     banner.textContent = `NEG ${r.points} pts`;
   } else {
-    // Wrong after the question finished reading — no penalty, just incorrect.
     banner.classList.add("incorrect");
     banner.textContent = "INCORRECT (0 pts)";
   }
@@ -3370,7 +3510,6 @@ function renderTossupResult() {
 
   setTimeout(() => {
     if (!state.resultAreaVisible) return;
-    // Drop focus off any input so Enter / next-key advances (no Next button now).
     try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {}
   }, 100);
 }
@@ -3386,14 +3525,13 @@ function toggleResultOverride(markCorrect) {
   const wasPoints = r.points;
   const celVal = 1 - r.celerity;
 
-  // Wrong after a full read is 0, not a -5 neg (same rule as live scoring).
   const incorrectPts = state.questionFullyRead ? 0 : -5;
+  const inPowerZone = state.prePowerEnd > 0 && r.buzzPosition != null && r.buzzPosition <= state.prePowerEnd;
   r.correct = markCorrect;
-  r.isPower = markCorrect ? r.isPower : false;
+  r.isPower = markCorrect ? inPowerZone : false;
   r.points = markCorrect ? (r.isPower ? 15 : 10) : incorrectPts;
   state.resultOverridden = true;
 
-  // Keep the "bonus after correct tossup" queue in sync with the new verdict.
   if (state.mode === "tossups" && state.settings.bonusAfter) {
     if (markCorrect && !wasCorrect) {
       state._wantBonus = true;
@@ -3406,7 +3544,6 @@ function toggleResultOverride(markCorrect) {
     }
   }
 
-  // Update the session history entry to reflect override
   const histEntry = state.sessionHistory.find(e => e.id === r.questionId && e.correct !== markCorrect);
   if (histEntry) {
     histEntry.correct = markCorrect;
@@ -3424,8 +3561,9 @@ function toggleResultOverride(markCorrect) {
     state.correct = Math.max(0, state.correct - 1);
     if (r.points < 0) state.negs++;
   }
+  if (!wasPower && r.isPower) state.powers++;
+  else if (wasPower && !r.isPower) state.powers = Math.max(0, state.powers - 1);
 
-  // Move celerity between buckets
   if (markCorrect) {
     state.correctCelerityHistory.push(celVal);
     state.incorrectCelerityHistory = state.incorrectCelerityHistory.filter(c => c !== celVal);
@@ -3436,7 +3574,6 @@ function toggleResultOverride(markCorrect) {
   if (state.correctCelerityHistory.length > 10) state.correctCelerityHistory.shift();
   if (state.incorrectCelerityHistory.length > 10) state.incorrectCelerityHistory.shift();
 
-  // Record the override in the backend with corrected values
   if (r.category && state.mode === "tossups") {
     API.post("/api/check-tossup", {
       questionId: r.questionId,
@@ -3451,7 +3588,7 @@ function toggleResultOverride(markCorrect) {
   }
 
   renderTossupResult();
-  updateLiveStats();
+  updateSessionStats();
   Sound.toggle();
 }
 
@@ -3460,9 +3597,6 @@ function displayBonusResult(result, userAnswers) {
   const answerDiv = $("#result-answer");
   const area = $("#result-area");
   area.classList.remove("hidden");
-  // The Next button is gone — advancing is keyboard-driven and gated on this
-  // flag, so a bonus result MUST set it (mirrors the tossup path) or the user is
-  // stuck after every bonus.
   state.resultAreaVisible = true;
 
   banner.className = "result-banner";
@@ -3470,23 +3604,8 @@ function displayBonusResult(result, userAnswers) {
   banner.textContent = `BONUS: ${result.totalPoints}/30 pts (${result.partsCorrect}/3)`;
 
   const actualAnswers = result.answers || [];
-  let html = "";
-  for (let i = 0; i < 3; i++) {
-    const partResult = result.parts?.[i];
-    const symbol = partResult?.correct ? "\u2713" : "\u2717";
-    const color = partResult?.correct ? "var(--green)" : "var(--red)";
-    html += `
-      <div style="margin:4px 0">
-        <span style="color:${color}">${symbol}</span>
-        Part ${i + 1}: <strong>${escapeHtml(userAnswers[i] || "(no answer)")}</strong>
-        ${partResult?.correct ? "" : ` \u2192 <span class="actual">${answerLineHtml(state.bonusAnswersRaw?.[i], actualAnswers[i] || "")}</span>`}
-        <span style="color:var(--text-muted)"> (${partResult?.points || 0} pts)</span>
-      </div>
-    `;
-  }
-  answerDiv.innerHTML = html;
+  answerDiv.innerHTML = "";
 
-  // Track in session history
   state.sessionHistory.push({
     id: state.currentQuestion?.id,
     type: "bonus",
@@ -3503,14 +3622,14 @@ function displayBonusResult(result, userAnswers) {
   renderResultPanels({ type: "bonus", result, question: state.currentQuestion, userAnswers });
   qbEmit("bonus:result", { result, userAnswers });
 
+  scheduleAchievementCheck();
+
   setTimeout(() => {
     if (!state.resultAreaVisible) return;
-    // Drop focus off any input so Enter / next-key advances (no Next button now).
     try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {}
   }, 100);
 }
 
-// ── Session Stats ────────────────────────────────────────
 
 function updateSessionStats(result) {
   if (result) {
@@ -3557,12 +3676,9 @@ function updateLiveStats() {
   $("#session-counter").textContent = `${state.questionCount}`;
 }
 
-// ── UI Helpers ───────────────────────────────────────────
 
-// The idle / between-session placeholder: tells you how to start (keybind-aware).
-// resetQuestionUI restores this so the leftover "Loading…" text never sticks.
 function startPromptHtml() {
-  return '<div class="placeholder-icon">&#9670;</div>' +
+  return '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>' +
     "<p>Select categories and difficulty, then start a session.</p>" +
     '<p class="text-muted">Press <kbd id="placeholder-start-key">' + escapeHtml(keyDisplay("start-skip")) + "</kbd> to start.</p>";
 }
@@ -3581,6 +3697,8 @@ function resetQuestionUI() {
   $("#result-area").classList.add("hidden");
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
   $("#bonus-parts-area").classList.add("hidden");
+  state.bonusAwait = null;
+  $("#bonus-next-hint")?.classList.add("hidden");
   $("#question-text").textContent = "";
   $("#question-meta").innerHTML = "";
   $("#buzz-input").value = "";
@@ -3588,11 +3706,54 @@ function resetQuestionUI() {
   $$(".bonus-answer-input").forEach((inp) => (inp.value = ""));
 }
 
-// Next/Skip are keyboard-driven now (the visible buttons were removed):
-// Enter / next-question / start-skip advance after a result; skip mid-question.
 
-// NOTE: #btn-toggle-db-view's click handler is registered once in loadDatabase().
-// A second handler here would flip state.viewMode twice per click (net no-op).
+
+$("#bonus-next-hint")?.addEventListener("click", advanceBonusPart);
+
+// "Hide answers": each hidden answer is a cover box — click reveals, click again re-hides.
+document.addEventListener("click", (e) => {
+  const t = e.target.closest?.(".ans-toggle");
+  if (t && t.closest(".db-hide-ans")) t.classList.toggle("shown");
+});
+
+function copyToClipboard(t) {
+  try { navigator.clipboard.writeText(t); window.QB?.toast?.("Copied"); } catch (e) {}
+}
+
+// Right-click any question card (search, packets, history, review, starred)
+// for quick actions built from what the card actually contains.
+document.addEventListener("contextmenu", (e) => {
+  const card = e.target.closest?.(".qcard");
+  if (!card || !window.QB?.contextMenu) return;
+  const items = [];
+  const text = card.querySelector(".qcard-text")?.textContent?.trim();
+  const ans = card.querySelector(".ans")?.textContent?.trim();
+  const star = card.querySelector(".qb-star[data-qid]");
+  const save = card.querySelector(".db-save[data-qid]");
+  const compact = card.classList.contains("compact");
+  items.push({ label: compact ? "Expand card" : "Collapse card", onClick: () => { card.classList.toggle("compact", !compact); card.classList.toggle("expanded", compact); } });
+  if (text) items.push({ label: "Copy question", onClick: () => copyToClipboard(text) });
+  if (ans) items.push({ label: "Copy answer", onClick: () => copyToClipboard(ans.replace(/^answer:\s*/i, "")) });
+  if (star) items.push({ label: star.classList.contains("on") ? "Unstar" : "Star", onClick: () => star.click() });
+  if (save) items.push({ label: "Save to review / folders…", onClick: () => save.click() });
+  e.preventDefault();
+  window.QB.contextMenu(e.clientX, e.clientY, items);
+});
+
+// Right-click the live practice question for the same quick actions.
+$("#question-content")?.addEventListener("contextmenu", (e) => {
+  if (!state.currentQuestion || !window.QB?.contextMenu) return;
+  const q = state.currentQuestion;
+  const isBonus = state.mode === "bonuses";
+  const items = [{ label: "Copy question", onClick: () => copyToClipboard($("#question-text")?.textContent || "") }];
+  if (!isBonus && state.resultAreaVisible && q.answer_sanitized) {
+    items.push({ label: "Copy answer", onClick: () => copyToClipboard(q.answer_sanitized) });
+  }
+  items.push({ label: "Star question", onClick: () => toggleStar() });
+  items.push({ label: "Save to review / folders…", onClick: () => openSaveMenu(q, isBonus ? "bonus" : "tossup", e.target) });
+  e.preventDefault();
+  window.QB.contextMenu(e.clientX, e.clientY, items);
+});
 
 $("#btn-start-session").addEventListener("click", () => {
   if (!state.sessionActive) startSession();
@@ -3605,7 +3766,7 @@ $("#btn-end-session").addEventListener("click", () => {
   goHome();
 });
 
-$("#btn-history-export")?.addEventListener("click", () => {
+function exportSessionHistory() {
   if (!state.sessionHistory.length) { window.QB?.toast?.("No questions this session yet", "error"); return; }
   const entries = state.sessionHistory.map((e) => ({
     type: e.type,
@@ -3631,24 +3792,45 @@ $("#btn-history-export")?.addEventListener("click", () => {
   a.download = `session-${state.mode || "practice"}-${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(url);
-});
+}
 
-$("#btn-history-compact")?.addEventListener("click", () => {
-  state.viewMode = "compact"; lsSet("qb-viewmode", "compact"); renderHistoryPanel();
-});
-$("#btn-history-expand")?.addEventListener("click", () => {
-  state.viewMode = "expanded"; lsSet("qb-viewmode", "expanded"); renderHistoryPanel();
-});
+function openHistoryOverlay() {
+  document.getElementById("history-overlay")?.remove();
+  const el = document.createElement("div");
+  el.id = "history-overlay";
+  el.className = "review-viewer";
+  el.innerHTML = `
+    <div class="review-viewer-box">
+      <div class="review-viewer-head">
+        <span class="hotkey-sheet-title" style="margin:0">SESSION HISTORY (${state.sessionHistory.length})</span>
+        <span style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-ghost" id="btn-history-export">Export</button>
+          <button class="btn btn-sm btn-ghost" id="btn-history-compact">Compact all</button>
+          <button class="btn btn-sm btn-ghost" id="btn-history-expand">Expand all</button>
+          <button class="btn btn-sm btn-ghost" id="btn-history-close">Close</button>
+        </span>
+      </div>
+      <div class="review-viewer-list history-list" id="history-list"></div>
+    </div>`;
+  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  document.body.appendChild(el);
+  el.querySelector("#btn-history-close").onclick = () => el.remove();
+  el.querySelector("#btn-history-export").onclick = exportSessionHistory;
+  el.querySelector("#btn-history-compact").onclick = () => { state.viewMode = "compact"; lsSet("qb-viewmode", "compact"); renderHistoryPanel(); };
+  el.querySelector("#btn-history-expand").onclick = () => { state.viewMode = "expanded"; lsSet("qb-viewmode", "expanded"); renderHistoryPanel(); };
+  renderHistoryPanel();
+}
+
+$("#btn-history-open")?.addEventListener("click", openHistoryOverlay);
 
 $("#btn-home").addEventListener("click", goBack);
 $("#btn-stats-home").addEventListener("click", goBack);
 $("#stats-cat-filter")?.addEventListener("change", () => loadStats());
+$("#stats-period")?.addEventListener("change", (e) => { _statsPeriod = e.target.value; loadStats(); });
 $("#btn-settings-home").addEventListener("click", goBack);
 $("#btn-player-home")?.addEventListener("click", goBack);
 $("#btn-ext-home")?.addEventListener("click", goBack);
 
-// Panels contributed by plugins (ctx.registerResultPanel) appear under each
-// practice result and are cleared on the next question.
 function renderResultPanels(resultCtx) {
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
   const area = $("#result-area");
@@ -3669,7 +3851,6 @@ function showError(msg) {
   banner.textContent = msg;
 }
 
-// ── Starring ─────────────────────────────────────────────
 
 async function toggleStar() {
   const q = state.currentQuestion;
@@ -3682,8 +3863,8 @@ async function toggleStar() {
       questionId: q.id,
       type,
     });
+    setStarredLocal(q.id, type, result.starred);
     updateStarIndicator(q.id, type, result.starred);
-    // Update history entries for this question
     state.sessionHistory.forEach(e => {
       if (e.id === q.id && e.type === type) e.starred = result.starred;
     });
@@ -3709,7 +3890,6 @@ function getStarChar(questionId, type) {
   return "\u2606";
 }
 
-// ── Stats Graph ──────────────────────────────────────────
 
 function setupCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
@@ -3724,7 +3904,6 @@ function setupCanvas(canvas) {
   return { ctx, W: w, H: h };
 }
 
-// Round a max value up to a "nice" number so axis ticks are clean integers.
 function niceAxisMax(v) {
   if (!isFinite(v) || v <= 0) return 4;
   const pow = Math.pow(10, Math.floor(Math.log10(v)));
@@ -3751,12 +3930,7 @@ function rrect(ctx, x, y, w, h, r) {
   ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
-// ── Chart core ───────────────────────────────────────────
-// One shared frame (title, dashed grid, y labels) so every chart has the same
-// paddings, fonts, and corner treatment.
 function chartFrame(ctx, W, H, t, opts, yMin, yMax, fmt) {
-  // opts._reserve adds an empty band above the plot so bar value labels always
-  // sit ABOVE the tallest bar (never drawn on top of it).
   const pad = { top: (opts.title ? 34 : 16) + (opts._reserve || 0), right: 16, bottom: 30, left: 50 };
   const plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;
   if (opts.title) {
@@ -3778,7 +3952,6 @@ function chartFrame(ctx, W, H, t, opts, yMin, yMax, fmt) {
   return { pad, plotW, plotH, yOf: (v) => pad.top + plotH - ((v - yMin) / range) * plotH };
 }
 
-// X-axis label, centered + ellipsized so it can never clip its neighbours.
 function xLabel(ctx, t, text, cx, y, maxW) {
   let str = String(text);
   ctx.font = "10px " + t.font;
@@ -3790,9 +3963,6 @@ function xLabel(ctx, t, text, cx, y, maxW) {
   ctx.fillText(str, cx, y);
 }
 
-// Vertical bar chart. bars: [{label, value, color?}]. All bars share the same
-// rounded corners; value labels go above the bar, or inside it when the bar
-// reaches the top of the plot (never clipped).
 function barChart(canvas, bars, opts = {}) {
   if (!bars || !bars.length) return emptyChart(canvas, opts.empty);
   const { ctx, W, H } = setupCanvas(canvas); const t = chartTheme(); ctx.clearRect(0, 0, W, H);
@@ -3814,11 +3984,8 @@ function barChart(canvas, bars, opts = {}) {
     const label = fmt(b.value);
     ctx.font = "10px " + t.font; ctx.textAlign = "center"; ctx.fillStyle = t.text;
     if (b.value >= 0) {
-      // Always above the bar — the reserved band guarantees it fits.
       ctx.fillText(label, cx, top - 4);
     } else {
-      // Below the bar tip, or above the zero line when the tip touches the
-      // bottom of the plot — never ON the bar.
       const bot = top + h;
       if (H - pad.bottom - bot >= 13) ctx.fillText(label, cx, bot + 11);
       else ctx.fillText(label, cx, zeroY - 4);
@@ -3827,9 +3994,6 @@ function barChart(canvas, bars, opts = {}) {
   });
 }
 
-// Stacked bar chart. groups: [{label, segments: [{value, color}]}]. Each
-// column is drawn inside ONE rounded clip so every column has identical
-// corners (no mixed square/rounded bars).
 function stackedChart(canvas, groups, opts = {}) {
   if (!groups || !groups.length) return emptyChart(canvas, opts.empty);
   const { ctx, W, H } = setupCanvas(canvas); const t = chartTheme(); ctx.clearRect(0, 0, W, H);
@@ -3867,13 +4031,12 @@ function stackedChart(canvas, groups, opts = {}) {
       });
       ctx.restore();
       ctx.font = "10px " + t.font; ctx.textAlign = "center";
-      ctx.fillStyle = t.text; ctx.fillText(String(Math.round(total)), cx, top - 4); // always above (reserved band)
+      ctx.fillStyle = t.text; ctx.fillText(String(Math.round(total)), cx, top - 4);
     }
     if (i % step === 0) xLabel(ctx, t, g.label, cx, H - pad.bottom + 15, slot * step - 6);
   });
 }
 
-// Line + area chart. points: [{x: label, y: number}].
 function lineChart(canvas, points, opts = {}) {
   if (!points || !points.length) return emptyChart(canvas, opts.empty);
   const { ctx, W, H } = setupCanvas(canvas); const t = chartTheme(); ctx.clearRect(0, 0, W, H);
@@ -3935,8 +4098,6 @@ function populateGraphFilters(stats) {
     for (let d = 1; d <= 10; d++) { const o = document.createElement("option"); o.value = String(d); o.textContent = "Diff " + d; diffSel.appendChild(o); }
   }
 
-  // `onchange` (not addEventListener) so re-rendering Stats never stacks
-  // duplicate listeners.
   if (catSel) catSel.onchange = () => redrawFilteredGraphs();
   if (diffSel) diffSel.onchange = () => redrawFilteredGraphs();
 }
@@ -3946,7 +4107,6 @@ async function redrawFilteredGraphs(breakdown) {
   const cat = document.getElementById("graph-filter-cat")?.value || "";
   const diff = document.getElementById("graph-filter-diff")?.value || "";
 
-  // Re-fetch the breakdown filtered by category/difficulty so the graphs change.
   let bd;
   if (breakdown) { _breakdownCache = breakdown; bd = breakdown; }
   else {
@@ -3992,7 +4152,6 @@ function drawCelerityDetail(canvas, breakdown) {
   lineChart(canvas, points, { title: "Avg Buzz Celerity per Session", fmt: (v) => v + "%", empty: "No tossup sessions yet" });
 }
 
-// ── Export stats as a shareable PNG ──────────────────────
 async function exportStatsImage() {
   let stats;
   try {
@@ -4007,7 +4166,6 @@ async function exportStatsImage() {
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
   ctx.fillStyle = t.bg || "#0d1117"; ctx.fillRect(0, 0, W, H);
-  // header
   ctx.fillStyle = t.accent; ctx.font = "700 22px " + t.font;
   ctx.fillText("OFFLINEQUIZ \u2014 STATISTICS", 32, 48);
   ctx.fillStyle = t.muted; ctx.font = "12px " + t.font;
@@ -4015,7 +4173,6 @@ async function exportStatsImage() {
     (state.statsSessionId ? "session " + formatSessionTitle(state.statsSessionId) : "all time") +
     " \u00b7 " + new Date().toLocaleDateString();
   ctx.fillText(sub, 32, 70);
-  // overview cards
   const cards = [
     ["Questions", String(stats.totalQuestions)],
     ["Total points", String(stats.totalPoints)],
@@ -4035,7 +4192,6 @@ async function exportStatsImage() {
     ctx.fillText(label.toUpperCase(), x + cw / 2, 150);
     ctx.textAlign = "left";
   });
-  // top categories bars
   const cats = Object.values(stats.byCategory || {})
     .sort((a, b) => b.totalQuestions - a.totalQuestions).slice(0, 8);
   ctx.fillStyle = t.sec; ctx.font = "600 12px " + t.font;
@@ -4065,10 +4221,7 @@ async function exportStatsImage() {
 }
 $("#btn-stats-export")?.addEventListener("click", exportStatsImage);
 
-// ── Stats Screen ─────────────────────────────────────────
 
-// Statistics time-period filter (all-time view only). Maps a period key to a
-// Unix-ms cutoff; 0 = all time.
 let _statsPeriod = "all";
 function statsSinceMs() {
   const p = _statsPeriod;
@@ -4079,16 +4232,24 @@ function statsSinceMs() {
 function statsPeriodLabel() {
   return { all: "All time", today: "Today", "7": "Last 7 days", "30": "Last 30 days", "90": "Last 90 days" }[_statsPeriod] || "All time";
 }
-function statsPeriodSelectorHtml() {
-  const opts = [["all", "All time"], ["today", "Today"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"]];
-  return '<div class="stats-period-bar"><span class="setting-label">Period</span>' +
-    '<select id="stats-period" class="mode-input" style="width:150px">' +
-    opts.map(([v, l]) => '<option value="' + v + '"' + (_statsPeriod === v ? " selected" : "") + ">" + l + "</option>").join("") +
-    "</select></div>";
+function syncStatsControls(sid) {
+  const per = document.getElementById("stats-period");
+  if (per && per.value !== _statsPeriod) per.value = _statsPeriod;
+  if (per) per.style.display = sid ? "none" : "";
+  const cat = document.getElementById("stats-cat-filter");
+  if (cat) cat.style.display = sid ? "none" : "";
 }
-function wireStatsPeriod() {
-  const sel = document.getElementById("stats-period");
-  if (sel) sel.addEventListener("change", () => { _statsPeriod = sel.value; loadStats(); });
+function qhDetailHtml(q, type) {
+  if (type === "bonus") {
+    let answers = [], raws = [], parts = [];
+    try { answers = JSON.parse(q.answers_sanitized || "[]"); } catch (e) {}
+    try { raws = JSON.parse(q.answers || "[]"); } catch (e) {}
+    try { parts = JSON.parse(q.parts_sanitized || "[]"); } catch (e) {}
+    return '<div class="qh-qtext">' + escapeHtml(q.leadin_sanitized || "") + "</div>" +
+      parts.map((p, k) => '<div class="qh-part">[10] ' + escapeHtml(p) + '<br><span class="qh-ans">ANSWER: ' + answerLineHtml(raws[k], answers[k] || "") + "</span></div>").join("");
+  }
+  return '<div class="qh-qtext">' + escapeHtml(q.question_sanitized || "") + "</div>" +
+    '<div class="qh-ans">Answer: ' + answerLineHtml(q.answer, q.answer_sanitized || "") + "</div>";
 }
 async function loadStats(preserveScroll = false) {
   const screen = document.getElementById("stats-screen");
@@ -4096,41 +4257,36 @@ async function loadStats(preserveScroll = false) {
   const container = $("#stats-container");
   if (!preserveScroll) container.innerHTML = '<div class="text-muted">Loading stats...</div>';
 
-  // A selected session (state.statsSessionId) narrows everything to that
-  // session; null = all-time stats (optionally limited to a time period).
   const sid = state.statsSessionId || null;
   const since = sid ? 0 : statsSinceMs();
   try {
     const data = await API.get("/api/stats" + (sid ? "?sessionId=" + encodeURIComponent(sid) : (since ? "?since=" + since : "")));
     const stats = data.stats;
 
+    syncStatsControls(sid);
     if (!stats || stats.totalQuestions === 0) {
       container.innerHTML = `
-        ${sid ? '<button class="btn btn-sm btn-ghost" id="stats-back">\u2190 All sessions</button>' : (_statsPeriod !== "all" ? statsPeriodSelectorHtml() : "")}
+        ${sid ? '<button class="btn btn-sm btn-ghost" id="stats-back">\u2190 All sessions</button>' : ""}
         <div style="text-align:center;padding:40px;color:var(--text-muted)">
-          <div style="font-size:48px;margin-bottom:16px">&#9670;</div>
+          <div style="font-size:48px;margin-bottom:16px"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>
           <p>${sid ? "This session has no recorded questions." : (_statsPeriod !== "all" ? "No questions in " + escapeHtml(statsPeriodLabel().toLowerCase()) + " \u2014 try a wider period." : "No statistics yet. Start a practice session to see your performance data.")}</p>
         </div>
       `;
       document.getElementById("stats-back")?.addEventListener("click", () => { state.statsSessionId = null; loadStats(); });
-      wireStatsPeriod();
       return;
     }
 
     const sessions = await API.get("/api/sessions");
     const sessionList = sessions.sessions || [];
 
-    // Per-question detail for a single open session (history + buzz locations).
     let sessionEntries = [];
     if (sid) { try { sessionEntries = (await API.get("/api/sessions/entries?sessionId=" + encodeURIComponent(sid))).entries || []; } catch (e) {} }
 
-    // Populate stats category filter with all categories
     const catFilter = $("#stats-cat-filter");
     if (catFilter && catFilter.options.length <= 1) await fillCategoryDropdown(catFilter);
 
     const selectedCat = catFilter?.value || "";
     const catData = selectedCat ? stats.byCategory[selectedCat] : null;
-    // When a category is selected, the cards reflect just that category.
     const view = catData ? {
       totalQuestions: catData.totalQuestions,
       totalPoints: catData.totalPoints,
@@ -4150,18 +4306,13 @@ async function loadStats(preserveScroll = false) {
 
     let html = "";
 
-    // Session-detail header with a way back to the all-time view.
     if (sid) {
       html += `<div class="stats-session-head">
         <button class="btn btn-sm btn-ghost" id="stats-back">\u2190 All sessions</button>
         <span class="stats-session-name">SESSION ${escapeHtml(formatSessionTitle(sid))}</span>
       </div>`;
-    } else {
-      // All-time view: time-period filter (affects the aggregate numbers/graphs).
-      html += statsPeriodSelectorHtml();
     }
 
-    // Overview
     html += `<div class="stats-section">
       <div class="stats-section-title">OVERVIEW${selectedCat ? " — " + escapeHtml(selectedCat) : ""}</div>
       <div class="stats-grid">
@@ -4192,7 +4343,6 @@ async function loadStats(preserveScroll = false) {
       </div>
     </div>`;
 
-    // Cumulative-points trend (all-time view only — one session is one day).
     if (!sid) {
       html += `<div class="stats-section">
         <div class="stats-section-title">GRAPH</div>
@@ -4200,7 +4350,6 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    // Tossup breakdown
     html += `<div class="stats-section">
       <div class="stats-section-title">TOSSUPS: ${view.tossupsAttempted}</div>
       <div class="stats-grid">
@@ -4223,7 +4372,6 @@ async function loadStats(preserveScroll = false) {
       </div>
     </div>`;
 
-    // Bonus breakdown
     if (view.bonusesAttempted > 0) {
       html += `<div class="stats-section">
         <div class="stats-section-title">BONUSES: ${view.bonusesAttempted}</div>
@@ -4240,7 +4388,6 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    // By Category
     const categoryData = Object.values(stats.byCategory || {})
       .filter((c) => c.totalQuestions > 0)
       .sort((a, b) => (b.totalPoints / b.totalQuestions) - (a.totalPoints / a.totalQuestions));
@@ -4273,11 +4420,8 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    // QUESTION HISTORY (single open session only): per-question outcome, your
-    // answer, and where in the question you buzzed. Works for solo tossups AND
-    // multiplayer games (the MP plugin records each of your buzzes the same way).
     if (sid && sessionEntries.length) {
-      const rowsHtml = sessionEntries.map((en) => {
+      const rowsHtml = sessionEntries.map((en, i) => {
         const isBonus = en.type === "bonus";
         let cls = "qh-miss", label = "MISS";
         if (isBonus) { cls = en.points >= 20 ? "qh-correct" : en.points > 0 ? "qh-partial" : "qh-miss"; label = (en.bonus_parts_correct != null ? en.bonus_parts_correct : 0) + "/3"; }
@@ -4289,13 +4433,14 @@ async function loadStats(preserveScroll = false) {
           '<div class="qh-buzzbar" title="Buzzed ' + Math.round(cel * 100) + '% into the question">' +
             '<div class="qh-buzzmark" style="left:' + (cel * 100).toFixed(1) + '%"></div></div>';
         const ans = en.given_answer ? escapeHtml(en.given_answer) : '<span class="text-muted">(no answer)</span>';
-        return "<tr>" +
-          '<td><span class="qh-badge ' + cls + '">' + label + "</span></td>" +
+        return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" style="cursor:pointer" title="Show the question & answer">' +
+          '<td><span class="qh-chev">▸</span> <span class="qh-badge ' + cls + '">' + label + "</span></td>" +
           "<td>" + escapeHtml(en.category || "") + (en.difficulty != null ? ' <span class="text-muted">d' + en.difficulty + "</span>" : "") + "</td>" +
           "<td>" + ans + "</td>" +
           "<td>" + buzzBar + "</td>" +
           '<td style="text-align:right">' + (en.points > 0 ? "+" : "") + en.points + "</td>" +
-        "</tr>";
+        "</tr>" +
+        '<tr class="qh-detail hidden" data-qhd="' + i + '"><td colspan="5"><div class="text-muted">Loading…</div></td></tr>';
       }).join("");
       html += '<div class="stats-section">' +
         '<div class="stats-section-title">QUESTION HISTORY (' + sessionEntries.length + ")</div>" +
@@ -4303,7 +4448,6 @@ async function loadStats(preserveScroll = false) {
         rowsHtml + "</tbody></table></div>";
     }
 
-    // Celerity distribution
     const celDist = stats.celerityDistribution || {};
     const celTotal =
       (celDist.power?.length || 0) +
@@ -4344,7 +4488,6 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    // Sessions (all-time view only; click a row to open that session)
     if (!sid && sessionList.length > 0) {
       html += `<div class="stats-section">
         <div class="stats-section-title">SESSIONS (${sessionList.length})</div>
@@ -4356,11 +4499,12 @@ async function loadStats(preserveScroll = false) {
             ${sessionList
               .slice(0, 50)
               .map((s) => {
-                // Sessions outside the selected period stay listed + openable,
-                // just dimmed (in-range = had activity at/after the cutoff).
-                const faint = since && (s.ended_at || s.started_at || 0) < since;
+                const outOfPeriod = since && (s.ended_at || s.started_at || 0) < since;
+                const sCats = (s.categories || "").split(",").map((c) => c.trim()).filter(Boolean);
+                const outOfCat = selectedCat && !sCats.includes(selectedCat);
+                const faint = outOfPeriod || outOfCat;
                 return `
-              <tr class="session-row${faint ? " session-faint" : ""}" data-session="${escapeHtml(s.session_id)}" title="${faint ? "Outside the selected period — click to open" : "View this session's stats"}">
+              <tr class="session-row${faint ? " session-faint" : ""}" data-session="${escapeHtml(s.session_id)}" title="${faint ? "Outside the current filter — click to open anyway" : "View this session's stats"}">
                 <td>${formatSessionTitle(s.session_id)}</td>
                 <td>${s.question_count}</td>
                 <td>${s.total_points}</td>
@@ -4374,7 +4518,6 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    // Difficulty progression graphs
     const diffKeys = Object.keys(stats.byDifficulty || {}).sort((a,b) => parseInt(a) - parseInt(b));
     if (diffKeys.length >= 2) {
       html += `<div class="stats-section">
@@ -4387,7 +4530,6 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    // Per-session outcome graphs (requires breakdown data; all-time only)
     if (!sid) html += `<div class="stats-section">
       <div class="stats-section-title">SESSION BREAKDOWN
         <select id="graph-filter-cat" style="margin-left:12px;font-family:var(--font);font-size:10px;padding:1px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:3px;color:var(--text)">
@@ -4407,7 +4549,6 @@ async function loadStats(preserveScroll = false) {
       </div>
     </div>`;
 
-    // Fetch session breakdown for per-session graphs
     let breakdown = [];
     if (!sid) {
       try {
@@ -4418,8 +4559,6 @@ async function loadStats(preserveScroll = false) {
 
     container.innerHTML = html;
 
-    // Plugin-contributed stats sections (Coach Mode, Flashcards, …) — all-time
-    // view only, via the generic ctx.registerStatsProvider API.
     if (!sid) {
       for (const prov of (window.QB?.getStatsProviders?.() || [])) {
         const sec = document.createElement("div");
@@ -4432,42 +4571,67 @@ async function loadStats(preserveScroll = false) {
       }
     }
 
-    // Restore scroll (delete-session re-render keeps your place).
     if (preserveScroll && screen) { screen.scrollTop = keepScroll; requestAnimationFrame(() => { screen.scrollTop = keepScroll; }); }
 
-    // Back to all-time stats
     document.getElementById("stats-back")?.addEventListener("click", () => { state.statsSessionId = null; loadStats(); });
-    wireStatsPeriod();
 
-    // Click a session row to open its stats (delete button stays separate).
+    container.querySelectorAll(".qh-row").forEach((row) => {
+      row.addEventListener("click", async () => {
+        const d = container.querySelector('[data-qhd="' + row.dataset.qh + '"]');
+        if (!d) return;
+        d.classList.toggle("hidden");
+        const chev = row.querySelector(".qh-chev"); if (chev) chev.textContent = d.classList.contains("hidden") ? "▸" : "▾";
+        if (d.classList.contains("hidden") || d.dataset.loaded) return;
+        d.dataset.loaded = "1";
+        const qid = row.dataset.qid, qtype = row.dataset.qtype;
+        const cell = d.querySelector("td");
+        if (!qid) { cell.innerHTML = '<div class="text-muted">Question id not recorded.</div>'; return; }
+        try {
+          const dd = await API.get("/api/" + (qtype === "bonus" ? "bonuses" : "tossups") + "/" + encodeURIComponent(qid));
+          const q = dd.tossup || dd.bonus;
+          cell.innerHTML = q ? qhDetailHtml(q, qtype) : '<div class="text-muted">Question not found in the database.</div>';
+          if (qtype !== "bonus" && q) {
+            const bar = row.querySelector(".qh-buzzbar");
+            const raw = q.question_sanitized || "";
+            const pi = raw.indexOf("(*)");
+            if (bar && pi >= 0 && !bar.querySelector(".qh-powermark")) {
+              const len = raw.replace(/\(\*\)/g, "").length || 1;
+              const frac = Math.max(0, Math.min(1, pi / len));
+              const pm = document.createElement("div");
+              pm.className = "qh-powermark";
+              pm.style.left = (frac * 100).toFixed(1) + "%";
+              pm.title = "Power mark";
+              bar.appendChild(pm);
+            }
+          }
+        } catch (e) { cell.innerHTML = '<div class="text-muted">Failed to load.</div>'; }
+      });
+    });
+
     container.querySelectorAll(".session-row").forEach((row) => {
       row.addEventListener("click", (ev) => {
         if (ev.target.closest(".session-delete")) return;
-        if (!row.dataset.session) return; // plugin session rows wire their own handler
+        if (!row.dataset.session) return;
         state.statsSessionId = row.dataset.session;
         loadStats();
       });
     });
 
-    // Delete-session buttons
     container.querySelectorAll(".session-delete").forEach((b) => {
       b.addEventListener("click", async (ev) => {
         ev.stopPropagation();
         const id = b.dataset.session;
-        if (!id) return; // plugin delete buttons wire their own handler
+        if (!id) return;
         try { await API.delete("/api/sessions/" + encodeURIComponent(id)); } catch (e) {}
-        loadStats(true); // re-render while keeping scroll position
+        loadStats(true);
       });
     });
 
-    // Populate filter dropdowns
     populateGraphFilters(stats);
 
-    // Draw graphs after DOM update
     setTimeout(() => {
       const canvas = document.getElementById("stats-graph");
       if (canvas) drawStatsGraph(canvas, stats);
-      // (session view has no breakdown graphs — the canvases just don't exist)
       const c1 = document.getElementById("graph-diff-accuracy");
       const c2 = document.getElementById("graph-diff-celerity");
       const c3 = document.getElementById("graph-diff-bonus");
@@ -4481,12 +4645,8 @@ async function loadStats(preserveScroll = false) {
   }
 }
 
-// ── Starred Screen ───────────────────────────────────────
 
-// ── Settings ─────────────────────────────────────────────
 
-// Base look is fixed (dark); all appearance customization now comes from themes
-// (Extensions screen), which expose palettes/fonts/glow/layout in APPEARANCE.
 
 $("#speed-slider").addEventListener("input", (e) => setRevealSpeed(parseInt(e.target.value)));
 
@@ -4508,6 +4668,8 @@ $("#opt-bonus-after")?.addEventListener("change", (e) => { state.settings.bonusA
 $("#opt-review-negs")?.addEventListener("change", (e) => { state.settings.reviewNegs = e.target.checked; lsSet("qb-review-negs", e.target.checked.toString()); refreshReviewBadge(); });
 $("#opt-review-unans")?.addEventListener("change", (e) => { state.settings.reviewUnans = e.target.checked; lsSet("qb-review-unans", e.target.checked.toString()); refreshReviewBadge(); });
 $("#opt-review-wrongend")?.addEventListener("change", (e) => { state.settings.reviewWrongEnd = e.target.checked; lsSet("qb-review-wrongend", e.target.checked.toString()); refreshReviewBadge(); });
+$("#opt-review-nopower")?.addEventListener("change", (e) => { state.settings.autoReviewNoPower = e.target.checked; lsSet("qb-review-nopower", e.target.checked.toString()); });
+$("#opt-review-skipnomark")?.addEventListener("change", (e) => { state.settings.autoReviewSkipNoMark = e.target.checked; lsSet("qb-review-skipnomark", e.target.checked.toString()); });
 $("#filter-hide-pron")?.addEventListener("change", (e) => setHidePron(e.target.checked));
 { const b = $("#filter-hide-pron"); if (b) b.checked = state.settings.hidePronunciations; }
 
@@ -4542,7 +4704,12 @@ function initSettings() {
   const rn = $("#opt-review-negs"); if (rn) rn.checked = state.settings.reviewNegs;
   const ru = $("#opt-review-unans"); if (ru) ru.checked = state.settings.reviewUnans;
   const rwe = $("#opt-review-wrongend"); if (rwe) rwe.checked = state.settings.reviewWrongEnd;
+  const rnp = $("#opt-review-nopower"); if (rnp) rnp.checked = state.settings.autoReviewNoPower;
+  const rsm = $("#opt-review-skipnomark"); if (rsm) rsm.checked = state.settings.autoReviewSkipNoMark;
   const aAcc = $("#app-accent"); if (aAcc) aAcc.value = state.settings.appAccent;
+  const aMode = $("#app-mode"); if (aMode) aMode.value = state.settings.appAppearanceMode;
+  const aCust = $("#app-custom-accent"); if (aCust) aCust.value = /^#[0-9a-fA-F]{6}$/.test(state.settings.appCustomAccent || "") ? state.settings.appCustomAccent : "#dfb347";
+  const aFont = $("#app-font"); if (aFont) aFont.value = state.settings.appFont;
   const aRad = $("#app-radius"); if (aRad) aRad.value = state.settings.appRadius;
   const aGap = $("#app-btngap"); if (aGap) aGap.value = state.settings.appBtnGap;
   const sret = $("#session-retention"); if (sret) sret.value = String(state.settings.sessionRetentionDays || 0);
@@ -4559,9 +4726,16 @@ function initSettings() {
   loadSettingsArt();
 }
 
+function activeThemeArt() {
+  try { return (window.QB && window.QB._activeThemeArt) || null; } catch (e) { return null; }
+}
+
 async function loadSettingsArt() {
   const container = document.getElementById("settings-art-content");
   if (!container) return;
+  const ta = activeThemeArt();
+  if (ta && ta.image) { container.innerHTML = '<img class="theme-art-img" src="' + escapeHtml(ta.image) + '" alt="">'; return; }
+  if (ta && ta.text) { renderArtToFit(container, ta.text); return; }
   const artFiles = ["reflection", "trio", "chernobyl", "legion", "wave"];
   let selectedArt = localStorage.getItem("qb-art") || "reflection";
   if (selectedArt === "random") selectedArt = artFiles[Math.floor(Math.random() * artFiles.length)];
@@ -4575,12 +4749,16 @@ async function loadTitleArt() {
   if (!container) return;
   const screen = document.getElementById("title-screen");
   const artFiles = ["reflection", "trio", "chernobyl", "legion", "wave"];
+  const ta = activeThemeArt();
   let selectedArt = localStorage.getItem("qb-art") || "reflection";
   if (selectedArt === "random") selectedArt = artFiles[Math.floor(Math.random() * artFiles.length)];
-  const text = getArt(selectedArt);
-  if (!text) { container.innerHTML = ""; return; }
+  const themeImg = ta && ta.image ? ta.image : null;
+  const text = ta && ta.text ? ta.text : getArt(selectedArt);
+  if (!themeImg && !text) { container.innerHTML = ""; return; }
 
-  const isStacked = selectedArt === "trio" || selectedArt === "chernobyl" || selectedArt === "wave";
+  const isStacked = (ta && (ta.text || ta.image))
+    ? ta.layout !== "sidebar"
+    : (selectedArt === "trio" || selectedArt === "chernobyl" || selectedArt === "wave");
   const left = screen ? screen.querySelector(".title-left") : null;
 
   screen.classList.remove("stacked", "sidebar");
@@ -4599,6 +4777,7 @@ async function loadTitleArt() {
     }
   }
 
+  if (themeImg) { container.innerHTML = '<img class="theme-art-img" src="' + escapeHtml(themeImg) + '" alt="">'; return; }
   renderArtToFit(container, text);
 }
 
@@ -4676,33 +4855,71 @@ function renderArtToFit(container, artText, retries) {
 
 $("#btn-update-db")?.addEventListener("click", checkForUpdatesUI);
 
-// ── In-app code (app) updates ──
 $("#opt-app-autoupdate")?.addEventListener("change", (e) => lsSet("qb-app-autoupdate", e.target.checked.toString()));
-$("#btn-app-update")?.addEventListener("click", async () => {
-  const btn = $("#btn-app-update"), status = $("#app-update-status");
-  if (!btn || !status) return;
-  btn.disabled = true; btn.textContent = "Checking…";
-  status.innerHTML = progressBarHtml("app-upd", "Checking for updates…");
+$("#opt-app-critical-auto")?.addEventListener("change", (e) => lsSet("qb-app-critical-auto", e.target.checked.toString()));
+function isNetworkErr(msg) {
+  return /failed to fetch|fetch failed|network|err_|enotfound|getaddrinfo|timed ?out|econn|\bdns\b/i.test(String(msg || ""));
+}
+function friendlyUpdateErr(msg) {
+  return isNetworkErr(msg)
+    ? "Couldn't reach the update server. Check your internet connection and try again (some school/work networks block it)."
+    : String(msg || "Unknown error");
+}
+// Download the already-confirmed update into `status`, showing progress and a
+// restart button when done. Used by the Settings button AND the startup dialog.
+async function downloadAppUpdate(status, barId) {
+  status.innerHTML = progressBarHtml(barId, "Downloading update…");
   let unsub = null;
   if (window.qbreader?.onAppUpdateProgress) {
-    unsub = window.qbreader.onAppUpdateProgress((p) => setProgress("app-upd", p && p.pct, "Downloading update…"));
+    unsub = window.qbreader.onAppUpdateProgress((p) => setProgress(barId, p && p.pct, "Downloading update…"));
   }
   try {
-    const r = await API.post("/api/app-update-check", {});
-    if (r.dev) status.textContent = "App updates only run in the packaged app.";
-    else if (r.error) status.textContent = "Update check failed: " + r.error;
-    else if (!r.configured) status.textContent = "App updates aren't set up in this build.";
-    else if (!r.updated) status.textContent = "You're on the latest version (v" + (r.version || "?") + ").";
-    else {
-      setProgress("app-upd", 100, "Update v" + r.version + " downloaded.");
+    let r;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      r = await API.post("/api/app-update-check", {});
+      if (!r || !r.error || !isNetworkErr(r.error) || attempt === 2) break;
+      status.innerHTML = progressBarHtml(barId, "Network hiccup — retrying (" + (attempt + 2) + "/3)…");
+      await new Promise((res) => setTimeout(res, 1500));
+    }
+    if (r && r.updated) {
+      setProgress(barId, 100, "Update v" + r.version + " downloaded.");
       const restart = document.createElement("button");
       restart.className = "btn btn-sm btn-primary"; restart.style.marginTop = "8px";
       restart.textContent = "Restart now to apply";
       restart.onclick = () => { try { window.qbreader?.relaunchApp?.(); } catch {} };
       status.appendChild(restart);
+      return true;
     }
-  } catch (e) { status.textContent = "Update check failed: " + (e.message || e); }
-  if (unsub) unsub();
+    status.textContent = r && r.error ? "Update failed: " + friendlyUpdateErr(r.error) : "Nothing new to install.";
+  } catch (e) { status.textContent = "Update failed: " + friendlyUpdateErr(e.message || e); }
+  finally { if (unsub) unsub(); }
+  return false;
+}
+
+$("#btn-app-update")?.addEventListener("click", async () => {
+  const btn = $("#btn-app-update"), status = $("#app-update-status");
+  if (!btn || !status) return;
+  btn.disabled = true; btn.textContent = "Checking…";
+  status.textContent = "Checking for updates…";
+  try {
+    let r;
+    try { r = await API.get("/api/app-update-peek"); }
+    catch (e) { r = { unsupported: true }; } // pre-peek backend: invoke has no handler
+    if (r.unsupported) await downloadAppUpdate(status, "app-upd"); // legacy: checking installs directly
+    else if (r.dev) status.textContent = "App updates only run in the packaged app.";
+    else if (r.error) status.textContent = "Update check failed: " + friendlyUpdateErr(r.error);
+    else if (!r.configured) status.textContent = "App updates aren't set up in this build.";
+    else if (!r.available) status.textContent = "You're on the latest version (v" + (r.haveVersion || r.version || "?") + ").";
+    else {
+      // Checking never installs — updating is its own click.
+      status.innerHTML = `<div style="margin-bottom:8px">Update available: <strong>v${escapeHtml(String(r.version))}</strong>${r.critical ? " (important)" : ""}</div>`;
+      const install = document.createElement("button");
+      install.className = "btn btn-sm btn-primary";
+      install.textContent = "Download & install";
+      install.onclick = () => downloadAppUpdate(status, "app-upd");
+      status.appendChild(install);
+    }
+  } catch (e) { status.textContent = "Update check failed: " + friendlyUpdateErr(e.message || e); }
   btn.disabled = false; btn.textContent = "Check for updates";
 });
 
@@ -4710,8 +4927,9 @@ async function syncAppUpdateUI() {
   try {
     const info = await API.get("/api/app-update-info");
     const sec = $("#app-update-section"); if (!sec) return;
-    if (info.dev) { sec.style.display = "none"; return; }   // dev server: hide
+    if (info.dev) { sec.style.display = "none"; return; }
     const auto = $("#opt-app-autoupdate"); if (auto) auto.checked = localStorage.getItem("qb-app-autoupdate") !== "false";
+    const crit = $("#opt-app-critical-auto"); if (crit) crit.checked = localStorage.getItem("qb-app-critical-auto") !== "false";
     const status = $("#app-update-status");
     if (status && !status.textContent) {
       status.textContent = info.configured
@@ -4733,7 +4951,9 @@ async function checkForUpdatesUI() {
   try {
     const info = await API.get("/api/check-update");
     if (info.error) {
-      status.textContent = "Update check failed: " + info.error;
+      status.textContent = isNetworkErr(info.error)
+        ? friendlyUpdateErr(info.error)
+        : "Question updates aren't configured for this build. (The app + plugins update via your GitHub repo; the question database updates separately.)";
     } else if (!info.configured) {
       status.textContent = "Online updates aren't set up in this build.";
     } else if (!info.available) {
@@ -4747,14 +4967,13 @@ async function checkForUpdatesUI() {
       status.appendChild(install);
     }
   } catch (e) {
-    status.textContent = "Update check failed: " + e.message;
+    status.textContent = "Update check failed: " + friendlyUpdateErr(e.message || e);
   }
 
   btn.disabled = false;
   btn.textContent = "Check for Updates";
 }
 
-// Reusable progress-bar markup + setter (used by DB + app updates).
 function progressBarHtml(id, label) {
   return `<div class="upd-bar-label" id="${id}-label">${escapeHtml(label || "Starting…")}</div>` +
     `<div class="upd-bar"><div class="upd-bar-fill" id="${id}-fill"></div></div>`;
@@ -4787,9 +5006,7 @@ async function installUpdateUI(latest) {
     setProgress("db-upd", 100, `Updated to ${latest.name} — ${(r.tossups || 0).toLocaleString()} tossups, ${(r.bonuses || 0).toLocaleString()} bonuses.`);
     const el = pt();
     if (el) {
-      // keep label set above
     }
-    // Refresh caches that depend on the question DB.
     _allCategoryNames = null;
     state.subcategoryCache = {};
     initTitle();
@@ -4801,7 +5018,6 @@ async function installUpdateUI(latest) {
   }
 }
 
-// All bindable actions: built-in + hotkeys from enabled plugins.
 function pluginHotkeyDefs() {
   return (window.QB && window.QB.getActiveHotkeys && window.QB.getActiveHotkeys()) || [];
 }
@@ -4810,11 +5026,6 @@ function allHotkeyActions() {
   const pl = pluginHotkeyDefs().map((h) => ({ action: h.action, label: h.label, pluginId: h.pluginId }));
   return base.concat(pl);
 }
-// Where each built-in action actually fires. Two bindings only CONFLICT when
-// their scopes can be active at the same time — e.g. Answerline Lab's "next"
-// lives on its own page and can safely share "N" with practice's
-// next-question. Plugin hotkeys are scoped to their own plugin (their
-// handlers no-op unless that plugin's page is active).
 const HOTKEY_SCOPES = {
   "buzz": "practice", "start-skip": "practice", "next-question": "practice",
   "end-session": "practice", "star-question": "practice", "pause-reveal": "practice",
@@ -4827,7 +5038,7 @@ const HOTKEY_SCOPES = {
 function hotkeyScope(action) {
   if (HOTKEY_SCOPES[action]) return HOTKEY_SCOPES[action];
   const i = action.indexOf(":");
-  if (i > 0) return "plugin:" + action.slice(0, i); // a plugin's own page
+  if (i > 0) return "plugin:" + action.slice(0, i);
   return "global";
 }
 function hotkeyScopeLabel(action) {
@@ -4839,8 +5050,6 @@ function hotkeyScopeLabel(action) {
 }
 function scopesOverlap(a, b) { return a === b || a === "global" || b === "global"; }
 
-// Returns the conflicting action object if `binding` is already used by
-// another action IN AN OVERLAPPING SCOPE.
 function bindingConflict(action, binding) {
   if (!binding || binding === "Not Set") return null;
   const myScope = hotkeyScope(action);
@@ -4851,7 +5060,6 @@ function bindingConflict(action, binding) {
   }
   return null;
 }
-// Assign defaults for enabled plugins' hotkeys (Not Set if the default conflicts).
 function ensureAllPluginHotkeys() {
   pluginHotkeyDefs().forEach((h) => {
     const cur = state.settings.hotkeys[h.action];
@@ -4859,8 +5067,6 @@ function ensureAllPluginHotkeys() {
     if (cur === undefined) {
       state.settings.hotkeys[h.action] = (def && !bindingConflict(h.action, def)) ? def : "Not Set";
     } else if (cur === "Not Set" && def && !bindingConflict(h.action, def)) {
-      // The default was blocked by the old everything-conflicts rule; with
-      // per-scope conflicts it's now free, so claim it.
       state.settings.hotkeys[h.action] = def;
     }
   });
@@ -4877,8 +5083,6 @@ function renderHotkeySettings() {
   for (const { action, label } of actions) {
     const binding = getHotkey(action) || "Not Set";
     const isRebinding = state.hotkeyRebinding === action;
-    // Conflicts are scope-aware: the same key in two places that are never
-    // active together (practice vs a plugin page) is fine.
     const conflict = (binding !== "Not Set" && !!bindingConflict(action, binding)) || state._hotkeyError === action;
     html += `
       <tr class="hotkey-row${conflict ? " conflict" : ""}" data-action="${action}" style="cursor:pointer">
@@ -4904,7 +5108,6 @@ function renderHotkeySettings() {
     });
   });
 
-  // Reset button
   const resetBtn = document.createElement("button");
   resetBtn.className = "btn btn-sm btn-ghost";
   resetBtn.textContent = "Reset to defaults";
@@ -4913,15 +5116,13 @@ function renderHotkeySettings() {
     state.settings.hotkeys = {};
     localStorage.removeItem("qb-hotkeys");
     renderHotkeySettings();
-    updateKeyLabels(); // refresh all on-screen [key] indicators too
+    updateKeyLabels();
   });
   table.appendChild(resetBtn);
 }
 
-// ── Utility ──────────────────────────────────────────────
 
 function formatSessionTitle(sid) {
-  // session-1747766400000 → extract timestamp
   const match = sid.match(/(\d{13})/);
   if (match) {
     const d = new Date(parseInt(match[1]));
@@ -4931,10 +5132,6 @@ function formatSessionTitle(sid) {
   return sid.slice(0, 20);
 }
 
-// Render an answer line with its REAL formatting: escape everything, then
-// re-enable only the safe inline tags answer lines actually use. The result is
-// run through a detached element so UNBALANCED tags get auto-closed — a stray
-// "<u>" in one answer line was underlining every question and star after it.
 function answerLineHtml(raw, sanitizedFallback) {
   const src = (raw && String(raw).trim()) ? String(raw) : String(sanitizedFallback || "");
   const html = escapeHtml(src).replace(/&lt;(\/?)(b|u|i|em|strong)&gt;/gi, "<$1$2>");
@@ -4952,7 +5149,6 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-// ── Player Page ─────────────────────────────────────────
 
 async function loadPlayer() {
   const container = $("#player-container");
@@ -4960,13 +5156,19 @@ async function loadPlayer() {
   container.innerHTML = '<div class="text-muted">Loading player data...</div>';
 
   try {
-    const [statsData, sessionsData] = await Promise.all([
+    const [statsData, sessionsData, apData, activeProfile] = await Promise.all([
       API.get("/api/stats"),
       API.get("/api/sessions"),
+      API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
+      API.get("/api/profiles/active").catch(() => null),
     ]);
 
     const stats = statsData.stats || {};
     const sessions = sessionsData.sessions || [];
+    const apCounts = apData.answer_counts || {};
+    const apClasses = apData.answer_classes || {};
+    const ap = activeProfile && (activeProfile.profile || activeProfile);
+    const profileKey = (ap && (ap.id ?? ap.profile_id)) || "default";
 
     const username = state.username || "Player";
     const avatar = state.avatar || "(◕‿◕)";
@@ -4974,29 +5176,10 @@ async function loadPlayer() {
     const powers = stats.tossupPowers || 0;
     const negs = stats.tossupNegs || 0;
 
-    // Compute achievements from stats
-    const achData = {};
-    const streak = computeDailyStreak(stats.questionsByDate);
-    for (const ach of ACHIEVEMENT_LIST) {
-      let progress = 0;
-      if (ach.type === "total") progress = totalQ;
-      else if (ach.type === "powers") progress = powers;
-      else if (ach.type === "negs") progress = negs;
-      else if (ach.type === "cat") {
-        const cats = stats.byCategory || {};
-        progress = Math.max(...Object.values(cats).map(c => c.totalQuestions || 0), 0);
-      } else if (ach.type === "cat_specific") {
-        const catData = (stats.byCategory || {})[ach.category];
-        progress = catData ? catData.totalQuestions || 0 : 0;
-      } else if (ach.type === "daily") {
-        const days = stats.questionsByDate || {};
-        progress = Math.max(...Object.values(days).map(d => d.questions || 0), 0);
-      } else if (ach.type === "streak") {
-        progress = streak;
-      }
-      achData[ach.id] = { earned: progress >= ach.threshold, progress };
-    }
-    const achievementsHtml = buildAchievementHTML(achData, totalQ, powers, negs);
+    const achData = computeAchievementData(stats, apCounts, apClasses);
+    const pluginAchs = collectPluginAchievements(stats, apCounts);
+    const achievementsHtml = buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs);
+    maybeShowAchievementPopups(achData, pluginAchs, profileKey);
 
     container.innerHTML = `
       <div class="player-header">
@@ -5018,16 +5201,13 @@ async function loadPlayer() {
       </div>
     `;
 
-    // Avatar picker
     $("#player-avatar")?.addEventListener("click", showAvatarPicker);
 
-    // Username save
     $("#player-username-input")?.addEventListener("input", (e) => {
       state.username = e.target.value.trim();
       lsSet("qb-username", state.username);
     });
 
-    // Export/import handlers
     $("#btn-export-data")?.addEventListener("click", exportData);
     $("#btn-import-data")?.addEventListener("click", () => $("#import-file")?.click());
     $("#import-file")?.addEventListener("change", importData);
@@ -5036,50 +5216,410 @@ async function loadPlayer() {
   }
 }
 
-function buildAchievementHTML(achData, totalQ, powers, negs) {
+function apNorm(s) {
+  return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+// Faithful renderer port of src/main/answerChecker.js primaryAnswer() so the
+// Achievement Lab keys a power the same way the server does (it cannot import
+// the main-process module). Helpers are local to avoid name collisions.
+function apPrimary(raw, sanitized) {
+  const WORD_CHAR = /[A-Za-z0-9'’]/;
+  const stripTags = (t) => String(t == null ? "" : t).replace(/<[^>]+>/g, "").trim();
+  const stripQuotes = (s) => String(s || "").replace(/^["“”'']+|["“”'']+$/g, "").trim();
+  const isDirectiveInner = (inner) => /\b(accept|prompt|reject|do not|anti-?prompt)\b/i.test(inner) || /^\s*or\b/i.test(inner);
+  function findContainers(s) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c !== "[" && c !== "(") continue;
+      const close = c === "[" ? "]" : ")";
+      let depth = 1, j = i + 1;
+      while (j < s.length && depth > 0) { if (s[j] === c) depth++; else if (s[j] === close) depth--; j++; }
+      out.push({ start: i, text: s.slice(i, j) });
+      i = j - 1;
+    }
+    return out;
+  }
+  function underlineSpans(html) {
+    let vis = "";
+    const spans = [];
+    let depth = 0, spanStart = -1;
+    const re = /<[^>]+>|[^<]+/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const tok = m[0];
+      if (tok[0] === "<") {
+        if (/^<u(\s|>)/i.test(tok)) { if (depth === 0) spanStart = vis.length; depth++; }
+        else if (/^<\/u\s*>/i.test(tok)) {
+          depth = Math.max(0, depth - 1);
+          if (depth === 0 && spanStart >= 0) { spans.push([spanStart, vis.length]); spanStart = -1; }
+        }
+      } else { vis += tok; }
+    }
+    if (depth > 0 && spanStart >= 0) spans.push([spanStart, vis.length]);
+    const merged = [];
+    for (const sp of spans) {
+      const prev = merged[merged.length - 1];
+      if (prev && sp[0] - prev[1] <= 1 && /^['’’-]?$/.test(vis.slice(prev[1], sp[0]))) prev[1] = sp[1];
+      else merged.push([sp[0], sp[1]]);
+    }
+    return { vis, spans: merged };
+  }
+  const src = (raw && String(raw).trim()) ? String(raw) : String(sanitized || "");
+  const containers = findContainers(src);
+  const firstDir = containers.find((c) => isDirectiveInner(c.text.slice(1, -1)));
+  const mainRaw = firstDir ? src.slice(0, firstDir.start) : src;
+  const { vis, spans } = underlineSpans(mainRaw);
+  if (spans.length) {
+    const fulls = [];
+    for (const [s0, e0] of spans) {
+      let a = s0, b = e0;
+      while (a > 0 && WORD_CHAR.test(vis[a - 1])) a--;
+      while (b < vis.length && WORD_CHAR.test(vis[b])) b++;
+      const w = vis.slice(a, b).trim();
+      if (w) fulls.push(w);
+    }
+    const joined = fulls.join(" ").trim();
+    if (joined) return joined;
+  }
+  return stripQuotes(stripTags(mainRaw).trim());
+}
+const AP_STOP = new Set(["the", "a", "an", "of", "and", "or", "de", "la", "le", "el", "il", "s"]);
+function apMatch(ans, target) {
+  if (!ans || !target) return false;
+  if (ans === target) return true;
+  const aw = ans.split(/\s+/).filter((w) => w.length >= 3 && !AP_STOP.has(w));
+  const tw = target.split(/\s+/).filter((w) => w.length >= 3 && !AP_STOP.has(w));
+  if (!aw.length || !tw.length) return false;
+  const short = aw.length <= tw.length ? aw : tw;
+  const longSet = new Set(aw.length <= tw.length ? tw : aw);
+  return short.every((w) => longSet.has(w));
+}
+
+// Derive an answer_power achievement's required category from its id prefix
+// (or an explicit ach.cat). Powers only count toward it if the question's
+// category — and any declared subcategory / alternate subcategory — match.
+function apAchCategory(id) {
+  if (!id) return null;
+  for (const [prefix, label] of AP_CATEGORY_PREFIXES) if (id.indexOf(prefix) === 0) return label;
+  return null;
+}
+// Count powers of one answer whose class (category|subcategory|altSub) matches
+// the achievement domain. Empty domain dimensions are wildcards; questions that
+// lack a subcategory/altSub simply won't match an achievement that requires one.
+function apDimOk(val, want) {
+  if (!want) return true;
+  return Array.isArray(want) ? want.includes(val) : val === want;
+}
+function apClassCount(classMap, cat, sub, alt) {
+  if (!classMap) return 0;
+  if (!cat && !sub && !alt) return 0;
+  let n = 0;
+  for (const key in classMap) {
+    const parts = key.split("|");
+    if (apDimOk(parts[0], cat) && apDimOk(parts[1], sub) && apDimOk(parts[2], alt)) n += classMap[key];
+  }
+  return n;
+}
+function computeAchievementData(stats, apCounts, apClasses) {
+  stats = stats || {};
+  apCounts = apCounts || {};
+  apClasses = apClasses || {};
+  const totalQ = stats.totalQuestions || 0;
+  const powers = stats.tossupPowers || 0;
+  const negs = stats.tossupNegs || 0;
+  const streak = computeDailyStreak(stats.questionsByDate);
+  const achData = {};
+  for (const ach of ACHIEVEMENT_LIST) {
+    let progress = 0;
+    if (ach.type === "total") progress = totalQ;
+    else if (ach.type === "powers") progress = powers;
+    else if (ach.type === "negs") progress = negs;
+    else if (ach.type === "cat") {
+      const cats = stats.byCategory || {};
+      progress = Math.max(...Object.values(cats).map(c => c.totalQuestions || 0), 0);
+    } else if (ach.type === "cat_specific") {
+      const catData = (stats.byCategory || {})[ach.category];
+      progress = catData ? catData.totalQuestions || 0 : 0;
+    } else if (ach.type === "daily") {
+      const days = stats.questionsByDate || {};
+      progress = Math.max(...Object.values(days).map(d => d.questions || 0), 0);
+    } else if (ach.type === "streak") {
+      progress = streak;
+    } else if (ach.type === "answer_power") {
+      const targets = (Array.isArray(ach.target) ? ach.target : [ach.target]).map(apNorm).filter(Boolean);
+      const cat = ach.cat || apAchCategory(ach.id), sub = ach.sub || null, alt = ach.alt || null;
+      const locked = !!(cat || sub || alt);
+      const cnt = (ans) => (locked ? apClassCount(apClasses[ans], cat, sub, alt) : (apCounts[ans] || 0));
+      if (ach.distinct && targets.length > 1) {
+        for (const norm of targets) {
+          if (Object.keys(apCounts).some((ans) => apMatch(ans, norm) && cnt(ans) > 0)) progress++;
+        }
+      } else {
+        for (const ans of Object.keys(apCounts)) {
+          if (targets.some((norm) => apMatch(ans, norm))) progress += cnt(ans);
+        }
+      }
+    }
+    achData[ach.id] = { earned: progress >= ach.threshold, progress };
+  }
+  return achData;
+}
+
+let _rtAchTimer = null;
+let _rtAchProfileKey = null;
+async function refreshAchievementsRealtime() {
+  try {
+    if (_rtAchProfileKey == null) {
+      try {
+        const ap = await API.get("/api/profiles/active");
+        const a = ap && (ap.profile || ap);
+        _rtAchProfileKey = (a && (a.id ?? a.profile_id)) || "default";
+      } catch (e) { _rtAchProfileKey = "default"; }
+    }
+    const [statsData, apData] = await Promise.all([
+      API.get("/api/stats").catch(() => ({ stats: {} })),
+      API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
+    ]);
+    const stats = statsData.stats || {};
+    const apCounts = apData.answer_counts || {};
+    const apClasses = apData.answer_classes || {};
+    const achData = computeAchievementData(stats, apCounts, apClasses);
+    const pluginAchs = collectPluginAchievements(stats, apCounts);
+    maybeShowAchievementPopups(achData, pluginAchs, _rtAchProfileKey);
+  } catch (e) {}
+}
+function scheduleAchievementCheck() {
+  if (_rtAchTimer) clearTimeout(_rtAchTimer);
+  _rtAchTimer = setTimeout(refreshAchievementsRealtime, 1200);
+}
+
+function resolveAchievementIcon(ach) {
+  let icon = ach.icon;
+  try {
+    const map = window.QB && window.QB._achievementIcons;
+    if (map && map[ach.id] != null && map[ach.id] !== "") {
+      icon = map[ach.id];
+    } else {
+      const fn = window.QB && window.QB._achievementIconFn;
+      if (typeof fn === "function") { const r = fn(ach); if (r != null && r !== "") icon = r; }
+    }
+  } catch (e) {}
+  return icon;
+}
+
+function achievementIconHTML(ach, extraClass) {
+  const icon = resolveAchievementIcon(ach);
+  const s = String(icon == null ? "" : icon);
+  const cls = "achievement-icon" + (extraClass ? " " + extraClass : "");
+  if (/^\s*</.test(s)) {
+    return `<span class="${cls} achievement-icon-graphic">${s}</span>`;
+  }
+  const chars = [...s];
+  if (chars.length >= 4) {
+    return `<span class="${cls} achievement-icon-grid">${chars.slice(0, 4).map(c => `<span>${escapeHtml(c)}</span>`).join("")}</span>`;
+  }
+  return `<span class="${cls}">${escapeHtml(s)}</span>`;
+}
+
+const AP_CATEGORY_PREFIXES = [
+  ["ap-lit-", "Literature"],
+  ["ap-hist-", "History"],
+  ["ap-geo-", "Geography"],
+  ["ap-sci-", "Science"],
+  ["ap-myth-", "Mythology"],
+  ["ap-pop-", "Pop Culture"],
+  ["ap-fa-", "Fine Arts"],
+  ["ap-phil-", "Philosophy"],
+];
+
+function renderAchievementCard(ach, data) {
+  const earned = !!(data && data.earned);
+  const progress = (data && data.progress) || 0;
+  const threshold = ach.threshold || 1;
+  const pct = Math.min(100, Math.round((progress / threshold) * 100));
+  const mystery = ach.type === "cat_specific" && !earned;
+  const displayName = mystery ? "??? Mystery ???" : ach.name;
+  const displayDesc = mystery ? "Secret achievement" : (ach.desc || "");
+  return `
+    <div class="achievement-card ${earned ? "earned" : ""}">
+      ${achievementIconHTML(ach)}
+      <div class="achievement-info">
+        <div class="achievement-name">${escapeHtml(displayName)}</div>
+        <div class="achievement-desc">${escapeHtml(displayDesc)}</div>
+        <div class="achievement-bar"><div class="achievement-bar-fill" style="width:${pct}%"></div></div>
+        <div class="achievement-progress">${progress}/${threshold}</div>
+      </div>
+    </div>`;
+}
+
+function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
   if (!achData || Object.keys(achData).length === 0) {
     return '<div class="text-muted">No achievements yet. Start playing!</div>';
   }
 
-  const categories = {
-    total: "Questions",
-    powers: "Powers",
-    negs: "Negs",
-    cat: "Categories",
-    cat_specific: "Category Legends",
-    daily: "Endurance",
-    streak: "Streaks",
-  };
+  const globalSections = [
+    ["total", "Questions"],
+    ["powers", "Powers"],
+    ["negs", "Negs"],
+    ["cat", "Categories"],
+    ["cat_specific", "Category Legends"],
+    ["daily", "Endurance"],
+    ["streak", "Streaks"],
+  ];
 
-  let html = "";
-  for (const [type, label] of Object.entries(categories)) {
+  let html = '<div class="achievement-section-title">Global</div>';
+  for (const [type, label] of globalSections) {
     const typeAchs = ACHIEVEMENT_LIST.filter(a => a.type === type);
     if (typeAchs.length === 0) continue;
-    html += `<div class="achievement-category">${label}</div>`;
+    html += `<div class="achievement-category">${escapeHtml(label)}</div>`;
     for (const ach of typeAchs) {
       const data = achData[ach.id];
       if (!data) continue;
-      const earned = data.earned;
-      const progress = data.progress || 0;
-      const pct = Math.min(100, Math.round((progress / ach.threshold) * 100));
-      const displayName = (ach.type === "cat_specific" && !earned) ? "??? Mystery ???" : ach.name;
-      const displayDesc = (ach.type === "cat_specific" && !earned) ? "3333 in a category" : ach.desc;
-      html += `
-        <div class="achievement-card ${earned ? 'earned' : ''}">
-          <span class="achievement-icon">${ach.icon}</span>
-          <div class="achievement-info">
-            <div class="achievement-name">${escapeHtml(displayName)}</div>
-            <div class="achievement-desc">${escapeHtml(displayDesc)}</div>
-            <div class="achievement-bar"><div class="achievement-bar-fill" style="width:${pct}%"></div></div>
-            <div class="achievement-progress">${progress}/${ach.threshold}</div>
-          </div>
-        </div>`;
+      html += renderAchievementCard(ach, data);
     }
   }
+
+  const apAchs = ACHIEVEMENT_LIST.filter(a => a.type === "answer_power");
+  if (apAchs.length) {
+    html += '<div class="achievement-section-title">Answer Powers</div>';
+    for (const [prefix, label] of AP_CATEGORY_PREFIXES) {
+      const group = apAchs.filter(a => a.id.startsWith(prefix));
+      if (!group.length) continue;
+      html += `<div class="achievement-category">${escapeHtml(label)}</div>`;
+      for (const ach of group) {
+        html += renderAchievementCard(ach, achData[ach.id]);
+      }
+    }
+    const known = new Set(AP_CATEGORY_PREFIXES.map(p => p[0]));
+    const other = apAchs.filter(a => ![...known].some(p => a.id.startsWith(p)));
+    if (other.length) {
+      html += `<div class="achievement-category">Other</div>`;
+      for (const ach of other) html += renderAchievementCard(ach, achData[ach.id]);
+    }
+  }
+
+  if (Array.isArray(pluginAchs) && pluginAchs.length) {
+    const bySource = {};
+    for (const p of pluginAchs) {
+      const src = p.source || "Plugin";
+      (bySource[src] = bySource[src] || []).push(p);
+    }
+    html += '<div class="achievement-section-title">Plugins</div>';
+    for (const src of Object.keys(bySource)) {
+      html += `<div class="achievement-category">${escapeHtml(src)}</div>`;
+      for (const p of bySource[src]) {
+        html += renderAchievementCard(p, { earned: p.earned, progress: p.progress });
+      }
+    }
+  }
+
   return html;
 }
 
-// Share achievement list with the builder
+function collectPluginAchievements(stats, apCounts) {
+  let defs = [];
+  try { defs = (window.QB && window.QB._pluginAchievements) || []; } catch (e) { defs = []; }
+  if (!Array.isArray(defs) || !defs.length) return [];
+  const ctx = {
+    stats: stats || {},
+    apCounts: apCounts || {},
+    totalQuestions: (stats && stats.totalQuestions) || 0,
+    powers: (stats && stats.tossupPowers) || 0,
+    negs: (stats && stats.tossupNegs) || 0,
+  };
+  const out = [];
+  for (const d of defs) {
+    if (!d || !d.id) continue;
+    let progress = 0;
+    try {
+      progress = typeof d.progress === "function" ? (d.progress(ctx) || 0) : (Number(d.progress) || 0);
+    } catch (e) { progress = 0; }
+    const threshold = d.threshold || 1;
+    out.push({
+      id: d.id,
+      name: d.name || d.id,
+      desc: d.desc || "",
+      icon: d.icon || "★",
+      source: d.source || d.plugin || "Plugin",
+      threshold,
+      progress,
+      earned: progress >= threshold,
+    });
+  }
+  return out;
+}
+
+let _achPopupQueue = [];
+let _achPopupActive = false;
+
+function _earnedAchKey(profileKey) {
+  return "qb-earned-achs:" + (profileKey == null ? "default" : profileKey);
+}
+function _loadEarnedAchRaw(profileKey) {
+  try { return localStorage.getItem(_earnedAchKey(profileKey)); } catch (e) { return null; }
+}
+function _saveEarnedAchIds(set, profileKey) {
+  try { localStorage.setItem(_earnedAchKey(profileKey), JSON.stringify([...set])); } catch (e) {}
+}
+
+function maybeShowAchievementPopups(achData, pluginAchs, profileKey) {
+  const raw = _loadEarnedAchRaw(profileKey);
+  const firstRun = raw == null;
+  let prev;
+  try { prev = new Set(JSON.parse(raw || "[]")); } catch (e) { prev = new Set(); }
+
+  const nowEarned = [];
+  for (const ach of ACHIEVEMENT_LIST) {
+    if (achData[ach.id] && achData[ach.id].earned) nowEarned.push(ach);
+  }
+  for (const p of (pluginAchs || [])) {
+    if (p.earned) nowEarned.push(p);
+  }
+
+  const all = new Set(prev);
+  const fresh = [];
+  for (const a of nowEarned) {
+    if (!all.has(a.id)) {
+      all.add(a.id);
+      if (!firstRun) fresh.push(a);
+    }
+  }
+  _saveEarnedAchIds(all, profileKey);
+  for (const a of fresh) queueAchievementPopup(a);
+}
+
+function queueAchievementPopup(ach) {
+  _achPopupQueue.push(ach);
+  if (!_achPopupActive) showNextAchievementPopup();
+}
+
+function showNextAchievementPopup() {
+  if (_achPopupQueue.length === 0) { _achPopupActive = false; return; }
+  _achPopupActive = true;
+  const ach = _achPopupQueue.shift();
+  const el = document.createElement("div");
+  el.className = "ach-popup";
+  el.innerHTML = `
+    <div class="ach-popup-icon">${achievementIconHTML(ach, "ach-popup-icon-inner")}</div>
+    <div class="ach-popup-text">
+      <div class="ach-popup-title">Achievement Unlocked!</div>
+      <div class="ach-popup-name">${escapeHtml(ach.name || "")}</div>
+      <div class="ach-popup-desc">${escapeHtml(ach.desc || "")}</div>
+    </div>`;
+  document.body.appendChild(el);
+  try { Sound.achievement(); } catch (e) {}
+  requestAnimationFrame(() => el.classList.add("show"));
+  let done = false;
+  const dismiss = () => {
+    if (done) return; done = true;
+    el.classList.remove("show");
+    setTimeout(() => { el.remove(); showNextAchievementPopup(); }, 350);
+  };
+  el.addEventListener("click", dismiss);
+  setTimeout(dismiss, 4200);
+}
+
 const ACHIEVEMENT_LIST = [
   { id:"q100", name:"Rookie", desc:"100 questions", type:"total", threshold:100, icon:"百" },
   { id:"q300", name:"Novice", desc:"300 questions", type:"total", threshold:300, icon:"参" },
@@ -5108,7 +5648,6 @@ const ACHIEVEMENT_LIST = [
   { id:"streak7", name:"Consistency", desc:"7 day streak", type:"streak", threshold:7, icon:"週" },
   { id:"streak14", name:"Two Week Streak", desc:"14 day streak", type:"streak", threshold:14, icon:"月" },
   { id:"streak30", name:"Locked In", desc:"30 day streak", type:"streak", threshold:30, icon:"年" },
-  // ── Category-specific 3333 ──
   { id:"cat3333_History", name:"Keskil Khan", desc:"3333 in History", type:"cat_specific", threshold:3333, icon:"汗", category:"History" },
   { id:"cat3333_Literature", name:"Keskil Collector", desc:"3333 in Literature", type:"cat_specific", threshold:3333, icon:"文", category:"Literature" },
   { id:"cat3333_Science", name:"Keskil Chemist", desc:"3333 in Science", type:"cat_specific", threshold:3333, icon:"科", category:"Science" },
@@ -5121,11 +5660,143 @@ const ACHIEVEMENT_LIST = [
   { id:"cat3333_Math", name:"Keskil Calculator", desc:"3333 in Math", type:"cat_specific", threshold:3333, icon:"数", category:"Math" },
   { id:"cat3333_Computer Science", name:"Keskil claude user", desc:"3333 in Computer Science", type:"cat_specific", threshold:3333, icon:"算", category:"Computer Science" },
   { id:"cat3333_Trash", name:"Keskil's Opps", desc:"3333 in Trash", type:"cat_specific", threshold:3333, icon:"屑", category:"Trash" },
-  // ── Endurance ──
   { id:"day25", name:"Full Round", desc:"Answer 25 questions in a day", type:"daily", threshold:25, icon:"準" },
   { id:"day50", name:"Prelims", desc:"Answer 50 questions in a day", type:"daily", threshold:50, icon:"予" },
   { id:"day100", name:"Playoffs", desc:"Answer 100 questions in a day", type:"daily", threshold:100, icon:"決" },
   { id:"day300", name:"Marathon", desc:"Answer 300 questions in a day", type:"daily", threshold:300, icon:"覇" },
+  {id:"ap-lit-mobydih",name:"Moby Dih",desc:"Power on a Moby Dick question",type:"answer_power",threshold:1,target:"moby dick",icon:"鯨"},
+  {id:"ap-lit-hope",name:"Hope is the Thing with Feathers",desc:"Power on an Emily Dickinson question",type:"answer_power",threshold:1,target:"emily dickinson",icon:"羽"},
+  {id:"ap-lit-raven",name:"The Raven",desc:"Power on an Edgar Allan Poe question",type:"answer_power",threshold:1,target:"edgar allan poe",icon:"鴉"},
+  {id:"ap-lit-shore",name:"On the Shore",desc:"Power on a Franz Kafka question",type:"answer_power",threshold:1,target:"franz kafka",icon:"岸"},
+  {id:"ap-lit-pewpew",name:"Pew Pew",desc:"Power on an Anton Chekhov question",type:"answer_power",threshold:1,target:"anton chekhov",icon:"銃"},
+  {id:"ap-lit-pottery",name:"Lover of Pottery",desc:"Power on a John Keats question",type:"answer_power",threshold:1,target:"john keats",icon:"壺"},
+  {id:"ap-lit-inimitable",name:"The Inimitable",desc:"Power on a Charles Dickens question",type:"answer_power",threshold:1,target:"charles dickens",icon:"筆"},
+  {id:"ap-lit-dear",name:"Dear Reader",desc:"Power on a Jane Austen question",type:"answer_power",threshold:1,target:"jane austen",icon:"淑"},
+  {id:"ap-lit-bronte",name:"Double Trouble",desc:"Power on Emily and Charlotte Brontë",type:"answer_power",threshold:2,target:["emily brontë","charlotte brontë"],distinct:true,icon:"姉"},
+  {id:"ap-lit-beowulf",name:"Epic of the North",desc:"Power on a Beowulf question",type:"answer_power",threshold:1,target:"beowulf",icon:"竜"},
+  {id:"ap-lit-magical",name:"Magical Realist",desc:"Power on a Gabriel García Márquez question",type:"answer_power",threshold:1,target:"gabriel garcía márquez",icon:"魔"},
+  {id:"ap-lit-norwegian",name:"Norwegian Wood",desc:"Power on a Haruki Murakami question",type:"answer_power",threshold:1,target:"haruki murakami",icon:"森"},
+  {id:"ap-lit-dante",name:"Descent into Hell",desc:"Power on a Dante question",type:"answer_power",threshold:1,target:"dante",icon:"獄"},
+  {id:"ap-lit-paradise",name:"Fall of Man",desc:"Power on a Paradise Lost question",type:"answer_power",threshold:1,target:"paradise lost",icon:"堕"},
+  {id:"ap-lit-twelfth",name:"Twelfth Night",desc:"Power on 12 different Shakespeare works",type:"answer_power",threshold:12,target:["hamlet","macbeth","othello","king lear","romeo and juliet","the tempest","a midsummer night's dream","julius caesar","antony and cleopatra","richard iii","henry v","much ado about nothing","twelfth night","the merchant of venice","as you like it","the taming of the shrew","the winter's tale","coriolanus","titus andronicus","henry iv"],distinct:true,icon:"劇"},
+  {id:"ap-hist-wars",name:"Wars of the Three Meanings",desc:"Power on War of the Three Henries, War of the Triple Alliance, and Punic Wars",type:"answer_power",threshold:3,target:["war of the three henries","war of the triple alliance","punic wars"],distinct:true,icon:"戦"},
+  {id:"ap-hist-teto",name:"Kasane Teto",desc:"Power on a Tito or Yugoslavia question",type:"answer_power",threshold:1,target:["tito","yugoslavia"],icon:"統"},
+  {id:"ap-hist-memento",name:"Memento Mori",desc:"Power on a Goths, Vandals, or Huns question",type:"answer_power",threshold:1,target:["goths","vandals","huns"],icon:"蛮"},
+  {id:"ap-hist-alexander",name:"Conqueror of the Known World",desc:"Power on 9 Alexander the Great questions",type:"answer_power",threshold:9,target:"alexander the great",icon:"帝"},
+  {id:"ap-hist-grant",name:"Unconditional Surrender Grant",desc:"Power on a Ulysses S. Grant question",type:"answer_power",threshold:1,target:"ulysses s. grant",icon:"将"},
+  {id:"ap-hist-luther",name:"Hater of German Serfs",desc:"Power on a Martin Luther question",type:"answer_power",threshold:1,target:"martin luther",icon:"改"},
+  {id:"ap-hist-capet",name:"House of Capet",desc:"Power on 16 questions answered Louis",type:"answer_power",threshold:16,target:"louis",icon:"冠"},
+  {id:"ap-hist-union",name:"Union Jack",desc:"Power on England, Scotland, Wales, Ireland, and Britain",type:"answer_power",threshold:5,target:["england","scotland","wales","ireland","britain"],distinct:true,icon:"連"},
+  {id:"ap-hist-autumn",name:"Autumn of Nations",desc:"Power on a Berlin Wall or Soviet Union question",type:"answer_power",threshold:1,target:["berlin wall","soviet union"],icon:"壁"},
+  {id:"ap-hist-fdj",name:"Freie Deutsche Jugend",desc:"Power on an East Germany question",type:"answer_power",threshold:1,target:"east germany",icon:"東"},
+  {id:"ap-hist-bismarck",name:"Iron and Blood",desc:"Power on a Bismarck question",type:"answer_power",threshold:1,target:"bismarck",icon:"血"},
+  {id:"ap-hist-dynasty",name:"Dynasty of Dynasties",desc:"Power on 8 different Chinese dynasties",type:"answer_power",threshold:8,target:["han","tang","song","ming","qing","yuan","qin","zhou","sui","shang","xia","jin"],distinct:true,icon:"朝"},
+  {id:"ap-hist-treatises",name:"Treatises",desc:"Power on Versailles, Westphalia, Utrecht, Paris, and Tordesillas",type:"answer_power",threshold:5,target:["versailles","westphalia","utrecht","paris","tordesillas"],distinct:true,icon:"約"},
+  {id:"ap-hist-sun",name:"Sun Never Sets",desc:"Power on a British Empire or Victoria question",type:"answer_power",threshold:1,target:["british empire","victoria"],icon:"日"},
+  {id:"ap-hist-japan",name:"Land of the Rising Sun",desc:"Power on a Japan question",type:"answer_power",threshold:1,target:"japan",icon:"和"},
+  {id:"ap-hist-mansa",name:"I'm Mansa Musa",desc:"Power on a Mansa Musa question",type:"answer_power",threshold:1,target:"mansa musa",icon:"金"},
+  {id:"ap-hist-sunking",name:"The Sun King",desc:"Power on a Louis XIV question",type:"answer_power",threshold:1,target:"louis xiv",icon:"陽"},
+  {id:"ap-hist-thatcher",name:"Milk Snatcher",desc:"Power on a Margaret Thatcher question",type:"answer_power",threshold:1,target:"margaret thatcher",icon:"鉄"},
+  {id:"ap-hist-genghis",name:"Great Conqueror",desc:"Power on a Genghis Khan question",type:"answer_power",threshold:1,target:"genghis khan",icon:"征"},
+  {id:"ap-hist-workers",name:"Workers of the World, Unite!",desc:"Power on 12 different communist revolutionaries",type:"answer_power",threshold:12,target:["stalin","lenin","trotsky","mao","che guevara","ho chi minh","castro","engels","rosa luxemburg","tito","kim il-sung","pol pot","deng xiaoping","zhou enlai","honecker","ceausescu"],distinct:true,icon:"革"},
+  {id:"ap-geo-siberia",name:"Birthplace of Keskil",desc:"Power on a Siberia question",type:"answer_power",threshold:1,target:"siberia",icon:"寒"},
+  {id:"ap-geo-newfin",name:"New-fin-land",desc:"Power on a Newfoundland question",type:"answer_power",threshold:1,target:"newfoundland",icon:"島"},
+  {id:"ap-geo-mormon",name:"Land of the Mormons",desc:"Power on a Utah question",type:"answer_power",threshold:1,target:"utah",icon:"塩"},
+  {id:"ap-geo-faithful",name:"Old Faithful",desc:"Power on a Yellowstone question",type:"answer_power",threshold:1,target:"yellowstone",icon:"泉"},
+  {id:"ap-geo-carnival",name:"Carnival",desc:"Power on a Brazil question",type:"answer_power",threshold:1,target:"brazil",icon:"祭"},
+  {id:"ap-geo-lion",name:"Lion City",desc:"Power on a Singapore question",type:"answer_power",threshold:1,target:"singapore",icon:"獅"},
+  {id:"ap-geo-harbour",name:"Fragrant Harbour",desc:"Power on a Hong Kong question",type:"answer_power",threshold:1,target:"hong kong",icon:"港"},
+  {id:"ap-geo-capitals",name:"Capital of Capitals",desc:"Power on a London question",type:"answer_power",threshold:1,target:"london",icon:"都"},
+  {id:"ap-geo-pearl",name:"Pearl of the Orient",desc:"Power on a Shanghai question",type:"answer_power",threshold:1,target:"shanghai",icon:"珠"},
+  {id:"ap-geo-snow",name:"Abode of Snow",desc:"Power on a Himalayas question",type:"answer_power",threshold:1,target:"himalayas",icon:"雪"},
+  {id:"ap-geo-penguins",name:"Penguins",desc:"Power on a Madagascar question",type:"answer_power",threshold:1,target:"madagascar",icon:"狐"},
+  {id:"ap-geo-arteries",name:"Arteries of the World",desc:"Power on Nile, Yangtze, Amazon, Mississippi, and Danube",type:"answer_power",threshold:5,target:["nile","yangtze","amazon","mississippi","danube"],distinct:true,icon:"河"},
+  {id:"ap-geo-potassium",name:"Greatest Exporter of Potassium",desc:"Power on a Kazakhstan question",type:"answer_power",threshold:1,target:"kazakhstan",icon:"鉀"},
+  {id:"ap-geo-stans",name:"Stan(d) Up Comedy",desc:"Power on 6 different -stan countries",type:"answer_power",threshold:6,target:["kazakhstan","uzbekistan","turkmenistan","kyrgyzstan","tajikistan","afghanistan","pakistan"],distinct:true,icon:"邦"},
+  {id:"ap-geo-seas",name:"Seven Seas",desc:"Power on 7 oceans and major seas",type:"answer_power",threshold:7,target:["pacific","atlantic","indian","arctic","southern","mediterranean","caribbean","baltic","black","red","caspian","north sea"],distinct:true,icon:"海"},
+  {id:"ap-sci-alloys",name:"Too Complicated for Simple Wikipedia",desc:"Power on an alloys question",type:"answer_power",threshold:1,target:"alloys",icon:"合"},
+  {id:"ap-sci-mito",name:"Powerhouse of the Cell",desc:"Power on a mitochondria question",type:"answer_power",threshold:1,target:"mitochondria",icon:"粒"},
+  {id:"ap-sci-blackhole",name:"Hail Mary",desc:"Power on a black hole question",type:"answer_power",threshold:1,target:"black hole",icon:"孔"},
+  {id:"ap-sci-nobel",name:"Nobel Intentions",desc:"Power on a Nobel Prize-winning discovery",type:"answer_power",threshold:1,target:["nobel prize","nobel"],icon:"賞"},
+  {id:"ap-sci-dna",name:"Double Helix",desc:"Power on a DNA question",type:"answer_power",threshold:1,target:"dna",icon:"螺"},
+  {id:"ap-sci-gut",name:"Gut Instinct",desc:"Power on a digestive system or enzyme question",type:"answer_power",threshold:1,target:["digestive","enzyme","stomach","intestine"],icon:"腸"},
+  {id:"ap-sci-ideal",name:"Ideal Gas",desc:"Power on a thermodynamics question",type:"answer_power",threshold:1,target:"thermodynamics",icon:"熱"},
+  {id:"ap-sci-em",name:"Electromagnetism",desc:"Power on an electromagnetism question",type:"answer_power",threshold:1,target:"electromagnetism",icon:"磁"},
+  {id:"ap-sci-schrodinger",name:"Schrödinger's Cat",desc:"Power on a quantum mechanics question",type:"answer_power",threshold:1,target:"quantum",icon:"量"},
+  {id:"ap-sci-lagrangian",name:"Lagrangian",desc:"Power on a classical mechanics question",type:"answer_power",threshold:1,target:"lagrangian",icon:"力"},
+  {id:"ap-sci-selection",name:"Law of the Jungle",desc:"Power on a natural selection question",type:"answer_power",threshold:1,target:"natural selection",icon:"進"},
+  {id:"ap-sci-water",name:"Universal Solvent",desc:"Power on a water question",type:"answer_power",threshold:1,target:"water",icon:"水"},
+  {id:"ap-sci-standard",name:"Standard Model",desc:"Power on a particle physics question",type:"answer_power",threshold:1,target:["standard model","particle physics"],icon:"粒"},
+  {id:"ap-sci-speciation",name:"Speciation",desc:"Power on an evolution or speciation question",type:"answer_power",threshold:1,target:"speciation",icon:"種"},
+  {id:"ap-sci-chloroplast",name:"Chloroplast",desc:"Power on a photosynthesis question",type:"answer_power",threshold:1,target:"photosynthesis",icon:"葉"},
+  {id:"ap-sci-mendel",name:"Mendelian",desc:"Power on a genetics question",type:"answer_power",threshold:1,target:"genetics",icon:"遺"},
+  {id:"ap-sci-aero",name:"Curious",desc:"Power on an aerospace or aerodynamics question",type:"answer_power",threshold:1,target:["aerospace","aerodynamics","airfoil"],icon:"翼"},
+  {id:"ap-sci-fibonacci",name:"Fibonacci",desc:"Power on a golden ratio question",type:"answer_power",threshold:1,target:"golden ratio",icon:"比"},
+  {id:"ap-sci-gaussian",name:"Gaussian",desc:"Power on a Gauss or normal distribution question",type:"answer_power",threshold:1,target:["gauss","normal distribution"],icon:"鐘"},
+  {id:"ap-sci-sort",name:"Stalin Sort",desc:"Power on a sorting question",type:"answer_power",threshold:1,target:"sorting",icon:"序"},
+  {id:"ap-sci-turing",name:"Turing Test",desc:"Power on an AI or machine learning question",type:"answer_power",threshold:1,target:["ai","machine learning","artificial intelligence","neural network"],icon:"機"},
+  {id:"ap-sci-compiler",name:"Compiler",desc:"Power on a compiler or programming language question",type:"answer_power",threshold:1,target:["compiler","programming language"],icon:"訳"},
+  {id:"ap-sci-kernels",name:"Kernels",desc:"Power on an operating system question",type:"answer_power",threshold:1,target:["linux","unix","windows","operating system"],icon:"核"},
+  {id:"ap-sci-sun",name:"The Sun Is a Deadly Laser",desc:"Power on a question about the sun",type:"answer_power",threshold:1,target:"sun",icon:"燃"},
+  {id:"ap-sci-v12",name:"V12 Engine",desc:"Power on an internal combustion or Otto cycle question",type:"answer_power",threshold:1,target:["internal combustion","otto cycle","engine"],icon:"輪"},
+  {id:"ap-sci-stress",name:"Stress-Strain Curve",desc:"Power on a materials science question",type:"answer_power",threshold:1,target:["materials science","stress-strain","material"],icon:"張"},
+  {id:"ap-sci-hydrology",name:"Water Cycle",desc:"Power on a hydrology or precipitation question",type:"answer_power",threshold:1,target:["hydrology","precipitation","water cycle"],icon:"雨"},
+  {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different element questions",type:"answer_power",threshold:7,target:["hydrogen","helium","lithium","beryllium","boron","carbon","nitrogen","oxygen","fluorine","neon","sodium","magnesium","aluminium","silicon","phosphorus","sulfur","chlorine","argon","potassium","calcium","iron","copper","zinc","silver","gold","mercury","lead","uranium","platinum","titanium","nickel","cobalt","manganese","chromium","vanadium","bromine","iodine","strontium","barium","radium","thorium"],distinct:true,icon:"元"},
+  {id:"ap-sci-spectroscopy",name:"Spectroscopy",desc:"Power on NMR, IR, UV-Vis, mass spec, and X-ray crystallography",type:"answer_power",threshold:5,target:["nmr","ir","uv-vis","mass spectrometry","x-ray crystallography"],distinct:true,icon:"光"},
+  {id:"ap-sci-solvay",name:"Solvay Conference",desc:"Power on Einstein, Bohr, Heisenberg, Dirac, Pauli, Curie, and Schrödinger",type:"answer_power",threshold:7,target:["einstein","bohr","heisenberg","dirac","pauli","curie","schrödinger"],distinct:true,icon:"学"},
+  {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on Apollo, Gemini, Mercury, Soyuz, and Space Shuttle",type:"answer_power",threshold:5,target:["apollo","gemini","mercury","soyuz","space shuttle"],distinct:true,icon:"宙"},
+  {id:"ap-myth-lightning",name:"God of Lightning",desc:"Power on Thor, Zeus, and Indra",type:"answer_power",threshold:3,target:["thor","zeus","indra"],distinct:true,icon:"雷"},
+  {id:"ap-myth-freaky",name:"Freaky Deaky",desc:"Power on an Oedipus Rex question",type:"answer_power",threshold:1,target:"oedipus",icon:"眼"},
+  {id:"ap-myth-underworld",name:"Underworld",desc:"Power on Anubis, Hades, and Osiris",type:"answer_power",threshold:3,target:["anubis","hades","osiris"],distinct:true,icon:"冥"},
+  {id:"ap-myth-monkey",name:"Great Sage Equal to Heaven",desc:"Power on a Monkey King or Journey to the West question",type:"answer_power",threshold:1,target:["monkey king","journey to the west","sun wukong"],icon:"猿"},
+  {id:"ap-myth-trickster",name:"Trickster God",desc:"Power on Loki and Coyote",type:"answer_power",threshold:2,target:["loki","coyote"],distinct:true,icon:"狡"},
+  {id:"ap-myth-gilgamesh",name:"Uuudreeeeeeeaaaa",desc:"Power on a Gilgamesh question",type:"answer_power",threshold:1,target:"gilgamesh",icon:"王"},
+  {id:"ap-myth-ragnarok",name:"Ragnarök",desc:"Power on a Norse apocalypse question",type:"answer_power",threshold:1,target:"ragnarök",icon:"滅"},
+  {id:"ap-myth-shinto",name:"Shinto Shrine",desc:"Power on a Japanese mythology question",type:"answer_power",threshold:1,target:"japanese myth",icon:"社"},
+  {id:"ap-myth-morrigan",name:"The Morrigan",desc:"Power on a Celtic mythology question",type:"answer_power",threshold:1,target:"celtic",icon:"巫"},
+  {id:"ap-myth-genesis",name:"Genesis",desc:"Power on a creation myth question",type:"answer_power",threshold:1,target:"creation myth",icon:"創"},
+  {id:"ap-myth-quetzal",name:"Feathered Serpent",desc:"Power on a Quetzalcoatl question",type:"answer_power",threshold:1,target:"quetzalcoatl",icon:"蛇"},
+  {id:"ap-myth-labours",name:"The Labours",desc:"Power on a Heracles or Hercules question",type:"answer_power",threshold:1,target:"heracles",icon:"獅"},
+  {id:"ap-myth-theogony",name:"Theogony",desc:"Power on 12 different Greek deities or Titans",type:"answer_power",threshold:12,target:["zeus","hera","poseidon","demeter","athena","apollo","artemis","ares","hephaestus","aphrodite","hermes","dionysus","hades","hestia","cronus","rhea","oceanus","tethys","hyperion","theia","coeus","phoebe","mnemosyne","themis","crius","iapetus","atlas","prometheus","epimetheus"],distinct:true,icon:"神"},
+  {id:"ap-myth-iliad",name:"Iliad Heroes",desc:"Power on Achilles, Hector, Agamemnon, Odysseus, Ajax, Diomedes, and Patroclus",type:"answer_power",threshold:7,target:["achilles","hector","agamemnon","odysseus","ajax","diomedes","patroclus"],distinct:true,icon:"英"},
+  {id:"ap-myth-allfather",name:"Allfather's Blessing",desc:"Power on 10 different Norse mythology questions",type:"answer_power",threshold:10,target:["odin","thor","loki","freyja","freyr","baldr","tyr","heimdall","frigg","hel","jörmungandr","fenrir","yggdrasil","valhalla","ragnarök","valkyrie","njord","skadi","mimir","norns"],distinct:true,icon:"北"},
+  {id:"ap-pop-kanye",name:"I Guess We'll Never Know",desc:"Power on a Kanye West question",type:"answer_power",threshold:1,target:"kanye",icon:"韻"},
+  {id:"ap-pop-mj",name:"King of Pop",desc:"Power on a Michael Jackson question",type:"answer_power",threshold:1,target:"michael jackson",icon:"舞"},
+  {id:"ap-pop-starwars",name:"Skywalker",desc:"Power on a Star Wars question",type:"answer_power",threshold:1,target:"star wars",icon:"星"},
+  {id:"ap-pop-minecraft",name:"Master of the Craft",desc:"Power on a Minecraft question",type:"answer_power",threshold:1,target:"minecraft",icon:"塊"},
+  {id:"ap-pop-nba",name:"Point Guard",desc:"Power on an NBA question",type:"answer_power",threshold:1,target:"nba",icon:"球"},
+  {id:"ap-pop-lebron",name:"LeSunshine",desc:"Power on a LeBron James question",type:"answer_power",threshold:1,target:"lebron james",icon:"覇"},
+  {id:"ap-pop-zelda",name:"Hyrule",desc:"Power on a Legend of Zelda question",type:"answer_power",threshold:1,target:"zelda",icon:"剣"},
+  {id:"ap-pop-fortnite",name:"Battle Royale",desc:"Power on a Fortnite or battle royale question",type:"answer_power",threshold:1,target:["fortnite","battle royale"],icon:"闘"},
+  {id:"ap-pop-harry",name:"Wizarding World",desc:"Power on a Harry Potter question",type:"answer_power",threshold:1,target:"harry potter",icon:"杖"},
+  {id:"ap-pop-lol",name:"Get a Life",desc:"Power on a League of Legends question",type:"answer_power",threshold:1,target:"league of legends",icon:"戯"},
+  {id:"ap-pop-nfl",name:"Touchdown",desc:"Power on an NFL question",type:"answer_power",threshold:1,target:"nfl",icon:"突"},
+  {id:"ap-pop-nintendo",name:"64",desc:"Power on a Nintendo franchise question",type:"answer_power",threshold:1,target:"nintendo",icon:"遊"},
+  {id:"ap-pop-mario",name:"Wahoo!",desc:"Power on a Mario question",type:"answer_power",threshold:1,target:"mario",icon:"跳"},
+  {id:"ap-fa-requiem",name:"Requiem",desc:"Power on a Mozart question",type:"answer_power",threshold:1,target:"mozart",icon:"奏"},
+  {id:"ap-fa-messiah",name:"Messiah",desc:"Power on a Handel question",type:"answer_power",threshold:1,target:"handel",icon:"唱"},
+  {id:"ap-fa-tmnt",name:"Teenage Mutant Ninja Turtles",desc:"Power on Raphael, Michelangelo, Donatello, and da Vinci",type:"answer_power",threshold:4,target:["raphael","michelangelo","donatello","da vinci"],distinct:true,icon:"絵"},
+  {id:"ap-fa-wagner",name:"Total Work of Art",desc:"Power on a Wagner question",type:"answer_power",threshold:1,target:"wagner",icon:"楽"},
+  {id:"ap-fa-rodin",name:"The Thinker",desc:"Power on a Rodin question",type:"answer_power",threshold:1,target:"rodin",icon:"想"},
+  {id:"ap-fa-monet",name:"Water Lilies",desc:"Power on a Monet question",type:"answer_power",threshold:1,target:"monet",icon:"蓮"},
+  {id:"ap-fa-lascala",name:"La Scala",desc:"Power on an Italian opera question",type:"answer_power",threshold:1,target:"opera",icon:"歌"},
+  {id:"ap-fa-ring",name:"Ring Cycle",desc:"Power on a Wagner Ring Cycle question",type:"answer_power",threshold:1,target:"ring cycle",icon:"環"},
+  {id:"ap-fa-debussy",name:"Clair de Lune",desc:"Power on a Debussy question",type:"answer_power",threshold:1,target:"debussy",icon:"月"},
+  {id:"ap-fa-vangogh",name:"Earless Man",desc:"Power on a van Gogh question",type:"answer_power",threshold:1,target:"van gogh",icon:"耳"},
+  {id:"ap-fa-dali",name:"The Persistence of Memory",desc:"Power on a Dalí question",type:"answer_power",threshold:1,target:"dalí",icon:"夢"},
+  {id:"ap-fa-impressionist",name:"Impressionist Circle",desc:"Power on Monet, Renoir, Degas, Cézanne, Pissarro, and Morisot",type:"answer_power",threshold:6,target:["monet","renoir","degas","cézanne","pissarro","morisot"],distinct:true,icon:"印"},
+  {id:"ap-fa-string",name:"String Quartets",desc:"Power on 4 different chamber music questions",type:"answer_power",threshold:4,target:["string quartet","chamber music","sonata","quartet"],distinct:true,icon:"弦"},
+  {id:"ap-phil-locke",name:"Essay Competition",desc:"Power on a John Locke question",type:"answer_power",threshold:1,target:"john locke",icon:"白"},
+  {id:"ap-phil-athens",name:"The Three Meanings of Athens",desc:"Power on Plato, Aristotle, and Socrates",type:"answer_power",threshold:3,target:["plato","aristotle","socrates"],distinct:true,icon:"知"},
+  {id:"ap-phil-cave",name:"The Cave Allegory",desc:"Power on a Plato's Republic question",type:"answer_power",threshold:1,target:"republic",icon:"洞"},
+  {id:"ap-phil-marx",name:"Gen Z Larper Handbook",desc:"Power on a Marx question",type:"answer_power",threshold:1,target:"marx",icon:"階"},
+  {id:"ap-phil-nietzsche",name:"Übermensch",desc:"Power on a Nietzsche question",type:"answer_power",threshold:1,target:"nietzsche",icon:"超"},
+  {id:"ap-phil-hobbes",name:"Leviathan",desc:"Power on a Hobbes question",type:"answer_power",threshold:1,target:"hobbes",icon:"獣"},
+  {id:"ap-phil-exist",name:"Existentialism",desc:"Power on a Sartre or Camus question",type:"answer_power",threshold:1,target:["sartre","camus"],icon:"存"},
+  {id:"ap-phil-machiavelli",name:"Il Principe",desc:"Power on a Machiavelli question",type:"answer_power",threshold:1,target:"machiavelli",icon:"君"},
+  {id:"ap-phil-kant",name:"Categorical Imperative",desc:"Power on a Kant question",type:"answer_power",threshold:1,target:"kant",icon:"徳"},
+  {id:"ap-phil-enlightened",name:"Enlightened Monarch",desc:"Power on Locke, Hume, Kant, Rousseau, Voltaire, and Montesquieu",type:"answer_power",threshold:6,target:["locke","hume","kant","rousseau","voltaire","montesquieu"],distinct:true,icon:"啓"},
+  {id:"ap-phil-school",name:"The School of Athens",desc:"Power on 5 figures from The School of Athens",type:"answer_power",threshold:5,target:["plato","aristotle","socrates","pythagoras","euclid","diogenes","heraclitus","ptolemy","zoroaster","raphael"],distinct:true,icon:"学"},
 ];
 
 function showAvatarPicker() {
@@ -5155,11 +5826,12 @@ function showAvatarPicker() {
   ).join("");
   av.appendChild(picker);
   picker.querySelectorAll(".avatar-option").forEach(opt => {
-    opt.addEventListener("click", () => {
+    opt.addEventListener("click", (e) => {
+      e.stopPropagation();
       state.avatar = opt.dataset.avatar;
       lsSet("qb-avatar", state.avatar);
-      av.textContent = state.avatar;
       picker.remove();
+      av.textContent = state.avatar;
     });
   });
 }
@@ -5199,15 +5871,11 @@ async function importData(e) {
     const data = JSON.parse(text);
     if (!data.version) throw new Error("Invalid export file");
 
-    // Import session entries via API
     if (data.sessions) {
-      // Cannot easily re-import sessions without question data
       alert("Session history import requires question database. Starred questions will be imported.");
     }
     if (data.starred) {
       for (const s of data.starred) {
-        // Only star if not already starred — a blind toggle would UNSTAR
-        // questions you already have.
         try {
           const cur = await API.get(`/api/starred/check?questionId=${encodeURIComponent(s.question_id)}&type=${s.type}`);
           if (!cur.starred) await API.post("/api/starred/toggle", { questionId: s.question_id, type: s.type });
@@ -5226,7 +5894,6 @@ async function importData(e) {
   e.target.value = "";
 }
 
-// ── Database Screen (tabbed: Search / Browse Sets / Frequency / Starred) ──
 let _dbWired = false;
 let _dbStarred = null;
 async function refreshDbStarred() {
@@ -5238,9 +5905,6 @@ async function refreshDbStarred() {
   } catch { _dbStarred = new Set(); }
 }
 
-// Plugin-provided starred collections (e.g. starred flashcards) get their OWN
-// Database tab. Generic: ctx.registerStarredProvider({ id, title, render(el) });
-// the tab exists only while the plugin is enabled.
 function renderDbProviderTabs() {
   const strip = document.querySelector(".db-tabs");
   if (!strip) return;
@@ -5249,7 +5913,7 @@ function renderDbProviderTabs() {
     const b = document.createElement("button");
     b.className = "db-tab prov";
     b.dataset.tab = "prov:" + p.id;
-    b.textContent = p.title.replace(/^STARRED\s+/i, "\u2605 ");
+    b.textContent = "\u2605 " + p.title.replace(/^STARRED\s+/i, "");
     b.addEventListener("click", () => {
       state.dbTab = b.dataset.tab;
       document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x === b));
@@ -5268,7 +5932,6 @@ function loadDatabase() {
     const setAll = (compact) => {
       state.viewMode = compact ? "compact" : "expanded";
       lsSet("qb-viewmode", state.viewMode);
-      // flip the cards already on screen (works on plugin tabs too)
       document.querySelectorAll("#db-content .qcard").forEach((c) => {
         c.classList.toggle("compact", compact);
         c.classList.toggle("expanded", !compact);
@@ -5306,7 +5969,6 @@ async function renderProviderTab(id) {
   catch { host.innerHTML = '<div class="text-muted" style="padding:16px">Failed to load.</div>'; }
 }
 
-// ── Search tab ──
 let _dbTimer = null;
 const DIFFICULTY_NAMES = ["Pop Culture", "Middle School", "Easy HS", "Regular HS", "Hard HS", "National HS", "Easy College", "Medium College", "Regionals College", "Nationals College", "Open"];
 function renderSearchTab() {
@@ -5322,7 +5984,7 @@ function renderSearchTab() {
       '<select id="db-cat-filter" class="db-input db-input-sm"><option value="">All categories</option></select>' +
       '<select id="db-sub-filter" class="db-input db-input-sm"><option value="">All subcategories</option></select>' +
       '<select id="db-alt-filter" class="db-input db-input-sm"><option value="">All alternate subcategories</option></select>' +
-      '<label class="db-opt"><input type="checkbox" id="db-exact"> Exact phrase</label>' +
+      '<label class="db-opt"><input type="checkbox" id="db-exact" checked> Exact phrase</label>' +
       '<label class="db-opt"><input type="checkbox" id="db-hide-ans"> Hide answers</label>' +
     "</div>" +
     '<div class="db-toolbar db-toolbar-adv">' +
@@ -5338,12 +6000,34 @@ function renderSearchTab() {
   fillCategoryDropdown(document.getElementById("db-cat-filter")).then(() => {
     wireCatCascade(document.getElementById("db-cat-filter"), document.getElementById("db-sub-filter"), document.getElementById("db-alt-filter"), deb);
   });
-  c.querySelectorAll("#db-search-input, #db-qtype, #db-search-type, #db-exact, #db-hide-ans, .db-diff-cb, #db-year-min, #db-year-max")
+  c.querySelectorAll("#db-search-input, #db-qtype, #db-search-type, #db-exact, .db-diff-cb, #db-year-min, #db-year-max")
     .forEach((el) => el.addEventListener(el.type === "text" || el.type === "number" || el.type === "range" ? "input" : "change", deb));
-  performDbSearch(); // blank box → browse all (with whatever filters are set)
+  // Hiding answers is instant — a CSS cover over each answer, no re-query.
+  document.getElementById("db-hide-ans").addEventListener("change", (e) => {
+    document.getElementById("db-results")?.classList.toggle("db-hide-ans", e.target.checked);
+    document.querySelectorAll("#db-results .ans-toggle.shown").forEach((t) => t.classList.remove("shown"));
+  });
+  performDbSearch();
 }
 
-async function performDbSearch() {
+// Indeterminate loading bar used wherever a query/scan takes noticeable time.
+function loadingBarHtml(label) {
+  return `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div><span>${escapeHtml(label || "Loading…")}</span></div>`;
+}
+
+let _dbPage = 0;
+const DB_PAGE_SIZE = 50;
+function dbPagerHtml(hasMore) {
+  return '<div class="db-pager"><button class="btn btn-sm" id="db-prev"' + (_dbPage <= 0 ? " disabled" : "") + ">‹ Prev</button>" +
+    '<span class="text-muted" style="font-size:12px">Page ' + (_dbPage + 1) + "</span>" +
+    '<button class="btn btn-sm" id="db-next"' + (hasMore ? "" : " disabled") + ">Next ›</button></div>";
+}
+function wireDbPager(container) {
+  const prev = container.querySelector("#db-prev"); if (prev) prev.onclick = () => performDbSearch({ page: _dbPage - 1 });
+  const next = container.querySelector("#db-next"); if (next) next.onclick = () => performDbSearch({ page: _dbPage + 1 });
+}
+async function performDbSearch(opts) {
+  _dbPage = opts && opts.page != null ? Math.max(0, opts.page) : 0;
   const query = document.getElementById("db-search-input")?.value?.trim();
   const qtype = document.getElementById("db-qtype")?.value || "all";
   const textType = document.getElementById("db-search-type")?.value || "all";
@@ -5361,9 +6045,10 @@ async function performDbSearch() {
   if (fill) { fill.style.left = ((yearMin - 2000) / 26) * 100 + "%"; fill.style.right = ((2026 - yearMax) / 26) * 100 + "%"; }
   const container = document.getElementById("db-results");
   if (!container) return;
+  container.classList.toggle("db-hide-ans", !!hideAns);
 
   const common =
-    "limit=100" +
+    `limit=${DB_PAGE_SIZE}&offset=${_dbPage * DB_PAGE_SIZE}` +
     (cat ? `&categories=${encodeURIComponent(cat)}` : "") +
     (sub ? `&subcategories=${encodeURIComponent(sub)}` : "") +
     (alt ? `&alternateSubcategories=${encodeURIComponent(alt)}` : "") +
@@ -5371,44 +6056,48 @@ async function performDbSearch() {
     (yearMin > 2000 ? `&yearMin=${yearMin}` : "") +
     (yearMax < 2026 ? `&yearMax=${yearMax}` : "");
 
-  // Blank search box → browse all questions matching the other filters (uses the
-  // plain query endpoint since FTS needs a term).
   const tokens = query ? (query.match(/[\p{L}\p{N}]+/gu) || []) : [];
   if (!query || !tokens.length) {
-    container.innerHTML = '<div class="text-muted" style="padding:16px">Loading…</div>';
+    container.innerHTML = loadingBarHtml("Loading questions…");
     try {
       const [t, b] = await Promise.all([
-        qtype === "bonus" ? Promise.resolve({ rows: [] }) : API.get(`/api/tossups/query?random=1&${common}`),
-        qtype === "tossup" ? Promise.resolve({ rows: [] }) : API.get(`/api/bonuses/query?random=1&${common}`),
+        qtype === "bonus" ? Promise.resolve({ rows: [] }) : API.get(`/api/tossups/query?${common}`),
+        qtype === "tossup" ? Promise.resolve({ rows: [] }) : API.get(`/api/bonuses/query?${common}`),
       ]);
       const rows = [...(t.rows || []), ...(b.rows || [])];
-      container.innerHTML = rows.length ? rows.slice(0, 100).map((q) => renderSearchResult(q, hideAns)).join("") : '<div class="text-muted" style="padding:24px;text-align:center">No questions match these filters</div>';
+      const perSource = Math.max((t.rows || []).length, (b.rows || []).length);
+      if (!rows.length) {
+        container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">' + (_dbPage > 0 ? "No more results" : "No questions match these filters") + "</div>" + (_dbPage > 0 ? dbPagerHtml(false) : "");
+      } else {
+        container.innerHTML = rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(perSource >= DB_PAGE_SIZE);
+      }
+      wireDbPager(container);
     } catch (e) { container.innerHTML = '<div class="text-muted" style="padding:16px">Failed: ' + escapeHtml(e.message || "") + "</div>"; }
     return;
   }
 
-  // Sanitize into FTS5-safe tokens (each quoted) so punctuation like . : - ( )
-  // can't trigger an "fts5: syntax error". Quote terms; phrase-quote when exact.
   const base = exact ? `"${tokens.join(" ")}"` : tokens.map((t) => `"${t}"`).join(" ");
-  // FTS column names differ per table (bonuses have no question_sanitized).
   const tossupFts = textType === "answer" ? `answer_sanitized : (${base})` : textType === "question" ? `question_sanitized : (${base})` : base;
   const bonusFts = textType === "answer" ? `answers_sanitized : (${base})` : textType === "question" ? `{leadin_sanitized parts_sanitized} : (${base})` : base;
 
-  container.innerHTML = '<div class="text-muted" style="padding:16px">Searching…</div>';
+  container.innerHTML = loadingBarHtml("Searching…");
   try {
     const [t, b] = await Promise.all([
       qtype === "bonus" ? Promise.resolve({ rows: [] }) : API.get(`/api/tossups/search?query=${encodeURIComponent(tossupFts)}&${common}`),
       qtype === "tossup" ? Promise.resolve({ rows: [] }) : API.get(`/api/bonuses/search?query=${encodeURIComponent(bonusFts)}&${common}`),
     ]);
     const rows = [...(t.rows || []), ...(b.rows || [])];
-    if (rows.length === 0) { container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">No results</div>'; return; }
-    container.innerHTML = rows.slice(0, 100).map((q) => renderSearchResult(q, hideAns)).join("");
+    const perSource = Math.max((t.rows || []).length, (b.rows || []).length);
+    if (rows.length === 0) {
+      container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">' + (_dbPage > 0 ? "No more results" : "No results") + "</div>" + (_dbPage > 0 ? dbPagerHtml(false) : "");
+    } else {
+      container.innerHTML = rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(perSource >= DB_PAGE_SIZE);
+    }
+    wireDbPager(container);
   } catch (e) { container.innerHTML = '<div class="text-muted" style="padding:16px">Search failed: ' + escapeHtml(e.message || "") + "</div>"; }
 }
 
-// One question (tossup or bonus) as a unified qcard. Compact = answer +
-// category/year/difficulty; expanded = the ENTIRE question text.
-function renderSearchResult(q, hideAns) {
+function renderSearchResult(q) {
   const isTossup = q.question_sanitized != null;
   const type = isTossup ? "tossup" : "bonus";
   const starred = _dbStarred && _dbStarred.has(type + ":" + q.id);
@@ -5426,7 +6115,7 @@ function renderSearchResult(q, hideAns) {
     answerHtmlStr = answers.map((a, i) => answerLineHtml(rawAnswers[i], a)).join(" / ") || "?";
     body = `<div class="qcard-text">${escapeHtml(q.leadin_sanitized || "")}</div>` +
       parts.map((p, i) =>
-        `<div class="qcard-part">[10] ${escapeHtml(p)}${hideAns ? "" : `<br><span class="ans">ANSWER: ${answerLineHtml(rawAnswers[i], answers[i] || "")}</span>`}</div>`).join("");
+        `<div class="qcard-part">[10] ${escapeHtml(p)}<br><span class="ans-toggle"><span class="ans">ANSWER: ${answerLineHtml(rawAnswers[i], answers[i] || "")}</span></span></div>`).join("");
   }
   if (q.set_name) body += `<div class="qcard-foot"><span class="qcard-note">${escapeHtml(q.set_name)}${q.set_year ? " (" + q.set_year + ")" : ""}</span></div>`;
   return qcardHtml({
@@ -5436,17 +6125,28 @@ function renderSearchResult(q, hideAns) {
     altSub: q.alternate_subcategory,
     year: q.set_year,
     difficulty: q.difficulty,
-    sideHtml: `<span class="pill">${isTossup ? "TU" : "BO"}</span>${star}`,
-    answerHtml: hideAns ? null : `Answer: <span class="ans">${answerHtmlStr}</span>`,
+    sideHtml: `<span class="star-btn db-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders" style="font-size:16px">+</span><span class="pill">${isTossup ? "TU" : "BO"}</span>${star}`,
+    answerHtml: `Answer: <span class="ans-toggle"><span class="ans">${answerHtmlStr}</span></span>`,
     bodyHtml: body,
   });
 }
 
-// ── Browse Sets tab (sets → packets → questions) ──
 let _dbSets = null;
+// Where the sets browser is drilled to — back steps up one level (packet →
+// set → set list) instead of leaving the Database screen.
+let _dbBrowse = null;
+function dbBrowseBack() {
+  if (!_dbBrowse) return false;
+  if (!document.querySelector("#database-screen.active")) return false;
+  if ((state.dbTab || "search") !== "sets") return false;
+  if (_dbBrowse.pkt != null) { openSet(_dbBrowse.set); return true; }
+  renderSetsTab();
+  return true;
+}
 async function renderSetsTab() {
+  _dbBrowse = null;
   const c = document.getElementById("db-content"); if (!c) return;
-  c.innerHTML = '<div class="text-muted" style="padding:16px">Loading sets…</div>';
+  c.innerHTML = loadingBarHtml("Loading sets…");
   if (!_dbSets) { try { _dbSets = (await API.get("/api/sets")).sets || []; } catch { _dbSets = []; } }
   c.innerHTML =
     '<div class="db-toolbar"><input type="text" id="db-set-search" class="db-input" placeholder="Filter sets…" autocomplete="off"></div>' +
@@ -5464,6 +6164,7 @@ async function renderSetsTab() {
 }
 
 async function openSet(setName) {
+  _dbBrowse = { set: setName };
   const c = document.getElementById("db-content");
   c.innerHTML = `<div class="db-crumb"><button class="ext-link" id="db-back-sets">← Sets</button> / <strong>${escapeHtml(setName)}</strong></div><div class="db-browse" id="db-packet-list"><div class="text-muted" style="padding:12px">Loading packets…</div></div>`;
   document.getElementById("db-back-sets").addEventListener("click", renderSetsTab);
@@ -5479,23 +6180,42 @@ async function openSet(setName) {
 }
 
 async function openPacket(setName, packetNumber) {
+  _dbBrowse = { set: setName, pkt: packetNumber };
   const c = document.getElementById("db-content");
-  c.innerHTML = `<div class="db-crumb"><button class="ext-link" id="db-back-sets">← Sets</button> / <button class="ext-link" id="db-back-set">${escapeHtml(setName)}</button> / <strong>Packet ${packetNumber}</strong></div><div class="search-results" id="db-pkt-content"><div class="text-muted" style="padding:12px">Loading…</div></div>`;
+  c.innerHTML =
+    `<div class="db-crumb"><button class="ext-link" id="db-back-sets">← Sets</button> / <button class="ext-link" id="db-back-set">${escapeHtml(setName)}</button> / <strong>Packet ${packetNumber}</strong>` +
+    `<span class="db-pkt-view"><button class="btn btn-sm" id="db-view-sections">Tossups → Bonuses</button><button class="btn btn-sm" id="db-view-inter">Interleaved</button></span></div>` +
+    `<div class="search-results" id="db-pkt-content">${loadingBarHtml("Loading packet…")}</div>`;
   document.getElementById("db-back-sets").addEventListener("click", renderSetsTab);
   document.getElementById("db-back-set").addEventListener("click", () => openSet(setName));
   let data = { tossups: [], bonuses: [] }, pErr = "";
   try { data = await API.get(`/api/packet-content?setName=${encodeURIComponent(setName)}&packetNumber=${packetNumber}`); } catch (e) { pErr = e.message || String(e); }
   const el = document.getElementById("db-pkt-content");
   if (pErr) { el.innerHTML = '<div class="text-muted" style="padding:12px">Couldn\'t load packet: ' + escapeHtml(pErr) + "</div>"; return; }
-  let html = "<div class='db-section-label'>TOSSUPS</div>" + (data.tossups || []).map((q) => renderSearchResult(q)).join("");
-  html += "<div class='db-section-label'>BONUSES</div>" + (data.bonuses || []).map((b) => renderSearchResult(b)).join("");
-  el.innerHTML = html || '<div class="text-muted" style="padding:12px">Empty packet</div>';
+  const tus = data.tossups || [], bos = data.bonuses || [];
+  const render = () => {
+    const inter = lsGet("qb-pkt-view") === "interleaved";
+    document.getElementById("db-view-sections")?.classList.toggle("btn-primary", !inter);
+    document.getElementById("db-view-inter")?.classList.toggle("btn-primary", inter);
+    let html = "";
+    if (inter) {
+      for (let i = 0; i < Math.max(tus.length, bos.length); i++) {
+        if (tus[i]) html += `<div class='db-section-label'>TOSSUP ${i + 1}</div>` + renderSearchResult(tus[i]);
+        if (bos[i]) html += `<div class='db-section-label'>BONUS ${i + 1}</div>` + renderSearchResult(bos[i]);
+      }
+    } else {
+      html = "<div class='db-section-label'>TOSSUPS</div>" + tus.map((q) => renderSearchResult(q)).join("");
+      html += "<div class='db-section-label'>BONUSES</div>" + bos.map((b) => renderSearchResult(b)).join("");
+    }
+    el.innerHTML = html || '<div class="text-muted" style="padding:12px">Empty packet</div>';
+  };
+  document.getElementById("db-view-sections").addEventListener("click", () => { lsSet("qb-pkt-view", "sections"); render(); });
+  document.getElementById("db-view-inter").addEventListener("click", () => { lsSet("qb-pkt-view", "interleaved"); render(); });
+  render();
 }
 
-// ── Cascading category → subcategory → alternate-subcategory dropdowns ──
 function _catAddOpt(sel, v) { const o = document.createElement("option"); o.value = v; o.textContent = v; sel.appendChild(o); }
 function _catSetDisabled(sel, dis) { sel.disabled = dis; sel.style.opacity = dis ? "0.5" : "1"; sel.title = dis ? "Not applicable for this selection" : ""; }
-// Wire a category/subcategory/alternate trio with the conditional-enable rules.
 function wireCatCascade(catSel, subSel, altSel, onChange) {
   _catSetDisabled(subSel, true); _catSetDisabled(altSel, true);
   catSel.addEventListener("change", async () => {
@@ -5505,7 +6225,6 @@ function wireCatCascade(catSel, subSel, altSel, onChange) {
     const cat = catSel.value;
     if (!cat) { _catSetDisabled(subSel, true); onChange(); return; }
     if (cat === "Social Science") {
-      // No real subcategories — the alternate subcategories ARE the subcat list.
       (ALT_SUBCATS["Social Science"] || []).forEach((a) => _catAddOpt(subSel, a));
       _catSetDisabled(subSel, false);
     } else {
@@ -5516,33 +6235,35 @@ function wireCatCascade(catSel, subSel, altSel, onChange) {
     }
     onChange();
   });
-  subSel.addEventListener("change", () => {
+  subSel.addEventListener("change", async () => {
     altSel.innerHTML = '<option value="">All alternate subcategories</option>';
     const cat = catSel.value, sub = subSel.value;
-    // Only an "Other …" subcategory (and not Social Science) unlocks alternates.
-    if (cat !== "Social Science" && /^Other /.test(sub) && ALT_SUBCATS[sub]) {
-      ALT_SUBCATS[sub].forEach((a) => _catAddOpt(altSel, a));
-      _catSetDisabled(altSel, false);
-    } else _catSetDisabled(altSel, true);
+    let alts = [];
+    if (cat && cat !== "Social Science" && sub) {
+      // Real alternate subcategories for this (category, subcategory) pair —
+      // the static ALT_SUBCATS table only covers "Other …" groups.
+      try {
+        alts = (await API.get(`/api/alternate-subcategories?type=tossups&category=${encodeURIComponent(cat)}&subcategory=${encodeURIComponent(sub)}`)).alternateSubcategories || [];
+      } catch {}
+      if (!alts.length && /^Other /.test(sub) && ALT_SUBCATS[sub]) alts = ALT_SUBCATS[sub];
+    }
+    if (sub !== subSel.value) return; // selection changed while we were fetching
+    if (alts.length) { alts.forEach((a) => _catAddOpt(altSel, a)); _catSetDisabled(altSel, false); }
+    else _catSetDisabled(altSel, true);
     onChange();
   });
   altSel.addEventListener("change", onChange);
 }
-// Returns { category, subcategory, alternateSubcategory } for the current trio.
 function getCatCascadeFilter(catSel, subSel, altSel) {
   const cat = catSel.value || "";
   if (!cat) return { category: "", subcategory: "", alternateSubcategory: "" };
   if (cat === "Social Science") {
-    // The "subcategory" picked here is really an alternate subcategory.
     return { category: "Social Science", subcategory: "", alternateSubcategory: subSel.value || "" };
   }
-  // When an alternate is chosen it implies its parent subcategory, so send only
-  // the alternate (it narrows; sending both would widen via OR in search).
-  if (!altSel.disabled && altSel.value) return { category: cat, subcategory: "", alternateSubcategory: altSel.value };
+  if (!altSel.disabled && altSel.value) return { category: cat, subcategory: subSel.value || "", alternateSubcategory: altSel.value };
   return { category: cat, subcategory: subSel.value || "", alternateSubcategory: "" };
 }
 
-// ── Frequency tab (most common answers per category/subcategory/alternate) ──
 async function renderFrequencyTab() {
   const c = document.getElementById("db-content"); if (!c) return;
   c.innerHTML =
@@ -5559,7 +6280,7 @@ async function renderFrequencyTab() {
   wireCatCascade(catSel, subSel, altSel, runFrequency);
   limSel.addEventListener("change", runFrequency);
   document.getElementById("freq-type")?.addEventListener("change", runFrequency);
-  runFrequency(); // show the All / All / All / 50 list by default
+  runFrequency();
 }
 
 async function runFrequency() {
@@ -5569,7 +6290,7 @@ async function runFrequency() {
   const limit = document.getElementById("freq-limit")?.value || 50;
   const qtype = document.getElementById("freq-type")?.value || "tossup";
   const el = document.getElementById("freq-results"); if (!el) return;
-  el.innerHTML = '<div class="text-muted" style="padding:16px">Loading…</div>';
+  el.innerHTML = loadingBarHtml("Building frequency list…");
   try {
     const data = await API.get(`/api/frequent-answers?limit=${limit}&qtype=${qtype}` + (cat ? `&category=${encodeURIComponent(cat)}` : "") + (sub ? `&subcategory=${encodeURIComponent(sub)}` : "") + (alt ? `&alternateSubcategory=${encodeURIComponent(alt)}` : ""));
     const rows = data.answers || [];
@@ -5581,7 +6302,6 @@ async function runFrequency() {
   } catch (e) { el.innerHTML = '<div class="text-muted" style="padding:16px">Failed to load: ' + escapeHtml(e.message || String(e)) + "</div>"; }
 }
 
-// Jump from a frequency-list answer to the Search tab, querying answer lines.
 function searchFromFrequency(answer, qtype) {
   state.dbTab = "search";
   document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === "search"));
@@ -5590,20 +6310,16 @@ function searchFromFrequency(answer, qtype) {
   const typeSel = document.getElementById("db-search-type");
   const qtypeSel = document.getElementById("db-qtype");
   if (typeSel) typeSel.value = "answer";
-  // Carry the frequency tab's tossup/bonus choice into the search filters.
   if (qtypeSel) qtypeSel.value = qtype === "bonus" ? "bonus" : qtype === "both" ? "all" : "tossup";
   if (inp) inp.value = answer;
   performDbSearch();
 }
 
-// ── Starred tab ──
 async function renderStarredTab() {
   const c = document.getElementById("db-content"); if (!c) return;
-  c.innerHTML = '<div class="search-results"><div class="text-muted">Loading starred…</div></div>';
+  c.innerHTML = '<div class="search-results">' + loadingBarHtml("Loading starred…") + "</div>";
   let items = [];
   try { items = (await API.get("/api/starred")).starred || []; } catch {}
-  // Buttons contributed by plugins (e.g. Flashcards/Coach "Run as…"), shown only
-  // while that plugin is enabled. run(items) receives [{type, question}, …].
   const actions = (window.QB && window.QB.getStarredActions) ? window.QB.getStarredActions() : [];
   const actionBtns = actions.map((a, i) => '<button class="btn btn-sm" data-star-action="' + i + '">' + escapeHtml(a.label) + "</button>").join("");
   c.innerHTML =
@@ -5614,12 +6330,11 @@ async function renderStarredTab() {
     "</div>" +
     '<div class="search-results" id="db-results"></div>';
   document.getElementById("db-practice-starred")?.addEventListener("click", () => {
-    // Flip the saved filter BEFORE entering practice so restoreFilterState
-    // (which runs async during setMode) lands with starred-only checked.
     try {
-      const saved = JSON.parse(localStorage.getItem("qb-filters")) || {};
-      saved.starredOnly = true;
-      lsSet("qb-filters", JSON.stringify(saved));
+      const b = loadFilterBlob();
+      b.tossups = b.tossups || {};
+      b.tossups.starredOnly = true;
+      lsSet("qb-filters", JSON.stringify(b));
     } catch {}
     const cb = $("#filter-starred"); if (cb) cb.checked = true;
     showScreen("practice-tossups");
@@ -5636,7 +6351,6 @@ async function renderStarredTab() {
   container.innerHTML = items.filter((it) => it.question).map((it) => renderSearchResult(it.question)).join("");
 }
 
-// ── Splash Screen ──────────────────────────────────────
 
 function startSplash() {
   const splash = document.getElementById("splash-screen");
@@ -5654,7 +6368,6 @@ function startSplash() {
   setTimeout(() => { splash.classList.add("hidden"); splash.innerHTML = ""; initApp(); }, 2400);
 }
 
-// ── Init ─────────────────────────────────────────────────
 
 function showSetupOverlay() {
   const overlay = document.getElementById("player-setup");
@@ -5662,7 +6375,6 @@ function showSetupOverlay() {
   overlay.classList.remove("hidden");
   document.getElementById("setup-username")?.focus();
 
-  // Avatar grid
   const grid = document.getElementById("setup-avatar-grid");
   const kaomojis = [
   "(◕‿◕)", "(◠‿◠)", "(◡‿◡)", "(.❛ᴗ❛.)", "(◍•ᴗ•◍)",
@@ -5710,33 +6422,29 @@ function initApp() {
   initTitle();
   renderPluginNav();
   updateKeyLabels();
-  // React to plugins being enabled/disabled (refresh hotkeys, nav, labels).
   window.QB?.on?.("plugins:changed", () => {
     ensureAllPluginHotkeys();
     renderPluginNav();
     updateKeyLabels();
     if (document.getElementById("settings-screen")?.classList.contains("active")) renderHotkeySettings();
   });
-  // Plugin toggles add/remove Database provider tabs.
   window.QB?.on?.("plugins:changed", () => {
     if (document.getElementById("database-screen")?.classList.contains("active")) {
       renderDbProviderTabs();
       if ((state.dbTab || "").startsWith("prov:")) { state.dbTab = "search"; renderDbTab(); }
     }
   });
-  // Theme switched on/off → refresh the Settings APPEARANCE section if visible.
   window.QB?.on?.("theme:change", () => {
     window.QB?.renderAppearanceSettings(document.getElementById("theme-appearance-host"));
   });
   showScreen("title");
-  // Overlay this profile's stored settings (async; refreshes controls).
-  loadProfileSettings().then(pruneOldSessions); // honor "auto-delete old sessions" on launch
+  loadStarredIds();
+  loadProfileSettings().then(pruneOldSessions);
   if (!localStorage.getItem("qb-setup-done") && !state.username) {
     showSetupOverlay();
   }
 }
 
-// Render plugin-provided nav buttons under "Extra:" in the title menu.
 function renderPluginNav() {
   const menu = document.querySelector("#title-screen .title-menu");
   if (!menu) return;
@@ -5756,7 +6464,6 @@ function renderPluginNav() {
 }
 
 function init() {
-  // Boot the extensions runtime first so an enabled theme applies before paint.
   if (window.QB) {
     window.QB.boot({
       api: API,
@@ -5768,16 +6475,13 @@ function init() {
         isBuzzed: state.isBuzzed,
         questionCount: state.questionCount,
         totalPoints: state.totalPoints,
+        avatar: state.avatar,
+        username: state.username,
       }),
       showScreen,
       goHome,
       setReadingHold: (v) => { ttsHold = !!v; },
-      // Let plugins (e.g. Multiplayer) reuse the Tossups Practice filters so they
-      // inherit every option: categories/subcategories (+weights), difficulties,
-      // year range, standard/powermark/starred. Strictness & reading speed too.
       getActiveFilters: () => getActiveFilters(),
-      // Ensure the practice category tree is populated (so a plugin that borrows
-      // the filter panel doesn't show an empty list if practice wasn't visited).
       ensureFiltersLoaded: () => { if (!document.querySelector("#category-filters .category-group")) setMode(state.mode || "tossups"); },
       resetPracticeFilters: () => resetPracticeFiltersToDefaults(),
       getPracticeConfig: () => ({
@@ -5791,16 +6495,21 @@ function init() {
       }),
       stripPronunciations: (t) => stripPronunciations(t),
       recordNav: (name) => recordNav(name),
+      collapseFilterSections: () => collapseFilterSections(),
       keyDisplay: (action) => keyDisplay(action),
       confirm: (message, onYes, opts) => confirmDialog(message, onYes, opts),
       openSaveMenu: (question, type, anchor) => openSaveMenu(question, type, anchor),
-      // Play one of the base sound effects from a plugin (Flashcards, Coach, MP…).
+      openItemSaveMenu: (spec, anchor) => openItemSaveMenu(spec, anchor),
+      itemReviewAdd: (it) => itemReviewAdd(it),
+      itemReviewHas: (it) => itemReviewHas(it),
+      itemReviewList: () => itemReviewList(),
+      refreshArt: () => { try { loadTitleArt(); loadSettingsArt(); } catch (e) {} },
+      addAppearanceOptions: (opts) => { try { return addAppearanceOptions(opts); } catch (e) { return () => {}; } },
       playSound: (name) => { try { if (Sound && typeof Sound[name] === "function") Sound[name](); } catch (e) {} },
-      // Launch Flashcards or Coach over a specific set of question ids (used by
-      // Folders, the Starred screen, Buzz Words…). Returns false if that plugin
-      // isn't enabled. Targets: "flashcards" | "coach".
       launchQuestions: (target, ids) => {
         if (!Array.isArray(ids) || !ids.length) return false;
+        if (target === "tossups") { startReviewSession(ids); return true; }
+        if (target === "bonuses") { startBonusIdsSession(ids); return true; }
         const map = {
           flashcards: { page: "flashcards::cards", key: "qb-flashcards-handoff", name: "Flashcards" },
           coach: { page: "coach-mode::coach", key: "qb-coach-handoff", name: "Coach Mode" },
@@ -5809,27 +6518,25 @@ function init() {
         try { localStorage.setItem(t.key, JSON.stringify({ ids: ids.slice(), ts: Date.now() })); } catch (e) {}
         const ok = window.QB && window.QB.showPage && window.QB.showPage(t.page);
         if (!ok) {
-          // Don't leave an orphaned handoff that would hijack the next normal open.
           try { localStorage.removeItem(t.key); } catch (e) {}
           window.QB && window.QB.toast && window.QB.toast("Enable the " + t.name + " plugin first (Plugins & Themes)", "error");
           return false;
         }
         return true;
       },
-      // Imported packet file (MODE > Imported packet file), for plugins that
-      // serve their own questions (e.g. Multiplayer). mode: "tu" | "both".
       getImportedPacket: () => state._importedPacket
         ? { ...state._importedPacket, mode: "tu" }
         : null,
+      getAchievementList: () => ACHIEVEMENT_LIST.map((a) => ({ ...a, cat: a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined) })),
+      normalizeAnswerPower: (s) => apNorm(s),
+      matchAnswerPower: (a, b) => apMatch(apNorm(a), apNorm(b)),
+      extractPrimaryAnswer: (raw, sani) => { try { return apPrimary(raw, sani); } catch (e) { return ""; } },
     });
   }
-  // After the runtime boots, install any plugin/theme updates the overlay
-  // staged (newer than what we last applied), then auto-check for app updates.
   applyStagedPluginUpdates().then(maybeAutoCheckAppUpdate);
   startSplash();
 }
 
-// Install plugin zips the in-app updater downloaded, once per overlay version.
 async function applyStagedPluginUpdates() {
   try {
     const info = await API.get("/api/app-update-plugins");
@@ -5838,10 +6545,6 @@ async function applyStagedPluginUpdates() {
     if (info.version <= applied) return;
     let updated = 0;
     for (const p of info.plugins) {
-      // Plugins are OPT-IN: only UPDATE ones the user has already installed —
-      // never auto-install new ones. A fresh install ships with no plugins; you
-      // download a .zip and import it in Plugins & Themes, and it auto-updates
-      // from then on.
       if (!window.QB?._plugins?.some?.((x) => x.id === p.id)) continue;
       try {
         const bytes = Uint8Array.from(atob(p.base64), (c) => c.charCodeAt(0));
@@ -5849,20 +6552,76 @@ async function applyStagedPluginUpdates() {
         updated++;
       } catch (e) { console.error("plugin update failed", p.id, e); }
     }
-    // Only mark this overlay version fully applied when every declared plugin
-    // was present — otherwise a later launch retries the ones that hadn't
-    // finished downloading yet.
     if (info.complete !== false) localStorage.setItem("qb-overlay-plugins-applied", String(info.version));
     if (updated) window.QB?.toast?.(updated + " plugin update" + (updated === 1 ? "" : "s") + " applied");
   } catch {}
 }
 
+// Startup policy: normal updates are only ever OFFERED (Update / Ignore) —
+// never installed on their own. Critical releases (manifest.critical) install
+// automatically unless the user turned that off in Settings.
 async function maybeAutoCheckAppUpdate() {
   if (localStorage.getItem("qb-app-autoupdate") === "false") return;
+  let r = null;
+  try { r = await API.get("/api/app-update-peek"); }
+  catch (e) { r = { unsupported: true }; } // pre-peek backend: invoke has no handler
+  if (!r || r.dev) return;
+  if (r.unsupported) {
+    // Old backend from an earlier DMG can only check-and-download in one step.
+    try {
+      const d = await API.post("/api/app-update-check", {});
+      if (d && d.updated) showUpdateDialog({ version: d.version }, { installed: true });
+    } catch {}
+    return;
+  }
+  if (r.error || !r.configured || !r.available) return;
   try {
-    const r = await API.post("/api/app-update-check", {});
-    if (r && r.updated) window.QB?.toast?.(`App update downloaded (v${r.version}) — restart to apply.`, "info");
+    if (r.critical && localStorage.getItem("qb-app-critical-auto") !== "false") {
+      const d = await API.post("/api/app-update-check", {});
+      if (d && d.updated) showUpdateDialog(r, { installed: true });
+      return;
+    }
+    if (localStorage.getItem("qb-ignored-update") === String(r.version)) return;
+    showUpdateDialog(r, { installed: false });
   } catch {}
+}
+
+function showUpdateDialog(info, opts) {
+  document.getElementById("update-dialog")?.remove();
+  const el = document.createElement("div");
+  el.id = "update-dialog";
+  el.className = "qb-overlay confirm-overlay";
+  const head = opts.installed
+    ? `Update v${escapeHtml(String(info.version))} downloaded — restart to apply.`
+    : `Update available: v${escapeHtml(String(info.version))}${info.critical ? " (important)" : ""}`;
+  el.innerHTML = `<div class="confirm-box"><div class="confirm-msg">${head}${info.notes ? `<div class="text-muted" style="font-size:12px;margin-top:6px">${escapeHtml(info.notes)}</div>` : ""}</div>
+    <div id="update-dialog-status" style="margin:4px 0"></div>
+    <div class="confirm-actions" id="update-dialog-actions"></div></div>`;
+  document.body.appendChild(el);
+  const actions = el.querySelector("#update-dialog-actions");
+  const statusEl = el.querySelector("#update-dialog-status");
+  const mkBtn = (label, cls, fn) => {
+    const b = document.createElement("button");
+    b.className = "btn " + cls; b.textContent = label; b.onclick = fn;
+    actions.appendChild(b);
+    return b;
+  };
+  if (opts.installed) {
+    mkBtn("Restart now", "btn-primary", () => { try { window.qbreader?.relaunchApp?.(); } catch {} });
+    mkBtn("Later", "btn-ghost", () => el.remove());
+  } else {
+    mkBtn("Update", "btn-primary", async () => {
+      actions.style.display = "none";
+      await downloadAppUpdate(statusEl, "app-upd-dlg");
+      actions.style.display = "";
+      actions.innerHTML = "";
+      mkBtn("Close", "btn-ghost", () => el.remove());
+    });
+    mkBtn("Ignore", "btn-ghost", () => {
+      try { localStorage.setItem("qb-ignored-update", String(info.version)); } catch (e) {}
+      el.remove();
+    });
+  }
 }
 
 init();

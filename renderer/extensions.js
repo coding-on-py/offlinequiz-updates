@@ -1,23 +1,23 @@
-/**
- * OfflineQuiz — Extensions runtime (plugins + themes)
- *
- * Loaded BEFORE app.js so `window.QB` exists when the app boots.
- *
- * Everything is a `.zip` package containing a manifest (plugin.json / theme.json
- * with an "entry" .js, default plugin.js / theme.js) and that entry script.
- *
- *   - Plugins call QB.registerPlugin({ id, name, settings, onEnable, onDisable })
- *   - Themes  call QB.registerTheme({ id, name, settings, onEnable, onDisable })
- *
- * Both run in the renderer's isolated world (DOM + web APIs only). A theme is an
- * appearance/GUI package: in onEnable it uses ctx.setVar()/ctx.addCSS() (and can
- * restructure the DOM) and may declare its own settings. Only one theme is active
- * at a time. Settings can appear on the extension's card, in the [5] Settings
- * screen (location:"settings"), or in the practice panel (location:"practice").
- *
- * State is persisted in localStorage, so it behaves the same in the packaged app
- * and in `npm run dev`.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 (function () {
   "use strict";
 
@@ -34,23 +34,37 @@
     _pendingTheme: null,
     _hotkeyHandlers: {},
     _backHandlers: [],
-    _saveActions: [], // "pluginId:hotkeyId" -> fn
+    _saveActions: [],
     _pages: [],
     _starredProviders: [],
-    _starredActions: [],    // {pluginId, id, label, run(questions)} — buttons on the Starred screen
+    _starredActions: [],
     _statsProviders: [],
-    _textTransforms: [],    // {pluginId, apply(text, context)} — reading text
-    _questionFilters: [],   // {pluginId, fn(question, context) -> keep?}
-    _resultPanels: [],      // {pluginId, render(el, resultCtx)} — result area
-    _answerRules: [],       // {pluginId, fn(verdict, context) -> verdict'}
-    _scoringRules: [],      // {pluginId, fn(points, context) -> points'}
+    _textTransforms: [],
+    _questionFilters: [],
+    _resultPanels: [],
+    _answerRules: [],
+    _scoringRules: [],
+    _settingsSections: [],
+    _assets: {},
+    _pluginAchievements: [],
+    _achievementIcons: {},
+    _achievementIconFn: null,
+    _achIconContributors: [],
   };
 
-  // ── utils ──────────────────────────────────────────────
   function esc(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;")
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  QB._registerAssets = (id, map) => { QB._assets[id] = Object.assign(QB._assets[id] || {}, map || {}); };
+  function assetUrl(id, name) {
+    const m = QB._assets[id]; if (!m || !name) return "";
+    return m[name] || m[String(name).split("/").pop()] || "";
+  }
+  function resolveAssetCss(id, css) {
+    if (!css || String(css).indexOf("asset:") < 0) return css;
+    return String(css).replace(/asset:([^\s"')]+)/g, (m, name) => assetUrl(id, name.trim()) || m);
   }
   function loadStore(key) { try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; } }
   function saveStore(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { console.error("[QB] save failed", e); } }
@@ -59,14 +73,12 @@
   function saveThemes() { saveStore(THEMES_KEY, QB._themes.map(persistFields)); }
   function findExt(id) { return QB._plugins.find((p) => p.id === id) || QB._themes.find((t) => t.id === id); }
 
-  // ── event bus ──────────────────────────────────────────
   QB.on = (ev, fn) => { (QB._events[ev] = QB._events[ev] || []).push(fn); return () => QB.off(ev, fn); };
   QB.off = (ev, fn) => { if (QB._events[ev]) QB._events[ev] = QB._events[ev].filter((f) => f !== fn); };
   QB._emit = (ev, data) => { (QB._events[ev] || []).forEach((fn) => { try { fn(data); } catch (e) { console.error("[QB] handler", ev, e); } }); };
 
   QB.connect = (host) => { QB._host = host || {}; };
 
-  // ── toasts ─────────────────────────────────────────────
   QB.toast = (msg, type) => {
     let host = document.getElementById("qb-toast-host");
     if (!host) { host = document.createElement("div"); host.id = "qb-toast-host"; document.body.appendChild(host); }
@@ -78,11 +90,41 @@
     setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 300); }, 2800);
   };
 
-  // ── registration ───────────────────────────────────────
+  // Shared indeterminate loading bar (CSS lives in the base app's style.css).
+  QB.loadingBarHtml = (label) => {
+    const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    return `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div><span>${esc(label || "Loading…")}</span></div>`;
+  };
+
+  // Right-click context menu: items = [{label, onClick, danger}] — closes on
+  // click-away / Esc. Plugins get it via ctx.contextMenu.
+  QB.contextMenu = (x, y, items) => {
+    document.getElementById("qb-ctx-menu")?.remove();
+    const list = (items || []).filter((it) => it && it.label && typeof it.onClick === "function");
+    if (!list.length) return;
+    const el = document.createElement("div");
+    el.id = "qb-ctx-menu";
+    el.className = "qb-ctx-menu";
+    list.forEach((it) => {
+      const b = document.createElement("button");
+      b.className = "qb-ctx-item" + (it.danger ? " danger" : "");
+      b.textContent = it.label;
+      b.addEventListener("click", () => { el.remove(); try { it.onClick(); } catch (e) { console.error("[QB] ctx item", e); } });
+      el.appendChild(b);
+    });
+    document.body.appendChild(el);
+    const r = el.getBoundingClientRect();
+    el.style.left = Math.min(x, window.innerWidth - r.width - 8) + "px";
+    el.style.top = Math.min(y, window.innerHeight - r.height - 8) + "px";
+    const close = (ev) => { if (!el.contains(ev.target)) { el.remove(); cleanup(); } };
+    const onKey = (ev) => { if (ev.key === "Escape") { el.remove(); cleanup(); ev.stopPropagation(); } };
+    const cleanup = () => { document.removeEventListener("mousedown", close, true); document.removeEventListener("keydown", onKey, true); };
+    setTimeout(() => { document.addEventListener("mousedown", close, true); document.addEventListener("keydown", onKey, true); }, 0);
+  };
+
   QB.registerPlugin = (m) => { QB._pendingManifest = m; };
   QB.registerTheme = (m) => { QB._pendingTheme = m; };
 
-  // ── shared extension context ───────────────────────────
   function makeCtx(ext) {
     const subs = [];
     return {
@@ -94,20 +136,66 @@
       host: QB._host,
       showScreen: (name) => QB._host.showScreen && QB._host.showScreen(name),
       toast: QB.toast,
-      // appearance helpers (used by themes; available to plugins too)
       setVar(name, val) {
         document.documentElement.style.setProperty(name, val);
-        subs.push(() => document.documentElement.style.removeProperty(name));
+        this._setVars = this._setVars || new Set();
+        if (!this._setVars.has(name)) {
+          this._setVars.add(name);
+          subs.push(() => document.documentElement.style.removeProperty(name));
+        }
       },
       addCSS(css) {
         const st = document.createElement("style");
         st.dataset.ext = ext.id;
-        st.textContent = css;
+        st.textContent = resolveAssetCss(ext.id, css);
         document.head.appendChild(st);
         subs.push(() => st.remove());
         return st;
       },
+      asset(name) { return assetUrl(ext.id, name); },
       addStyle(css) { return this.addCSS(css); },
+      registerArt(id, art) {
+        art = art || {};
+        try {
+          window.ART = window.ART || {};
+          if (art.text) window.ART[id] = art.text;
+          let image = art.image || null;
+          if (image && /^asset:/.test(image)) image = assetUrl(ext.id, image.slice(6)) || null;
+          QB._themeArts = QB._themeArts || {};
+          QB._themeArts[id] = { id, name: art.name || id, text: art.text || "", layout: art.layout || "stacked", image };
+          QB._activeThemeArt = QB._themeArts[id];
+          if (QB._host && QB._host.refreshArt) QB._host.refreshArt();
+          subs.push(() => {
+            if (QB._activeThemeArt && QB._activeThemeArt.id === id) QB._activeThemeArt = null;
+            if (QB._host && QB._host.refreshArt) QB._host.refreshArt();
+          });
+        } catch (e) {  }
+      },
+      extendAppearance(opts) {
+        try {
+          if (QB._host && QB._host.addAppearanceOptions) {
+            const remove = QB._host.addAppearanceOptions(opts);
+            if (typeof remove === "function") subs.push(remove);
+            return remove;
+          }
+        } catch (e) {}
+        return () => {};
+      },
+      registerSettingsSection(p) {
+        const rec = { pluginId: ext.id, id: p.id || ext.id, location: p.location || "appearance", title: p.title, render: p.render };
+        QB._settingsSections.push(rec);
+        subs.push(() => { QB._settingsSections = QB._settingsSections.filter((x) => x !== rec); });
+        return rec;
+      },
+      registerAppearancePanel(render, opts) {
+        opts = opts || {};
+        const rec = { pluginId: ext.id, id: ext.id + "-appearance", location: "appearance", render, _fullAppearance: true };
+        if ("title" in opts) rec.title = opts.title;
+        QB._settingsSections.push(rec);
+        subs.push(() => { QB._settingsSections = QB._settingsSections.filter((x) => x !== rec); });
+        QB._emit("theme:change", null);
+        return rec;
+      },
       mount(el) { document.body.appendChild(el); subs.push(() => el.remove()); return el; },
       storage: {
         get(k) { try { return JSON.parse(localStorage.getItem("qb-pl-" + ext.id + "-" + k)); } catch { return null; } },
@@ -116,58 +204,39 @@
       getSetting(k) { return QB.getSetting(ext.id, k); },
       setSetting(k, v) { QB.setSetting(ext.id, k, v); },
       onSetting(fn) { subs.push(QB.on("ext:setting", (e) => { if (e.id === ext.id) fn(e.key, e.val); })); },
-      // declarative hotkeys: handler for a hotkey id declared in manifest.hotkeys
       onHotkey(id, fn) { const action = ext.id + ":" + id; QB._hotkeyHandlers[action] = fn; subs.push(() => { delete QB._hotkeyHandlers[action]; }); },
-      // Esc/back: fn() should return true when it consumed the back action
-      // (e.g. an in-page drill-down was popped); false lets the app navigate.
       onBack(fn) { const rec = { pluginId: ext.id, fn }; QB._backHandlers.push(rec); subs.push(() => { QB._backHandlers = QB._backHandlers.filter((r) => r !== rec); }); },
-      // Contribute entries to the + save menu next to the star.
-      // fn(question, type) -> [{ label, onClick }]
       registerSaveAction(fn) {
         const rec = { pluginId: ext.id, fn };
         QB._saveActions.push(rec);
         subs.push(() => { QB._saveActions = QB._saveActions.filter((r) => r !== rec); });
         return rec;
       },
-      // Current binding for one of this plugin's hotkeys (live, rebind-aware).
       keyLabel(id) {
         try { return (QB._host.keyDisplay && QB._host.keyDisplay(ext.id + ":" + id)) || "?"; } catch { return "?"; }
       },
-      // register a full app page (adds a nav button under "Extra:")
+      contextMenu(x, y, items) { QB.contextMenu(x, y, items); },
+      loadingBarHtml(label) { return QB.loadingBarHtml(label); },
       registerPage(page) { const rec = QB._createPage(ext, page); subs.push(() => QB._removePage(rec)); return rec; },
-      // ── practice-loop hooks (all auto-removed on disable) ──
-      // Transform question text as it's READ (practice, and any plugin that
-      // calls ctx.transformText) — e.g. censoring, annotations, translation.
       registerTextTransform(t) {
         const rec = { pluginId: ext.id, apply: typeof t === "function" ? t : t.apply };
         QB._textTransforms.push(rec);
         subs.push(() => { QB._textTransforms = QB._textTransforms.filter((x) => x !== rec); });
         return rec;
       },
-      // Veto questions before they're served in practice (return false to
-      // skip; the app refetches). Keep these FAST and side-effect free.
       registerQuestionFilter(fn) {
         const rec = { pluginId: ext.id, fn };
         QB._questionFilters.push(rec);
         subs.push(() => { QB._questionFilters = QB._questionFilters.filter((x) => x !== rec); });
         return rec;
       },
-      // Render a panel under every practice result (the AI-explainer pattern,
-      // formalized): render(el, { type, result, question, userAnswer }).
       registerResultPanel(p) {
         const rec = { pluginId: ext.id, id: p.id || ext.id, render: p.render };
         QB._resultPanels.push(rec);
         subs.push(() => { QB._resultPanels = QB._resultPanels.filter((x) => x !== rec); });
         return rec;
       },
-      // Run the registered text-transform chain (plugins reading questions
-      // themselves — Coach, Flashcards, Packet Builder — should use this).
       transformText(text, context) { return QB.applyTextTransforms(text, context); },
-      // ── judging hooks: edit the answer checker's RULES and the SCORING ──
-      // Answer rule: fn(verdict, context) where verdict = {status, prompt?,
-      // antiprompt?} and context = {userAnswer, question, buzzPosition,
-      // fullyRead, strictness}. Return a new status string ("accept"/"prompt"/
-      // "reject") or a verdict object to change the call; anything else keeps it.
       registerAnswerRule(fn) {
         const rec = { pluginId: ext.id, fn };
         rec.remove = () => { QB._answerRules = QB._answerRules.filter((x) => x !== rec); };
@@ -175,9 +244,6 @@
         subs.push(rec.remove);
         return rec;
       },
-      // Scoring rule: fn(points, context) -> number. context = {correct,
-      // isPower, fullyRead, celerity, buzzPosition, question, userAnswer}.
-      // Chained in registration order over the base 15/10/0/-5.
       registerScoringRule(fn) {
         const rec = { pluginId: ext.id, fn };
         rec.remove = () => { QB._scoringRules = QB._scoringRules.filter((x) => x !== rec); };
@@ -185,10 +251,6 @@
         subs.push(rec.remove);
         return rec;
       },
-      // ── ctx.db: the plugin's OWN tables in user_data.db ──
-      // table("decks") -> "plug_<id>__decks"; exec runs guarded SQL (SELECT
-      // returns {rows}, writes return {changes}); only plug_<id>__* tables are
-      // reachable — core tables are blocked server-side.
       db: {
         table(name) { return "plug_" + ext.id.replace(/[^a-zA-Z0-9_-]/g, "") + "__" + String(name).replace(/[^a-zA-Z0-9_]/g, ""); },
         async exec(sql, params) {
@@ -197,8 +259,6 @@
           return r;
         },
       },
-      // Per-PROFILE persistent storage backed by user_data.db (async). Unlike
-      // ctx.storage (localStorage, per machine), this follows the profile.
       profileStorage: {
         async get(k) {
           try { return (await QB._host.api.get("/api/plugin-data?plugin=" + encodeURIComponent(ext.id) + "&key=" + encodeURIComponent(k))).value; }
@@ -208,34 +268,77 @@
           try { await QB._host.api.post("/api/plugin-data", { plugin: ext.id, key: k, value: v }); } catch {}
         },
       },
-      // contribute a section to the STATISTICS screen ({ id, title, render(el) });
-      // shown only while this plugin is enabled.
       registerStatsProvider(p) {
         const rec = { pluginId: ext.id, id: p.id || ext.id, title: p.title || ext.name, render: p.render };
         QB._statsProviders.push(rec);
         subs.push(() => { QB._statsProviders = QB._statsProviders.filter((x) => x !== rec); });
         return rec;
       },
-      // contribute a section to Database → Starred ({ id, title, render(el) });
-      // shown only while this plugin is enabled.
       registerStarredProvider(p) {
         const rec = { pluginId: ext.id, id: p.id || ext.id, title: p.title || ext.name, render: p.render };
         QB._starredProviders.push(rec);
         subs.push(() => { QB._starredProviders = QB._starredProviders.filter((x) => x !== rec); });
         return rec;
       },
-      // Contribute an action BUTTON to the base "Starred" screen. a = { id?,
-      // label, run(questions) } where questions = [{type, q:{id,...}}, …]. Lets a
-      // plugin add features (e.g. "Run as Flashcards") without a base edit.
       registerStarredAction(a) {
         const rec = { pluginId: ext.id, id: a.id || (ext.id + "-act"), label: a.label || ext.name, run: a.run };
         QB._starredActions.push(rec);
         subs.push(() => { QB._starredActions = QB._starredActions.filter((x) => x !== rec); });
         return rec;
       },
-      // Play a base sound effect by name (buzz/correct/incorrect/power/skip/star/…).
+      registerAchievements(defs) {
+        const list = Array.isArray(defs) ? defs : [defs];
+        const recs = [];
+        for (const d of list) {
+          if (!d || !d.id) continue;
+          const rec = Object.assign({ pluginId: ext.id, source: ext.name || ext.id }, d);
+          QB._pluginAchievements.push(rec);
+          recs.push(rec);
+        }
+        subs.push(() => { QB._pluginAchievements = QB._pluginAchievements.filter((x) => recs.indexOf(x) === -1); });
+        return recs;
+      },
+      registerAchievementIcons(mapOrFn) {
+        if (typeof mapOrFn === "function") {
+          const prev = QB._achievementIconFn;
+          QB._achievementIconFn = mapOrFn;
+          const contrib = { pluginId: ext.id, kind: "fn", value: mapOrFn };
+          QB._achIconContributors.push(contrib);
+          subs.push(() => {
+            QB._achIconContributors = QB._achIconContributors.filter((x) => x !== contrib);
+            if (QB._achievementIconFn === mapOrFn) QB._achievementIconFn = prev || null;
+          });
+          return;
+        }
+        if (mapOrFn && typeof mapOrFn === "object") {
+          const contrib = { pluginId: ext.id, kind: "map", value: Object.assign({}, mapOrFn) };
+          QB._achIconContributors.push(contrib);
+          Object.assign(QB._achievementIcons, contrib.value);
+          subs.push(() => {
+            QB._achIconContributors = QB._achIconContributors.filter((x) => x !== contrib);
+            const rebuilt = {};
+            for (const c of QB._achIconContributors) { if (c.kind === "map") Object.assign(rebuilt, c.value); }
+            QB._achievementIcons = rebuilt;
+          });
+        }
+      },
+      setBackground(value) {
+        try {
+          if (!value) { document.body.style.background = ""; return; }
+          let css;
+          if (/^(https?:|data:image|blob:|\.?\/)/.test(value) || /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(value)) {
+            css = `url("${value}") center/cover no-repeat fixed, var(--bg)`;
+          } else {
+            css = value;
+          }
+          document.body.style.background = css;
+          if (!ext._bgSubbed) {
+            ext._bgSubbed = true;
+            subs.push(() => { document.body.style.background = ""; ext._bgSubbed = false; });
+          }
+        } catch (e) {}
+      },
       playSound(name) { try { QB._host.playSound && QB._host.playSound(name); } catch (e) {} },
-      // Launch Flashcards/Coach over specific question ids. target: "flashcards"|"coach".
       launchQuestions(target, ids) { try { return QB._host.launchQuestions ? QB._host.launchQuestions(target, ids) : false; } catch (e) { return false; } },
       goHome() { if (QB._host.goHome) QB._host.goHome(); },
       speak(text, opts) { try { const s = window.speechSynthesis; s.cancel(); const u = new SpeechSynthesisUtterance(text); Object.assign(u, opts || {}); s.speak(u); } catch {} },
@@ -247,12 +350,10 @@
 
   function runEntry(code) {
     QB._pendingManifest = null; QB._pendingTheme = null;
-    // eslint-disable-next-line no-new-func
     new Function("QB", code)(QB);
     return { plugin: QB._pendingManifest, theme: QB._pendingTheme };
   }
 
-  // ── settings store (shared by plugins + themes) ────────
   function readSettings(id) { try { return JSON.parse(localStorage.getItem("qb-pl-" + id + "-settings")) || {}; } catch { return {}; } }
   function writeSettings(id, s) { try { localStorage.setItem("qb-pl-" + id + "-settings", JSON.stringify(s)); } catch {} }
   function settingDef(id, key) {
@@ -266,14 +367,11 @@
     return def ? def.default : undefined;
   };
   QB.setSetting = (id, key, val) => { const s = readSettings(id); s[key] = val; writeSettings(id, s); QB._emit("ext:setting", { id, key, val }); };
-  // back-compat aliases
   QB.getPluginSetting = QB.getSetting;
   QB.setPluginSetting = QB.setSetting;
 
-  // ── plugins ────────────────────────────────────────────
   function finalizePlugin(filename, code, manifest) {
     if (!manifest || !manifest.id) { QB.toast("Plugin must call QB.registerPlugin({ id, ... })", "error"); return null; }
-    // Re-installing (e.g. an in-app update) must keep the user's enabled state.
     const prev = QB._plugins.find((x) => x.id === manifest.id);
     const wasEnabled = !!(prev && prev.enabled);
     if (prev && prev._enabledRuntime) { try { QB.disablePlugin(prev.id); } catch (e) {} }
@@ -313,8 +411,9 @@
   };
   QB.togglePlugin = (id, on) => (on ? QB.enablePlugin(id) : QB.disablePlugin(id));
   QB.removePlugin = (id) => { QB.disablePlugin(id); QB._plugins = QB._plugins.filter((p) => p.id !== id); savePlugins(); };
+  QB.isPluginEnabled = (id) => { const p = QB._plugins.find((x) => x.id === id); return !!(p && p._enabledRuntime); };
+  QB.getEnabledPlugins = () => QB._plugins.filter((p) => p._enabledRuntime).map((p) => p.id);
 
-  // ── plugin hotkeys ─────────────────────────────────────
   QB.getActiveHotkeys = () => {
     const out = [];
     QB._plugins.forEach((p) => {
@@ -341,7 +440,6 @@
     return false;
   };
 
-  // ── plugin pages ───────────────────────────────────────
   QB._createPage = (ext, page) => {
     const screenId = "ext-page-" + ext.id + "-" + page.id;
     let el = document.getElementById(screenId);
@@ -369,7 +467,6 @@
   QB.getStatsProviders = () => QB._statsProviders.slice();
   QB.getResultPanels = () => QB._resultPanels.slice();
   QB.hasJudgingRules = () => QB._answerRules.length > 0 || QB._scoringRules.length > 0;
-  // Chain the answer rules over a verdict (string status or object accepted).
   QB.applyAnswerRules = (verdict, context) => {
     let v = Object.assign({}, verdict);
     for (const r of QB._answerRules) {
@@ -391,8 +488,6 @@
     }
     return p;
   };
-  // Apply every registered text transform in registration order; a transform
-  // that throws or returns a non-string is skipped.
   QB.applyTextTransforms = (text, context) => {
     let out = String(text == null ? "" : text);
     for (const t of QB._textTransforms) {
@@ -403,7 +498,6 @@
     }
     return out;
   };
-  // True unless some enabled plugin's filter vetoes this question.
   QB.passesQuestionFilters = (question, context) => {
     for (const f of QB._questionFilters) {
       try { if (f.fn(question, context || {}) === false) return false; }
@@ -415,6 +509,8 @@
     const rec = QB._pages.find((p) => p.pluginId + "::" + p.id === combined);
     if (!rec) return false;
     try { QB._host.recordNav && QB._host.recordNav(combined); } catch (err) {}
+    // Pages that borrow the filters panel always open with its sections collapsed.
+    try { QB._host.collapseFilterSections && QB._host.collapseFilterSections(); } catch (err) {}
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
     rec.screenEl.classList.add("active");
     QB._emit("screen:change", { name: combined });
@@ -422,7 +518,6 @@
     return true;
   };
 
-  // ── themes (one active at a time) ──────────────────────
   function finalizeTheme(filename, code, manifest) {
     if (!manifest || !manifest.id) { QB.toast("Theme must call QB.registerTheme({ id, ... })", "error"); return null; }
     QB._themes = QB._themes.filter((t) => t.id !== manifest.id);
@@ -458,43 +553,123 @@
     try { if (t._manifest && typeof t._manifest.onDisable === "function" && t._ctx) t._manifest.onDisable(t._ctx); } catch (e) { console.error(e); }
     if (t._ctx) t._ctx._unsub.forEach((u) => { try { u(); } catch {} });
     t._ctx = null; t._enabledRuntime = false; t.enabled = false; saveThemes();
-    QB._emit("theme:change", null); // listeners refresh appearance UI
+    QB._emit("theme:change", null);
   };
   QB.removeTheme = (id) => { QB.disableTheme(id); QB._themes = QB._themes.filter((t) => t.id !== id); saveThemes(); };
 
-  // ── package install (zip → auto-detect plugin vs theme) ─
+  function declarativeThemeCode(mf, cssText) {
+    const D = {
+      id: mf.id, name: mf.name || mf.id, version: mf.version || "1.0",
+      author: mf.author || "unknown", description: mf.description || "",
+      settings: Array.isArray(mf.settings) ? mf.settings : [],
+      appearance: mf.appearance, vars: mf.vars || null, css: cssText || "",
+    };
+    return "(function(){var D=" + JSON.stringify(D) + ";QB.registerTheme({" +
+      "id:D.id,name:D.name,version:D.version,author:D.author,description:D.description," +
+      "settings:D.settings,appearance:D.appearance,onEnable:function(ctx){" +
+      "if(D.css)ctx.addCSS(D.css);" +
+      "if(D.vars)for(var k in D.vars)ctx.setVar(k,D.vars[k]);" +
+      "function ap(){for(var i=0;i<D.settings.length;i++){var s=D.settings[i];var v=ctx.getSetting(s.key);" +
+      "if(s.var){if(v!=null&&v!=='')ctx.setVar(s.var,v);if(s.varDim&&/^#[0-9a-fA-F]{6}$/.test(v))ctx.setVar(s.varDim,v+'33');continue;}" +
+      "var a='data-t-'+s.key;" +
+      "if(s.type==='toggle')document.documentElement.toggleAttribute(a,!!v);" +
+      "else document.documentElement.setAttribute(a,v==null?'':String(v));}}" +
+      "ap();ctx.onSetting(function(){ap();});" +
+      "ctx._unsub.push(function(){for(var i=0;i<D.settings.length;i++)document.documentElement.removeAttribute('data-t-'+D.settings[i].key);});" +
+      "}});})();";
+  }
+
+  function assetPreamble(id, fileMap) {
+    if (!id) return "";
+    const assets = {};
+    for (const p of Object.keys(fileMap)) { const v = fileMap[p]; if (typeof v === "string" && v.slice(0, 5) === "data:") assets[p.split("/").pop()] = v; }
+    return Object.keys(assets).length ? "QB._registerAssets(" + JSON.stringify(id) + "," + JSON.stringify(assets) + ");\n" : "";
+  }
+
   QB.installPackage = (fileMap) => {
     const paths = Object.keys(fileMap);
-    let entry = null;
+    let entry = null, manifest = null;
     const mfPath = paths.find((p) => /(^|\/)(theme|plugin|manifest)\.json$/i.test(p));
-    if (mfPath) { try { const mf = JSON.parse(fileMap[mfPath]); if (mf.entry) entry = mf.entry; } catch (e) { QB.toast("Bad manifest JSON: " + e.message, "error"); return null; } }
-    const codePath =
-      (entry && paths.find((p) => p.endsWith("/" + entry) || p === entry)) ||
-      paths.find((p) => /(^|\/)(theme|plugin)\.js$/i.test(p)) ||
-      paths.find((p) => /\.js$/i.test(p));
-    if (!codePath) { QB.toast("No .js entry found in the package", "error"); return null; }
-    const code = fileMap[codePath];
-    const filename = codePath.split("/").pop();
+    if (mfPath) { try { manifest = JSON.parse(fileMap[mfPath]); if (manifest.entry) entry = manifest.entry; } catch (e) { QB.toast("Bad manifest JSON: " + e.message, "error"); return null; } }
+    const resolvePath = (name) => paths.find((p) => p.endsWith("/" + name) || p === name);
+
+    // Multifile packages: manifest.files is an ordered list of .js files that
+    // are combined into one script sharing a single top-level scope.
+    let code = null, filename = null;
+    if (manifest && Array.isArray(manifest.files) && manifest.files.length) {
+      const parts = [];
+      for (const f of manifest.files) {
+        const p = resolvePath(f);
+        if (!p) { QB.toast("Package is missing a file listed in its manifest: " + f, "error"); return null; }
+        const body = fileMap[p];
+        if (typeof body !== "string" || body.slice(0, 5) === "data:") { QB.toast("manifest.files entry is not a script: " + f, "error"); return null; }
+        parts.push(body);
+      }
+      code = parts.join("\n;\n");
+      filename = String(entry || manifest.files[manifest.files.length - 1]).split("/").pop();
+    } else {
+      const codePath =
+        (entry && resolvePath(entry)) ||
+        paths.find((p) => /(^|\/)(theme|plugin)\.js$/i.test(p)) ||
+        paths.find((p) => /\.js$/i.test(p));
+      if (!codePath) {
+        const styleList = manifest && manifest.style ? (Array.isArray(manifest.style) ? manifest.style : [manifest.style]) : [];
+        const cssPaths = styleList.map(resolvePath).filter((p) => p && typeof fileMap[p] === "string");
+        const cssText = cssPaths.length
+          ? cssPaths.map((p) => fileMap[p]).join("\n")
+          : (() => { const p = paths.find((x) => /\.css$/i.test(x)); return p ? fileMap[p] : ""; })();
+        const isTheme = manifest && manifest.id && (cssText || manifest.vars || manifest.type === "theme" || /(^|\/)theme\.json$/i.test(mfPath || ""));
+        if (isTheme) {
+          const dcode = assetPreamble(manifest.id, fileMap) + declarativeThemeCode(manifest, cssText);
+          let r; try { r = runEntry(dcode); } catch (e) { QB.toast("Invalid theme: " + e.message, "error"); return null; }
+          if (r.theme) return finalizeTheme(manifest.id + ".theme.js", dcode, r.theme);
+        }
+        QB.toast("No .js entry or theme CSS found in the package", "error");
+        return null;
+      }
+      code = fileMap[codePath];
+      filename = codePath.split("/").pop();
+    }
+
+    // manifest.style: one CSS file or an ordered list, auto-attached on enable
+    // (works for plugins and themes alike).
+    let extraCss = "";
+    if (manifest && manifest.style) {
+      const styles = Array.isArray(manifest.style) ? manifest.style : [manifest.style];
+      const cssParts = [];
+      for (const s of styles) {
+        const sp = resolvePath(s);
+        if (sp && typeof fileMap[sp] === "string") cssParts.push(fileMap[sp]);
+      }
+      extraCss = cssParts.join("\n");
+    }
+    const finalCode = assetPreamble(manifest && manifest.id, fileMap) + (extraCss ? wrapWithCss(code, extraCss) : code);
     let r;
-    try { r = runEntry(code); } catch (e) { QB.toast("Invalid package: " + e.message, "error"); return null; }
-    if (r.theme) return finalizeTheme(filename, code, r.theme);
-    if (r.plugin) return finalizePlugin(filename, code, r.plugin);
+    try { r = runEntry(finalCode); } catch (e) { QB.toast("Invalid package: " + e.message, "error"); return null; }
+    if (r.theme) return finalizeTheme(filename, finalCode, r.theme);
+    if (r.plugin) return finalizePlugin(filename, finalCode, r.plugin);
     QB.toast("Package didn't call QB.registerPlugin or QB.registerTheme", "error");
     return null;
   };
 
-  // ── boot ───────────────────────────────────────────────
+  function wrapWithCss(code, cssText) {
+    return "(function(){var __css=" + JSON.stringify(cssText) + ";var __ot=QB.registerTheme;var __op=QB.registerPlugin;" +
+      "function __wrap(m){var oe=m.onEnable;m.onEnable=function(ctx){try{ctx.addCSS(__css);}catch(e){}if(oe)return oe.call(this,ctx);};return m;}" +
+      "QB.registerTheme=function(m){return __ot.call(QB,__wrap(m));};" +
+      "QB.registerPlugin=function(m){return __op.call(QB,__wrap(m));};" +
+      "try{\n" + code + "\n}finally{QB.registerTheme=__ot;QB.registerPlugin=__op;}})();";
+  }
+
   QB.boot = (host) => {
     QB.connect(host);
     QB._plugins = loadStore(PLUGINS_KEY).filter((p) => p.code);
-    QB._themes = loadStore(THEMES_KEY).filter((t) => t.code); // drop legacy (pre-package) themes
+    QB._themes = loadStore(THEMES_KEY).filter((t) => t.code);
     const t = QB._themes.find((x) => x.enabled);
     QB._themes.forEach((x) => { x._enabledRuntime = false; });
     if (t && t.code) QB.enableTheme(t.id);
     QB._plugins.forEach((p) => { p._enabledRuntime = false; if (p.enabled) QB.enablePlugin(p.id); });
   };
 
-  // ── zip reading ────────────────────────────────────────
   function readArrayBuffer(file) {
     return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsArrayBuffer(file); });
   }
@@ -502,6 +677,18 @@
     const ds = new DecompressionStream("deflate-raw");
     const ab = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
     return new Uint8Array(ab);
+  }
+  const IMG_EXT = /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i;
+  function mimeOf(name) {
+    const e = (name.split(".").pop() || "").toLowerCase();
+    return { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+      webp: "image/webp", bmp: "image/bmp", ico: "image/x-icon", avif: "image/avif",
+      svg: "image/svg+xml" }[e] || "application/octet-stream";
+  }
+  function bytesToBase64(bytes) {
+    let bin = ""; const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    return btoa(bin);
   }
   async function unzip(arrayBuffer) {
     const u8 = new Uint8Array(arrayBuffer);
@@ -527,7 +714,10 @@
       const dataStart = localOff + 30 + lNameLen + lExtraLen;
       const comp = u8.subarray(dataStart, dataStart + compSize);
       if (!name.endsWith("/") && !name.startsWith("__MACOSX/") && !name.endsWith(".DS_Store")) {
-        try { const data = method === 0 ? comp : method === 8 ? await inflateRaw(comp) : null; if (data) files[name] = dec.decode(data); } catch (e) {}
+        try {
+          const data = method === 0 ? comp : method === 8 ? await inflateRaw(comp) : null;
+          if (data) files[name] = IMG_EXT.test(name) ? ("data:" + mimeOf(name) + ";base64," + bytesToBase64(data)) : dec.decode(data);
+        } catch (e) {}
       }
       off += 46 + nameLen + extraLen + commentLen;
     }
@@ -545,8 +735,6 @@
     QB.renderScreen();
   }
 
-  // Programmatic install from raw zip bytes (used by the in-app updater to
-  // refresh plugin/theme packages). Preserves each package's enabled state.
   QB.installZipBytes = async (bytes) => {
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     const files = await unzip(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
@@ -554,7 +742,6 @@
     return QB.installPackage(files);
   };
 
-  // ── starter theme (one-click; same content as the example zip) ──
   const STARTER_THEME = String.raw`
 QB.registerTheme({
   id: "neon-hud",
@@ -617,7 +804,6 @@ QB.registerTheme({
 
   QB.installStarterTheme = () => { QB.installTheme("neon-hud.js", STARTER_THEME); QB.renderScreen(); };
 
-  // ── settings controls ──────────────────────────────────
   function settingControl(extId, def) {
     const val = QB.getSetting(extId, def.key);
     const idAttr = ' data-ext-id="' + esc(extId) + '" data-setting-key="' + esc(def.key) + '"';
@@ -631,6 +817,19 @@ QB.registerTheme({
         opts.map((o) => { const v = o.value != null ? o.value : o; const l = o.label != null ? o.label : o; return '<option value="' + esc(v) + '"' + (val == v ? " selected" : "") + ">" + esc(l) + "</option>"; }).join("") + "</select>";
     } else if (def.type === "color") {
       control = '<input type="color" class="ext-setting-color"' + idAttr + ' value="' + esc(val || "#000000") + '">';
+    } else if (def.type === "swatches") {
+      let opts = typeof def.options === "function" ? def.options() : (def.options || []);
+      if (!Array.isArray(opts)) opts = [];
+      const sw = opts.map((o) => {
+        const v = o && o.value != null ? o.value : o;
+        const l = o && o.label != null ? o.label : v;
+        return '<button type="button" class="ext-swatch' + (val == v ? " sel" : "") + '"' + idAttr +
+          ' data-swatch="' + esc(v) + '" style="background:' + esc(v) + '" title="' + esc(l) + '"></button>';
+      }).join("");
+      const custom = def.custom === false ? "" :
+        '<label class="ext-swatch-custom">Custom<input type="color" class="ext-setting-color"' + idAttr +
+        ' value="' + esc(/^#[0-9a-fA-F]{6}$/.test(val || "") ? val : "#000000") + '"></label>';
+      control = '<div class="ext-swatches">' + sw + custom + "</div>";
     } else {
       const t = def.type === "number" ? "number" : def.type === "password" ? "password" : "text";
       control = '<input type="' + t + '" class="ext-setting-input"' + idAttr + ' value="' + esc(val != null ? val : "") + '"' + (def.placeholder ? ' placeholder="' + esc(def.placeholder) + '"' : "") + ' autocomplete="off" spellcheck="false">';
@@ -638,13 +837,13 @@ QB.registerTheme({
     return '<div class="ext-setting-row"><span class="ext-setting-label">' + esc(def.label) + "</span>" + control + "</div>";
   }
   function settingsHtml(ext, location) {
-    const defs = ((ext._manifest && ext._manifest.settings) || []).filter((d) => (d.location || "card") === location);
+    const defs = ((ext._manifest && ext._manifest.settings) || []).filter((d) => d.type !== "hidden" && (d.location || "card") === location);
     if (!ext.enabled || !defs.length) return "";
     return defs.map((d) => settingControl(ext.id, d)).join("");
   }
   function wireSettingControls(root) {
     if (!root) return;
-    root.querySelectorAll("[data-setting-key]").forEach((el) => {
+    root.querySelectorAll("input[data-setting-key],select[data-setting-key],textarea[data-setting-key]").forEach((el) => {
       const id = el.dataset.extId, key = el.dataset.settingKey;
       const evt = el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input";
       el.addEventListener(evt, () => {
@@ -652,38 +851,55 @@ QB.registerTheme({
         QB.setSetting(id, key, v);
       });
     });
+    root.querySelectorAll(".ext-swatch[data-setting-key]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.extId, key = btn.dataset.settingKey;
+        QB.setSetting(id, key, btn.dataset.swatch);
+        root.querySelectorAll('.ext-swatch[data-setting-key="' + key + '"]').forEach((b) => b.classList.toggle("sel", b === btn));
+      });
+    });
+    (QB._settingsSections || []).forEach((rec) => {
+      if (!rec || typeof rec.render !== "function") return;
+      const host = root.querySelector('[data-settings-section="' + rec.pluginId + ":" + rec.id + '"]');
+      if (host) { try { rec.render(host); } catch (e) { console.error("[QB] settings section", rec.pluginId, e); } }
+    });
   }
 
-  // ── render: [5] Settings + practice panel ──────────────
   function renderSettingsInto(container, location) {
     if (!container) return;
     const exts = QB._themes.filter((t) => t.enabled).concat(QB._plugins.filter((p) => p.enabled));
     let html = "";
+    const fullPanels = location === "appearance" ? (QB._settingsSections || []).filter((s) => s._fullAppearance) : [];
+    fullPanels.forEach((s) => {
+      html += (s.title ? '<div class="ext-settings-group-title">' + esc(s.title) + "</div>" : "") +
+        '<div class="ext-appearance-panel" data-settings-section="' + esc(s.pluginId + ":" + s.id) + '"></div>';
+    });
     exts.forEach((ext) => {
       const inner = settingsHtml(ext, location);
-      if (inner) html += '<div class="ext-settings-group"><div class="ext-settings-group-title">' + esc(ext.name) + "</div>" + inner + "</div>";
+      const sections = (QB._settingsSections || []).filter((s) => s.pluginId === ext.id && (s.location || "appearance") === location && !s._fullAppearance);
+      const sectionHtml = sections.map((s) =>
+        (s.title ? '<div class="ext-setting-label">' + esc(s.title) + "</div>" : "") +
+        '<div data-settings-section="' + esc(ext.id + ":" + s.id) + '"></div>'
+      ).join("");
+      if (inner || sectionHtml) html += '<div class="ext-settings-group"><div class="ext-settings-group-title">' + esc(ext.name) + "</div>" + (inner || "") + sectionHtml + "</div>";
     });
     container.innerHTML = html;
     container.style.display = html ? "" : "none";
     wireSettingControls(container);
   }
+  QB.hasAppearancePanel = () => (QB._settingsSections || []).some((s) => s._fullAppearance);
   QB.renderSettingsSections = (container) => {
     renderSettingsInto(container, "settings");
-    // Hide the whole EXTENSIONS settings section when no enabled plugin/theme
-    // contributes any controls (otherwise it's just an empty header).
     const sec = container && container.closest(".stats-section");
     if (sec) sec.style.display = container && container.children.length ? "" : "none";
   };
   QB.renderPracticeSettings = (container) => renderSettingsInto(container, "practice");
-  // Theme-defined appearance settings, shown in the [5] APPEARANCE section.
   QB.renderAppearanceSettings = (container) => {
     renderSettingsInto(container, "appearance");
-    // Show the "enable a theme" hint only when no theme contributes controls.
     const hint = document.getElementById("appearance-empty");
     if (hint) hint.style.display = container && container.children.length ? "none" : "";
   };
 
-  // ── Extensions screen ──────────────────────────────────
   function card(ext, kind) {
     const idAttr = kind === "theme" ? "data-theme-id" : "data-plugin-id";
     const removeAttr = kind === "theme" ? "data-remove-theme" : "data-remove-plugin";
@@ -725,7 +941,7 @@ QB.registerTheme({
 
     container.innerHTML =
       '<div class="ext-section">' +
-        '<div class="ext-section-head"><span class="ext-section-title">Themes</span><span class="ext-hint">One active at a time. .zip packages only.</span></div>' +
+        '<div class="ext-section-head"><span class="ext-section-title">Themes</span></div>' +
         '<div class="ext-dropzone" id="ext-drop-theme">' + UPLOAD_ICON +
           "<div>Drag a theme <strong>.zip</strong> here</div>" +
           '<div class="ext-drop-sub"><button class="ext-link" id="ext-browse-theme">Browse</button></div>' +
@@ -733,8 +949,8 @@ QB.registerTheme({
         '<div class="ext-list">' + themesHtml + "</div>" +
       "</div>" +
       '<div class="ext-section">' +
-        '<div class="ext-section-head"><span class="ext-section-title">Plugins</span><span class="ext-hint">.zip packages only.</span>' +
-          (QB._plugins.length ? '<span class="ext-bulk"><button class="ext-link" id="ext-enable-all">Enable all</button><button class="ext-link" id="ext-disable-all">Disable all</button></span>' : "") +
+        '<div class="ext-section-head"><span class="ext-section-title">Plugins</span>' +
+          (QB._plugins.length ? '<span class="ext-bulk"><button class="btn btn-sm" id="ext-enable-all">Enable all</button><button class="btn btn-sm" id="ext-disable-all">Disable all</button></span>' : "") +
         "</div>" +
         '<div class="ext-dropzone" id="ext-drop-plugin">' + UPLOAD_ICON +
           "<div>Drag a plugin <strong>.zip</strong> here</div>" +
@@ -749,9 +965,6 @@ QB.registerTheme({
     const zone = document.getElementById(zoneId), input = document.getElementById(inputId), browse = document.getElementById(browseId);
     if (!zone || !input) return;
     browse && browse.addEventListener("click", () => input.click());
-    // Snapshot the FileList FIRST — clearing input.value empties the live list
-    // while the async installer is still iterating (only the first file
-    // installed otherwise).
     input.addEventListener("change", () => {
       const files = Array.from(input.files || []);
       input.value = "";

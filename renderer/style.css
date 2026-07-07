@@ -111,6 +111,7 @@ html, body, button, input, select, textarea, kbd, .pill, .btn {
 /* ── Reset & Base ──────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 body {
   font-family: var(--font);
   font-size: var(--font-size);
@@ -359,9 +360,12 @@ kbd {
   color: var(--accent);
 }
 
-.menu-item .key {
+/* Key-shortcut indicator — always the THEME accent, never a fixed color. */
+.key {
   color: var(--accent);
   font-weight: 700;
+}
+.menu-item .key {
   margin-right: 10px;
 }
 
@@ -493,8 +497,9 @@ input[type="range"]:focus-visible { outline-offset: 2px; }
 }
 
 .placeholder-icon {
-  font-size: 32px;
-  color: var(--border);
+  color: var(--text-muted);
+  display: flex;
+  justify-content: center;
 }
 
 .question-content {
@@ -614,8 +619,7 @@ input[type="range"]:focus-visible { outline-offset: 2px; }
 
 /* ── Result Area ───────────────────────────────────────── */
 .result-area {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -654,6 +658,17 @@ input[type="range"]:focus-visible { outline-offset: 2px; }
   border-radius: var(--radius);
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
+  /* EXACTLY uniform height whether or not a box has a detail line (CEL has a
+     second line, the others don't) — content is centered in a fixed box, tall
+     enough that the three-line CEL box never touches its border. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 74px;
+  padding: 8px 6px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .stat-label {
@@ -913,7 +928,7 @@ select {
 .dual-range input[type="range"]::-moz-range-track { background: transparent; border: none; }
 
 /* Generic star control usable anywhere. */
-.qb-star, .star-btn { cursor: pointer; color: var(--text-muted); font-size: 18px; user-select: none; transition: color var(--transition); }
+.qb-star, .star-btn { cursor: pointer; color: var(--text-muted); font-size: 18px; user-select: none; transition: color var(--transition); display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 .qb-star:hover, .star-btn:hover { color: var(--star); }
 .qb-star.on, .star-btn.on { color: var(--star); }
 
@@ -1182,17 +1197,21 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
 }
 
 /* ── Resize Handle ────────────────────────────────────── */
-.resize-handle {
-  width: 6px;
+/* Edge-drag resize: invisible grab strips on the panel's left & right edges
+   (no separate handle bar). The JS in initResize() does the actual dragging. */
+.filters-panel { position: relative; }
+.filters-panel::before,
+.filters-panel::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 100%;
   cursor: col-resize;
-  background: var(--border);
-  flex-shrink: 0;
-  transition: background var(--transition);
+  z-index: 6;
 }
-.resize-handle:hover,
-.resize-handle.active {
-  background: var(--accent);
-}
+.filters-panel::before { left: 0; }
+.filters-panel::after { right: 0; }
 
 /* ── City Skyline ───────────────────────────────────── */
 .city-skyline {
@@ -1249,7 +1268,7 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
 .esc-hint {
   text-align: center;
   font-size: 11px;
-  color: var(--yellow);
+  color: var(--accent);
   padding: 6px;
   animation: blink 0.8s step-end infinite;
 }
@@ -1261,8 +1280,14 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  max-height: 35vh;
+  max-height: 52vh;
 }
+/* "Your Answer:" line shown on each revealed bonus part */
+.bonus-your-answer { margin-bottom: 2px; color: var(--text-secondary); font-size: 13px; }
+
+/* Start/Buzz/Skip is keyboard-driven (S / Space / Enter) — the big button is
+   hidden everywhere; the placeholder + buzz hints tell you which keys to press. */
+#btn-start-session { display: none !important; }
 .history-panel-header {
   display: flex;
   justify-content: space-between;
@@ -1508,6 +1533,112 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
   margin-top: 0;
 }
 
+/* Top-level grouping (Global / Answer Powers / Plugins) */
+.achievement-section-title {
+  width: 100%;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.5px;
+  margin: 22px 0 4px 0;
+  text-transform: uppercase;
+}
+.achievement-section-title:first-child {
+  margin-top: 0;
+}
+
+/* 2x2 character grid icon (achievements with a 4-glyph icon) */
+.achievement-icon-grid {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 0;
+  line-height: 1;
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
+.achievement-icon-grid > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Colorable graphic icon supplied by a plugin (inline SVG / emoji) */
+.achievement-icon-graphic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+.achievement-icon-graphic svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* Achievement unlock popup (toast) */
+.ach-popup {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 320px;
+  padding: 12px 16px;
+  background: var(--bg-secondary, var(--bg-tertiary));
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(16px) scale(0.96);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.ach-popup.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.ach-popup-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ach-popup-icon .achievement-icon {
+  font-size: 30px;
+  width: 40px;
+}
+.ach-popup-icon .achievement-icon-grid {
+  width: 40px;
+  height: 40px;
+  font-size: 17px;
+}
+.ach-popup-icon .achievement-icon-graphic svg {
+  width: 34px;
+  height: 34px;
+}
+.ach-popup-text { min-width: 0; }
+.ach-popup-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.ach-popup-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 2px;
+}
+.ach-popup-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
 .player-welcome {
   font-size: 18px;
   font-weight: 700;
@@ -1655,7 +1786,7 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
 .db-diff { font-size: 12px; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
 .db-diff input { cursor: pointer; }
 .db-browse { flex: 1; overflow-y: auto; padding: 6px 12px; }
-.db-row { display: flex; justify-content: space-between; padding: 9px 10px; border-bottom: 1px solid var(--border-light); cursor: pointer; font-size: 13px; }
+.db-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border-light); cursor: pointer; font-size: 13px; transition: background 120ms; }
 .db-row:hover { background: var(--bg-tertiary); }
 .db-crumb { padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); font-size: 13px; }
 .db-section-label { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--text-secondary); padding: 12px 4px 4px; }
@@ -1679,7 +1810,8 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
 .ext-section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
 .ext-section-title { font-size: 13px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
 .ext-hint { font-size: 11px; color: var(--text-muted); }
-.ext-bulk { margin-left: auto; display: inline-flex; gap: 14px; align-self: center; }
+.ext-bulk { margin-left: auto; display: inline-flex; gap: 8px; align-self: center; }
+.db-pager { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 16px 0 8px; }
 
 /* Per-question session history (Stats → open a session) */
 .qh-table td { vertical-align: middle; }
@@ -1690,12 +1822,19 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
 .qh-badge.qh-neg { background: var(--red-dim); color: var(--red); }
 .qh-badge.qh-miss { background: var(--bg-tertiary); color: var(--text-muted); }
 .qh-buzzbar { position: relative; height: 8px; min-width: 120px; background: linear-gradient(90deg, var(--accent-dim), var(--bg-tertiary)); border: 1px solid var(--border); border-radius: 4px; }
-.qh-buzzmark { position: absolute; top: -2px; width: 3px; height: 12px; background: var(--buzz-mark); border-radius: 2px; transform: translateX(-1px); }
+.qh-buzzmark { position: absolute; top: -2px; width: 3px; height: 12px; background: var(--buzz-mark); border-radius: 2px; transform: translateX(-1px); z-index: 2; }
+.qh-powermark { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--power-mark); border-radius: 1px; transform: translateX(-1px); z-index: 1; opacity: 0.9; }
 
 /* Statistics time-period filter */
 .stats-period-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .session-row.session-faint > td { opacity: 0.4; }
 .session-row.session-faint:hover > td { opacity: 0.7; }
+.qh-row:hover > td { background: var(--bg-secondary); }
+.qh-chev { color: var(--text-muted); font-size: 10px; }
+.qh-detail > td { padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.qh-qtext { font-size: 13px; line-height: 1.7; color: var(--text-secondary); }
+.qh-ans { margin-top: 6px; font-size: 13px; color: var(--green); }
+.qh-part { margin-top: 8px; font-size: 13px; line-height: 1.6; }
 
 .ext-dropzone {
   border: 1.5px dashed var(--border);
@@ -1746,6 +1885,16 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .ext-switch-sm .ext-slider::before { height: 13px; width: 13px; }
 .ext-switch-sm input:checked + .ext-slider::before { transform: translate(15px, -50%); }
 .ext-setting-color { width: 40px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-tertiary); cursor: pointer; }
+/* "swatches" setting type — preset color buttons + optional Custom… picker */
+.ext-swatches { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ext-swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; box-shadow: 0 0 0 1px var(--border); cursor: pointer; padding: 0; transition: transform var(--transition); }
+.ext-swatch:hover { transform: scale(1.12); }
+.ext-swatch.sel { border-color: var(--text); box-shadow: 0 0 0 2px var(--accent); }
+.ext-swatch-custom { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+/* A theme's full Appearance takeover (ctx.registerAppearancePanel) — bare canvas */
+.ext-appearance-panel { width: 100%; }
+/* A real image used as theme art (registerArt {image}) on the title/settings screens */
+.theme-art-img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; margin: 0 auto; border-radius: var(--radius); }
 .ext-settings-group { margin-bottom: 12px; }
 .ext-settings-group-title { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
 .ext-card-note { font-size: 11px; color: var(--text-muted); margin-top: 8px; }
@@ -2092,10 +2241,19 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .save-menu-item:hover { background: var(--accent-dim); color: var(--accent); }
 
 /* ── Review menu (age range + search + match count) ── */
-.rv-filter { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.rv-box { min-width: 480px; max-width: 92vw; }
+.rv-filter { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 10px; }
 .rv-row { display: flex; align-items: center; gap: 8px; }
-.rv-lbl { font-size: 11px; color: var(--text-secondary); flex: 0 0 auto; }
+.rv-lbl { font-size: 11px; color: var(--text-secondary); flex: 0 0 72px; }
 .rv-dual { flex: 1; min-width: 160px; }
+.rv-difficulties { align-items: flex-start; }
+.rv-diff-grid { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.rv-diff-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; padding: 2px 8px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--bg-tertiary); cursor: pointer;
+}
+.rv-diff-chip:has(input:checked) { border-color: var(--accent); color: var(--accent); }
 .rv-count { font-size: 11px; }
 
 .setting-subhead { font-size: 11px; font-weight: 700; letter-spacing: .5px; color: var(--text-secondary); margin: 6px 2px 2px; text-transform: uppercase; }
@@ -2117,3 +2275,41 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .upd-bar { width: 100%; height: 8px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin: 6px 0; }
 .upd-bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .25s ease; }
 .upd-bar-label { font-size: 11px; color: var(--text-secondary); }
+
+/* ── Indeterminate loading bar (search, frequency, plugin scans) ── */
+.qb-loading { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 26px 16px; color: var(--text-muted); font-size: 12px; }
+.qb-loadbar { width: min(340px, 80%); height: 4px; border-radius: 2px; background: var(--bg-tertiary); overflow: hidden; position: relative; }
+.qb-loadbar-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: 2px; background: var(--accent); animation: qb-loadbar-slide 1.6s ease-in-out infinite; }
+@keyframes qb-loadbar-slide { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
+.qb-loadbar.det .qb-loadbar-fill { animation: none; transition: width 150ms linear; }
+
+/* ── Right-click context menu ── */
+.qb-ctx-menu { position: fixed; z-index: 10000; min-width: 180px; padding: 4px; background: var(--bg-secondary, var(--bg-tertiary)); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4); display: flex; flex-direction: column; }
+.qb-ctx-item { display: block; width: 100%; text-align: left; padding: 7px 12px; border: none; border-radius: 7px; background: none; color: var(--text); font-size: 13px; cursor: pointer; }
+.qb-ctx-item:hover { background: var(--accent-dim, var(--bg-tertiary)); color: var(--accent); }
+.qb-ctx-item.danger { color: var(--red); }
+.qb-ctx-item.danger:hover { background: var(--red-dim, var(--bg-tertiary)); color: var(--red); }
+
+/* ── "Hide answers": Discord-style spoiler — a plain solid pill over the
+   answer (no label), lighter on hover, click to reveal/re-hide ── */
+.ans-toggle { display: inline-block; max-width: 100%; }
+.db-hide-ans .ans-toggle:not(.shown) { position: relative; cursor: pointer; border-radius: 8px; min-width: 44px; }
+.db-hide-ans .ans-toggle:not(.shown) > * { visibility: hidden; }
+.db-hide-ans .ans-toggle:not(.shown)::after { content: ""; position: absolute; inset: 0; background: var(--bg-tertiary); border-radius: 8px; transition: background 120ms; }
+.db-hide-ans .ans-toggle:not(.shown):hover::after { background: var(--border); }
+.db-hide-ans .ans-toggle.shown { cursor: pointer; }
+
+/* ── Bonus part stepping hint ── */
+.bonus-next-hint { padding: 12px 4px 4px; font-size: 13px; color: var(--text-muted); cursor: pointer; user-select: none; }
+.bonus-next-hint:hover { color: var(--text); }
+
+/* ── Packet view toggle (sections vs interleaved) ── */
+.db-pkt-view { margin-left: auto; display: inline-flex; gap: 6px; }
+.db-crumb { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* ── Polish: consistent alignment & numerics ── */
+.stats-table { font-variant-numeric: tabular-nums; }
+.stats-table th, .stats-table td { vertical-align: middle; }
+.btn { white-space: nowrap; }
+.db-toolbar .btn, .db-toolbar select, .db-toolbar input[type="text"] { height: 30px; box-sizing: border-box; }
+.confirm-actions { margin-top: 12px; }

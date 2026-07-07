@@ -42,7 +42,6 @@ export function computeStats(entries) {
         stats.tossupPowers++;
       }
     } else if (t.points < 0) {
-      // Only true negs (-5 interrupts) count — dead/0-point misses don't.
       stats.tossupNegs++;
     }
     stats.totalTossupPoints += t.points;
@@ -203,11 +202,11 @@ export function emptyStats() {
   };
 }
 
-/**
- * Compute per-session breakdown for detailed graphs
- * @param {Array} sessionList - from UserData.getSessionList()
- * @param {Array} allEntries - from UserData.getAllSessionEntries()
- */
+
+
+
+
+
 export function computeSessionBreakdown(sessionList, allEntries, filters = {}) {
   if (!sessionList || !allEntries) return [];
 
@@ -243,8 +242,6 @@ export function computeSessionBreakdown(sessionList, allEntries, filters = {}) {
     }
 
     const totalTU = tossups.length;
-    // When a category/difficulty filter is active, totals must come from the
-    // filtered entries (the stored session totals cover all categories).
     const totalPoints = filtering ? entries.reduce((a, e) => a + (e.points || 0), 0) : s.total_points;
     const questionCount = filtering ? entries.length : s.question_count;
     return {
@@ -268,6 +265,5 @@ export function computeSessionBreakdown(sessionList, allEntries, filters = {}) {
     };
   });
 
-  // When filtering, drop sessions that have no matching questions.
   return filtering ? rows.filter((r) => r.entryCount > 0) : rows;
 }
