@@ -826,7 +826,6 @@ function openReviewMenu(items) {
           <div class="rv-diff-grid" id="rv-diffs">
             ${[0,1,2,3,4,5,6,7,8,9,10].map((d) => `<label class="rv-diff-chip"><input type="checkbox" class="rv-diff" value="${d}"> ${d}</label>`).join("")}
           </div>
-          <span class="rv-lbl text-muted" style="font-size:10px">none = all</span>
         </div>
         <label class="checkbox-row" style="font-size:12px"><input type="checkbox" id="rv-remove"${reviewRemoveAfter() ? " checked" : ""}> Remove from review after I get it right</label>
         <div class="rv-count text-muted" id="rv-matchcount"></div>
