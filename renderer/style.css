@@ -928,7 +928,10 @@ select {
 .dual-range input[type="range"]::-moz-range-track { background: transparent; border: none; }
 
 /* Generic star control usable anywhere. */
-.qb-star, .star-btn { cursor: pointer; color: var(--text-muted); font-size: 18px; user-select: none; transition: color var(--transition); display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+/* Stars and +s share one fixed square box so their CENTERS always line up,
+   whatever the glyph. Size tweaks go on the glyph, never the box. */
+.qb-star, .star-btn { cursor: pointer; color: var(--text-muted); font-size: 18px; user-select: none; transition: color var(--transition); display: inline-flex; align-items: center; justify-content: center; line-height: 1; width: 22px; height: 22px; flex: 0 0 auto; }
+.save-plus { font-size: 20px; font-weight: 500; }
 .qb-star:hover, .star-btn:hover { color: var(--star); }
 .qb-star.on, .star-btn.on { color: var(--star); }
 
@@ -2193,7 +2196,7 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 #title-screen .title-left { min-height: 0; }
 
 /* ── Stars: muted until filled; theme color (--star) when on or hovered ── */
-.star-toggle { font-size: 13px; color: var(--text-muted); cursor: pointer; user-select: none; }
+.star-toggle { font-size: 15px; color: var(--text-muted); cursor: pointer; user-select: none; display: inline-flex; align-items: center; justify-content: center; line-height: 1; width: 22px; height: 22px; flex: 0 0 auto; }
 .star-toggle:hover { color: var(--star); }
 .star-toggle.on { color: var(--star); }
 

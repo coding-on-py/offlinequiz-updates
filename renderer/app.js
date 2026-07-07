@@ -2372,7 +2372,7 @@ function renderQuestion(question) {
     <span>${escapeHtml(question.category || "?")} / ${escapeHtml(question.subcategory || "?")}${question.alternate_subcategory ? " \u00b7 " + escapeHtml(question.alternate_subcategory) : ""}</span>
     <span>Diff ${diffLabel}${diffName ? " \u00b7 " + escapeHtml(diffName) : ""}</span>
     <span>${escapeHtml(setInfo)}</span>
-    <span class="star-btn" id="save-indicator" title="Save to review / folders">＋</span>
+    <span class="star-btn save-plus" id="save-indicator" title="Save to review / folders">+</span>
     <span class="star-btn" id="star-indicator" data-id="${question.id}" data-type="${isTossup ? "tossup" : "bonus"}">
       ${getStarChar(question.id, isTossup ? "tossup" : "bonus")}
     </span>
@@ -3448,7 +3448,7 @@ function renderHistoryPanel() {
       altSub: e.question?.alternate_subcategory,
       year: e.question?.set_year,
       difficulty: e.question?.difficulty,
-      sideHtml: (() => { const st = isStarredLocal(e.id, e.type); return `${celMarker}${badge}<span class="star-btn hist-save" data-idx="${i}" title="Save to review / folders" style="font-size:16px">+</span><span class="star-toggle${st ? " on" : ""}" data-qid="${e.id}" data-type="${e.type}">${st ? "\u2605" : "\u2606"}</span>`; })(),
+      sideHtml: (() => { const st = isStarredLocal(e.id, e.type); return `${celMarker}${badge}<span class="star-btn save-plus hist-save" data-idx="${i}" title="Save to review / folders">+</span><span class="star-toggle${st ? " on" : ""}" data-qid="${e.id}" data-type="${e.type}">${st ? "\u2605" : "\u2606"}</span>`; })(),
       answerHtml: `Answer: <span class="ans">${answer}</span>`,
       bodyHtml: `
         <div class="qcard-text">${historyQuestionHtml(e)}</div>
@@ -6164,7 +6164,7 @@ function renderSearchResult(q) {
     altSub: q.alternate_subcategory,
     year: q.set_year,
     difficulty: q.difficulty,
-    sideHtml: `<span class="star-btn db-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders" style="font-size:16px">+</span><span class="pill">${isTossup ? "TU" : "BO"}</span>${star}`,
+    sideHtml: `<span class="star-btn save-plus db-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders">+</span><span class="pill">${isTossup ? "TU" : "BO"}</span>${star}`,
     answerHtml: `Answer: <span class="ans-toggle"><span class="ans">${answerHtmlStr}</span></span>`,
     bodyHtml: body,
   });
