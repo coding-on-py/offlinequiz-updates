@@ -2317,3 +2317,7 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .btn { white-space: nowrap; }
 .db-toolbar .btn, .db-toolbar select, .db-toolbar input[type="text"] { height: 30px; box-sizing: border-box; }
 .confirm-actions { margin-top: 12px; }
+
+/* ── App-update dialog: a wide rectangle, not a cramped square ── */
+#update-dialog .confirm-box { width: min(560px, 92vw); max-width: min(560px, 92vw); padding: 24px 28px; }
+#update-dialog .upd-bar { width: 100%; }
