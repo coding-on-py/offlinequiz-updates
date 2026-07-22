@@ -11,6 +11,27 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, renameSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { createRequire } from "node:module";
+
+// Load the bson module no matter where THIS file runs from. A bare
+// import("bson") resolves relative to the importing file — fine inside the app
+// bundle (node_modules/bson ships in the asar), but this file also runs from
+// the OTA overlay dir under userData, where that walk finds nothing. Fall back
+// to resolving through the packaged app's own package.json.
+async function loadBson() {
+  try { return await import("bson"); } catch (e) {}
+  const candidates = [];
+  if (process.resourcesPath) {
+    candidates.push(join(process.resourcesPath, "app.asar", "package.json"));
+    candidates.push(join(process.resourcesPath, "app", "package.json"));
+  }
+  candidates.push(join(process.cwd(), "package.json"));
+  for (const c of candidates) {
+    try { return createRequire(c)("bson"); } catch (e) {}
+  }
+  throw new Error("bson module not found — reinstall the app");
+}
 
 // ── Configuration ──────────────────────────────────────────
 export const GOOGLE_API_KEY = "AIzaSyCSyvh5_21xzogdKlLhM27b9OGODQssyww"; // Drive API key — restrict to Drive API only
@@ -137,7 +158,7 @@ const FTS = `
  */
 export async function applyUpdate(folderId, dbPath, onProgress = () => {}) {
   if (!isConfigured()) throw new Error("updater not configured (missing GOOGLE_API_KEY)");
-  const { deserialize } = await import("bson");
+  const { deserialize } = await loadBson();
 
   onProgress({ label: "Locating files…", pct: 4 });
   const files = await listFilesInFolder(folderId);
