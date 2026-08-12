@@ -881,8 +881,8 @@ function parsePromptAnswers(answerline, sanitizedAnswerline) {
   return prompts;
 }
 
-export function checkBonusPart(userAnswer, partAnswerline, partSanitizedLine, pointValue = 10) {
-  const result = checkAnswer(userAnswer, partAnswerline, partSanitizedLine);
+export function checkBonusPart(userAnswer, partAnswerline, partSanitizedLine, pointValue = 10, strictness = 10) {
+  const result = checkAnswer(userAnswer, partAnswerline, partSanitizedLine, strictness);
   return {
     correct: result.correct,
     points: result.correct ? pointValue : 0,
@@ -890,7 +890,7 @@ export function checkBonusPart(userAnswer, partAnswerline, partSanitizedLine, po
   };
 }
 
-export function checkBonus(userAnswers, bonusData) {
+export function checkBonus(userAnswers, bonusData, strictness = 10) {
   const parts = [];
   let totalPoints = 0;
   let answers, answersSanitized, values;
@@ -899,7 +899,7 @@ export function checkBonus(userAnswers, bonusData) {
   try { values = JSON.parse(bonusData.point_values ?? bonusData.values); } catch { values = [10, 10, 10]; }
 
   for (let i = 0; i < 3; i++) {
-    const r = checkBonusPart(userAnswers[i] || "", answers[i] || "", answersSanitized[i] || "", values[i] || 10);
+    const r = checkBonusPart(userAnswers[i] || "", answers[i] || "", answersSanitized[i] || "", values[i] || 10, strictness);
     parts.push(r);
     totalPoints += r.points;
   }

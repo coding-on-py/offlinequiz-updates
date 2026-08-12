@@ -634,6 +634,7 @@ input[type="range"]:focus-visible { outline-offset: 2px; }
 .result-banner.correct { color: var(--green); }
 .result-banner.power { color: var(--accent); }
 .result-banner.incorrect { color: var(--red); }
+.result-banner.dead { color: var(--text-muted); }
 
 .result-answer {
   font-size: 13px;
@@ -987,6 +988,10 @@ select {
   .top-bar { padding: 6px 12px; }
   .settings-art-panel { display: none; }
   .settings-container { max-width: none; }
+  /* Sliders + labels must wrap inside the narrow panel instead of clipping. */
+  .filters-panel .slider-group { flex-wrap: wrap; }
+  .filters-panel .slider-group input[type="range"] { width: 100%; min-width: 0; flex: 1 1 60px; }
+  .filters-panel .slider-group span { min-width: 0; }
 }
 
 @media (max-width: 700px) {
@@ -2288,7 +2293,11 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .qb-loadbar.det .qb-loadbar-fill { animation: none; transition: width 150ms linear; }
 
 /* ── Right-click context menu ── */
-.qb-ctx-menu { position: fixed; z-index: 10000; min-width: 180px; padding: 4px; background: var(--bg-secondary, var(--bg-tertiary)); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4); display: flex; flex-direction: column; }
+.qb-ctx-menu { position: fixed; z-index: 10000; min-width: 200px; max-width: 320px; padding: 5px; background: var(--bg-secondary, var(--bg-tertiary)); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4); display: flex; flex-direction: column; opacity: 0; transform: scale(0.97); transition: opacity 90ms ease, transform 90ms ease; transform-origin: top left; }
+.qb-ctx-menu.open { opacity: 1; transform: scale(1); }
+.qb-ctx-title { padding: 5px 12px 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border-light); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qb-ctx-sep { height: 1px; background: var(--border-light); margin: 4px 6px; }
+.qb-ctx-hint { float: right; margin-left: 14px; color: var(--text-muted); font-size: 11px; }
 .qb-ctx-item { display: block; width: 100%; text-align: left; padding: 7px 12px; border: none; border-radius: 7px; background: none; color: var(--text); font-size: 13px; cursor: pointer; }
 .qb-ctx-item:hover { background: var(--accent-dim, var(--bg-tertiary)); color: var(--accent); }
 .qb-ctx-item.danger { color: var(--red); }

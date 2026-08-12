@@ -42,8 +42,8 @@ contextBridge.exposeInMainWorld("qbreader", {
   checkTossup: (questionId, answer, buzzPosition, sessionId, extra = {}) =>
     ipcRenderer.invoke("check-tossup", { questionId, answer, buzzPosition, sessionId, ...extra }),
 
-  checkBonus: (questionId, answers, sessionId) =>
-    ipcRenderer.invoke("check-bonus", { questionId, answers, sessionId }),
+  checkBonus: (questionId, answers, sessionId, strictness) =>
+    ipcRenderer.invoke("check-bonus", { questionId, answers, sessionId, strictness }),
 
   evaluateTossup: (questionId, answer, strictness, buzzPosition) =>
     ipcRenderer.invoke("evaluate-tossup", { questionId, answer, strictness, buzzPosition }),

@@ -20,6 +20,7 @@ export function computeStats(entries) {
     bonusPartsCorrect: 0,
     bonusPartsTotal: bonuses.length * 3,
     bonusConversion: 0,
+    bonusDist: { 0: 0, 10: 0, 20: 0, 30: 0 },
     totalBonusPoints: 0,
     totalPoints: 0,
     averagePointsPerQuestion: 0,
@@ -67,6 +68,9 @@ export function computeStats(entries) {
     bonusTotalPts += b.points;
     stats.bonusPartsCorrect += (b.bonus_parts_correct ?? b.bonusPartsCorrect) || 0;
     stats.totalBonusPoints += b.points;
+    // 30/20/10/0 distribution, bucketed by points so non-10 part values still land sanely.
+    const bkt = b.points >= 30 ? 30 : b.points >= 20 ? 20 : b.points >= 10 ? 10 : 0;
+    stats.bonusDist[bkt]++;
 
     addToCategoryStats(stats.byCategory, b, "bonus");
     addToDifficultyStats(stats.byDifficulty, b, "bonus");

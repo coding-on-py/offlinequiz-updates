@@ -96,29 +96,55 @@
     return `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div><span>${esc(label || "Loading…")}</span></div>`;
   };
 
-  // Right-click context menu: items = [{label, onClick, danger}] — closes on
+  // Right-click context menu. items: [{label, onClick, danger, hint}] plus
+  // {sep: true} separators; opts.title renders a truncated header. Closes on
   // click-away / Esc. Plugins get it via ctx.contextMenu.
-  QB.contextMenu = (x, y, items) => {
+  QB.contextMenu = (x, y, items, opts) => {
     document.getElementById("qb-ctx-menu")?.remove();
-    const list = (items || []).filter((it) => it && it.label && typeof it.onClick === "function");
-    if (!list.length) return;
+    const list = (items || []).filter((it) => it && (it.sep || (it.label && typeof it.onClick === "function")));
+    while (list.length && list[0].sep) list.shift();
+    while (list.length && list[list.length - 1].sep) list.pop();
+    if (!list.filter((it) => !it.sep).length) return;
     const el = document.createElement("div");
     el.id = "qb-ctx-menu";
     el.className = "qb-ctx-menu";
+    const close = (ev) => { if (!el.contains(ev.target)) { el.remove(); cleanup(); } };
+    const onKey = (ev) => { if (ev.key === "Escape") { el.remove(); cleanup(); ev.stopPropagation(); } };
+    const cleanup = () => { document.removeEventListener("mousedown", close, true); document.removeEventListener("keydown", onKey, true); };
+    if (opts && opts.title) {
+      const h = document.createElement("div");
+      h.className = "qb-ctx-title";
+      h.textContent = String(opts.title).length > 46 ? String(opts.title).slice(0, 45) + "…" : String(opts.title);
+      el.appendChild(h);
+    }
+    let lastSep = true;
     list.forEach((it) => {
+      if (it.sep) {
+        if (lastSep) return;
+        const s = document.createElement("div");
+        s.className = "qb-ctx-sep";
+        el.appendChild(s);
+        lastSep = true;
+        return;
+      }
+      lastSep = false;
       const b = document.createElement("button");
       b.className = "qb-ctx-item" + (it.danger ? " danger" : "");
       b.textContent = it.label;
-      b.addEventListener("click", () => { el.remove(); try { it.onClick(); } catch (e) { console.error("[QB] ctx item", e); } });
+      if (it.hint) {
+        const sp = document.createElement("span");
+        sp.className = "qb-ctx-hint";
+        sp.textContent = it.hint;
+        b.appendChild(sp);
+      }
+      b.addEventListener("click", () => { el.remove(); cleanup(); try { it.onClick(); } catch (e) { console.error("[QB] ctx item", e); } });
       el.appendChild(b);
     });
     document.body.appendChild(el);
     const r = el.getBoundingClientRect();
     el.style.left = Math.min(x, window.innerWidth - r.width - 8) + "px";
     el.style.top = Math.min(y, window.innerHeight - r.height - 8) + "px";
-    const close = (ev) => { if (!el.contains(ev.target)) { el.remove(); cleanup(); } };
-    const onKey = (ev) => { if (ev.key === "Escape") { el.remove(); cleanup(); ev.stopPropagation(); } };
-    const cleanup = () => { document.removeEventListener("mousedown", close, true); document.removeEventListener("keydown", onKey, true); };
+    requestAnimationFrame(() => el.classList.add("open"));
     setTimeout(() => { document.addEventListener("mousedown", close, true); document.addEventListener("keydown", onKey, true); }, 0);
   };
 
@@ -400,7 +426,13 @@
       if (typeof p._manifest.onEnable === "function") p._manifest.onEnable(ctx);
       p._enabledRuntime = true; p.enabled = true; savePlugins();
       QB._emit("plugins:changed");
-    } catch (e) { console.error(e); QB.toast("Plugin '" + (p.name || id) + "' failed: " + e.message, "error"); p.enabled = false; savePlugins(); }
+    } catch (e) {
+      console.error(e); QB.toast("Plugin '" + (p.name || id) + "' failed: " + e.message, "error");
+      // Unwind whatever the failed onEnable managed to register, so a retry
+      // can't stack duplicate hooks.
+      if (p._ctx) { p._ctx._unsub?.forEach?.((u) => { try { u(); } catch {} }); p._ctx = null; }
+      p.enabled = false; savePlugins();
+    }
   };
   QB.disablePlugin = (id) => {
     const p = QB._plugins.find((x) => x.id === id); if (!p) return;
@@ -505,6 +537,19 @@
     }
     return true;
   };
+  // Fire the outgoing plugin page's onHide whenever the active screen changes
+  // away from it — plugins rely on this for cleanup (timers, borrowed panel).
+  QB._lastActivePage = null;
+  QB.on("screen:change", () => {
+    const prev = QB._lastActivePage;
+    if (prev && (!prev.screenEl || !prev.screenEl.classList.contains("active"))) {
+      QB._lastActivePage = null;
+      try { if (typeof prev.onHide === "function") prev.onHide(); } catch (e) { console.error("[QB] onHide", e); }
+    }
+    const now = QB._pages.find((p) => p.screenEl && p.screenEl.classList.contains("active"));
+    if (now) QB._lastActivePage = now;
+  });
+
   QB.showPage = (combined) => {
     const rec = QB._pages.find((p) => p.pluginId + "::" + p.id === combined);
     if (!rec) return false;

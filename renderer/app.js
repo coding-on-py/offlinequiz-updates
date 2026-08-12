@@ -94,7 +94,7 @@ const API = isElectron
         if (path === "/api/sessions/prune") return window.qbreader.pruneSessions(data.days);
         if (path === "/api/plugin-data") return window.qbreader.setPluginData(data.plugin, data.key, data.value);
         if (path === "/api/plugin-sql") return window.qbreader.pluginSql(data.plugin, data.sql, data.params);
-        if (path === "/api/check-bonus") return window.qbreader.checkBonus(data.questionId, data.answers, data.sessionId);
+        if (path === "/api/check-bonus") return window.qbreader.checkBonus(data.questionId, data.answers, data.sessionId, data.strictness);
         if (path === "/api/starred/toggle") return window.qbreader.toggleStar(data.questionId, data.type);
         if (path === "/api/profiles") return window.qbreader.createProfile(data.name);
         if (path === "/api/profiles/activate") return window.qbreader.setActiveProfile(data.id);
@@ -555,7 +555,14 @@ function showScreen(name) {
   // earlier tossup+bonus interleave must never make bonus practice serve tossups.
   if (state.mode) state._practiceBase = state.mode;
   if (mapped === "practice") collapseFilterSections();
-  if (mapped === "title") { loadTitleArt(); refreshReviewBadge(); }
+  if (mapped === "title") {
+    loadTitleArt();
+    refreshReviewBadge();
+    // Keep the greeting in sync — a rename on the Player screen must show
+    // everywhere immediately, not only after a restart.
+    const greeting = document.getElementById("title-greeting");
+    if (greeting) greeting.textContent = state.username ? `HELLO, ${state.username.toUpperCase()}!` : "";
+  }
   qbEmit("screen:change", { name });
 }
 
@@ -1909,6 +1916,7 @@ $("#enable-cat-weights")?.addEventListener("change", (e) => {
   lsSet("qb-use-weights", e.target.checked);
   $("#category-filters")?.classList.toggle("weights-on", e.target.checked);
 });
+$("#btn-hidden-manager")?.addEventListener("click", openHiddenManager);
 $("#session-retention")?.addEventListener("change", (e) => {
   const days = parseInt(e.target.value) || 0;
   state.settings.sessionRetentionDays = days;
@@ -1922,6 +1930,30 @@ function pruneOldSessions() {
 }
 
 
+// Jump into practice configured for a set (packetNumber "" = whole set).
+// Applied by setMode AFTER the saved filter state restores, so the restore
+// can't clobber the selection.
+function playSetPacket(setName, packetNumber, asBonuses) {
+  state._pendingPacketPlay = { setName, packetNumber: packetNumber == null ? "" : packetNumber };
+  showScreen(asBonuses ? "practice-bonuses" : "practice-tossups");
+  setMode(asBonuses ? "bonuses" : "tossups");
+}
+
+// "Play this packet" from the set browser: applied after filter restore.
+function applyPendingPacketPlay() {
+  const p = state._pendingPacketPlay;
+  if (!p) return;
+  state._pendingPacketPlay = null;
+  const ms = $("#mode-select");
+  if (ms) { ms.value = "set"; ms.dispatchEvent(new Event("change", { bubbles: true })); }
+  const sn = $("#mode-set-name");
+  if (sn) { if (![...sn.options].some((o) => o.value === p.setName)) _catAddOpt(sn, p.setName); sn.value = p.setName; }
+  const pk = $("#mode-packet");
+  if (pk) pk.value = String(p.packetNumber);
+  state._gameSig = null;
+  window.QB?.toast?.(`Set to ${p.setName} — packet ${p.packetNumber}. Press Start.`);
+}
+
 function setMode(mode) {
   if (state.mode && state.mode !== mode && $("#category-filters .category-group")) saveFilterState();
   state.mode = mode;
@@ -1929,7 +1961,7 @@ function setMode(mode) {
   const type = mode === "tossups" ? "tossups" : "bonuses";
   $("#practice-title").textContent =
     `PRACTICE: ${mode.toUpperCase()}`;
-  loadSets().then(() => restoreFilterState());
+  loadSets().then(() => { restoreFilterState(); applyPendingPacketPlay(); });
   updateModeFields();
 
   loadCategories(type).then(() => {
@@ -1995,7 +2027,9 @@ function startSession() {
   state.incorrectCelerityHistory = [];
   state.lastResult = null;
   state.resultOverridden = false;
-  state.sessionHistory = [];
+  // Reset BOTH buckets — a leftover interleaved-bonus history from the previous
+  // session must not leak into (or be exported with) this one.
+  state.histories = { tossups: [], bonuses: [] };
   state._gameSig = null; state._gameQueue = null; state._gamePaired = null; state._gameIdx = 0;
   state._wantBonus = false; state._pendingPairedBonus = null; state._currentPaired = null;
   state._starredQueue = null; state._starredSig = null; state._starredIdx = 0;
@@ -2039,6 +2073,7 @@ async function nextQuestion() {
 
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
 
+  state._loadingQuestion = true; // cleared by renderQuestion / endOfQueue
   resetQuestionUI();
 
   const placeholder = $("#question-placeholder");
@@ -2048,7 +2083,7 @@ async function nextQuestion() {
   if (state.reviewIds && state.mode === "tossups") {
     if (!state.reviewIds.length) {
       state.reviewIds = null;
-      showError("Review complete \u2014 nice work! Press Esc to leave.");
+      endOfQueue("Review complete \u2014 nice work! Press Esc to leave.");
       return;
     }
     const id = state.reviewIds.shift();
@@ -2065,7 +2100,7 @@ async function nextQuestion() {
   }
 
   if (state.bonusIds && state.mode === "bonuses") {
-    if (!state.bonusIds.length) { state.bonusIds = null; showError("Done — Press Esc to leave."); return; }
+    if (!state.bonusIds.length) { state.bonusIds = null; endOfQueue("Done — Press Esc to leave."); return; }
     const id = state.bonusIds.shift();
     try {
       const d = await API.get("/api/bonuses/" + encodeURIComponent(id));
@@ -2136,8 +2171,11 @@ async function nextQuestion() {
     showError("No questions match your filters. Try broadening your criteria.");
     return;
   }
-  if (window.QB?.passesQuestionFilters) {
-    for (let tries = 0; tries < 5 && !window.QB.passesQuestionFilters(question, { mode: state.mode }); tries++) {
+  {
+    const qType = state.mode === "tossups" ? "tossup" : "bonus";
+    const servable = (q) => q && !isQuestionHidden(q.id, qType) &&
+      (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode }));
+    for (let tries = 0; tries < 8 && !servable(question); tries++) {
       try {
         const retry = await API.get(`${endpoint}?${params}`);
         const next = state.mode === "tossups" ? retry.tossup : retry.bonus;
@@ -2173,7 +2211,9 @@ async function skipQuestion() {
 
   if (state.sessionId && question) {
     if (state.mode === "tossups") {
-      API.post("/api/check-tossup", {
+      // If a neg was already recorded this reading (rebuzz mode), the attempt
+      // is in the books — don't overwrite that row with a 0-point skip.
+      if (!state._negRecorded) API.post("/api/check-tossup", {
         questionId: question.id,
         answer: "",
         buzzPosition: state.buzzPosition || 0,
@@ -2264,8 +2304,13 @@ async function serveOrdered() {
   if (r.error) { showError(r.error); return; }
   const queue = r.queue || [];
   if (!queue.length) { showError("No questions found for that selection."); return; }
+  // Skip questions the user has hidden ("never serve again").
+  {
+    const t = state._practiceBase === "bonuses" ? "bonus" : "tossup";
+    while (state._gameIdx < queue.length && queue[state._gameIdx] && isQuestionHidden(queue[state._gameIdx].id, t)) state._gameIdx++;
+  }
   if (state._gameIdx >= queue.length) {
-    showError("Packet finished \u2014 you've read every question. Press Esc to leave.");
+    endOfQueue("Packet finished \u2014 you've read every question. Press Esc to leave.");
     return;
   }
   const i = state._gameIdx++;
@@ -2307,9 +2352,9 @@ async function serveStarredQuestion(filters) {
   }
   const queue = state._starredQueue;
   const noun = type === "bonus" ? "bonuses" : "tossups";
-  if (!queue.length) { showError(`You have no starred ${noun} matching these filters. Star some questions first (or broaden the filters).`); return; }
+  if (!queue.length) { endOfQueue(`You have no starred ${noun} matching these filters. Star some questions first (or broaden the filters).`); return; }
   if (state._starredIdx >= queue.length) {
-    showError(`You've gone through all ${queue.length} starred ${noun}! Press Esc to leave, or start a new session to go again.`);
+    endOfQueue(`You've gone through all ${queue.length} starred ${noun}! Press Esc to leave, or start a new session to go again.`);
     return;
   }
   state.currentQuestion = queue[state._starredIdx++];
@@ -2354,6 +2399,8 @@ function switchPracticeType(type, label) {
 
 
 function renderQuestion(question) {
+  state._loadingQuestion = false;
+  state._negRecorded = false;
   resetQuestionUI();
   const isTossup = state.mode === "tossups";
 
@@ -2446,6 +2493,7 @@ async function renderBonus(q) {
 
   $("#power-mark").classList.add("hidden");
   $("#question-text").textContent = leadin;
+  state.currentDisplayText = null; // stale tossup text must never resume over a bonus
   state.revealIndex = leadin.length;
   $("#buzz-area").classList.add("hidden");
 
@@ -2563,6 +2611,7 @@ async function submitBonusAnswers() {
       questionId: state.currentQuestion.id,
       answers,
       sessionId: state.sessionId,
+      strictness: state.settings.strictness, // same strictness as the per-part ✓/✗ verdicts
     });
     displayBonusResult(result, answers);
     updateSessionStats({ points: result.totalPoints, correct: result.totalPoints > 0 });
@@ -2636,8 +2685,7 @@ function markDeadQuestion(text) {
   const banner = $("#result-banner");
   const answerDiv = $("#result-answer");
   area.classList.remove("hidden");
-  banner.className = "result-banner";
-  banner.style.color = "var(--text-muted)";
+  banner.className = "result-banner dead";
   banner.textContent = "DEAD (0 pts)";
   answerDiv.innerHTML = `Correct: <span class="actual">${answerLineHtml(state.currentQuestion?.answer, state.currentQuestion?.answer_sanitized || "")}</span>`;
   $("#buzz-area").classList.add("hidden");
@@ -2653,7 +2701,9 @@ function markDeadQuestion(text) {
   });
   renderHistoryPanel();
 
-  if (state.sessionId && state.currentQuestion) {
+  // If a rebuzz-mode neg was already recorded for this reading, keep that row —
+  // an overriding 0-point entry would silently erase the -5.
+  if (state.sessionId && state.currentQuestion && !state._negRecorded) {
     API.post("/api/check-tossup", {
       questionId: state.currentQuestion.id,
       answer: "",
@@ -2692,8 +2742,29 @@ function togglePause() {
   }
 }
 
+// Translate a buzz index in the DISPLAYED text (pron guides stripped, "(*)"
+// removed, plugin transforms applied) back into question_sanitized coordinates,
+// which is what the backend's read-position and power judging use. The display
+// text is a subsequence of the original for our own transforms, so greedy
+// character alignment recovers the original index; unknown plugin insertions
+// degrade gracefully.
+function displayPosToOriginal(displayPos) {
+  const orig = state.currentQuestion?.question_sanitized || "";
+  const disp = state.currentDisplayText || "";
+  if (!disp || !orig || disp === orig) return displayPos;
+  let oi = 0, di = 0;
+  while (di < displayPos && oi < orig.length) {
+    if (orig[oi] === disp[di]) { oi++; di++; }
+    else oi++;
+  }
+  return oi;
+}
+
 function resumeReveal() {
   if (!state.sessionActive || state.isBuzzed || state.isPaused) return;
+  // Bonuses have no progressive reveal — resuming with the stale tossup text
+  // would paint the previous tossup over the bonus and start a buzz window.
+  if (state.mode !== "tossups") return;
   const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
   if (state.revealIndex < text.length) {
     revealText(text);
@@ -2723,6 +2794,8 @@ function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) 
 
 function buzz() {
   if (state.isBuzzed || !state.sessionActive) return;
+  // No live question (still loading, or a queue just ran out) — nothing to buzz on.
+  if (!state.currentQuestion || state._loadingQuestion) return;
   state.isBuzzed = true;
   state.isPaused = false;
   state.promptActive = false;
@@ -2868,7 +2941,7 @@ async function submitTossupAnswer(answer) {
       : await API.post("/api/check-tossup", {
         questionId: state.currentQuestion.id,
         answer,
-        buzzPosition: state.buzzPosition,
+        buzzPosition: displayPosToOriginal(state.buzzPosition),
         sessionId: state.sessionId,
         fullyRead: !!state.questionFullyRead,
         strictness: state.settings.strictness,
@@ -2892,6 +2965,9 @@ async function submitTossupAnswer(answer) {
 
     if (!result.correct && state.settings.allowRebuzzes && !state.questionFullyRead) {
       updateSessionStats(result);
+      // A -5 row is now recorded for this question — a later skip/dead must
+      // NOT post an overriding 0-point entry that would rewrite it.
+      state._negRecorded = true;
       Sound.incorrect();
       state.isBuzzed = false;
       state.resultAreaVisible = false;
@@ -2937,7 +3013,7 @@ async function judgeWithPluginRules(answer) {
   const ruleCtx = {
     userAnswer: answer,
     question: q,
-    buzzPosition: state.buzzPosition,
+    buzzPosition: displayPosToOriginal(state.buzzPosition),
     fullyRead,
     strictness: state.settings.strictness,
   };
@@ -3026,7 +3102,7 @@ function displayTossupResult(result, userAnswer) {
 
   renderTossupResult();
 
-  if (state.settings.bonusAfter && result.correct && state.mode === "tossups" && state._practiceBase === "tossups") {
+  if (state.settings.bonusAfter && result.correct && state.mode === "tossups" && state._practiceBase === "tossups" && !state.reviewIds) {
     state._wantBonus = true;
     state._bonusFromQ = state.currentQuestion;
     const _mv = $("#mode-select")?.value;
@@ -3229,7 +3305,13 @@ function confirmDialog(message, onYes, opts) {
   el.querySelector("#cf-no").onclick = () => el.remove();
 }
 
-function closeSaveMenu() { document.getElementById("save-menu")?.remove(); }
+function closeSaveMenu() {
+  document.getElementById("save-menu")?.remove();
+  // Always disarm the click-away closer. With {once:true} alone, choosing a
+  // menu item (which stops propagation) left it armed — and it then instantly
+  // swallowed the NEXT save menu you tried to open.
+  document.removeEventListener("click", closeSaveMenu);
+}
 function _renderSaveMenu(items, anchor) {
   const menu = document.createElement("div");
   menu.className = "save-menu";
@@ -3252,11 +3334,14 @@ function _renderSaveMenu(items, anchor) {
   menu.querySelectorAll(".save-menu-item").forEach((el) => {
     el.addEventListener("click", async (ev) => {
       ev.stopPropagation();
+      // The menu is gone by the time the action runs — hand it the menu's last
+      // position so follow-up popups (e.g. "Add to folder…") open in place.
+      const r = menu.getBoundingClientRect();
       closeSaveMenu();
-      try { await items[+el.dataset.i].fn(); } catch (e) { console.error(e); }
+      try { await items[+el.dataset.i].fn({ anchorRect: { left: r.left, top: r.top, bottom: r.top } }); } catch (e) { console.error(e); }
     });
   });
-  setTimeout(() => document.addEventListener("click", closeSaveMenu, { once: true }), 0);
+  setTimeout(() => document.addEventListener("click", closeSaveMenu), 0);
 }
 function openSaveMenu(question, type, anchor) {
   closeSaveMenu();
@@ -3485,6 +3570,9 @@ document.addEventListener("click", async (e) => {
   try {
     const result = await API.post("/api/starred/toggle", { questionId: qId, type });
     setStarredLocal(qId, type, result.starred);
+    // Keep the Database screen's star cache in sync so re-renders don't show
+    // stale stars (and a second click doesn't silently unstar).
+    if (_dbStarred) { const k = type + ":" + qId; if (result.starred) _dbStarred.add(k); else _dbStarred.delete(k); }
     star.textContent = result.starred ? "★" : "☆";
     star.classList.toggle("on", !!result.starred);
     Sound.star();
@@ -3510,6 +3598,7 @@ async function toggleStarInHistory(qId, type, el) {
   try {
     const result = await API.post("/api/starred/toggle", { questionId: qId, type });
     setStarredLocal(qId, type, result.starred);
+    if (_dbStarred) { const k = type + ":" + qId; if (result.starred) _dbStarred.add(k); else _dbStarred.delete(k); }
     if (el) { el.textContent = result.starred ? "\u2605" : "\u2606"; el.classList.toggle("on", !!result.starred); }
     state.sessionHistory.forEach(e => {
       if (e.id === qId && e.type === type) e.starred = result.starred;
@@ -3762,6 +3851,66 @@ function copyToClipboard(t) {
   try { navigator.clipboard.writeText(t); window.QB?.toast?.("Copied"); } catch (e) {}
 }
 
+// ── Hidden questions ("this question is bad — never serve it again") ──
+function hiddenQs() { try { return JSON.parse(lsGet("qb-hidden-questions") || "{}") || {}; } catch (e) { return {}; } }
+function hiddenQsSave(m) { lsSet("qb-hidden-questions", JSON.stringify(m)); }
+function isQuestionHidden(id, type) { return !!hiddenQs()[(type || "tossup") + ":" + id]; }
+function toggleQuestionHidden(id, type, label) {
+  const m = hiddenQs();
+  const k = (type || "tossup") + ":" + id;
+  if (m[k]) { delete m[k]; } else { m[k] = { label: String(label || "").slice(0, 120), ts: Date.now() }; }
+  hiddenQsSave(m);
+  const on = !!m[k];
+  window.QB?.toast?.(on ? "Question hidden — it won't be served again" : "Question unhidden");
+  return on;
+}
+function openHiddenManager() {
+  document.getElementById("hidden-manager")?.remove();
+  const el = document.createElement("div");
+  el.id = "hidden-manager";
+  el.className = "qb-overlay confirm-overlay";
+  const render = () => {
+    const m = hiddenQs();
+    const keys = Object.keys(m).sort((a, b) => (m[b].ts || 0) - (m[a].ts || 0));
+    el.innerHTML = `<div class="confirm-box" style="width:min(560px,92vw);max-width:min(560px,92vw)">
+      <div class="confirm-msg">Hidden questions (${keys.length}) — these are never served in practice.</div>
+      <div style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
+        ${keys.length ? keys.map((k) => `
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+            <span class="pill">${k.startsWith("bonus") ? "BO" : "TU"}</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m[k].label || k.split(":")[1])}</span>
+            <button class="btn btn-sm btn-ghost hid-un" data-k="${escapeHtml(k)}">Unhide</button>
+          </div>`).join("") : '<div class="text-muted" style="padding:10px">Nothing hidden. Right-click a question → "Hide question".</div>'}
+      </div>
+      <div class="confirm-actions">
+        ${keys.length ? '<button class="btn btn-ghost" id="hid-clear">Unhide all</button>' : ""}
+        <button class="btn btn-primary" id="hid-close">Close</button>
+      </div>
+    </div>`;
+    el.querySelector("#hid-close").onclick = () => el.remove();
+    const clr = el.querySelector("#hid-clear");
+    if (clr) clr.onclick = () => confirmDialog("Unhide all hidden questions?", () => { hiddenQsSave({}); render(); }, { yes: "Unhide all" });
+    el.querySelectorAll(".hid-un").forEach((b) => {
+      b.onclick = () => { const m2 = hiddenQs(); delete m2[b.dataset.k]; hiddenQsSave(m2); render(); };
+    });
+  };
+  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  render();
+  document.body.appendChild(el);
+}
+
+// Selection-aware search entries shared by several menus.
+function selectionMenuItems() {
+  const sel = String(window.getSelection() || "").trim();
+  if (!sel || sel.length < 2) return [];
+  const q = sel.slice(0, 80);
+  return [
+    { sep: true },
+    { label: `Search questions for selection`, onClick: () => searchDatabase({ query: q, field: "question", exact: true }) },
+    { label: `Search answers for selection`, onClick: () => searchDatabase({ query: q, field: "answer", exact: false }) },
+  ];
+}
+
 // Right-click any question card (search, packets, history, review, starred)
 // for quick actions built from what the card actually contains.
 document.addEventListener("contextmenu", (e) => {
@@ -3770,16 +3919,49 @@ document.addEventListener("contextmenu", (e) => {
   const items = [];
   const text = card.querySelector(".qcard-text")?.textContent?.trim();
   const ans = card.querySelector(".ans")?.textContent?.trim();
+  const cleanAns = ans ? primaryAnswerText(ans) : "";
   const star = card.querySelector(".qb-star[data-qid]");
   const save = card.querySelector(".db-save[data-qid]");
   const compact = card.classList.contains("compact");
+  if (cleanAns) items.push({ label: "Find questions with this answer", onClick: () => searchDatabase({ query: cleanAns, field: "answer", exact: false }) });
   items.push({ label: compact ? "Expand card" : "Collapse card", onClick: () => { card.classList.toggle("compact", !compact); card.classList.toggle("expanded", compact); } });
+  items.push({ sep: true });
   if (text) items.push({ label: "Copy question", onClick: () => copyToClipboard(text) });
   if (ans) items.push({ label: "Copy answer", onClick: () => copyToClipboard(ans.replace(/^answer:\s*/i, "")) });
+  items.push({ sep: true });
   if (star) items.push({ label: star.classList.contains("on") ? "Unstar" : "Star", onClick: () => star.click() });
   if (save) items.push({ label: "Save to review / folders…", onClick: () => save.click() });
+  const idEl = save || star;
+  if (idEl && idEl.dataset.qid) {
+    const qid = idEl.dataset.qid, qtype = idEl.dataset.type || "tossup";
+    items.push({
+      label: isQuestionHidden(qid, qtype) ? "Unhide question" : "Hide question (never serve)",
+      danger: !isQuestionHidden(qid, qtype),
+      onClick: () => toggleQuestionHidden(qid, qtype, ans || text || qid),
+    });
+  }
+  items.push(...selectionMenuItems());
   e.preventDefault();
-  window.QB.contextMenu(e.clientX, e.clientY, items);
+  window.QB.contextMenu(e.clientX, e.clientY, items, { title: cleanAns || (text || "").slice(0, 44) });
+});
+
+// Anywhere else: right-click on SELECTED text offers copy + database searches.
+// Registered after the specific handlers, so it only fires when none of them
+// claimed the event (defaultPrevented).
+document.addEventListener("contextmenu", (e) => {
+  if (e.defaultPrevented || !window.QB?.contextMenu) return;
+  const tag = e.target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return; // keep the native menu for inputs
+  const sel = String(window.getSelection() || "").trim();
+  if (!sel || sel.length < 2) return;
+  const q = sel.slice(0, 80);
+  e.preventDefault();
+  window.QB.contextMenu(e.clientX, e.clientY, [
+    { label: "Copy", onClick: () => copyToClipboard(sel) },
+    { sep: true },
+    { label: "Search questions for it", onClick: () => searchDatabase({ query: q, field: "question", exact: true }) },
+    { label: "Search answers for it", onClick: () => searchDatabase({ query: q, field: "answer", exact: false }) },
+  ], { title: "“" + q.slice(0, 40) + "”" });
 });
 
 // Right-click the live practice question for the same quick actions.
@@ -3787,14 +3969,26 @@ $("#question-content")?.addEventListener("contextmenu", (e) => {
   if (!state.currentQuestion || !window.QB?.contextMenu) return;
   const q = state.currentQuestion;
   const isBonus = state.mode === "bonuses";
-  const items = [{ label: "Copy question", onClick: () => copyToClipboard($("#question-text")?.textContent || "") }];
-  if (!isBonus && state.resultAreaVisible && q.answer_sanitized) {
-    items.push({ label: "Copy answer", onClick: () => copyToClipboard(q.answer_sanitized) });
+  const revealed = !isBonus && state.resultAreaVisible && q.answer_sanitized;
+  const items = [];
+  if (revealed) {
+    const pa = primaryAnswerText(q.answer_sanitized);
+    if (pa) items.push({ label: "Find questions with this answer", onClick: () => searchDatabase({ query: pa, field: "answer", exact: false }) });
   }
+  items.push({ label: "Copy question", onClick: () => copyToClipboard($("#question-text")?.textContent || "") });
+  if (revealed) items.push({ label: "Copy answer", onClick: () => copyToClipboard(q.answer_sanitized) });
+  items.push({ sep: true });
   items.push({ label: "Star question", onClick: () => toggleStar() });
   items.push({ label: "Save to review / folders…", onClick: () => openSaveMenu(q, isBonus ? "bonus" : "tossup", e.target) });
+  const qtype = isBonus ? "bonus" : "tossup";
+  items.push({
+    label: isQuestionHidden(q.id, qtype) ? "Unhide question" : "Hide question (never serve)",
+    danger: !isQuestionHidden(q.id, qtype),
+    onClick: () => toggleQuestionHidden(q.id, qtype, q.answer_sanitized || q.id),
+  });
+  items.push(...selectionMenuItems());
   e.preventDefault();
-  window.QB.contextMenu(e.clientX, e.clientY, items);
+  window.QB.contextMenu(e.clientX, e.clientY, items, { title: revealed ? primaryAnswerText(q.answer_sanitized) : (isBonus ? "Bonus" : "Tossup") });
 });
 
 $("#btn-start-session").addEventListener("click", () => {
@@ -3883,6 +4077,18 @@ function renderResultPanels(resultCtx) {
     area.appendChild(host);
     try { p.render(host, resultCtx); } catch { host.remove(); }
   }
+}
+
+// A queue (review / packet / starred) ran out: show the message AND clear all
+// question state, so a later Next/Skip can't phantom-skip the stale last
+// question (which would overwrite its recorded result via the override path).
+function endOfQueue(msg) {
+  state.currentQuestion = null;
+  state._loadingQuestion = false;
+  state._wantBonus = false;
+  state._bonusFromQ = null;
+  state._pendingPairedBonus = null;
+  showError(msg);
 }
 
 function showError(msg) {
@@ -4415,6 +4621,7 @@ async function loadStats(preserveScroll = false) {
     </div>`;
 
     if (view.bonusesAttempted > 0) {
+      const bd = view.bonusDist || null; // per-category views don't carry a distribution
       html += `<div class="stats-section">
         <div class="stats-section-title">BONUSES: ${view.bonusesAttempted}</div>
         <div class="stats-grid">
@@ -4426,6 +4633,10 @@ async function loadStats(preserveScroll = false) {
             <div class="stat-card-value">${view.bonusConversion.toFixed(1)}</div>
             <div class="stat-card-label">Points/Bonus</div>
           </div>
+          ${bd ? `<div class="stat-card">
+            <div class="stat-card-value">${bd[30] || 0} · ${bd[20] || 0} · ${bd[10] || 0} · ${bd[0] || 0}</div>
+            <div class="stat-card-label">30s · 20s · 10s · 0s</div>
+          </div>` : ""}
         </div>
       </div>`;
     }
@@ -4660,12 +4871,26 @@ async function loadStats(preserveScroll = false) {
     });
 
     container.querySelectorAll(".session-delete").forEach((b) => {
-      b.addEventListener("click", async (ev) => {
+      b.addEventListener("click", (ev) => {
         ev.stopPropagation();
         const id = b.dataset.session;
         if (!id) return;
-        try { await API.delete("/api/sessions/" + encodeURIComponent(id)); } catch (e) {}
-        loadStats(true);
+        confirmDialog(`Delete the session "${formatSessionTitle(id)}"? Its stats are removed permanently.`, async () => {
+          try { await API.delete("/api/sessions/" + encodeURIComponent(id)); } catch (e) {}
+          loadStats(true);
+        });
+      });
+    });
+    container.querySelectorAll(".session-row").forEach((row) => {
+      row.addEventListener("contextmenu", (ev) => {
+        const id = row.dataset.session;
+        if (!id || !window.QB?.contextMenu) return;
+        ev.preventDefault();
+        window.QB.contextMenu(ev.clientX, ev.clientY, [
+          { label: "Open session stats", onClick: () => { state.statsSessionId = id; loadStats(); } },
+          { sep: true },
+          { label: "Delete session…", danger: true, onClick: () => confirmDialog(`Delete the session "${formatSessionTitle(id)}"? Its stats are removed permanently.`, async () => { try { await API.delete("/api/sessions/" + encodeURIComponent(id)); } catch (e) {} loadStats(true); }) },
+        ], { title: formatSessionTitle(id) });
       });
     });
 
@@ -5245,7 +5470,12 @@ async function loadPlayer() {
     $("#player-username-input")?.addEventListener("input", (e) => {
       state.username = e.target.value.trim();
       lsSet("qb-username", state.username);
+      const w = container.querySelector(".player-welcome");
+      if (w) w.textContent = state.username ? `Welcome, ${state.username}` : "Welcome";
     });
+    // Flush immediately when leaving the field, so quitting right after a
+    // rename can't lose it to the debounce window.
+    $("#player-username-input")?.addEventListener("blur", () => { clearTimeout(_profileSyncTimer); pushProfileSettings(); });
 
     $("#btn-export-data")?.addEventListener("click", exportData);
     $("#btn-import-data")?.addEventListener("click", () => $("#import-file")?.click());
@@ -6196,7 +6426,20 @@ async function renderSetsTab() {
     document.getElementById("db-set-list").innerHTML = list.map((s) =>
       `<div class="db-row" data-set="${escapeHtml(s.name)}"><span>${escapeHtml(s.name)}</span><span class="text-muted">${s.year || ""}</span></div>`
     ).join("") || '<div class="text-muted" style="padding:12px">No sets</div>';
-    document.querySelectorAll("#db-set-list .db-row").forEach((r) => r.addEventListener("click", () => openSet(r.dataset.set)));
+    document.querySelectorAll("#db-set-list .db-row").forEach((r) => {
+      r.addEventListener("click", () => openSet(r.dataset.set));
+      r.addEventListener("contextmenu", (ev) => {
+        if (!window.QB?.contextMenu) return;
+        ev.preventDefault();
+        const s = r.dataset.set;
+        window.QB.contextMenu(ev.clientX, ev.clientY, [
+          { label: "Open set", onClick: () => openSet(s) },
+          { sep: true },
+          { label: "Play tossups (whole set)", onClick: () => playSetPacket(s, "", false) },
+          { label: "Play bonuses (whole set)", onClick: () => playSetPacket(s, "", true) },
+        ], { title: s });
+      });
+    });
   };
   document.getElementById("db-set-search").addEventListener("input", render);
   render();
@@ -6215,7 +6458,20 @@ async function openSet(setName) {
   document.getElementById("db-packet-list").innerHTML = packets.length
     ? packets.map((p) => `<div class="db-row" data-pkt="${p.packet_number}"><span>Packet ${p.packet_number}${p.packet_name && p.packet_name !== String(p.packet_number) ? " — " + escapeHtml(p.packet_name) : ""}</span></div>`).join("")
     : `<div class="text-muted" style="padding:12px">${err ? "Couldn't load packets: " + escapeHtml(err) : "No packets in this set."}</div>`;
-  document.querySelectorAll("#db-packet-list .db-row").forEach((r) => r.addEventListener("click", () => openPacket(setName, parseInt(r.dataset.pkt))));
+  document.querySelectorAll("#db-packet-list .db-row").forEach((r) => {
+    r.addEventListener("click", () => openPacket(setName, parseInt(r.dataset.pkt)));
+    r.addEventListener("contextmenu", (ev) => {
+      if (!window.QB?.contextMenu) return;
+      ev.preventDefault();
+      const n = parseInt(r.dataset.pkt);
+      window.QB.contextMenu(ev.clientX, ev.clientY, [
+        { label: "Open packet", onClick: () => openPacket(setName, n) },
+        { sep: true },
+        { label: "Play tossups", onClick: () => playSetPacket(setName, n, false) },
+        { label: "Play bonuses", onClick: () => playSetPacket(setName, n, true) },
+      ], { title: setName + " — packet " + n });
+    });
+  });
 }
 
 async function openPacket(setName, packetNumber) {
@@ -6223,7 +6479,10 @@ async function openPacket(setName, packetNumber) {
   const c = document.getElementById("db-content");
   c.innerHTML =
     `<div class="db-crumb"><button class="ext-link" id="db-back-sets">← Sets</button> / <button class="ext-link" id="db-back-set">${escapeHtml(setName)}</button> / <strong>Packet ${packetNumber}</strong>` +
-    `<span class="db-pkt-view"><button class="btn btn-sm" id="db-view-sections">Tossups → Bonuses</button><button class="btn btn-sm" id="db-view-inter">Interleaved</button></span></div>` +
+    `<span class="db-pkt-view">` +
+      `<button class="btn btn-sm btn-primary" id="db-play-tu" title="Read this packet's tossups in order">▶ Play tossups</button>` +
+      `<button class="btn btn-sm" id="db-play-bo" title="Read this packet's bonuses in order">▶ Play bonuses</button>` +
+      `<button class="btn btn-sm" id="db-view-sections">Tossups → Bonuses</button><button class="btn btn-sm" id="db-view-inter">Interleaved</button></span></div>` +
     `<div class="search-results" id="db-pkt-content">${loadingBarHtml("Loading packet…")}</div>`;
   document.getElementById("db-back-sets").addEventListener("click", renderSetsTab);
   document.getElementById("db-back-set").addEventListener("click", () => openSet(setName));
@@ -6250,6 +6509,8 @@ async function openPacket(setName, packetNumber) {
   };
   document.getElementById("db-view-sections").addEventListener("click", () => { lsSet("qb-pkt-view", "sections"); render(); });
   document.getElementById("db-view-inter").addEventListener("click", () => { lsSet("qb-pkt-view", "interleaved"); render(); });
+  document.getElementById("db-play-tu").addEventListener("click", () => playSetPacket(setName, packetNumber, false));
+  document.getElementById("db-play-bo").addEventListener("click", () => playSetPacket(setName, packetNumber, true));
   render();
 }
 
@@ -6269,6 +6530,7 @@ function wireCatCascade(catSel, subSel, altSel, onChange) {
     } else {
       let subs = [];
       try { subs = (await API.get(`/api/subcategories?type=tossups&category=${encodeURIComponent(cat)}`)).subcategories || []; } catch {}
+      if (cat !== catSel.value) return; // selection changed while fetching — drop this stale response
       if (subs.length) { subs.forEach((s) => _catAddOpt(subSel, s.subcategory)); _catSetDisabled(subSel, false); }
       else _catSetDisabled(subSel, true);
     }
@@ -6299,7 +6561,9 @@ function getCatCascadeFilter(catSel, subSel, altSel) {
   if (cat === "Social Science") {
     return { category: "Social Science", subcategory: "", alternateSubcategory: subSel.value || "" };
   }
-  if (!altSel.disabled && altSel.value) return { category: cat, subcategory: subSel.value || "", alternateSubcategory: altSel.value };
+  // When an alternate subcategory is picked, filter on category+alt ONLY — the
+  // backend ORs subcategory/alternate filters, so sending both WIDENS results.
+  if (!altSel.disabled && altSel.value) return { category: cat, subcategory: "", alternateSubcategory: altSel.value };
   return { category: cat, subcategory: subSel.value || "", alternateSubcategory: "" };
 }
 
@@ -6341,17 +6605,33 @@ async function runFrequency() {
   } catch (e) { el.innerHTML = '<div class="text-muted" style="padding:16px">Failed to load: ' + escapeHtml(e.message || String(e)) + "</div>"; }
 }
 
-function searchFromFrequency(answer, qtype) {
+// Jump to Database → Search pre-filled and run it. Usable from anywhere in the
+// app AND from plugins (exposed as host.searchDatabase): field is
+// "answer" | "question" | "all"; qtype "tossup" | "bonus" | "all".
+function searchDatabase(opts) {
+  opts = opts || {};
+  showScreen("database");
+  loadDatabase();
   state.dbTab = "search";
   document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === "search"));
   renderSearchTab();
-  const inp = document.getElementById("db-search-input");
   const typeSel = document.getElementById("db-search-type");
   const qtypeSel = document.getElementById("db-qtype");
-  if (typeSel) typeSel.value = "answer";
-  if (qtypeSel) qtypeSel.value = qtype === "bonus" ? "bonus" : qtype === "both" ? "all" : "tossup";
-  if (inp) inp.value = answer;
+  const exact = document.getElementById("db-exact");
+  const inp = document.getElementById("db-search-input");
+  if (typeSel) typeSel.value = opts.field === "answer" ? "answer" : opts.field === "question" ? "question" : "all";
+  if (qtypeSel) qtypeSel.value = opts.qtype === "bonus" ? "bonus" : opts.qtype === "tossup" ? "tossup" : "all";
+  if (exact && opts.exact != null) exact.checked = !!opts.exact;
+  if (inp) inp.value = String(opts.query || "");
   performDbSearch();
+}
+// The primary part of a rendered answer line ("Ibsen, Henrik [or …]" → "Ibsen, Henrik").
+function primaryAnswerText(s) {
+  return String(s || "").replace(/^answer:\s*/i, "").split(/[\[(]/)[0].trim().replace(/[;:,.]+$/, "");
+}
+
+function searchFromFrequency(answer, qtype) {
+  searchDatabase({ query: answer, field: "answer", qtype: qtype === "bonus" ? "bonus" : qtype === "both" ? "all" : "tossup" });
 }
 
 async function renderStarredTab() {
@@ -6535,6 +6815,8 @@ function init() {
       stripPronunciations: (t) => stripPronunciations(t),
       recordNav: (name) => recordNav(name),
       collapseFilterSections: () => collapseFilterSections(),
+      searchDatabase: (opts) => searchDatabase(opts),
+      playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),
       keyDisplay: (action) => keyDisplay(action),
       confirm: (message, onYes, opts) => confirmDialog(message, onYes, opts),
       openSaveMenu: (question, type, anchor) => openSaveMenu(question, type, anchor),
@@ -6564,7 +6846,12 @@ function init() {
         return true;
       },
       getImportedPacket: () => state._importedPacket
-        ? { ...state._importedPacket, mode: "tu" }
+        ? {
+            ...state._importedPacket,
+            // "both" mirrors the solo bonus-after-correct pairing rule so
+            // multiplayer can interleave imported bonuses too.
+            mode: state.settings.bonusAfter && (state._importedPacket.bonuses || []).length ? "both" : "tu",
+          }
         : null,
       getAchievementList: () => ACHIEVEMENT_LIST.map((a) => ({ ...a, cat: a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined) })),
       normalizeAnswerPower: (s) => apNorm(s),
@@ -6580,8 +6867,8 @@ async function applyStagedPluginUpdates() {
   try {
     const info = await API.get("/api/app-update-plugins");
     if (!info || !info.plugins || !info.plugins.length) return;
-    const applied = parseInt(localStorage.getItem("qb-overlay-plugins-applied") || "0");
-    if (info.version <= applied) return;
+    const applied = localStorage.getItem("qb-overlay-plugins-applied") || "0";
+    if (cmpVer(info.version, applied) <= 0) return; // dotted-version aware
     let updated = 0;
     for (const p of info.plugins) {
       if (!window.QB?._plugins?.some?.((x) => x.id === p.id)) continue;

@@ -342,8 +342,8 @@ export class App {
     );
   }
 
-  scoreBonusResult(userAnswers, bonus) {
-    const result = checkBonus(userAnswers, bonus);
+  scoreBonusResult(userAnswers, bonus, strictness = 10) {
+    const result = checkBonus(userAnswers, bonus, strictness);
     return {
       ...scoreBonus(result.parts),
       parts: result.parts,
