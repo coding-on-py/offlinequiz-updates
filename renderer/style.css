@@ -2330,3 +2330,8 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 /* ── App-update dialog: a wide rectangle, not a cramped square ── */
 #update-dialog .confirm-box { width: min(560px, 92vw); max-width: min(560px, 92vw); padding: 24px 28px; }
 #update-dialog .upd-bar { width: 100%; }
+
+/* ── History mini buzz/power track (visible without expanding the card) ── */
+.hist-track { display: inline-block; vertical-align: middle; width: 92px; height: 6px; margin-left: 10px; position: relative; background: var(--bg-tertiary); border: 1px solid var(--border-light); border-radius: 3px; }
+.hist-track-power { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--power-mark, var(--yellow)); }
+.hist-track-buzz { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--accent); }

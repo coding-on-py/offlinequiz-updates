@@ -3501,6 +3501,23 @@ function historyQuestionHtml(e) {
   return out;
 }
 
+let _histFilter = null;
+// Small inline buzz/power track: where you buzzed vs where power ended —
+// visible on every history card without expanding it.
+function histTrackHtml(e) {
+  if (e.type !== "tossup" || !e.question) return "";
+  const raw = e.question.question_sanitized || "";
+  if (!raw) return "";
+  const len = raw.replace(/\(\*\)/g, "").length || 1;
+  const pi = raw.indexOf("(*)");
+  const buzz = Math.max(0, Math.min(1, (e.buzzPosition || 0) / len));
+  const power = pi >= 0 ? Math.max(0, Math.min(1, pi / len)) : -1;
+  return '<span class="hist-track" title="(#) buzz at ' + Math.round(buzz * 100) + "%" + (power >= 0 ? " · (*) power ends at " + Math.round(power * 100) + "%" : "") + '">' +
+    (power >= 0 ? '<span class="hist-track-power" style="left:' + (power * 100).toFixed(1) + '%"></span>' : "") +
+    (e.buzzPosition > 0 ? '<span class="hist-track-buzz" style="left:' + (buzz * 100).toFixed(1) + '%"></span>' : "") +
+    "</span>";
+}
+
 function renderHistoryPanel() {
   const panel = document.getElementById("history-panel");
   if (panel) {
@@ -3516,7 +3533,26 @@ function renderHistoryPanel() {
     return;
   }
 
-  const entries = [...state.sessionHistory].reverse();
+  let entries = [...state.sessionHistory].reverse();
+  // Overlay filters (result / type / category / text).
+  const hf = typeof _histFilter === "object" && _histFilter ? _histFilter : null;
+  if (hf && (hf.res || hf.type || hf.cat || hf.q)) {
+    entries = entries.filter((e) => {
+      if (hf.type && e.type !== hf.type) return false;
+      if (hf.cat && (e.question?.category || "") !== hf.cat) return false;
+      if (hf.res) {
+        const pts = e.points || 0;
+        const res = e.isPower ? "power" : (e.correct ? "correct" : pts < 0 ? "neg" : "zero");
+        if (res !== hf.res) return false;
+      }
+      if (hf.q) {
+        const hay = ((e.answer || "") + " " + (e.userAnswer || "") + " " + (e.question?.question_sanitized || e.question?.leadin_sanitized || "") + " " + (e.question?.answer_sanitized || "")).toLowerCase();
+        if (!hay.includes(hf.q)) return false;
+      }
+      return true;
+    });
+  }
+  if (!entries.length) { list.innerHTML = '<div class="text-muted" style="padding:16px">No history entries match these filters.</div>'; return; }
   const isCompact = state.viewMode === "compact";
 
   list.innerHTML = entries.map((e, i) => {
@@ -3546,7 +3582,7 @@ function renderHistoryPanel() {
       year: e.question?.set_year,
       difficulty: e.question?.difficulty,
       sideHtml: (() => { const st = isStarredLocal(e.id, e.type); return `${celMarker}${badge}<span class="star-btn save-plus hist-save" data-idx="${i}" title="Save to review / folders">+</span><span class="star-toggle${st ? " on" : ""}" data-qid="${e.id}" data-type="${e.type}">${st ? "\u2605" : "\u2606"}</span>`; })(),
-      answerHtml: `Answer: <span class="ans">${answer}</span>`,
+      answerHtml: `Answer: <span class="ans">${answer}</span>${histTrackHtml(e)}`,
       bodyHtml: `
         <div class="qcard-text">${historyQuestionHtml(e)}</div>
         <div class="qcard-foot">Your answer:
@@ -4068,10 +4104,28 @@ function openHistoryOverlay() {
           <button class="btn btn-sm btn-ghost" id="btn-history-close">Close</button>
         </span>
       </div>
+      <div class="rv-filterbar">
+        <select id="hist-fres" class="mode-input"><option value="">All results</option><option value="power">Powers</option><option value="correct">Correct</option><option value="neg">Negs</option><option value="zero">Dead / skipped / wrong</option></select>
+        <select id="hist-ftype" class="mode-input"><option value="">Tossups + Bonuses</option><option value="tossup">Tossups</option><option value="bonus">Bonuses</option></select>
+        <select id="hist-fcat" class="mode-input"><option value="">All categories</option>${[...new Set(state.sessionHistory.map((e) => e.question?.category).filter(Boolean))].sort().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>
+        <input type="text" id="hist-fq" class="mode-input" placeholder="Search answers / questions" autocomplete="off">
+      </div>
       <div class="review-viewer-list history-list" id="history-list"></div>
     </div>`;
   el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
   document.body.appendChild(el);
+  _histFilter = { res: "", type: "", cat: "", q: "" };
+  const syncF = () => {
+    _histFilter = {
+      res: el.querySelector("#hist-fres").value,
+      type: el.querySelector("#hist-ftype").value,
+      cat: el.querySelector("#hist-fcat").value,
+      q: el.querySelector("#hist-fq").value.trim().toLowerCase(),
+    };
+    renderHistoryPanel();
+  };
+  ["hist-fres", "hist-ftype", "hist-fcat"].forEach((id) => el.querySelector("#" + id).addEventListener("change", syncF));
+  el.querySelector("#hist-fq").addEventListener("input", syncF);
   el.querySelector("#btn-history-close").onclick = () => el.remove();
   el.querySelector("#btn-history-export").onclick = exportSessionHistory;
   el.querySelector("#btn-history-compact").onclick = () => { state.viewMode = "compact"; lsSet("qb-viewmode", "compact"); renderHistoryPanel(); };
@@ -4708,7 +4762,8 @@ async function loadStats(preserveScroll = false) {
           '<div class="qh-buzzbar" title="Buzzed ' + Math.round(cel * 100) + '% into the question">' +
             '<div class="qh-buzzmark" style="left:' + (cel * 100).toFixed(1) + '%"></div></div>';
         const ans = en.given_answer ? escapeHtml(en.given_answer) : '<span class="text-muted">(no answer)</span>';
-        return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" style="cursor:pointer" title="Show the question & answer">' +
+        const res = isBonus ? (en.points >= 20 ? "correct" : en.points > 0 ? "partial" : "miss") : (en.points >= 15 ? "power" : en.correct ? "correct" : en.points < 0 ? "neg" : "miss");
+        return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" data-res="' + res + '" data-cat="' + escapeHtml(en.category || "") + '" data-ans="' + escapeHtml((en.given_answer || "").toLowerCase()) + '" style="cursor:pointer" title="Show the question & answer">' +
           '<td><span class="qh-chev">▸</span> <span class="qh-badge ' + cls + '">' + label + "</span></td>" +
           "<td>" + escapeHtml(en.category || "") + (en.difficulty != null ? ' <span class="text-muted">d' + en.difficulty + "</span>" : "") + "</td>" +
           "<td>" + ans + "</td>" +
@@ -4717,8 +4772,15 @@ async function loadStats(preserveScroll = false) {
         "</tr>" +
         '<tr class="qh-detail hidden" data-qhd="' + i + '"><td colspan="5"><div class="text-muted">Loading…</div></td></tr>';
       }).join("");
+      const qhCats = [...new Set(sessionEntries.map((en) => en.category).filter(Boolean))].sort();
       html += '<div class="stats-section">' +
-        '<div class="stats-section-title">QUESTION HISTORY (' + sessionEntries.length + ")</div>" +
+        '<div class="stats-section-title">QUESTION HISTORY (<span id="qh-count">' + sessionEntries.length + "</span>)</div>" +
+        '<div class="db-toolbar" style="border:none;background:none;padding:8px 0">' +
+          '<select id="qh-fres" class="db-input db-input-sm"><option value="">All results</option><option value="power">Powers</option><option value="correct">Correct</option><option value="neg">Negs</option><option value="miss">Misses</option><option value="partial">Partial bonuses</option></select>' +
+          '<select id="qh-ftype" class="db-input db-input-sm"><option value="">Tossups + Bonuses</option><option value="tossup">Tossups</option><option value="bonus">Bonuses</option></select>' +
+          '<select id="qh-fcat" class="db-input db-input-sm"><option value="">All categories</option>' + qhCats.map((c) => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + "</option>").join("") + "</select>" +
+          '<input type="text" id="qh-fq" class="db-input" placeholder="Search your answers…" autocomplete="off" style="max-width:220px">' +
+        "</div>" +
         '<table class="stats-table qh-table"><thead><tr><th>Result</th><th>Category</th><th>Your answer</th><th>Buzz location</th><th>Pts</th></tr></thead><tbody>' +
         rowsHtml + "</tbody></table></div>";
     }
@@ -4850,6 +4912,57 @@ async function loadStats(preserveScroll = false) {
 
     document.getElementById("stats-back")?.addEventListener("click", () => { state.statsSessionId = null; loadStats(); });
 
+    // Filters: hide non-matching rows (and their detail rows) in place.
+    {
+      const applyQH = () => {
+        const res = container.querySelector("#qh-fres")?.value || "";
+        const typ = container.querySelector("#qh-ftype")?.value || "";
+        const cat = container.querySelector("#qh-fcat")?.value || "";
+        const q = (container.querySelector("#qh-fq")?.value || "").trim().toLowerCase();
+        let shown = 0;
+        container.querySelectorAll(".qh-row").forEach((row) => {
+          const ok = (!res || row.dataset.res === res) && (!typ || row.dataset.qtype === typ) &&
+            (!cat || row.dataset.cat === cat) && (!q || (row.dataset.ans || "").includes(q));
+          row.style.display = ok ? "" : "none";
+          const d = container.querySelector('[data-qhd="' + row.dataset.qh + '"]');
+          if (d && !ok) d.classList.add("hidden");
+          if (d) d.style.display = ok ? "" : "none";
+          if (ok) shown++;
+        });
+        const cnt = container.querySelector("#qh-count"); if (cnt) cnt.textContent = String(shown);
+      };
+      ["qh-fres", "qh-ftype", "qh-fcat"].forEach((id) => container.querySelector("#" + id)?.addEventListener("change", applyQH));
+      container.querySelector("#qh-fq")?.addEventListener("input", applyQH);
+    }
+    // Eagerly place the (*) power tick on every tossup row's buzz bar — no
+    // click needed to see where the power window ended.
+    {
+      const rows = [...container.querySelectorAll('.qh-row[data-qtype="tossup"][data-qid]')].filter((r) => r.dataset.qid);
+      let idx = 0, workers = 0;
+      const pump = () => {
+        while (workers < 4 && idx < rows.length) {
+          const row = rows[idx++];
+          workers++;
+          API.get("/api/tossups/" + encodeURIComponent(row.dataset.qid)).then((dd) => {
+            const q = dd && dd.tossup;
+            const bar = row.isConnected && row.querySelector(".qh-buzzbar");
+            if (q && bar && !bar.querySelector(".qh-powermark")) {
+              const raw = q.question_sanitized || "";
+              const pi = raw.indexOf("(*)");
+              if (pi >= 0) {
+                const len = raw.replace(/\(\*\)/g, "").length || 1;
+                const pm = document.createElement("div");
+                pm.className = "qh-powermark";
+                pm.style.left = (Math.max(0, Math.min(1, pi / len)) * 100).toFixed(1) + "%";
+                pm.title = "Power mark";
+                bar.appendChild(pm);
+              }
+            }
+          }).catch(() => {}).finally(() => { workers--; pump(); });
+        }
+      };
+      pump();
+    }
     container.querySelectorAll(".qh-row").forEach((row) => {
       row.addEventListener("click", async () => {
         const d = container.querySelector('[data-qhd="' + row.dataset.qh + '"]');
