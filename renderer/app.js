@@ -7094,7 +7094,7 @@ function showUpdateDialog(info, opts) {
     ? `Update v${escapeHtml(String(info.version))} downloaded — restart to apply.`
     : `Update available: v${escapeHtml(String(info.version))}${info.critical ? " (important)" : ""}`;
   el.innerHTML = `<div class="confirm-box"><div class="confirm-msg">${head}${info.notes ? `<div class="text-muted" style="font-size:12px;margin-top:6px">${escapeHtml(info.notes)}</div>` : ""}</div>
-    <div id="update-dialog-status" style="margin:4px 0"></div>
+    <div id="update-dialog-status"></div>
     <div class="confirm-actions" id="update-dialog-actions"></div></div>`;
   document.body.appendChild(el);
   const actions = el.querySelector("#update-dialog-actions");

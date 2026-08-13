@@ -2327,9 +2327,14 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .db-toolbar .btn, .db-toolbar select, .db-toolbar input[type="text"] { height: 30px; box-sizing: border-box; }
 .confirm-actions { margin-top: 12px; }
 
-/* ── App-update dialog: a wide rectangle, not a cramped square ── */
-#update-dialog .confirm-box { width: min(560px, 92vw); max-width: min(560px, 92vw); padding: 24px 28px; }
+/* ── App-update dialog: centered, self-sizing, no dead space ── */
+#update-dialog .confirm-box { width: auto; min-width: 400px; max-width: min(560px, 92vw); padding: 24px 30px 20px; text-align: center; gap: 10px; }
+#update-dialog .confirm-msg { font-size: 15px; line-height: 1.45; }
+#update-dialog-status { margin: 0; }
+#update-dialog-status:empty { display: none; }
 #update-dialog .upd-bar { width: 100%; }
+#update-dialog .upd-bar-label { text-align: center; margin-bottom: 4px; }
+#update-dialog .confirm-actions { justify-content: center; gap: 12px; margin-top: 8px; }
 
 /* ── History mini buzz/power track (visible without expanding the card) ── */
 .hist-track { display: inline-block; vertical-align: middle; width: 92px; height: 6px; margin-left: 10px; position: relative; background: var(--bg-tertiary); border: 1px solid var(--border-light); border-radius: 3px; }
