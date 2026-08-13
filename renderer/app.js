@@ -5285,11 +5285,8 @@ async function downloadAppUpdate(status, barId) {
     }
     if (r && r.updated) {
       setProgress(barId, 100, "Update v" + r.version + " downloaded.");
-      const restart = document.createElement("button");
-      restart.className = "btn btn-sm btn-primary"; restart.style.marginTop = "8px";
-      restart.textContent = "Restart now to apply";
-      restart.onclick = () => { try { window.qbreader?.relaunchApp?.(); } catch {} };
-      status.appendChild(restart);
+      // Restart prompt is always the standard popup dialog.
+      showUpdateDialog({ version: r.version }, { installed: true });
       return true;
     }
     status.textContent = r && r.error ? "Update failed: " + friendlyUpdateErr(r.error) : "Nothing new to install.";
