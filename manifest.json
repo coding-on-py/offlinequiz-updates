@@ -1,5 +1,5 @@
 {
-  "version": "9.5",
+  "version": "9.6",
   "renderer": [
     "index.html",
     "style.css",
@@ -37,6 +37,11 @@
       "id": "coach-mode",
       "name": "Coach Mode",
       "file": "coach-mode.zip"
+    },
+    {
+      "id": "fact-sheet",
+      "name": "Fact Sheet",
+      "file": "fact-sheet.zip"
     },
     {
       "id": "flashcards",

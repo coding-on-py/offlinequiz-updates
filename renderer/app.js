@@ -1944,14 +1944,18 @@ function applyPendingPacketPlay() {
   const p = state._pendingPacketPlay;
   if (!p) return;
   state._pendingPacketPlay = null;
+  // Values FIRST, change event LAST — the change handler loads the set's
+  // packet list and validates the packet number against the CURRENT fields.
   const ms = $("#mode-select");
-  if (ms) { ms.value = "set"; ms.dispatchEvent(new Event("change", { bubbles: true })); }
   const sn = $("#mode-set-name");
   if (sn) { if (![...sn.options].some((o) => o.value === p.setName)) _catAddOpt(sn, p.setName); sn.value = p.setName; }
   const pk = $("#mode-packet");
   if (pk) pk.value = String(p.packetNumber);
+  if (ms) { ms.value = "set"; ms.dispatchEvent(new Event("change", { bubbles: true })); }
+  if (sn) sn.value = p.setName;
+  if (pk) pk.value = String(p.packetNumber);
   state._gameSig = null;
-  window.QB?.toast?.(`Set to ${p.setName} — packet ${p.packetNumber}. Press Start.`);
+  window.QB?.toast?.(`Set to ${p.setName}${p.packetNumber !== "" ? ` — packet ${p.packetNumber}` : " (all packets)"}. Press Start.`);
 }
 
 function setMode(mode) {
@@ -1961,14 +1965,17 @@ function setMode(mode) {
   const type = mode === "tossups" ? "tossups" : "bonuses";
   $("#practice-title").textContent =
     `PRACTICE: ${mode.toUpperCase()}`;
-  loadSets().then(() => { restoreFilterState(); applyPendingPacketPlay(); });
+  // Two async chains both call restoreFilterState; apply a pending packet-play
+  // only after BOTH settle, or the later restore clobbers the selection.
+  Promise.all([
+    loadSets(),
+    loadCategories(type).then(() => {
+      const saved = restoreFilterState();
+      if (saved) restoreCategorySelections(saved);
+      $("#category-filters")?.classList.toggle("weights-on", !!state.settings.useWeights);
+    }),
+  ]).then(() => { restoreFilterState(); applyPendingPacketPlay(); });
   updateModeFields();
-
-  loadCategories(type).then(() => {
-    const saved = restoreFilterState();
-    if (saved) restoreCategorySelections(saved);
-    $("#category-filters")?.classList.toggle("weights-on", !!state.settings.useWeights);
-  });
   initGameplayControls();
   updateKeyLabels();
   window.QB?.renderPracticeSettings(document.getElementById("ext-practice-host"));
@@ -2196,7 +2203,7 @@ async function nextQuestion() {
 }
 
 async function skipQuestion() {
-  if (!state.currentQuestion || state.resultAreaVisible) return;
+  if (!state.currentQuestion || state.resultAreaVisible || state._loadingQuestion) return;
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
   if (state.isPaused) {
     state.isPaused = false;
@@ -2352,6 +2359,9 @@ async function serveStarredQuestion(filters) {
   }
   const queue = state._starredQueue;
   const noun = type === "bonus" ? "bonuses" : "tossups";
+  // Hidden questions are never served — skip at serve time so mid-session
+  // hides take effect immediately.
+  while (state._starredIdx < queue.length && queue[state._starredIdx] && isQuestionHidden(queue[state._starredIdx].id, type)) state._starredIdx++;
   if (!queue.length) { endOfQueue(`You have no starred ${noun} matching these filters. Star some questions first (or broaden the filters).`); return; }
   if (state._starredIdx >= queue.length) {
     endOfQueue(`You've gone through all ${queue.length} starred ${noun}! Press Esc to leave, or start a new session to go again.`);
@@ -2996,13 +3006,15 @@ async function submitTossupAnswer(answer) {
 async function judgeWithPluginRules(answer) {
   const q = state.currentQuestion;
   const fullyRead = !!state.questionFullyRead;
+  // Backend read-position judging uses question_sanitized coordinates.
+  const origPos = displayPosToOriginal(state.buzzPosition);
   let verdict;
   try {
     const ev = await API.post("/api/evaluate-tossup", {
       questionId: q.id,
       answer,
       strictness: state.settings.strictness,
-      buzzPosition: fullyRead ? null : state.buzzPosition,
+      buzzPosition: fullyRead ? null : origPos,
     });
     verdict = { status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt };
   } catch (e) {
@@ -3013,7 +3025,7 @@ async function judgeWithPluginRules(answer) {
   const ruleCtx = {
     userAnswer: answer,
     question: q,
-    buzzPosition: displayPosToOriginal(state.buzzPosition),
+    buzzPosition: origPos,
     fullyRead,
     strictness: state.settings.strictness,
   };
@@ -3038,7 +3050,7 @@ async function judgeWithPluginRules(answer) {
     const rec = await API.post("/api/check-tossup", {
       questionId: q.id,
       answer,
-      buzzPosition: state.buzzPosition,
+      buzzPosition: origPos,
       sessionId: state.sessionId,
       overriding: true,
       correct, isPower, points, celerity,
@@ -3899,16 +3911,28 @@ function openHiddenManager() {
   document.body.appendChild(el);
 }
 
-// Selection-aware search entries shared by several menus.
+// Selection-aware search entries shared by several menus — database searches
+// plus cross-plugin jumps (Keyword Frequency, Fact Sheet) when installed.
 function selectionMenuItems() {
   const sel = String(window.getSelection() || "").trim();
   if (!sel || sel.length < 2) return [];
   const q = sel.slice(0, 80);
-  return [
+  const items = [
     { sep: true },
-    { label: `Search questions for selection`, onClick: () => searchDatabase({ query: q, field: "question", exact: true }) },
-    { label: `Search answers for selection`, onClick: () => searchDatabase({ query: q, field: "answer", exact: false }) },
+    { label: "Search questions for selection", onClick: () => searchDatabase({ query: q, field: "question", exact: true }) },
+    { label: "Search answers for selection", onClick: () => searchDatabase({ query: q, field: "answer", exact: false }) },
   ];
+  const pages = window.QB?.getActivePages?.() || [];
+  if (pages.some((p) => p.id === "keyword-freq::kwfreq")) {
+    items.push({ sep: true });
+    items.push({ label: "Top answers for it (Keyword Freq)", onClick: () => { try { localStorage.setItem("qb-kf-handoff", JSON.stringify({ mode: "words", term: q })); } catch (e) {} window.QB.showPage("keyword-freq::kwfreq"); } });
+    items.push({ label: "Keywords, treating it as an answer", onClick: () => { try { localStorage.setItem("qb-kf-handoff", JSON.stringify({ mode: "answers", term: q })); } catch (e) {} window.QB.showPage("keyword-freq::kwfreq"); } });
+  }
+  const factPage = pages.find((p) => p.id.startsWith("fact-sheet::"));
+  if (factPage) {
+    items.push({ label: "Fact sheet for it", onClick: () => { try { localStorage.setItem("qb-facts-handoff", JSON.stringify({ term: q })); } catch (e) {} window.QB.showPage(factPage.id); } });
+  }
+  return items;
 }
 
 // Right-click any question card (search, packets, history, review, starred)
@@ -3958,9 +3982,7 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   window.QB.contextMenu(e.clientX, e.clientY, [
     { label: "Copy", onClick: () => copyToClipboard(sel) },
-    { sep: true },
-    { label: "Search questions for it", onClick: () => searchDatabase({ query: q, field: "question", exact: true }) },
-    { label: "Search answers for it", onClick: () => searchDatabase({ query: q, field: "answer", exact: false }) },
+    ...selectionMenuItems(),
   ], { title: "“" + q.slice(0, 40) + "”" });
 });
 
@@ -6295,7 +6317,11 @@ function wireDbPager(container) {
   const prev = container.querySelector("#db-prev"); if (prev) prev.onclick = () => performDbSearch({ page: _dbPage - 1 });
   const next = container.querySelector("#db-next"); if (next) next.onclick = () => performDbSearch({ page: _dbPage + 1 });
 }
+let _dbSearchSeq = 0;
 async function performDbSearch(opts) {
+  // Sequence token: only the LATEST invocation may write results — kills the
+  // race where an earlier (e.g. empty-input) query resolves last and clobbers.
+  const seq = ++_dbSearchSeq;
   _dbPage = opts && opts.page != null ? Math.max(0, opts.page) : 0;
   const query = document.getElementById("db-search-input")?.value?.trim();
   const qtype = document.getElementById("db-qtype")?.value || "all";
@@ -6333,6 +6359,7 @@ async function performDbSearch(opts) {
         qtype === "bonus" ? Promise.resolve({ rows: [] }) : API.get(`/api/tossups/query?${common}`),
         qtype === "tossup" ? Promise.resolve({ rows: [] }) : API.get(`/api/bonuses/query?${common}`),
       ]);
+      if (seq !== _dbSearchSeq) return;
       const rows = [...(t.rows || []), ...(b.rows || [])];
       const perSource = Math.max((t.rows || []).length, (b.rows || []).length);
       if (!rows.length) {
@@ -6341,7 +6368,7 @@ async function performDbSearch(opts) {
         container.innerHTML = rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(perSource >= DB_PAGE_SIZE);
       }
       wireDbPager(container);
-    } catch (e) { container.innerHTML = '<div class="text-muted" style="padding:16px">Failed: ' + escapeHtml(e.message || "") + "</div>"; }
+    } catch (e) { if (seq === _dbSearchSeq) container.innerHTML = '<div class="text-muted" style="padding:16px">Failed: ' + escapeHtml(e.message || "") + "</div>"; }
     return;
   }
 
@@ -6355,6 +6382,7 @@ async function performDbSearch(opts) {
       qtype === "bonus" ? Promise.resolve({ rows: [] }) : API.get(`/api/tossups/search?query=${encodeURIComponent(tossupFts)}&${common}`),
       qtype === "tossup" ? Promise.resolve({ rows: [] }) : API.get(`/api/bonuses/search?query=${encodeURIComponent(bonusFts)}&${common}`),
     ]);
+    if (seq !== _dbSearchSeq) return;
     const rows = [...(t.rows || []), ...(b.rows || [])];
     const perSource = Math.max((t.rows || []).length, (b.rows || []).length);
     if (rows.length === 0) {
@@ -6363,7 +6391,7 @@ async function performDbSearch(opts) {
       container.innerHTML = rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(perSource >= DB_PAGE_SIZE);
     }
     wireDbPager(container);
-  } catch (e) { container.innerHTML = '<div class="text-muted" style="padding:16px">Search failed: ' + escapeHtml(e.message || "") + "</div>"; }
+  } catch (e) { if (seq === _dbSearchSeq) container.innerHTML = '<div class="text-muted" style="padding:16px">Search failed: ' + escapeHtml(e.message || "") + "</div>"; }
 }
 
 function renderSearchResult(q) {
@@ -6610,11 +6638,12 @@ async function runFrequency() {
 // "answer" | "question" | "all"; qtype "tossup" | "bonus" | "all".
 function searchDatabase(opts) {
   opts = opts || {};
+  // Tab FIRST — loadDatabase renders state.dbTab, and a stale async tab
+  // renderer (e.g. Starred) would otherwise clobber the search UI after us.
+  state.dbTab = "search";
   showScreen("database");
   loadDatabase();
-  state.dbTab = "search";
   document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === "search"));
-  renderSearchTab();
   const typeSel = document.getElementById("db-search-type");
   const qtypeSel = document.getElementById("db-qtype");
   const exact = document.getElementById("db-exact");

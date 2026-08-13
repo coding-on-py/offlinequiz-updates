@@ -241,7 +241,7 @@
       keyLabel(id) {
         try { return (QB._host.keyDisplay && QB._host.keyDisplay(ext.id + ":" + id)) || "?"; } catch { return "?"; }
       },
-      contextMenu(x, y, items) { QB.contextMenu(x, y, items); },
+      contextMenu(x, y, items, opts) { QB.contextMenu(x, y, items, opts); },
       loadingBarHtml(label) { return QB.loadingBarHtml(label); },
       registerPage(page) { const rec = QB._createPage(ext, page); subs.push(() => QB._removePage(rec)); return rec; },
       registerTextTransform(t) {
