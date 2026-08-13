@@ -148,6 +148,105 @@
     setTimeout(() => { document.addEventListener("mousedown", close, true); document.addEventListener("keydown", onKey, true); }, 0);
   };
 
+  // ── Themed color picker ─────────────────────────────────────────────────
+  // Replaces the OS color dialog with an in-app popover that follows the
+  // active theme. Every input[type=color] anywhere (app, plugins, themes) is
+  // upgraded automatically; add data-native-picker to an input to opt out.
+  QB.pickColor = (opts) => {
+    opts = opts || {};
+    document.getElementById("qb-color-pop")?.remove();
+    const hexToRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(h || "").trim()); if (!m) return null; const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+    const rgbToHex = (r, g, b) => "#" + [r, g, b].map((x) => Math.round(Math.max(0, Math.min(255, x))).toString(16).padStart(2, "0")).join("");
+    const rgbToHsv = (r, g, b) => {
+      r /= 255; g /= 255; b /= 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+      let h = 0;
+      if (d) { if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4; h *= 60; if (h < 0) h += 360; }
+      return [h, mx ? d / mx : 0, mx];
+    };
+    const hsvToRgb = (h, s, v) => {
+      const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+      let r = 0, g = 0, b = 0;
+      if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; }
+      else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+      return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+    };
+    let hsv = (() => { const rgb = hexToRgb(opts.value) || [88, 166, 255]; return rgbToHsv(rgb[0], rgb[1], rgb[2]); })();
+    const hex = () => { const rgb = hsvToRgb(hsv[0], hsv[1], hsv[2]); return rgbToHex(rgb[0], rgb[1], rgb[2]); };
+
+    const el = document.createElement("div");
+    el.id = "qb-color-pop";
+    el.className = "qb-color-pop";
+    const cs = getComputedStyle(document.documentElement);
+    const presets = [...new Set(["--accent", "--green", "--red", "--yellow", "--star", "--text", "--bg-tertiary"]
+      .map((v) => (cs.getPropertyValue(v) || "").trim().toLowerCase())
+      .filter((v) => hexToRgb(v)).concat(["#ffffff", "#000000"]))].slice(0, 9);
+    el.innerHTML =
+      '<div class="qb-cp-sv"><div class="qb-cp-sv-white"></div><div class="qb-cp-sv-black"></div><div class="qb-cp-thumb"></div></div>' +
+      '<div class="qb-cp-hue"><div class="qb-cp-hue-thumb"></div></div>' +
+      '<div class="qb-cp-row"><span class="qb-cp-preview"></span><input class="qb-cp-hex" spellcheck="false" maxlength="7" aria-label="Hex color">' +
+      '<button class="qb-cp-done" type="button">Done</button></div>' +
+      '<div class="qb-cp-presets">' + presets.map((p) => '<span class="qb-cp-pre" data-c="' + p + '" style="background:' + p + '"></span>').join("") + "</div>";
+    document.body.appendChild(el);
+    const r = (opts.anchor && opts.anchor.getBoundingClientRect) ? opts.anchor.getBoundingClientRect() : { left: innerWidth / 2 - 110, bottom: innerHeight / 3 };
+    const pr = el.getBoundingClientRect();
+    el.style.left = Math.max(8, Math.min(r.left, innerWidth - pr.width - 8)) + "px";
+    el.style.top = Math.max(8, Math.min(r.bottom + 6, innerHeight - pr.height - 8)) + "px";
+    requestAnimationFrame(() => el.classList.add("open"));
+
+    const sv = el.querySelector(".qb-cp-sv"), thumb = el.querySelector(".qb-cp-thumb");
+    const hue = el.querySelector(".qb-cp-hue"), hueThumb = el.querySelector(".qb-cp-hue-thumb");
+    const prev = el.querySelector(".qb-cp-preview"), hexIn = el.querySelector(".qb-cp-hex");
+    const paint = (fire) => {
+      sv.style.backgroundColor = "hsl(" + hsv[0] + ",100%,50%)";
+      thumb.style.left = (hsv[1] * 100) + "%";
+      thumb.style.top = ((1 - hsv[2]) * 100) + "%";
+      hueThumb.style.left = (hsv[0] / 360 * 100) + "%";
+      const h = hex();
+      prev.style.background = h;
+      if (document.activeElement !== hexIn) hexIn.value = h;
+      if (fire && typeof opts.onChange === "function") { try { opts.onChange(h); } catch (e) {} }
+    };
+    const drag = (surface, apply) => {
+      surface.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        surface.setPointerCapture && surface.setPointerCapture(e.pointerId);
+        const move = (ev) => {
+          const b = surface.getBoundingClientRect();
+          apply(Math.max(0, Math.min(1, (ev.clientX - b.left) / b.width)), Math.max(0, Math.min(1, (ev.clientY - b.top) / b.height)));
+          paint(true);
+        };
+        const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+        move(e);
+      });
+    };
+    drag(sv, (x, y) => { hsv[1] = x; hsv[2] = 1 - y; });
+    drag(hue, (x) => { hsv[0] = Math.min(359.9, x * 360); });
+    hexIn.addEventListener("change", () => { const rgb = hexToRgb(hexIn.value); if (rgb) { hsv = rgbToHsv(rgb[0], rgb[1], rgb[2]); paint(true); } });
+    hexIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); hexIn.dispatchEvent(new Event("change")); finish(); } e.stopPropagation(); });
+    el.querySelectorAll(".qb-cp-pre").forEach((p) => p.addEventListener("click", () => { const rgb = hexToRgb(p.dataset.c); if (rgb) { hsv = rgbToHsv(rgb[0], rgb[1], rgb[2]); paint(true); } }));
+    const finish = () => { cleanup(); el.remove(); if (typeof opts.onDone === "function") { try { opts.onDone(hex()); } catch (e) {} } };
+    const away = (ev) => { if (!el.contains(ev.target)) finish(); };
+    const onKey = (ev) => { if (ev.key === "Escape") { ev.stopPropagation(); finish(); } };
+    const cleanup = () => { document.removeEventListener("mousedown", away, true); document.removeEventListener("keydown", onKey, true); };
+    setTimeout(() => { document.addEventListener("mousedown", away, true); document.addEventListener("keydown", onKey, true); }, 0);
+    el.querySelector(".qb-cp-done").addEventListener("click", finish);
+    paint(false);
+  };
+  document.addEventListener("click", (e) => {
+    const inp = e.target && e.target.closest && e.target.closest('input[type="color"]');
+    if (!inp || inp.dataset.nativePicker != null || inp.disabled) return;
+    e.preventDefault();
+    QB.pickColor({
+      anchor: inp,
+      value: inp.value,
+      onChange: (v) => { inp.value = v; inp.dispatchEvent(new Event("input", { bubbles: true })); },
+      onDone: (v) => { inp.value = v; inp.dispatchEvent(new Event("change", { bubbles: true })); },
+    });
+  }, true);
+
   QB.registerPlugin = (m) => { QB._pendingManifest = m; };
   QB.registerTheme = (m) => { QB._pendingTheme = m; };
 

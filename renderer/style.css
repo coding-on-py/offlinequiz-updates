@@ -2343,3 +2343,21 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 
 /* Search-term highlighting in Database results */
 mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var(--accent); border-radius: 3px; padding: 0 1px; font-weight: 600; }
+
+/* ── Themed color picker popover ── */
+.qb-color-pop { position: fixed; z-index: 10001; width: 230px; padding: 10px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45); opacity: 0; transform: scale(0.97); transition: opacity 90ms ease, transform 90ms ease; transform-origin: top left; }
+.qb-color-pop.open { opacity: 1; transform: scale(1); }
+.qb-cp-sv { position: relative; width: 100%; height: 130px; border-radius: 8px; cursor: crosshair; touch-action: none; overflow: hidden; border: 1px solid var(--border-light); }
+.qb-cp-sv-white { position: absolute; inset: 0; background: linear-gradient(to right, #fff, rgba(255, 255, 255, 0)); }
+.qb-cp-sv-black { position: absolute; inset: 0; background: linear-gradient(to top, #000, rgba(0, 0, 0, 0)); }
+.qb-cp-thumb { position: absolute; width: 12px; height: 12px; margin: -6px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); pointer-events: none; }
+.qb-cp-hue { position: relative; height: 12px; margin-top: 10px; border-radius: 6px; cursor: pointer; touch-action: none; background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); border: 1px solid var(--border-light); }
+.qb-cp-hue-thumb { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); pointer-events: none; }
+.qb-cp-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.qb-cp-preview { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--border); flex: 0 0 auto; }
+.qb-cp-hex { flex: 1; min-width: 0; font-family: var(--font); font-size: 12px; padding: 5px 8px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 7px; color: var(--text); outline: none; text-transform: lowercase; }
+.qb-cp-hex:focus { border-color: var(--accent); }
+.qb-cp-done { font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--accent); color: #fff; cursor: pointer; }
+.qb-cp-presets { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.qb-cp-pre { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border); cursor: pointer; flex: 0 0 auto; transition: transform 100ms; }
+.qb-cp-pre:hover { transform: scale(1.15); border-color: var(--accent); }
