@@ -810,7 +810,10 @@ async function initTitle() {
     const sd = await API.get("/api/stats");
     const streak = computeDailyStreak(sd.stats?.questionsByDate);
     const el = document.getElementById("title-streak");
-    if (el) el.textContent = streak >= 2 ? `\u{1F525} ${streak}-day streak` : "";
+    // Line-icon flame (stroke = currentColor, recolors with the theme) — never an emoji.
+    el && (el.innerHTML = streak >= 2
+      ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"><path d="M12 2c1 3.5-2.5 5-2.5 8a2.5 2.5 0 0 0 5 .3C16.5 12 18 13.5 18 16a6 6 0 0 1-12 0c0-5 4.5-7 6-14z"/></svg>' + escapeHtml(`${streak}-day streak`)
+      : "");
   } catch {}
   refreshReviewBadge();
 }
@@ -6411,6 +6414,42 @@ function renderSearchTab() {
   performDbSearch();
 }
 
+// Google-style highlighting: wrap search-term matches in <mark> inside the
+// results container. DOM-walks text nodes so existing markup stays intact.
+function highlightTerms(container, terms) {
+  const clean = (terms || []).map((t) => String(t || "").trim()).filter((t) => t.length >= 2);
+  if (!clean.length || !container) return;
+  const re = new RegExp("(" + clean.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      if (!n.nodeValue || !re.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
+      const p = n.parentElement;
+      if (!p || p.closest("mark, script, style, .pill, .qb-star, .star-btn")) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach((node) => {
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    const text = node.nodeValue;
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const mk = document.createElement("mark");
+      mk.className = "db-hl";
+      mk.textContent = m[0];
+      frag.appendChild(mk);
+      last = m.index + m[0].length;
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+}
+
 // Indeterminate loading bar used wherever a query/scan takes noticeable time.
 function loadingBarHtml(label) {
   return `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div><span>${escapeHtml(label || "Loading…")}</span></div>`;
@@ -6499,6 +6538,9 @@ async function performDbSearch(opts) {
       container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">' + (_dbPage > 0 ? "No more results" : "No results") + "</div>" + (_dbPage > 0 ? dbPagerHtml(false) : "");
     } else {
       container.innerHTML = rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(perSource >= DB_PAGE_SIZE);
+      // Highlight what was searched — the whole phrase in exact mode, else
+      // each token (the phrase is tried first so it wins when present).
+      highlightTerms(container, exact ? [tokens.join(" "), ...tokens] : tokens);
     }
     wireDbPager(container);
   } catch (e) { if (seq === _dbSearchSeq) container.innerHTML = '<div class="text-muted" style="padding:16px">Search failed: ' + escapeHtml(e.message || "") + "</div>"; }
