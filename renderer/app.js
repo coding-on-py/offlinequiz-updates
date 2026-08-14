@@ -65,6 +65,8 @@ const API = isElectron
         if (path === "/api/sessions") return window.qbreader.getSessions();
         if (path === "/api/sessions/breakdown") return window.qbreader.getSessionBreakdown(q.category, q.difficulty);
         if (path === "/api/sessions/entries") return window.qbreader.getSessionEntries(q.sessionId);
+        if (path === "/api/sessions/all-entries")
+          return window.qbreader.getAllSessionEntries({ answers: q.answers === "1" || q.answers === "true" });
         if (path === "/api/answer-powers") return window.qbreader.getAnswerPowers();
         if (path === "/api/profiles") return window.qbreader.getProfiles();
         if (path === "/api/profiles/active") return window.qbreader.getActiveProfile();
@@ -7195,6 +7197,26 @@ function init() {
           }
         : null,
       getAchievementList: () => ACHIEVEMENT_LIST.map((a) => ({ ...a, cat: a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined) })),
+      // Earned/progress state for every achievement (base + plugin), computed
+      // from the same data the Player screen uses. Plugins can't derive this
+      // themselves — the thresholds and answer-power classes live in app.js.
+      getEarnedAchievements: async () => {
+        const [statsData, apData] = await Promise.all([
+          API.get("/api/stats").catch(() => ({ stats: {} })),
+          API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
+        ]);
+        const stats = statsData.stats || {};
+        const achData = computeAchievementData(stats, apData.answer_counts || {}, apData.answer_classes || {});
+        const out = ACHIEVEMENT_LIST.map((a) => ({
+          id: a.id, name: a.name, desc: a.desc, threshold: a.threshold,
+          earned: !!(achData[a.id] && achData[a.id].earned),
+          progress: (achData[a.id] && achData[a.id].progress) || 0,
+        }));
+        for (const p of collectPluginAchievements(stats, apData.answer_counts || {}) || []) {
+          out.push({ id: p.id, name: p.name, desc: p.desc, threshold: p.threshold, earned: !!p.earned, progress: p.progress || 0, source: p.source });
+        }
+        return out;
+      },
       normalizeAnswerPower: (s) => apNorm(s),
       matchAnswerPower: (a, b) => apMatch(apNorm(a), apNorm(b)),
       extractPrimaryAnswer: (raw, sani) => { try { return apPrimary(raw, sani); } catch (e) { return ""; } },

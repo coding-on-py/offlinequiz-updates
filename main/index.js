@@ -404,6 +404,58 @@ export class App {
     return this.userData.getSessionEntries(sessionId);
   }
 
+  // Every recorded attempt for the active profile (question_id, given_answer,
+  // buzz_position, points, category…). Plugins that need cross-session history
+  // would otherwise have to fan out one request per session.
+  //
+  // opts.answers resolves each entry's answer here rather than making the
+  // caller re-request one question at a time — the same normalization
+  // getAnswerPowers uses, so callers can compare against it directly.
+  // answer_norms is a list because a bonus carries one answer per part.
+  getAllSessionEntries(opts = {}) {
+    const entries = this.userData.getAllSessionEntries();
+    if (!opts || !opts.answers) return entries;
+
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const cache = new Map();
+    const resolve = (type, qid) => {
+      const key = type + ":" + qid;
+      if (cache.has(key)) return cache.get(key);
+      let out = { answer: "", answer_norms: [] };
+      try {
+        if (type === "bonus") {
+          const b = this.questionDb.getBonus(qid);
+          if (b) {
+            const raw = JSON.parse(b.answers || "[]");
+            const sani = JSON.parse(b.answers_sanitized || "[]");
+            const heads = (Array.isArray(raw) ? raw : []).map((a, i) => {
+              try { return primaryAnswer(a || "", (sani && sani[i]) || ""); } catch { return ""; }
+            });
+            out = { answer: heads.filter(Boolean).join(" / "), answer_norms: heads.map(norm).filter(Boolean) };
+          }
+        } else {
+          const t = this.questionDb.getTossup(qid);
+          if (t) {
+            let head = "";
+            try { head = primaryAnswer(t.answer || "", t.answer_sanitized || ""); } catch { head = ""; }
+            if (!head) head = t.answer_sanitized || t.answer || "";
+            out = { answer: head, answer_norms: [norm(head)].filter(Boolean) };
+          }
+        }
+      } catch {
+        /* a missing or malformed row just means no answer for this entry */
+      }
+      cache.set(key, out);
+      return out;
+    };
+
+    return entries.map((e) => {
+      if (!e.question_id) return e;
+      const r = resolve(e.type === "bonus" ? "bonus" : "tossup", e.question_id);
+      return { ...e, answer: r.answer, answer_norms: r.answer_norms };
+    });
+  }
+
   getSessionList() {
     return this.userData.getSessionList();
   }

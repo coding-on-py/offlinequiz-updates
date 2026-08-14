@@ -320,6 +320,10 @@ export async function start(env) {
       return { entries: qbApp.getSessionEntries(sessionId) };
     });
 
+    ipcMain.handle("get-all-session-entries", (_e, opts = {}) => {
+      return { entries: qbApp.getAllSessionEntries(opts || {}) };
+    });
+
     ipcMain.handle("get-answer-powers", () => {
       return qbApp.getAnswerPowers();
     });
