@@ -26,6 +26,12 @@ export async function start(env) {
     qbApp = new App({ dbPath, userDbPath }).init();
   }
 
+  // Load the signature-verified overlay preload when present — it ships with
+  // the signed main bundle and must match the overlay backend's IPC surface.
+  function safeOverlayPreload() {
+    try { return appUpdater.preloadOverride(OVERLAY_DIR); } catch { return null; }
+  }
+
   function createWindow() {
     mainWindow = new BrowserWindow({
       width: 1200,
