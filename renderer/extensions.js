@@ -649,16 +649,24 @@
     if (now) QB._lastActivePage = now;
   });
 
-  QB.showPage = (combined) => {
+  QB.showPage = (combined, opts) => {
     const rec = QB._pages.find((p) => p.pluginId + "::" + p.id === combined);
     if (!rec) return false;
+    const back = !!(opts && opts.back);
+    // Snapshot the outgoing screen's scroll while it is still visible.
+    try { QB._host.saveScreenScroll && QB._host.saveScreenScroll(); } catch (err) {}
     try { QB._host.recordNav && QB._host.recordNav(combined); } catch (err) {}
-    // Pages that borrow the filters panel always open with its sections collapsed.
-    try { QB._host.collapseFilterSections && QB._host.collapseFilterSections(); } catch (err) {}
+    // Fresh entries open with the borrowed panel collapsed; Back hands the
+    // page back exactly as it was left.
+    if (!back) { try { QB._host.collapseFilterSections && QB._host.collapseFilterSections(); } catch (err) {} }
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
     rec.screenEl.classList.add("active");
-    QB._emit("screen:change", { name: combined });
-    if (typeof rec.onShow === "function") { try { rec.onShow(rec.body); } catch (e) { console.error(e); } }
+    QB._emit("screen:change", { name: combined, back });
+    if (typeof rec.onShow === "function") {
+      try { rec.onShow(rec.body, { back, first: !rec._shown }); } catch (e) { console.error(e); }
+    }
+    rec._shown = true;
+    try { QB._host.restoreScreenScroll && QB._host.restoreScreenScroll(rec.screenEl); } catch (err) {}
     return true;
   };
 

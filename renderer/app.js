@@ -515,12 +515,53 @@ function recordNav(name) {
   if (_navStack.length > 50) _navStack.shift();
   _navCurrent = name;
 }
-function navigateTo(name) {
-  if (name.includes("::")) {
-    if (window.QB?.showPage?.(name)) return;
-    name = "title";
-  }
-  showScreen(name);
+// Screens whose contents have been built at least once this session. Coming
+// BACK to one re-shows it instead of rebuilding it — the rebuild is exactly
+// what wiped the user's filters, search text and results.
+const _screenBuilt = new Set();
+
+// `display:none` drops every scroll offset inside a screen, so each screen's
+// offsets are snapshotted on the way out and replayed on the way back in.
+// Keyed by screen element id, so plugin pages get this for free.
+const _scrollState = new Map();
+function _scrollables(root) {
+  const out = [root];
+  root.querySelectorAll("*").forEach((el) => { if (el.scrollHeight > el.clientHeight + 4) out.push(el); });
+  return out;
+}
+function _scrollKey(root, el) {
+  if (el === root) return ":root";
+  if (el.id) return "#" + el.id;
+  const p = el.parentElement;
+  return p ? el.tagName + ":" + Array.prototype.indexOf.call(p.children, el) + "@" + (p.id || p.className || "") : null;
+}
+function saveScreenScroll() {
+  const cur = document.querySelector(".screen.active");
+  if (!cur || !cur.id) return;
+  const map = {};
+  _scrollables(cur).forEach((el) => {
+    const k = _scrollKey(cur, el);
+    if (k && el.scrollTop > 0) map[k] = el.scrollTop;
+  });
+  _scrollState.set(cur.id, map);
+}
+function restoreScreenScroll(screen) {
+  if (!screen || !screen.id) return;
+  const map = _scrollState.get(screen.id);
+  if (!map) return;
+  const apply = () => {
+    _scrollables(screen).forEach((el) => {
+      const k = _scrollKey(screen, el);
+      if (k && map[k] != null) el.scrollTop = map[k];
+    });
+  };
+  apply();
+  requestAnimationFrame(apply); // again after layout settles
+}
+
+// Building a screen is destructive (innerHTML rebuilds at default values);
+// reviving one only refreshes what can go stale behind the user's back.
+function buildScreen(name) {
   if (name === "practice-tossups") setMode("tossups");
   else if (name === "practice-bonuses") setMode("bonuses");
   else if (name === "stats") loadStats();
@@ -529,11 +570,36 @@ function navigateTo(name) {
   else if (name === "player") loadPlayer();
   else if (name === "extensions") window.QB?.renderScreen();
 }
+function reviveScreen(name) {
+  if (name === "database") {
+    // Stars/provider tabs can change while away; the tab BODY is left as the
+    // user left it (filters, query, results, scroll).
+    refreshDbStarred();
+    renderDbProviderTabs();
+    syncDbTabActive();
+  } else if (name === "extensions") window.QB?.renderScreen();
+  else if (name === "practice-tossups" || name === "practice-bonuses") {
+    // Keep the mode pinned without re-running the filter restore.
+    state.mode = name === "practice-tossups" ? "tossups" : "bonuses";
+    state._practiceBase = state.mode;
+  }
+}
+function navigateTo(name, opts) {
+  const back = opts ? !!opts.back : _navBack;
+  if (name.includes("::")) {
+    if (window.QB?.showPage?.(name, { back })) return;
+    name = "title";
+  }
+  showScreen(name, { back });
+  // On Back, re-show an already-built screen instead of rebuilding it.
+  if (back && _screenBuilt.has(name)) reviveScreen(name);
+  else buildScreen(name);
+}
 function goBack() {
   if (window.QB?.handleBack?.()) return;
   if (dbBrowseBack()) return;
   if (_navCurrent === "stats" && state.statsSessionId) { state.statsSessionId = null; loadStats(); return; }
-  if (state.sessionActive) endSession();
+  if (state.sessionActive) suspendSession();
   state.escOnce = false;
   clearTimeout(state.escTimer);
   hideEscHint();
@@ -542,7 +608,9 @@ function goBack() {
   try { navigateTo(prev); } finally { _navBack = false; }
 }
 
-function showScreen(name) {
+function showScreen(name, opts) {
+  const back = opts ? !!opts.back : _navBack;
+  saveScreenScroll(); // must run while the outgoing screen is still visible
   recordNav(name);
   crtFlash();
   $$(".screen").forEach((s) => s.classList.remove("active"));
@@ -554,7 +622,8 @@ function showScreen(name) {
   // Pin the practice base to the screen being opened — a stale base from an
   // earlier tossup+bonus interleave must never make bonus practice serve tossups.
   if (state.mode) state._practiceBase = state.mode;
-  if (mapped === "practice") collapseFilterSections();
+  // Fresh entries start collapsed; Back hands the panel back as it was left.
+  if (mapped === "practice" && !back) collapseFilterSections();
   if (mapped === "title") {
     loadTitleArt();
     refreshReviewBadge();
@@ -563,7 +632,8 @@ function showScreen(name) {
     const greeting = document.getElementById("title-greeting");
     if (greeting) greeting.textContent = state.username ? `HELLO, ${state.username.toUpperCase()}!` : "";
   }
-  qbEmit("screen:change", { name });
+  qbEmit("screen:change", { name, back });
+  if (screen) restoreScreenScroll(screen);
 }
 
 // Opening a screen with the settings bar always starts with every collapsible
@@ -583,7 +653,8 @@ function crtFlash() {
 }
 
 function goHome() {
-  if (state.sessionActive) endSession();
+  // Suspend, don't end — returning to practice resumes where you left off.
+  if (state.sessionActive) suspendSession();
   state.escOnce = false;
   clearTimeout(state.escTimer);
   hideEscHint();
@@ -2050,6 +2121,31 @@ function startSession() {
     : keyLabelHtml("start-skip", "Skip");
   qbEmit("session:start", { sessionId: state.sessionId, mode: state.mode });
   nextQuestion();
+}
+
+// Leaving a practice screen mid-session no longer THROWS AWAY the session —
+// it suspends it: every timer stops (nothing may count down or auto-advance
+// while you are on another screen) and the question stays on the page, so
+// coming back shows exactly where you were instead of the start placeholder.
+// Ending a session is now only ever explicit (Esc-Esc, or Start/End session).
+function suspendSession() {
+  if (!state.sessionActive) return;
+  if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+  stopBuzzTimer();
+  stopEventTimer();
+  // Mid-reading questions come back paused so the clock can't run out while
+  // you were away; already-answered ones just sit on their result.
+  if (!state.isBuzzed && !state.resultAreaVisible && state.currentQuestion && !state.questionFullyRead) {
+    state.isPaused = true;
+    $("#question-text")?.classList.add("paused-text");
+    if (!document.getElementById("pause-overlay")) {
+      const el = document.createElement("div");
+      el.className = "pause-overlay";
+      el.id = "pause-overlay";
+      el.textContent = "PAUSED";
+      $("#question-area")?.appendChild(el);
+    }
+  }
 }
 
 function endSession() {
@@ -3956,22 +4052,7 @@ function selectionMenuItems() {
   const sel = String(window.getSelection() || "").trim();
   if (!sel || sel.length < 2) return [];
   const q = sel.slice(0, 80);
-  const items = [
-    { sep: true },
-    { label: "Search questions for selection", onClick: () => searchDatabase({ query: q, field: "question", exact: true }) },
-    { label: "Search answers for selection", onClick: () => searchDatabase({ query: q, field: "answer", exact: false }) },
-  ];
-  const pages = window.QB?.getActivePages?.() || [];
-  if (pages.some((p) => p.id === "keyword-freq::kwfreq")) {
-    items.push({ sep: true });
-    items.push({ label: "Top answers for it (Keyword Freq)", onClick: () => { try { localStorage.setItem("qb-kf-handoff", JSON.stringify({ mode: "words", term: q })); } catch (e) {} window.QB.showPage("keyword-freq::kwfreq"); } });
-    items.push({ label: "Keywords, treating it as an answer", onClick: () => { try { localStorage.setItem("qb-kf-handoff", JSON.stringify({ mode: "answers", term: q })); } catch (e) {} window.QB.showPage("keyword-freq::kwfreq"); } });
-  }
-  const factPage = pages.find((p) => p.id.startsWith("fact-sheet::"));
-  if (factPage) {
-    items.push({ label: "Fact sheet for it", onClick: () => { try { localStorage.setItem("qb-facts-handoff", JSON.stringify({ term: q })); } catch (e) {} window.QB.showPage(factPage.id); } });
-  }
-  return items;
+  return selectionTermItems(q);
 }
 
 // Right-click any question card (search, packets, history, review, starred)
@@ -4015,15 +4096,74 @@ document.addEventListener("contextmenu", (e) => {
   if (e.defaultPrevented || !window.QB?.contextMenu) return;
   const tag = e.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") return; // keep the native menu for inputs
+
   const sel = String(window.getSelection() || "").trim();
-  if (!sel || sel.length < 2) return;
-  const q = sel.slice(0, 80);
+  if (sel && sel.length >= 2) {
+    const q = sel.slice(0, 80);
+    e.preventDefault();
+    window.QB.contextMenu(e.clientX, e.clientY, [
+      { label: "Copy", onClick: () => copyToClipboard(sel) },
+      ...selectionMenuItems(),
+    ], { title: "“" + q.slice(0, 40) + "”" });
+    return;
+  }
+
+  // No selection: if the cursor is over text that is ITSELF interactive
+  // (clickable / underlined — the things a left-click already acts on, like
+  // the words and answers in the frequency lists), treat that element's text
+  // as the term and open the same menu without making the user highlight it.
+  const term = interactiveTermAt(e.target);
+  if (!term) return;
   e.preventDefault();
   window.QB.contextMenu(e.clientX, e.clientY, [
-    { label: "Copy", onClick: () => copyToClipboard(sel) },
-    ...selectionMenuItems(),
-  ], { title: "“" + q.slice(0, 40) + "”" });
+    { label: "Copy", onClick: () => copyToClipboard(term) },
+    ...selectionTermItems(term),
+  ], { title: term.length > 40 ? term.slice(0, 39) + "…" : term });
 });
+
+// Text that a left-click already does something with, or that is visibly
+// underlined, is a "term" the user can act on. Deliberately excludes real
+// buttons/inputs (their label is UI chrome, not content) and anything already
+// handled by a more specific context menu.
+const TERM_SELECTOR = [
+  ".kw-word", ".freq-answer", ".bw-kw", ".fs-gram", ".ext-link", ".al-rans",
+  ".db-row", ".session-row", ".fo-tile-name", ".qcard-part", ".ans", ".actual",
+  "a[href]", "u",
+].join(",");
+function interactiveTermAt(target) {
+  if (!target || !target.closest) return null;
+  let el = target.closest(TERM_SELECTOR);
+  if (!el) {
+    // Fall back to any element the app made clickable (cursor:pointer + own text).
+    const cand = target.closest("[data-w],[data-kw],[data-g],[data-answer],[data-sub],[data-set],[data-pkt]");
+    if (cand) el = cand;
+  }
+  if (!el) return null;
+  if (el.closest("button, input, select, textarea, .btn, .qb-ctx-menu, .save-menu")) return null;
+  const raw = (el.dataset && (el.dataset.w || el.dataset.kw || el.dataset.g || el.dataset.answer)) || el.textContent || "";
+  const term = String(raw).replace(/^answer:\s*/i, "").replace(/\s+/g, " ").trim();
+  if (!term || term.length < 2 || term.length > 90) return null;
+  if (!/[a-zA-Z0-9]/.test(term)) return null;
+  return term;
+}
+// Same entries selectionMenuItems() builds, for an explicit term.
+function selectionTermItems(term) {
+  const q = String(term).slice(0, 80);
+  const items = [
+    { sep: true },
+    { label: "Search questions for it", onClick: () => searchDatabase({ query: q, field: "question", exact: true }) },
+    { label: "Search answers for it", onClick: () => searchDatabase({ query: q, field: "answer", exact: false }) },
+  ];
+  const pages = window.QB?.getActivePages?.() || [];
+  if (pages.some((p) => p.id === "keyword-freq::kwfreq")) {
+    items.push({ sep: true });
+    items.push({ label: "Top answers for it (Keyword Freq)", onClick: () => { try { localStorage.setItem("qb-kf-handoff", JSON.stringify({ mode: "words", term: q })); } catch (err) {} window.QB.showPage("keyword-freq::kwfreq"); } });
+    items.push({ label: "Keywords, treating it as an answer", onClick: () => { try { localStorage.setItem("qb-kf-handoff", JSON.stringify({ mode: "answers", term: q })); } catch (err) {} window.QB.showPage("keyword-freq::kwfreq"); } });
+  }
+  const factPage = pages.find((p) => p.id.startsWith("fact-sheet::"));
+  if (factPage) items.push({ label: "Fact sheet for it", onClick: () => { try { localStorage.setItem("qb-facts-handoff", JSON.stringify({ term: q })); } catch (err) {} window.QB.showPage(factPage.id); } });
+  return items;
+}
 
 // Right-click the live practice question for the same quick actions.
 $("#question-content")?.addEventListener("contextmenu", (e) => {
@@ -4579,6 +4719,7 @@ function qhDetailHtml(q, type) {
     '<div class="qh-ans">Answer: ' + answerLineHtml(q.answer, q.answer_sanitized || "") + "</div>";
 }
 async function loadStats(preserveScroll = false) {
+  _screenBuilt.add("stats");
   const screen = document.getElementById("stats-screen");
   const keepScroll = preserveScroll && screen ? screen.scrollTop : 0;
   const container = $("#stats-container");
@@ -5085,6 +5226,7 @@ $("#opt-show-qmeta")?.addEventListener("change", (e) => {
 });
 
 function initSettings() {
+  _screenBuilt.add("settings");
   syncAppUpdateUI();
   const speedSlider = $("#speed-slider");
   const autoReveal = $("#auto-reveal");
@@ -5550,6 +5692,7 @@ function escapeHtml(str) {
 
 
 async function loadPlayer() {
+  _screenBuilt.add("player");
   const container = $("#player-container");
   if (!container) return;
   container.innerHTML = '<div class="text-muted">Loading player data...</div>';
@@ -6327,7 +6470,15 @@ function renderDbProviderTabs() {
   });
 }
 
+// Re-mark the active Database tab after the provider tabs are rebuilt, without
+// re-rendering the tab body (a Back entry keeps its filters/results).
+function syncDbTabActive() {
+  const tab = state.dbTab || "search";
+  document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
+}
+
 function loadDatabase() {
+  _screenBuilt.add("database");
   refreshDbStarred();
   renderDbProviderTabs();
   if (!_dbWired) {
@@ -6995,6 +7146,8 @@ function init() {
       }),
       stripPronunciations: (t) => stripPronunciations(t),
       recordNav: (name) => recordNav(name),
+      saveScreenScroll: () => saveScreenScroll(),
+      restoreScreenScroll: (el) => restoreScreenScroll(el),
       collapseFilterSections: () => collapseFilterSections(),
       searchDatabase: (opts) => searchDatabase(opts),
       playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),

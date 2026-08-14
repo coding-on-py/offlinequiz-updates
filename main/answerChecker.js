@@ -248,6 +248,30 @@ function underlineSpans(html) {
 
 const WORD_CHAR = /[A-Za-z0-9'’]/;
 
+// Some sets enter an answerline with the inflection split off by the markup
+// ("<b><u>pulsar</u> </b>s", "<u>neutron star</u> s", "<u>Echinoderm</u> ata"),
+// which leaves a stray space INSIDE the term — the DB itself stores
+// "pulsar s [prompt on neutron star s until read]". Emit an extra GLUED
+// variant so the joined form matches too (and, via the normal singular/plural
+// handling, so does the singular). Purely ADDITIVE: the original term is
+// always kept, so nothing that matched before stops matching.
+const GLUE_STOP = /^(of|or|in|on|to|a|an|the|and|at|by|for|as|is|it|be|no|not|de|la|le|el|il|du|da|di|do|von|van|der|den|del|des|und|et)$/;
+function glueOrphanSuffix(term) {
+  // Cap the orphan at 3 chars: a longer run is a real word ("neutron star"),
+  // not a broken-off inflection ("star s", "Echinoderm ata").
+  const g = String(term).replace(/([A-Za-z])\s+([a-z]{1,3})\b/g, (m, ch, tok) => (GLUE_STOP.test(tok) ? m : ch + tok));
+  return g !== term && /[a-zA-Z0-9]/.test(g) ? g : null;
+}
+function withGluedVariants(terms) {
+  const out = [];
+  for (const t of terms) {
+    out.push(t);
+    const g = glueOrphanSuffix(t);
+    if (g) out.push(g);
+  }
+  return out;
+}
+
 function phraseTerms(html) {
   const terms = [];
   const { vis, spans } = underlineSpans(html);
@@ -277,7 +301,7 @@ function phraseTerms(html) {
     const full = stripQuotes(stripTags(html).trim());
     if (full) terms.push(full);
   }
-  return [...new Set(terms.filter((t) => t && /[a-zA-Z0-9]/.test(t)))];
+  return [...new Set(withGluedVariants(terms).filter((t) => t && /[a-zA-Z0-9]/.test(t)))];
 }
 
 const FILLER_TERM = /^((or|and)\s+)?(just|only|merely|simply|plainly?|exactly|precisely|similar|(obvious|reasonable|clear)\s+equivalents?|equivalents?|synonyms?|(equivalent\s+)?descriptions?|word\s*forms?|forms?|etc\.?|so\s+on|the\s+like|and\s+so\s+forth|anything\s+similar|likewise)$/i;
@@ -349,7 +373,7 @@ function extractTerms(content, opts = {}) {
       phraseTerms(part).forEach((t) => out.push(t));
     }
   });
-  return [...new Set(out.filter((t) => {
+  return [...new Set(withGluedVariants(out).filter((t) => {
     const tt = t.trim();
     if (!tt || !/[a-zA-Z0-9]/.test(tt)) return false;
     if (FILLER_TERM.test(tt) || INSTRUCTION_TERM.test(tt) || /^(the|a|an|or|and|of)$/i.test(tt)) return false;
