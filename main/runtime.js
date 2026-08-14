@@ -49,6 +49,16 @@ export async function start(env) {
       },
     });
 
+    // A relaunch ("Restart now to apply") can come back windowed: macOS
+    // restores the previous window state, and quitting out of a fullscreen
+    // space makes the constructor flag unreliable. Enforce it once the window
+    // is actually ready, and again after the page loads.
+    const goFullScreen = () => {
+      try { if (mainWindow && !mainWindow.isFullScreen()) mainWindow.setFullScreen(true); } catch (e) {}
+    };
+    try { mainWindow.once("ready-to-show", goFullScreen); } catch (e) {}
+    try { mainWindow.webContents.once("did-finish-load", goFullScreen); } catch (e) {}
+
     let indexPath = BUNDLED_INDEX;
     try { if (!isDev) indexPath = appUpdater.overlayRendererIndex(OVERLAY_DIR) || BUNDLED_INDEX; } catch { indexPath = BUNDLED_INDEX; }
     mainWindow.loadFile(indexPath);
