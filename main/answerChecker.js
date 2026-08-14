@@ -248,29 +248,61 @@ function underlineSpans(html) {
 
 const WORD_CHAR = /[A-Za-z0-9'’]/;
 
-// Some sets enter an answerline with the inflection split off by the markup
-// ("<b><u>pulsar</u> </b>s", "<u>neutron star</u> s", "<u>Echinoderm</u> ata"),
-// which leaves a stray space INSIDE the term — the DB itself stores
-// "pulsar s [prompt on neutron star s until read]". Emit an extra GLUED
-// variant so the joined form matches too (and, via the normal singular/plural
-// handling, so does the singular). Purely ADDITIVE: the original term is
-// always kept, so nothing that matched before stops matching.
-const GLUE_STOP = /^(of|or|in|on|to|a|an|the|and|at|by|for|as|is|it|be|no|not|de|la|le|el|il|du|da|di|do|von|van|der|den|del|des|und|et)$/;
-function glueOrphanSuffix(term) {
-  // Cap the orphan at 3 chars: a longer run is a real word ("neutron star"),
-  // not a broken-off inflection ("star s", "Echinoderm ata").
-  const g = String(term).replace(/([A-Za-z])\s+([a-z]{1,3})\b/g, (m, ch, tok) => (GLUE_STOP.test(tok) ? m : ch + tok));
-  return g !== term && /[a-zA-Z0-9]/.test(g) ? g : null;
+// ── Tag-split word repair ────────────────────────────────────────────────
+// Packet markup routinely ends an underline mid-word ("<b><u>pulsar</u></b>s"),
+// which phraseTerms already handles by expanding to the word boundary. But part
+// of the upstream dump strands the inflection behind a SPACE the markup
+// introduced: "<b><u>pulsar</u> </b>s", "<u>neutron star</u> s" — the DB row
+// literally reads "pulsar s [prompt on neutron star s until read]". Heal it at
+// the source so terms, mainAnswer, primaryAnswer and the displayed answerline
+// all see one word.
+//
+// Three guards keep this off genuine multi-word answers:
+//   1. a formatting-tag run must sit between the word and the space, so plain
+//      prose is never glued;
+//   2. the tail must be a bound morpheme from a closed list, AND must be
+//      plausible for the STEM it would attach to (this is what keeps
+//      "<u>Dar</u> es Salaam", "log n" and "2 to the n" intact);
+//   3. nothing word-like may follow the tail, looking THROUGH tags, so
+//      "is<u> n</u>ot" stays split.
+const SPLIT_SUFFIX = /^(?:['’]?s|es|n|ns|ic|ics|ism|isms|ian|ians|ata|ae|ing|er|ers|ly|ness)$/;
+const SPLIT_STEM_RE = /[\p{L}\p{N}'’]+$/u;
+const TAG_SPLIT_RE = /(?<=[\p{L}\p{N}'’])((?:<\/?[A-Za-z][^>]*>)+)[ \t]+((?:<\/?[A-Za-z][^>]*>)*)(['’]?[a-z]{1,4})(?!(?:<\/?[A-Za-z][^>]*>)*[\p{L}\p{N}'’-])/gu;
+const TEXT_SPLIT_RE = /(?<=[\p{L}\p{N}'’])[ \t]+(['’]?[a-z]{1,4})(?![\p{L}\p{N}'’-])/gu;
+// "-es" only attaches to a sibilant or -o stem ("gases", "churches", "potatoes"),
+// so "Dar es Salaam" / "La vida es sueno" stay split. "-n"/"-ns" is the demonym
+// split ("Persia n", "Maya ns") and needs a vowel-final stem of >= 4 chars,
+// which keeps "log n", "2 to the n", "ln n", "mod n" and "escalier n" intact.
+function splitSuffixOk(stem, suf) {
+  if (!SPLIT_SUFFIX.test(suf)) return false;
+  if (suf === "es") return /(?:s|x|z|ch|sh|o)$/i.test(stem);
+  if (suf === "n" || suf === "ns") return stem.length >= 4 && /[aeiou]$/i.test(stem) && !/^(?:the|una|une|ide|ode|are)$/i.test(stem);
+  return true;
 }
-function withGluedVariants(terms) {
-  const out = [];
-  for (const t of terms) {
-    out.push(t);
-    const g = glueOrphanSuffix(t);
-    if (g) out.push(g);
+export function healAnswerline(answerline, sanitizedAnswerline) {
+  const src = String(answerline || "");
+  const healed = new Set();
+  const stemBefore = (str, off) => ((stripTags(str.slice(0, off)).match(SPLIT_STEM_RE) || [""])[0]);
+  const html = src.includes("<")
+    ? src.replace(TAG_SPLIT_RE, (m, t1, t2, suf, off, str) => {
+        const lo = suf.toLowerCase();
+        if (!splitSuffixOk(stemBefore(str, off), lo)) return m;
+        healed.add(lo);
+        return t1 + t2 + suf;
+      })
+    : src;
+  let text = String(sanitizedAnswerline || "");
+  // The sanitized line has no tags to anchor on, so only repair the exact
+  // suffixes the tagged line proved were split — never guess from text alone.
+  if (healed.size && text) {
+    text = text.replace(TEXT_SPLIT_RE, (m, suf, off, str) => {
+      const lo = suf.toLowerCase();
+      return healed.has(lo) && splitSuffixOk(stemBefore(str, off), lo) ? suf : m;
+    });
   }
-  return out;
+  return { answerline: html, sanitized: text };
 }
+
 
 function phraseTerms(html) {
   const terms = [];
@@ -301,7 +333,7 @@ function phraseTerms(html) {
     const full = stripQuotes(stripTags(html).trim());
     if (full) terms.push(full);
   }
-  return [...new Set(withGluedVariants(terms).filter((t) => t && /[a-zA-Z0-9]/.test(t)))];
+  return [...new Set(terms.filter((t) => t && /[a-zA-Z0-9]/.test(t)))];
 }
 
 const FILLER_TERM = /^((or|and)\s+)?(just|only|merely|simply|plainly?|exactly|precisely|similar|(obvious|reasonable|clear)\s+equivalents?|equivalents?|synonyms?|(equivalent\s+)?descriptions?|word\s*forms?|forms?|etc\.?|so\s+on|the\s+like|and\s+so\s+forth|anything\s+similar|likewise)$/i;
@@ -373,7 +405,7 @@ function extractTerms(content, opts = {}) {
       phraseTerms(part).forEach((t) => out.push(t));
     }
   });
-  return [...new Set(withGluedVariants(out).filter((t) => {
+  return [...new Set(out.filter((t) => {
     const tt = t.trim();
     if (!tt || !/[a-zA-Z0-9]/.test(tt)) return false;
     if (FILLER_TERM.test(tt) || INSTRUCTION_TERM.test(tt) || /^(the|a|an|or|and|of)$/i.test(tt)) return false;
@@ -411,7 +443,14 @@ function findContainers(s) {
   return out;
 }
 
+// "until read", "until it's mentioned", "before those words are read", "after
+// they're said" all mean the same thing: anchor the window on the TERM ITSELF —
+// the qualifier names no separate marker. Only a real marker phrase falls
+// through to the else branch.
+const SELF_MARKER = /^(?:(?:those|these)\s+words\s+(?:are|is)\s+|(?:it|this|that|they|these|those)\s*(?:['’]s|['’]re)\s+|(?:it|this|that|they|these|those)\s+(?:is|are|was|were)\s+)?(?:read|mention(?:ed)?|given|said|stated)\b/i;
+
 export function parseDirectives(answerline, sanitizedAnswerline) {
+  ({ answerline, sanitized: sanitizedAnswerline } = healAnswerline(answerline, sanitizedAnswerline));
   const raw = (answerline && answerline.trim()) ? answerline : (sanitizedAnswerline || "");
   const accept = [];
   const prompt = [];
@@ -480,7 +519,7 @@ export function parseDirectives(answerline, sanitizedAnswerline) {
     const kind = m[1].toLowerCase();
     let markerSrc = m[2] || "";
     let marker;
-    if (/^(it\s+is\s+)?(read|mention(ed)?|given|said)\b/i.test(markerSrc.trim()) || !markerSrc.trim()) {
+    if (SELF_MARKER.test(markerSrc.trim()) || !markerSrc.trim()) {
       marker = "__self__";
     } else {
       const q = markerSrc.match(/["“”']([^"“”']+)["“”']/);
@@ -594,6 +633,7 @@ function contentWords(norm) {
 }
 
 export function primaryAnswer(raw, sanitized) {
+  ({ answerline: raw, sanitized } = healAnswerline(raw, sanitized));
   const src = (raw && raw.trim()) ? raw : (sanitized || "");
   const containers = findContainers(src);
   const firstDir = containers.find((c) => isDirectiveInner(c.text.slice(1, -1)));
@@ -737,23 +777,53 @@ export function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, stri
   const fullLower = hasPos && opts.fullText ? String(opts.fullText).toLowerCase() : null;
   const readLen = hasPos ? (opts.readLen != null ? opts.readLen : String(opts.readText).length) : null;
 
-  function markerStarted(marker) {
+  // "prompt on <u>neutron star</u>s until read" anchors the window on the term
+  // itself, but the question says the SINGULAR ("…rotating neutron star…").
+  // A literal substring probe never fires, so the window silently stayed open
+  // for the whole question. Probe the marker verbatim FIRST (unchanged
+  // behaviour), then inflection-relaxed forms. Relaxed forms are word-boundary
+  // anchored and may pick up a plural tail, so "pari" cannot match inside
+  // "parity" while "neutron star" still matches "neutron stars".
+  function markerForms(marker) {
     const m = String(marker).toLowerCase().trim();
-    if (!m) return false;
-    if (fullLower) {
-      const idx = fullLower.indexOf(m);
-      if (idx >= 0) return readLen > idx;
+    if (!m) return [];
+    const forms = [{ text: m, exact: true }];
+    const add = (f) => { if (f && f.length > 1 && !forms.some((x) => x.text === f)) forms.push({ text: f, exact: false }); };
+    const parts = m.split(/\s+/);
+    const last = parts[parts.length - 1];
+    if (last.length >= 4) add(parts.slice(0, -1).concat(singularize(last)).join(" "));
+    // Possessive-stripped form, but only when what remains is substantial —
+    // "it's" must not relax to "it", which occurs in nearly every question.
+    const poss = m.replace(/['’]s\b/g, "").replace(/\s+/g, " ").trim();
+    if (poss.length >= 4) add(poss);
+    return forms;
+  }
+  function markerHit(f) {
+    if (f.exact) {
+      const i = fullLower.indexOf(f.text);
+      return i >= 0 ? { idx: i, len: f.text.length } : null;
     }
-    return readNorm.includes(normalizeText(m));
+    const re = new RegExp("(?<![\\p{L}\\p{N}])" + f.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:e?s)?(?![\\p{L}\\p{N}])", "u");
+    const mm = re.exec(fullLower);
+    return mm ? { idx: mm.index, len: mm[0].length } : null;
+  }
+  function markerStarted(marker) {
+    const forms = markerForms(marker);
+    if (!forms.length) return false;
+    if (fullLower) {
+      for (const f of forms) { const h = markerHit(f); if (h) return readLen > h.idx; }
+    }
+    for (const f of forms) if (readNorm.includes(normalizeText(f.text))) return true;
+    return false;
   }
   function markerFinished(marker) {
-    const m = String(marker).toLowerCase().trim();
-    if (!m) return false;
+    const forms = markerForms(marker);
+    if (!forms.length) return false;
     if (fullLower) {
-      const idx = fullLower.indexOf(m);
-      if (idx >= 0) return readLen >= idx + m.length;
+      for (const f of forms) { const h = markerHit(f); if (h) return readLen >= h.idx + h.len; }
     }
-    return readNorm.includes(normalizeText(m));
+    for (const f of forms) if (readNorm.includes(normalizeText(f.text))) return true;
+    return false;
   }
   function termLive(term, until, after, group) {
     if (!hasPos) return true;

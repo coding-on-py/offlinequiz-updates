@@ -632,6 +632,11 @@ function showScreen(name, opts) {
     const greeting = document.getElementById("title-greeting");
     if (greeting) greeting.textContent = state.username ? `HELLO, ${state.username.toUpperCase()}!` : "";
   }
+  // Coming back to a suspended session: the question is still on screen, and
+  // reading was frozen so nothing ran down while you were away.
+  if (mapped === "practice" && state.sessionActive && state.currentQuestion && state.isPaused) {
+    window.QB?.toast?.("Session resumed — press " + keyDisplay("pause") + " to continue reading");
+  }
   qbEmit("screen:change", { name, back });
   if (screen) restoreScreenScroll(screen);
 }
@@ -667,7 +672,7 @@ function showEscHint() {
     el = document.createElement("div");
     el.id = "esc-hint";
     el.className = "esc-hint";
-    el.textContent = "Press [Esc] again to leave";
+    el.textContent = "Press [Esc] again to leave — your session is kept";
     $("#question-area")?.appendChild(el);
   }
 }
@@ -747,7 +752,9 @@ document.addEventListener("keydown", (e) => {
       if (state.escOnce) {
         clearTimeout(state.escTimer);
         state.escOnce = false;
-        endSession();
+        // Leaving KEEPS the session (goBack suspends it) so returning resumes
+        // the same question. Ending is explicit: the End Session button or the
+        // end-session hotkey.
         goBack();
       } else {
         e.preventDefault();
