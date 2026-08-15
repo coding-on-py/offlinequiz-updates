@@ -322,6 +322,43 @@
         return rec;
       },
       mount(el) { document.body.appendChild(el); subs.push(() => el.remove()); return el; },
+      // Run fn(el) for every element matching `selector` — the ones on screen
+      // now AND any added later. Screens here rebuild by assigning innerHTML,
+      // so a one-shot querySelectorAll only ever decorates whatever happened to
+      // exist at enable time; this keeps up with rebuilds.
+      //
+      // It exists because CSS alone cannot add DOM. A theme that needs the
+      // structure a component library uses — an indicator span inside a
+      // checkbox, a chevron, a spinner — can inject it here, and `undo` puts
+      // the element back the way it was found when the theme is disabled.
+      //
+      // fn may return a cleanup function; each element is only ever decorated
+      // once (tracked by a per-registration marker).
+      decorate(selector, fn) {
+        const seen = new WeakSet();
+        const undos = [];
+        const apply = (root) => {
+          if (!root || root.nodeType !== 1) return;
+          let list;
+          try { list = root.matches && root.matches(selector) ? [root] : []; } catch { return; }
+          try { list = list.concat([...root.querySelectorAll(selector)]); } catch {}
+          for (const el of list) {
+            if (seen.has(el)) continue;
+            seen.add(el);
+            try { const u = fn(el); if (typeof u === "function") undos.push(u); } catch (e) { console.error(e); }
+          }
+        };
+        apply(document.body);
+        const obs = new MutationObserver((records) => {
+          for (const r of records) for (const n of r.addedNodes) apply(n);
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+        subs.push(() => {
+          obs.disconnect();
+          for (const u of undos) { try { u(); } catch {} }
+        });
+        return () => obs.disconnect();
+      },
       storage: {
         get(k) { try { return JSON.parse(localStorage.getItem("qb-pl-" + ext.id + "-" + k)); } catch { return null; } },
         set(k, v) { localStorage.setItem("qb-pl-" + ext.id + "-" + k, JSON.stringify(v)); },
