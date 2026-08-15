@@ -688,17 +688,25 @@
     catch (e) { QB.toast("Invalid theme: " + e.message, "error"); return null; }
   };
   QB.enableTheme = (id) => {
-    QB._themes.forEach((t) => { if (t.id !== id && t._enabledRuntime) QB.disableTheme(t.id); });
-    const t = QB._themes.find((x) => x.id === id); if (!t) return;
+    _themeSwitching = true;
     try {
-      if (!t._manifest) t._manifest = runEntry(t.code).theme;
-      const ctx = makeCtx(t); t._ctx = ctx;
-      if (typeof t._manifest.onEnable === "function") t._manifest.onEnable(ctx);
-      t._enabledRuntime = true; t.enabled = true;
-      QB._themes.forEach((x) => { if (x.id !== id) x.enabled = false; });
-      saveThemes();
-      QB._emit("theme:change", t);
-    } catch (e) { console.error(e); QB.toast("Theme '" + (t.name || id) + "' failed: " + e.message, "error"); }
+      QB._themes.forEach((t) => { if (t.id !== id && t._enabledRuntime) QB.disableTheme(t.id); });
+      const t = QB._themes.find((x) => x.id === id); if (!t) return;
+      try {
+        if (!t._manifest) t._manifest = runEntry(t.code).theme;
+        const ctx = makeCtx(t); t._ctx = ctx;
+        if (typeof t._manifest.onEnable === "function") t._manifest.onEnable(ctx);
+        t._enabledRuntime = true; t.enabled = true;
+        QB._themes.forEach((x) => { if (x.id !== id) x.enabled = false; });
+        saveThemes();
+        QB._emit("theme:change", t);
+      } catch (e) { console.error(e); QB.toast("Theme '" + (t.name || id) + "' failed: " + e.message, "error"); }
+    } finally {
+      _themeSwitching = false;
+      // A user theme takes over from the baseline — and if it failed to load,
+      // this puts the baseline back rather than leaving the app unstyled.
+      QB.syncBaseTheme();
+    }
   };
   QB.disableTheme = (id) => {
     const t = QB._themes.find((x) => x.id === id); if (!t) return;
@@ -706,6 +714,7 @@
     if (t._ctx) t._ctx._unsub.forEach((u) => { try { u(); } catch {} });
     t._ctx = null; t._enabledRuntime = false; t.enabled = false; saveThemes();
     QB._emit("theme:change", null);
+    QB.syncBaseTheme();
   };
   QB.removeTheme = (id) => { QB.disableTheme(id); QB._themes = QB._themes.filter((t) => t.id !== id); saveThemes(); };
 
@@ -812,31 +821,66 @@
       "try{\n" + code + "\n}finally{QB.registerTheme=__ot;QB.registerPlugin=__op;}})();";
   }
 
-  // A brand-new install ships with the default theme already applied. Guarded by
-  // a one-shot marker so this only ever happens on the very first launch — a
-  // user who later removes every theme keeps the bare look they chose.
-  const DEFAULT_THEME_KEY = "qb-default-theme-installed";
-  function installDefaultThemeOnce() {
-    let done = null;
-    try { done = localStorage.getItem(DEFAULT_THEME_KEY); } catch (e) { return; }
-    if (done || QB._themes.length) return;
-    try {
-      localStorage.setItem(DEFAULT_THEME_KEY, "1");
-      const t = QB.installTheme(DEFAULT_THEME_FILE, STARTER_THEME);
-      // installTheme stores it disabled; mark it active so boot's normal path
-      // picks it up below and the first screen the user sees is themed.
-      if (t) { t.enabled = true; saveThemes(); }
-    } catch (e) {}
+  // ── the app's baseline look ────────────────────────────────────────────────
+  // This is NOT an installed theme: it is never listed in Plugins & Themes,
+  // never written to localStorage, and cannot be removed. It simply runs
+  // whenever no user theme is enabled — so a stock install already looks
+  // designed, and turning every theme off returns here rather than to the
+  // unstyled defaults. Enabling any theme stands it down; disabling that theme
+  // brings it back.
+  let _baseTheme = null;
+  function baseThemeRec() {
+    if (!_baseTheme) {
+      _baseTheme = { id: "daylight-cards-studio", name: "Daylight Cards Studio",
+        filename: DEFAULT_THEME_FILE, code: STARTER_THEME, enabled: false, _base: true };
+    }
+    return _baseTheme;
   }
+  function enableBaseTheme() {
+    const t = baseThemeRec();
+    if (t._enabledRuntime) return;
+    try {
+      if (!t._manifest) t._manifest = runEntry(t.code).theme;
+      const ctx = makeCtx(t); t._ctx = ctx;
+      if (typeof t._manifest.onEnable === "function") t._manifest.onEnable(ctx);
+      t._enabledRuntime = true;
+      QB._emit("theme:change", t);
+    } catch (e) { console.error(e); }
+  }
+  function disableBaseTheme() {
+    const t = _baseTheme;
+    if (!t || !t._enabledRuntime) return;
+    try { if (t._manifest && typeof t._manifest.onDisable === "function" && t._ctx) t._manifest.onDisable(t._ctx); } catch (e) { console.error(e); }
+    if (t._ctx) t._ctx._unsub.forEach((u) => { try { u(); } catch {} });
+    t._ctx = null; t._enabledRuntime = false;
+  }
+  // Suppressed while enableTheme swaps one theme for another, so the baseline
+  // does not flash on between the disable and the enable.
+  let _themeSwitching = false;
+  QB.syncBaseTheme = () => {
+    if (_themeSwitching) return;
+    if (QB._themes.some((t) => t._enabledRuntime)) disableBaseTheme(); else enableBaseTheme();
+  };
+  QB.isBaseTheme = (id) => !!(_baseTheme && _baseTheme._base && id === _baseTheme.id);
 
   QB.boot = (host) => {
     QB.connect(host);
     QB._plugins = loadStore(PLUGINS_KEY).filter((p) => p.code);
     QB._themes = loadStore(THEMES_KEY).filter((t) => t.code);
-    installDefaultThemeOnce();
+    // An earlier build briefly auto-INSTALLED the default theme into the user's
+    // list. It is a built-in baseline now, so drop that copy — but only the one
+    // we installed, never a theme the user imported themselves.
+    try {
+      if (localStorage.getItem("qb-default-theme-installed")) {
+        localStorage.removeItem("qb-default-theme-installed");
+        const i = QB._themes.findIndex((x) => x.id === "daylight-cards-studio");
+        if (i >= 0) { QB._themes.splice(i, 1); saveThemes(); }
+      }
+    } catch (e) {}
     const t = QB._themes.find((x) => x.enabled);
     QB._themes.forEach((x) => { x._enabledRuntime = false; });
     if (t && t.code) QB.enableTheme(t.id);
+    QB.syncBaseTheme();
     QB._plugins.forEach((p) => { p._enabledRuntime = false; if (p.enabled) QB.enablePlugin(p.id); });
   };
 
@@ -1156,6 +1200,9 @@ QB.registerTheme({
 
 `;
 
+  // Kept for the console / older callers: installs the baseline as a normal,
+  // user-managed theme. Nothing in the app calls it — the baseline runs on its
+  // own now (see syncBaseTheme), so using this only creates a duplicate entry.
   QB.installStarterTheme = () => { QB.installTheme(DEFAULT_THEME_FILE, STARTER_THEME); QB.renderScreen(); };
 
   function settingControl(extId, def) {
