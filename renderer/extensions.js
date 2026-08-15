@@ -690,6 +690,11 @@
   QB.enableTheme = (id) => {
     _themeSwitching = true;
     try {
+      // Stand the baseline down FIRST. Its onDisable removes the <html>
+      // attributes its CSS keys off, and a user copy of the same theme sets the
+      // very same ones — tearing down after the enable would strip them back
+      // out from under the theme that just took over.
+      disableBaseTheme();
       QB._themes.forEach((t) => { if (t.id !== id && t._enabledRuntime) QB.disableTheme(t.id); });
       const t = QB._themes.find((x) => x.id === id); if (!t) return;
       try {
