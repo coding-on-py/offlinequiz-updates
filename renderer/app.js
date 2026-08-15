@@ -668,6 +668,19 @@ function goHome() {
   showScreen("title");
 }
 
+// Where a second [Esc] is required. Everywhere else one press goes back —
+// `state.sessionActive` stays true while a session is merely SUSPENDED, so
+// gating on it alone made every screen in the app demand two presses once the
+// user had ever started practising.
+function needsEscConfirm() {
+  const active = document.querySelector(".screen.active");
+  if (!active) return false;
+  // Mid-question in tossups/bonuses: leaving costs the buzz, so confirm.
+  if (active.id === "practice-screen") return !!state.sessionActive;
+  // Multiplayer: leaving drops you out of a live game for everyone else too.
+  return active.id.startsWith("ext-page-multiplayer-");
+}
+
 function showEscHint() {
   let el = document.getElementById("esc-hint");
   if (!el) {
@@ -675,7 +688,11 @@ function showEscHint() {
     el.id = "esc-hint";
     el.className = "esc-hint";
     el.textContent = "Press [Esc] again to leave — your session is kept";
-    $("#question-area")?.appendChild(el);
+    // Anchor to whatever is on screen: #question-area only exists on the
+    // practice screen, so on multiplayer the hint would be invisible and the
+    // first press would look like it did nothing.
+    const active = document.querySelector(".screen.active");
+    ($("#question-area")?.closest(".screen.active") ? $("#question-area") : active)?.appendChild(el);
   }
 }
 
@@ -750,7 +767,7 @@ document.addEventListener("keydown", (e) => {
       ...document.querySelectorAll("#confirm-dialog, #save-menu, #review-menu, #review-viewer, #history-overlay, #hotkey-sheet, .qb-overlay, .fo-overlay, .ar-overlay"),
     ];
     if (overlays.length) { e.preventDefault(); overlays[overlays.length - 1].remove(); return; }
-    if (state.sessionActive) {
+    if (needsEscConfirm()) {
       if (state.escOnce) {
         clearTimeout(state.escTimer);
         state.escOnce = false;
@@ -891,8 +908,10 @@ async function initTitle() {
     const streak = computeDailyStreak(sd.stats?.questionsByDate);
     const el = document.getElementById("title-streak");
     // Line-icon flame (stroke = currentColor, recolors with the theme) — never an emoji.
+    // The teardrop outline this replaced didn't read as fire at 14px; this one
+    // has the licking tip and the inner tongue that make a flame legible small.
     el && (el.innerHTML = streak >= 2
-      ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"><path d="M12 2c1 3.5-2.5 5-2.5 8a2.5 2.5 0 0 0 5 .3C16.5 12 18 13.5 18 16a6 6 0 0 1-12 0c0-5 4.5-7 6-14z"/></svg>' + escapeHtml(`${streak}-day streak`)
+      ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>' + escapeHtml(`${streak}-day streak`)
       : "");
   } catch {}
   refreshReviewBadge();
@@ -6471,6 +6490,7 @@ function renderDbProviderTabs() {
     b.dataset.tab = "prov:" + p.id;
     b.textContent = "\u2605 " + p.title.replace(/^STARRED\s+/i, "");
     b.addEventListener("click", () => {
+      _dbTabFrom = null; // an explicit tab pick replaces any remembered origin
       state.dbTab = b.dataset.tab;
       document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x === b));
       renderDbTab();
@@ -6505,6 +6525,7 @@ function loadDatabase() {
     document.getElementById("btn-db-expand")?.addEventListener("click", () => setAll(false));
     document.querySelectorAll(".db-tab").forEach((t) => {
       t.addEventListener("click", () => {
+        _dbTabFrom = null; // an explicit tab pick replaces any remembered origin
         state.dbTab = t.dataset.tab;
         document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x === t));
         renderDbTab();
@@ -6744,7 +6765,24 @@ let _dbSets = null;
 // Where the sets browser is drilled to — back steps up one level (packet →
 // set → set list) instead of leaving the Database screen.
 let _dbBrowse = null;
+// Which Database tab a search was launched FROM. Clicking an answer in the
+// Frequency list jumps to the Search tab inside the SAME screen, and the nav
+// stack only tracks screens (recordNav no-ops on a same-screen navigation), so
+// without this Back would pop straight past the Database to whatever opened it.
+let _dbTabFrom = null;
 function dbBrowseBack() {
+  if (_dbTabFrom && document.querySelector("#database-screen.active")) {
+    const from = _dbTabFrom;
+    _dbTabFrom = null;
+    state.dbTab = from.tab;
+    syncDbTabActive();
+    if (from.tab === "frequency" && from.freq) {
+      renderFrequencyTab(from.freq);
+    } else {
+      renderDbTab();
+    }
+    return true;
+  }
   if (!_dbBrowse) return false;
   if (!document.querySelector("#database-screen.active")) return false;
   if ((state.dbTab || "search") !== "sets") return false;
@@ -6907,7 +6945,67 @@ function getCatCascadeFilter(catSel, subSel, altSel) {
   return { category: cat, subcategory: subSel.value || "", alternateSubcategory: "" };
 }
 
-async function renderFrequencyTab() {
+// Snapshot of the Frequency tab's dropdowns, so returning to it via Back shows
+// the same list rather than resetting to "All categories".
+function currentFrequencySelection() {
+  const g = (id) => document.getElementById(id);
+  if (!g("freq-cat")) return null;
+  return {
+    cat: g("freq-cat").value || "",
+    sub: g("freq-sub") && !g("freq-sub").disabled ? g("freq-sub").value || "" : "",
+    alt: g("freq-alt") && !g("freq-alt").disabled ? g("freq-alt").value || "" : "",
+    type: g("freq-type") ? g("freq-type").value : "tossup",
+    limit: g("freq-limit") ? g("freq-limit").value : "50",
+  };
+}
+
+// The category dropdowns cascade through async fetches, so a restored value can
+// only be applied once its options exist. Poll briefly rather than guessing.
+function waitForOption(sel, value, ms = 1500) {
+  if (!sel || !value) return Promise.resolve(false);
+  const deadline = Date.now() + ms;
+  return new Promise((resolve) => {
+    const tick = () => {
+      if ([...sel.options].some((o) => o.value === value)) return resolve(true);
+      if (Date.now() > deadline) return resolve(false);
+      setTimeout(tick, 25);
+    };
+    tick();
+  });
+}
+
+// Set while a saved selection is being replayed: each dispatched change fires
+// the cascade's own runFrequency, and those in-flight fetches could land after
+// the final one and overwrite the correct results.
+let _freqRestoring = false;
+
+async function applyFrequencySelection(sel) {
+  const catSel = document.getElementById("freq-cat");
+  if (!catSel || !sel) return;
+  _freqRestoring = true;
+  try {
+    const typeSel = document.getElementById("freq-type");
+    const limSel = document.getElementById("freq-limit");
+    if (typeSel && sel.type) typeSel.value = sel.type;
+    if (limSel && sel.limit) limSel.value = String(sel.limit);
+    if (sel.cat && await waitForOption(catSel, sel.cat)) {
+      catSel.value = sel.cat;
+      catSel.dispatchEvent(new Event("change"));
+      const subSel = document.getElementById("freq-sub");
+      if (sel.sub && await waitForOption(subSel, sel.sub)) {
+        subSel.value = sel.sub;
+        subSel.dispatchEvent(new Event("change"));
+      }
+      const altSel = document.getElementById("freq-alt");
+      if (sel.alt && await waitForOption(altSel, sel.alt)) altSel.value = sel.alt;
+    }
+  } finally {
+    _freqRestoring = false;
+  }
+  runFrequency();
+}
+
+async function renderFrequencyTab(restore) {
   const c = document.getElementById("db-content"); if (!c) return;
   c.innerHTML =
     '<div class="db-toolbar">' +
@@ -6923,10 +7021,12 @@ async function renderFrequencyTab() {
   wireCatCascade(catSel, subSel, altSel, runFrequency);
   limSel.addEventListener("change", runFrequency);
   document.getElementById("freq-type")?.addEventListener("change", runFrequency);
+  if (restore) { applyFrequencySelection(restore); return; }
   runFrequency();
 }
 
 async function runFrequency() {
+  if (_freqRestoring) return;
   const catSel = document.getElementById("freq-cat"), subSel = document.getElementById("freq-sub"), altSel = document.getElementById("freq-alt");
   if (!catSel) return;
   const { category: cat, subcategory: sub, alternateSubcategory: alt } = getCatCascadeFilter(catSel, subSel, altSel);
@@ -6950,6 +7050,14 @@ async function runFrequency() {
 // "answer" | "question" | "all"; qtype "tossup" | "bonus" | "all".
 function searchDatabase(opts) {
   opts = opts || {};
+  // Coming from another Database tab (Frequency, Starred, a provider tab)?
+  // Remember it — and, for Frequency, the exact selection — so Back returns to
+  // that list instead of leaving the screen. Must be read before dbTab is
+  // overwritten below.
+  const fromTab = state.dbTab || "search";
+  _dbTabFrom = document.querySelector("#database-screen.active") && fromTab !== "search"
+    ? { tab: fromTab, freq: fromTab === "frequency" ? currentFrequencySelection() : null }
+    : null;
   // Tab FIRST — loadDatabase renders state.dbTab, and a stale async tab
   // renderer (e.g. Starred) would otherwise clobber the search UI after us.
   state.dbTab = "search";
