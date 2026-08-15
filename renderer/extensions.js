@@ -812,10 +812,28 @@
       "try{\n" + code + "\n}finally{QB.registerTheme=__ot;QB.registerPlugin=__op;}})();";
   }
 
+  // A brand-new install ships with the default theme already applied. Guarded by
+  // a one-shot marker so this only ever happens on the very first launch — a
+  // user who later removes every theme keeps the bare look they chose.
+  const DEFAULT_THEME_KEY = "qb-default-theme-installed";
+  function installDefaultThemeOnce() {
+    let done = null;
+    try { done = localStorage.getItem(DEFAULT_THEME_KEY); } catch (e) { return; }
+    if (done || QB._themes.length) return;
+    try {
+      localStorage.setItem(DEFAULT_THEME_KEY, "1");
+      const t = QB.installTheme(DEFAULT_THEME_FILE, STARTER_THEME);
+      // installTheme stores it disabled; mark it active so boot's normal path
+      // picks it up below and the first screen the user sees is themed.
+      if (t) { t.enabled = true; saveThemes(); }
+    } catch (e) {}
+  }
+
   QB.boot = (host) => {
     QB.connect(host);
     QB._plugins = loadStore(PLUGINS_KEY).filter((p) => p.code);
     QB._themes = loadStore(THEMES_KEY).filter((t) => t.code);
+    installDefaultThemeOnce();
     const t = QB._themes.find((x) => x.enabled);
     QB._themes.forEach((x) => { x._enabledRuntime = false; });
     if (t && t.code) QB.enableTheme(t.id);
@@ -894,67 +912,251 @@
     return QB.installPackage(files);
   };
 
+  // The theme a fresh install ships with, embedded so first launch needs no
+  // file access. Swapping the default means replacing this source AND the
+  // DEFAULT_THEME_FILE name below.
+  const DEFAULT_THEME_FILE = "daylight-cards-studio.js";
   const STARTER_THEME = String.raw`
+/**
+ * Daylight Cards Studio — a copy of "Daylight Cards" that takes over the WHOLE
+ * Appearance settings section with a custom UI (ctx.registerAppearancePanel),
+ * instead of the standard select/toggle controls. The base preset/custom pickers
+ * are hidden; everything you see in Appearance is built by this theme.
+ */
 QB.registerTheme({
-  id: "neon-hud",
-  name: "Neon HUD",
-  version: "2.0.0",
+  id: "daylight-cards-studio",
+  name: "Daylight Cards Studio",
+  version: "1.3.0",
   author: "OfflineQuiz",
-  description: "A GUI/HUD restyle: pick a HUD layout, choose from several color palettes, fonts, rounded corners, and a neon glow.",
+  description: "Light card-based restyle with a fully CUSTOM Appearance panel: palette cards, a live accent picker, font + layout buttons, and a shadow toggle — all built by the theme via registerAppearancePanel.",
+  // Settings still exist (defaults + persistence) but are NOT auto-rendered —
+  // location:"hidden" keeps them out of every section so our panel owns the UI.
   settings: [
-    { key: "hud", label: "HUD layout", type: "select", location: "appearance", default: "default", options: [
-      { value: "default", label: "Default" },
-      { value: "compact", label: "Compact (slim panels)" },
-      { value: "focus", label: "Focus (hide side stats)" } ] },
-    { key: "palette", label: "Color palette", type: "select", location: "appearance", default: "synthwave", options: [
-      { value: "synthwave", label: "Synthwave" },
-      { value: "matrix", label: "Matrix Green" },
-      { value: "amber", label: "Amber Terminal" },
-      { value: "ice", label: "Ice Blue" },
-      { value: "mono", label: "Monochrome" } ] },
-    { key: "font", label: "Font", type: "select", location: "appearance", default: "sans", options: [
-      { value: "sans", label: "Sans-serif" }, { value: "mono", label: "Monospace" }, { value: "serif", label: "Serif" } ] },
-    { key: "rounded", label: "Rounded corners", type: "toggle", location: "appearance", default: true },
-    { key: "glow", label: "Neon glow", type: "toggle", location: "appearance", default: true },
+    { key: "palette", type: "hidden", default: "paper" },
+    { key: "accentOverride", type: "hidden", default: "" },
+    { key: "font", type: "hidden", default: "sans" },
+    { key: "panelSide", type: "hidden", default: "right" },
+    { key: "shadows", type: "hidden", default: true },
+    { key: "custom", type: "hidden", default: "" },
   ],
   onEnable: function (ctx) {
-    // Each palette only changes colors; the theme's primary job is the HUD layout.
     var palettes = {
-      synthwave: { accent: "#ff5dd2", bg: "#1b1035", sec: "#241246", ter: "#2e1857", text: "#f5e6ff", text2: "#c9a7ff", muted: "#7c6aa6", border: "#4a2f7a", border2: "#3a2562", green: "#36f9c3", red: "#ff5b79", yellow: "#ffd86b" , star: "#ff5dd2" },
-      matrix:    { accent: "#36f9c3", bg: "#06120a", sec: "#0a1f14", ter: "#0e2a1b", text: "#d7ffe9", text2: "#7fdfb0", muted: "#4f8c6e", border: "#1a4733", border2: "#123524", green: "#36f9c3", red: "#ff6b6b", yellow: "#d8ff6b" , star: "#36f9c3" },
-      amber:     { accent: "#ffb000", bg: "#160f02", sec: "#211705", ter: "#2c1f08", text: "#ffeccb", text2: "#e3b873", muted: "#8c6f3e", border: "#5a4218", border2: "#3f2f12", green: "#9bd14a", red: "#ff7a3d", yellow: "#ffd86b" , star: "#ffb000" },
-      ice:       { accent: "#5dd2ff", bg: "#08131f", sec: "#0d1f30", ter: "#102840", text: "#e6f6ff", text2: "#a7d8ff", muted: "#5e84a0", border: "#234a6a", border2: "#1a3650", green: "#4af0c0", red: "#ff6b8a", yellow: "#ffe07a" , star: "#5dd2ff" },
-      mono:      { accent: "#dddddd", bg: "#0d0d0d", sec: "#161616", ter: "#1e1e1e", text: "#f0f0f0", text2: "#bdbdbd", muted: "#7a7a7a", border: "#3a3a3a", border2: "#2a2a2a", green: "#cccccc", red: "#999999", yellow: "#eeeeee" , star: "#eeeeee" },
+      paper:    { label: "Paper",    accent: "#2563eb", bg: "#f4f6fb", sec: "#ffffff", ter: "#eef1f7", text: "#1c2433", text2: "#475569", muted: "#94a3b8", border: "#d8dee9", border2: "#e5e9f2", green: "#15803d", red: "#dc2626", yellow: "#b45309" },
+      sepia:    { label: "Sepia",    accent: "#9a3412", bg: "#f6efe3", sec: "#fffaf0", ter: "#efe6d4", text: "#3b2f23", text2: "#6b5b48", muted: "#a3937d", border: "#ddd0b8", border2: "#e8ddc9", green: "#3f6212", red: "#b91c1c", yellow: "#92600a" },
+      slate:    { label: "Slate",    accent: "#0e7490", bg: "#eceff3", sec: "#f8fafc", ter: "#e2e8f0", text: "#0f172a", text2: "#475569", muted: "#8b9bb0", border: "#cbd5e1", border2: "#dbe3ec", green: "#047857", red: "#be123c", yellow: "#a16207" },
+      midnight: { label: "Midnight", accent: "#5b8cff", bg: "#0f1522", sec: "#161e30", ter: "#1d2740", text: "#e8edf7", text2: "#aab6cf", muted: "#5f6c87", border: "#2b3650", border2: "#222c44", green: "#3ecf8e", red: "#ff6b7a", yellow: "#e8b339" },
     };
-    var fonts = { sans: "'Avenir Next','Segoe UI','Helvetica Neue',system-ui,sans-serif", mono: "'SF Mono','Menlo','Monaco',monospace", serif: "Georgia,'Times New Roman',serif" };
+    var fonts = {
+      sans: "'Avenir Next','Segoe UI','Helvetica Neue',system-ui,sans-serif",
+      serif: "Georgia,'Iowan Old Style','Times New Roman',serif",
+    };
+    function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+
+    // Every themable part, its CSS variable, and where its palette default
+    // comes from. "dim" parts also get a translucent -dim companion.
+    var PARTS = [
+      { v: "--bg", label: "Background", of: "bg" },
+      { v: "--bg-secondary", label: "Cards", of: "sec" },
+      { v: "--bg-tertiary", label: "Panels & inputs", of: "ter" },
+      { v: "--text", label: "Text", of: "text" },
+      { v: "--text-secondary", label: "Secondary text", of: "text2" },
+      { v: "--text-muted", label: "Muted text", of: "muted" },
+      { v: "--border", label: "Borders", of: "border" },
+      { v: "--border-light", label: "Light borders", of: "border2" },
+      { v: "--green", label: "Correct", of: "green", dim: true },
+      { v: "--red", label: "Wrong", of: "red", dim: true },
+      { v: "--yellow", label: "Warning", of: "yellow", dim: true },
+      { v: "--star", label: "Stars", of: "accent" },
+      { v: "--power-mark", label: "Power mark", of: "accent" },
+    ];
+    function customMap() {
+      try { var m = JSON.parse(ctx.getSetting("custom") || "{}"); return m && typeof m === "object" ? m : {}; }
+      catch (e) { return {}; }
+    }
     function apply() {
-      var p = palettes[ctx.getSetting("palette")] || palettes.synthwave;
-      ctx.setVar("--accent", p.accent); ctx.setVar("--accent-dim", p.accent + "33");
+      var p = palettes[ctx.getSetting("palette")] || palettes.paper;
+      var accent = ctx.getSetting("accentOverride") || p.accent;
+      var custom = customMap();
+      ctx.setVar("--accent", accent); ctx.setVar("--accent-dim", accent + "22");
       ctx.setVar("--bg", p.bg); ctx.setVar("--bg-secondary", p.sec); ctx.setVar("--bg-tertiary", p.ter);
       ctx.setVar("--text", p.text); ctx.setVar("--text-secondary", p.text2); ctx.setVar("--text-muted", p.muted);
       ctx.setVar("--border", p.border); ctx.setVar("--border-light", p.border2);
-      ctx.setVar("--green", p.green); ctx.setVar("--green-dim", p.green + "33");
-      ctx.setVar("--red", p.red); ctx.setVar("--red-dim", p.red + "33");
-      ctx.setVar("--yellow", p.yellow); ctx.setVar("--yellow-dim", p.yellow + "33");
-      ctx.setVar("--star", p.star || p.yellow);
-      ctx.setVar("--power-mark", p.star || p.yellow);
+      ctx.setVar("--green", p.green); ctx.setVar("--green-dim", p.green + "22");
+      ctx.setVar("--red", p.red); ctx.setVar("--red-dim", p.red + "22");
+      ctx.setVar("--yellow", p.yellow); ctx.setVar("--yellow-dim", p.yellow + "22");
+      ctx.setVar("--star", accent); ctx.setVar("--power-mark", accent);
+      ctx.setVar("--buzz-mark-self", p.green); ctx.setVar("--buzz-mark-other", p.yellow);
+      PARTS.forEach(function (part) {
+        var c = custom[part.v];
+        if (!c || !/^#[0-9a-fA-F]{6}$/.test(c)) return;
+        ctx.setVar(part.v, c);
+        if (part.dim) ctx.setVar(part.v + "-dim", c + "22");
+      });
       ctx.setVar("--font", fonts[ctx.getSetting("font")] || fonts.sans);
-      ctx.setVar("--radius", ctx.getSetting("rounded") ? "12px" : "2px");
-      document.documentElement.toggleAttribute("data-sw-glow", !!ctx.getSetting("glow"));
-      document.documentElement.setAttribute("data-sw-hud", ctx.getSetting("hud") || "default");
+      ctx.setVar("--radius", "12px");
+      var d = document.documentElement;
+      d.setAttribute("data-dls", "1");
+      d.setAttribute("data-dls-side", ctx.getSetting("panelSide") || "right");
+      d.toggleAttribute("data-dls-shadow", ctx.getSetting("shadows") !== false);
+      d.setAttribute("data-dls-art", "1");
     }
     apply();
-    // Neon glow effect (the "coloring" exception the spec allows).
-    ctx.addCSS("[data-sw-glow] .btn-primary{box-shadow:0 0 16px var(--accent-dim)} [data-sw-glow] .top-bar-title,[data-sw-glow] .title-logo pre{text-shadow:0 0 10px var(--accent-dim)} [data-sw-glow] .pill{box-shadow:0 0 8px var(--accent-dim)} [data-sw-glow] .stat-value{text-shadow:0 0 8px var(--accent-dim)}");
-    // HUD layouts — the theme's main feature is changing the GUI/HUD layout.
-    ctx.addCSS("[data-sw-hud='compact'] .filters-panel{width:180px;padding:8px;gap:10px} [data-sw-hud='compact'] .stats-panel{width:104px} [data-sw-hud='compact'] .top-bar{padding-top:6px;padding-bottom:6px} [data-sw-hud='focus'] .stats-panel{display:none} [data-sw-hud='focus'] .question-area{padding:32px 12%}");
+
+    // ── The same card re-layout as Daylight Cards (data-dls scoped) ──
+    ctx.addCSS(
+      "[data-dls][data-dls-side='right'] .practice-layout{flex-direction:row-reverse}" +
+      "[data-dls] .top-bar{margin:10px 14px 4px;border:1px solid var(--border);border-radius:14px;background:var(--bg-secondary);padding:10px 16px}" +
+      "[data-dls] .filters-panel,[data-dls] .stats-panel{background:var(--bg-secondary);border:1px solid var(--border);border-radius:14px;margin:8px}" +
+      "[data-dls-shadow] .filters-panel,[data-dls-shadow] .stats-panel,[data-dls-shadow] .top-bar,[data-dls-shadow] .qcard,[data-dls-shadow] .history-panel,[data-dls-shadow] .stats-section,[data-dls-shadow] .question-content{box-shadow:0 2px 10px rgba(15,23,42,.06)}" +
+      "[data-dls] .question-area{padding:24px 28px}" +
+      "[data-dls] .question-content{background:var(--bg-secondary);border:1px solid var(--border);border-radius:14px;padding:18px 20px}" +
+      "[data-dls] .history-panel,[data-dls] .stats-section{background:var(--bg-secondary);border:1px solid var(--border);border-radius:14px;padding:14px}" +
+      "[data-dls] .btn{border-radius:10px}[data-dls] .btn-primary{box-shadow:none}" +
+      "[data-dls] input[type=text],[data-dls] input[type=number],[data-dls] select{border-radius:8px}" +
+      // ── "Remove ASCII art" → Daylight Cards title screen: hide the art, show a
+      //    styled wordmark, and lay the menu out as a 2-column card grid. Scoped to
+      //    [data-dls-art] so toggling the setting brings the ASCII art back. ──
+      "[data-dls][data-dls-art] #title-screen{flex-direction:column;align-items:center;overflow:hidden;padding:18px 0 8px}" +
+      "[data-dls][data-dls-art] #title-screen .title-left,[data-dls][data-dls-art] #title-screen.sidebar .title-left,[data-dls][data-dls-art] #title-screen.stacked .title-left{width:100%;max-width:860px;flex:1 1 auto;min-height:0;margin:0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px 28px;border:none;background:transparent;overflow:hidden}" +
+      "[data-dls][data-dls-art] .title-art,[data-dls][data-dls-art] .title-art-stacked-spot,[data-dls][data-dls-art] .settings-art-panel,[data-dls][data-dls-art] .art-frame{display:none!important}" +
+      "[data-dls][data-dls-art] .settings-container{max-width:none;padding:24px 48px}" +
+      "[data-dls][data-dls-art] .title-logo{display:flex;flex-direction:column;align-items:center;flex:0 0 auto}" +
+      "[data-dls][data-dls-art] .title-logo pre{display:none}" +
+      "[data-dls][data-dls-art] .title-logo::before{content:'OfflineQuiz';display:block;font-size:52px;font-weight:800;letter-spacing:-0.5px;color:var(--text);line-height:1.1}" +
+      "[data-dls][data-dls-art] .title-logo::after{content:'';display:block;width:64px;height:4px;border-radius:2px;background:var(--accent);margin:10px auto 0}" +
+      "[data-dls][data-dls-art] .title-greeting,[data-dls][data-dls-art] .title-streak{min-height:0;width:100%;text-align:center;flex:0 0 auto}" +
+      "[data-dls][data-dls-art] .title-menu{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:10px;margin-top:14px;width:100%;flex:0 1 auto;min-height:0;overflow-y:auto;padding:2px}" +
+      "[data-dls][data-dls-art] .menu-item{display:flex;align-items:center;gap:10px;height:48px;margin:0;padding:0 16px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;text-align:left;font-size:13px}" +
+      "[data-dls][data-dls-art] .menu-item:hover{border-color:var(--accent);background:var(--accent-dim);transform:none}" +
+      "[data-dls][data-dls-art] .menu-item .key{flex:0 0 auto;font-size:11px;color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 7px}" +
+      "[data-dls][data-dls-art] #title-extra-menu{grid-column:1 / -1;display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:10px}" +
+      "[data-dls][data-dls-art] #title-extra-menu .title-extra-label{grid-column:1 / -1;font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-align:left;margin:2px 2px 0}" +
+      "[data-dls][data-dls-art] .title-status{width:100%;text-align:center;margin-top:10px;font-size:11px;color:var(--text-muted);flex:0 0 auto}" +
+      // ── Styling for our custom appearance panel ──
+      ".dls-panel{display:flex;flex-direction:column;gap:16px;align-items:stretch}" +
+      ".dls-cols{display:flex;flex-wrap:wrap;gap:16px 48px;align-items:flex-start}" +
+      ".dls-h{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px}" +
+      ".dls-pals{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}" +
+      ".dls-pal{display:flex;align-items:center;gap:10px;padding:10px;border:2px solid var(--border);border-radius:12px;background:var(--bg-tertiary);cursor:pointer;transition:border-color 120ms,transform 120ms}" +
+      ".dls-pal:hover{transform:translateY(-1px)}" +
+      ".dls-pal.sel{border-color:var(--accent)}" +
+      ".dls-dots{display:flex;gap:4px}.dls-dot{width:16px;height:16px;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.12)}" +
+      ".dls-pal-name{font-size:13px;font-weight:600;color:var(--text)}" +
+      ".dls-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}" +
+      ".dls-seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden}" +
+      ".dls-seg button{border:none;background:var(--bg-tertiary);color:var(--text-secondary);padding:6px 14px;font-size:12px;cursor:pointer}" +
+      ".dls-seg button.sel{background:var(--accent);color:#fff}" +
+      ".dls-accent{display:flex;align-items:center;gap:8px;flex-wrap:wrap}" +
+      ".dls-accent input[type=color]{width:42px;height:28px;border:1px solid var(--border);border-radius:8px;background:var(--bg-tertiary);cursor:pointer;padding:0;flex:0 0 auto}" +
+      ".dls-sw{flex:0 0 auto;width:24px;height:24px;border-radius:50%;border:2px solid transparent;box-shadow:0 0 0 1px var(--border);cursor:pointer}" +
+      ".dls-sw.sel{border-color:var(--text)}" +
+      ".dls-btn{font-size:12px;color:var(--text);background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:5px 12px;cursor:pointer;flex:0 0 auto}" +
+      ".dls-btn:hover{border-color:var(--accent);color:var(--accent)}" +
+      ".dls-toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text)}" +
+      ".dls-more{border:1px solid var(--border);border-radius:12px;background:var(--bg-tertiary);padding:10px 14px}" +
+      ".dls-more summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}" +
+      ".dls-more summary::-webkit-details-marker{display:none}" +
+      ".dls-more summary::before{content:'';width:0;height:0;border-left:5px solid var(--text-muted);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform 120ms}" +
+      ".dls-more[open] summary::before{transform:rotate(90deg)}" +
+      ".dls-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px 18px;margin:12px 0}"
+      + ".dls-crow{display:flex;align-items:center;gap:8px}.dls-crow label{flex:1}" +
+      ".dls-grid label{font-size:12px;color:var(--text-secondary)}" +
+      ".dls-grid input[type=color]{width:38px;height:26px;border:1px solid var(--border);border-radius:7px;background:var(--bg-secondary);cursor:pointer;padding:0}" +
+      ".dls-clear{width:22px;height:22px;border:none;border-radius:6px;background:none;color:var(--text-muted);cursor:pointer;font-size:13px;line-height:1}" +
+      ".dls-clear:hover{color:var(--red)}" +
+      ".dls-clear:disabled{opacity:.25;cursor:default}"
+    );
+
+    // ── TAKE OVER the Appearance section with a fully custom UI ──
+    var ACCENTS = ["#2563eb", "#7c3aed", "#0e7490", "#15803d", "#b45309", "#dc2626", "#db2777", "#0f172a"];
+    ctx.registerAppearancePanel(function (el) {
+      var moreOpen = false;
+      function g(k) { return ctx.getSetting(k); }
+      function build() {
+        var pal = g("palette"), accentOv = g("accentOverride") || "", font = g("font"), side = g("panelSide"), shadow = g("shadows") !== false;
+        var p0 = palettes[pal] || palettes.paper;
+        var custom = customMap();
+        var palCards = Object.keys(palettes).map(function (k) {
+          var p = palettes[k];
+          return '<div class="dls-pal' + (pal === k ? " sel" : "") + '" data-pal="' + k + '">' +
+            '<div class="dls-dots"><span class="dls-dot" style="background:' + p.accent + '"></span>' +
+            '<span class="dls-dot" style="background:' + p.bg + '"></span>' +
+            '<span class="dls-dot" style="background:' + p.text + '"></span></div>' +
+            '<span class="dls-pal-name">' + esc(p.label) + "</span></div>";
+        }).join("");
+        var swatches = ACCENTS.map(function (c) {
+          return '<span class="dls-sw' + (accentOv === c ? " sel" : "") + '" data-acc="' + c + '" style="background:' + c + '" title="' + c + '"></span>';
+        }).join("");
+        var rows = PARTS.map(function (part) {
+          var cur = custom[part.v] || p0[part.of] || "#888888";
+          var overridden = !!custom[part.v];
+          return '<div class="dls-crow"><label>' + esc(part.label) + (overridden ? " •" : "") + '</label>' +
+            '<input type="color" data-var="' + part.v + '" value="' + esc(cur) + '">' +
+            '<button class="dls-clear" data-clearvar="' + part.v + '" title="Back to palette color"' + (overridden ? "" : " disabled") + '>&times;</button></div>';
+        }).join("");
+        el.innerHTML =
+          '<div class="dls-panel">' +
+            '<div><div class="dls-h">Palette</div><div class="dls-pals">' + palCards + "</div></div>" +
+            '<div class="dls-cols">' +
+              '<div><div class="dls-h">Accent</div><div class="dls-accent">' +
+                swatches +
+                '<input type="color" id="dls-color" value="' + esc(/^#[0-9a-fA-F]{6}$/.test(accentOv) ? accentOv : p0.accent) + '">' +
+                '<button class="dls-btn" id="dls-reset"' + (accentOv ? "" : " disabled") + '>Use palette accent</button>' +
+              "</div></div>" +
+              '<div><div class="dls-h">Font</div><div class="dls-seg" id="dls-font">' +
+                '<button data-font="sans" class="' + (font === "sans" ? "sel" : "") + '">Sans</button>' +
+                '<button data-font="serif" class="' + (font === "serif" ? "sel" : "") + '">Serif</button></div></div>' +
+              '<div><div class="dls-h">Filters panel side</div><div class="dls-seg" id="dls-side">' +
+                '<button data-side="left" class="' + (side === "left" ? "sel" : "") + '">Left</button>' +
+                '<button data-side="right" class="' + (side === "right" ? "sel" : "") + '">Right</button></div></div>' +
+              '<div><div class="dls-h">Effects</div><label class="dls-toggle"><input type="checkbox" id="dls-shadow"' + (shadow ? " checked" : "") + "> Card shadows</label></div>" +
+            "</div>" +
+            '<details class="dls-more" id="dls-more"' + (moreOpen ? " open" : "") + '>' +
+              '<summary><span class="dls-h" style="margin:0">More settings — colors</span></summary>' +
+              '<div class="dls-grid">' + rows + "</div>" +
+              '<button class="dls-btn" id="dls-clearall">Reset all custom colors</button>' +
+            "</details>" +
+          "</div>";
+        wire();
+      }
+      function setCustom(v, val) {
+        var m = customMap();
+        if (val == null) delete m[v]; else m[v] = val;
+        ctx.setSetting("custom", Object.keys(m).length ? JSON.stringify(m) : "");
+      }
+      function wire() {
+        el.querySelectorAll("[data-pal]").forEach(function (b) { b.onclick = function () { ctx.setSetting("palette", b.dataset.pal); build(); }; });
+        el.querySelectorAll("[data-acc]").forEach(function (b) { b.onclick = function () { ctx.setSetting("accentOverride", b.dataset.acc); build(); }; });
+        var col = el.querySelector("#dls-color"); if (col) { col.oninput = function () { ctx.setSetting("accentOverride", col.value); }; col.onchange = function () { build(); }; }
+        var rst = el.querySelector("#dls-reset"); if (rst) rst.onclick = function () { ctx.setSetting("accentOverride", ""); build(); };
+        el.querySelectorAll("#dls-font button").forEach(function (b) { b.onclick = function () { ctx.setSetting("font", b.dataset.font); build(); }; });
+        el.querySelectorAll("#dls-side button").forEach(function (b) { b.onclick = function () { ctx.setSetting("panelSide", b.dataset.side); build(); }; });
+        var sh = el.querySelector("#dls-shadow"); if (sh) sh.onchange = function () { ctx.setSetting("shadows", sh.checked); };
+        var more = el.querySelector("#dls-more"); if (more) more.ontoggle = function () { moreOpen = more.open; };
+        el.querySelectorAll(".dls-grid input[type=color]").forEach(function (inp) {
+          inp.oninput = function () { setCustom(inp.dataset.var, inp.value); };
+          inp.onchange = function () { build(); };
+        });
+        el.querySelectorAll("[data-clearvar]").forEach(function (b) {
+          b.onclick = function () { setCustom(b.dataset.clearvar, null); build(); };
+        });
+        var ca = el.querySelector("#dls-clearall"); if (ca) ca.onclick = function () { ctx.setSetting("custom", ""); build(); };
+      }
+      build();
+    }, { title: "Daylight Studio — Appearance" });
+
+    // Re-apply the palette whenever any setting changes.
     ctx.onSetting(function () { apply(); });
   },
-  onDisable: function () { var d = document.documentElement; d.removeAttribute("data-sw-glow"); d.removeAttribute("data-sw-hud"); },
+  onDisable: function () {
+    var d = document.documentElement;
+    d.removeAttribute("data-dls"); d.removeAttribute("data-dls-side"); d.removeAttribute("data-dls-shadow"); d.removeAttribute("data-dls-art");
+  },
 });
+
 `;
 
-  QB.installStarterTheme = () => { QB.installTheme("neon-hud.js", STARTER_THEME); QB.renderScreen(); };
+  QB.installStarterTheme = () => { QB.installTheme(DEFAULT_THEME_FILE, STARTER_THEME); QB.renderScreen(); };
 
   function settingControl(extId, def) {
     const val = QB.getSetting(extId, def.key);

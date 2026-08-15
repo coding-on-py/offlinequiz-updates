@@ -3629,6 +3629,9 @@ function historyQuestionHtml(e) {
 }
 
 let _histFilter = null;
+// When set, the history overlay renders these entries instead of the live solo
+// session (see openHistoryOverlay). Cleared whenever the overlay closes.
+let _histEntries = null;
 // Small inline buzz/power track: where you buzzed vs where power ended —
 // visible on every history card without expanding it.
 function histTrackHtml(e) {
@@ -3652,15 +3655,21 @@ function renderHistoryPanel() {
     const cnt = document.getElementById("history-count");
     if (cnt) cnt.textContent = String(state.sessionHistory.length);
   }
+  // Esc and the backdrop can close the overlay through the generic overlay
+  // handler, which never runs our close(); drop a borrowed list whenever the
+  // overlay is gone so the next solo open can't inherit it.
+  if (_histEntries && !document.getElementById("history-overlay")) _histEntries = null;
+
   const list = document.getElementById("history-list");
   if (!list) return;
 
-  if (state.sessionHistory.length === 0) {
+  const source = _histEntries || state.sessionHistory;
+  if (source.length === 0) {
     list.innerHTML = "";
     return;
   }
 
-  let entries = [...state.sessionHistory].reverse();
+  let entries = [...source].reverse();
   // Overlay filters (result / type / category / text).
   const hf = typeof _histFilter === "object" && _histFilter ? _histFilter : null;
   if (hf && (hf.res || hf.type || hf.cat || hf.q)) {
@@ -4232,8 +4241,11 @@ $("#btn-end-session").addEventListener("click", () => {
 });
 
 function exportSessionHistory() {
-  if (!state.sessionHistory.length) { window.QB?.toast?.("No questions this session yet", "error"); return; }
-  const entries = state.sessionHistory.map((e) => ({
+  // Export whatever the overlay is currently showing, so a plugin-supplied
+  // list exports itself rather than the solo session sitting behind it.
+  const src = _histEntries || state.sessionHistory;
+  if (!src.length) { window.QB?.toast?.("No questions this session yet", "error"); return; }
+  const entries = src.map((e) => ({
     type: e.type,
     category: e.question?.category || "",
     subcategory: e.question?.subcategory || "",
@@ -4259,7 +4271,15 @@ function exportSessionHistory() {
   URL.revokeObjectURL(url);
 }
 
-function openHistoryOverlay() {
+// opts.entries renders the overlay over a supplied list instead of the live solo
+// session — that is how the multiplayer plugin gets this exact GUI rather than a
+// lookalike. opts.title relabels the header.
+function openHistoryOverlay(opts) {
+  // Also used directly as a click handler, so `opts` may be a MouseEvent —
+  // only an object carrying an entries array counts.
+  const o = opts && Array.isArray(opts.entries) ? opts : null;
+  _histEntries = o ? o.entries : null;
+  const src = _histEntries || state.sessionHistory;
   document.getElementById("history-overlay")?.remove();
   const el = document.createElement("div");
   el.id = "history-overlay";
@@ -4267,7 +4287,7 @@ function openHistoryOverlay() {
   el.innerHTML = `
     <div class="review-viewer-box">
       <div class="review-viewer-head">
-        <span class="hotkey-sheet-title" style="margin:0">SESSION HISTORY (${state.sessionHistory.length})</span>
+        <span class="hotkey-sheet-title" style="margin:0">${escapeHtml((o && o.title) || "SESSION HISTORY")} (${src.length})</span>
         <span style="display:flex;gap:6px">
           <button class="btn btn-sm btn-ghost" id="btn-history-export">Export</button>
           <button class="btn btn-sm btn-ghost" id="btn-history-compact">Compact all</button>
@@ -4278,12 +4298,15 @@ function openHistoryOverlay() {
       <div class="rv-filterbar">
         <select id="hist-fres" class="mode-input"><option value="">All results</option><option value="power">Powers</option><option value="correct">Correct</option><option value="neg">Negs</option><option value="zero">Dead / skipped / wrong</option></select>
         <select id="hist-ftype" class="mode-input"><option value="">Tossups + Bonuses</option><option value="tossup">Tossups</option><option value="bonus">Bonuses</option></select>
-        <select id="hist-fcat" class="mode-input"><option value="">All categories</option>${[...new Set(state.sessionHistory.map((e) => e.question?.category).filter(Boolean))].sort().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>
+        <select id="hist-fcat" class="mode-input"><option value="">All categories</option>${[...new Set(src.map((e) => e.question?.category).filter(Boolean))].sort().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>
         <input type="text" id="hist-fq" class="mode-input" placeholder="Search answers / questions" autocomplete="off">
       </div>
       <div class="review-viewer-list history-list" id="history-list"></div>
     </div>`;
-  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  // Closing must drop the borrowed list, or the next solo open would still be
+  // showing the plugin's entries.
+  const close = () => { _histEntries = null; el.remove(); };
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
   document.body.appendChild(el);
   _histFilter = { res: "", type: "", cat: "", q: "" };
   const syncF = () => {
@@ -4297,7 +4320,7 @@ function openHistoryOverlay() {
   };
   ["hist-fres", "hist-ftype", "hist-fcat"].forEach((id) => el.querySelector("#" + id).addEventListener("change", syncF));
   el.querySelector("#hist-fq").addEventListener("input", syncF);
-  el.querySelector("#btn-history-close").onclick = () => el.remove();
+  el.querySelector("#btn-history-close").onclick = close;
   el.querySelector("#btn-history-export").onclick = exportSessionHistory;
   el.querySelector("#btn-history-compact").onclick = () => { state.viewMode = "compact"; lsSet("qb-viewmode", "compact"); renderHistoryPanel(); };
   el.querySelector("#btn-history-expand").onclick = () => { state.viewMode = "expanded"; lsSet("qb-viewmode", "expanded"); renderHistoryPanel(); };
@@ -7305,6 +7328,14 @@ function init() {
           }
         : null,
       getAchievementList: () => ACHIEVEMENT_LIST.map((a) => ({ ...a, cat: a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined) })),
+      // Open the app's own session-history overlay over a supplied list, so a
+      // plugin gets the real GUI — filters, compact/expand, buzz track, star
+      // and save actions — instead of a hand-rolled imitation.
+      // Entry shape: { id, type, points, correct, isPower, celerity, buzzPosition,
+      //   userAnswer, answer, question: { question_sanitized, answer, answer_sanitized,
+      //   category, subcategory, alternate_subcategory, difficulty, set_name, set_year } }
+      openSessionHistory: (entries, opts) =>
+        openHistoryOverlay({ entries: Array.isArray(entries) ? entries : [], title: (opts && opts.title) || "SESSION HISTORY" }),
       // Earned/progress state for every achievement (base + plugin), computed
       // from the same data the Player screen uses. Plugins can't derive this
       // themselves — the thresholds and answer-power classes live in app.js.
