@@ -1453,6 +1453,11 @@ async function loadSubcategories(category, type, container, silent = false, chec
       const w = cb.closest(".filter-item")?.querySelector(".subcat-weight, .altsub-weight");
       if (w) w.value = "10";
     });
+    // Ticking a category selects its alternate subcategories too — so open
+    // those lists as well. Without this they stay collapsed with their boxes
+    // silently ticked inside, and the row still shows the closed arrow.
+    container.querySelectorAll(".altsub-list").forEach((l) => l.classList.remove("hidden"));
+    container.querySelectorAll(".altsub-expand").forEach((x) => { x.textContent = "▾"; });
   };
 
   if (state.subcategoryCache[cacheKey]) {
@@ -7444,4 +7449,193 @@ function showUpdateDialog(info, opts) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Custom select
+//
+// Native <select> renders an OS-drawn menu that no stylesheet or theme can
+// touch. This wraps each one in markup the app (and any theme) can style,
+// while keeping the real <select> in the DOM as the source of truth — every
+// existing `.value` read and `change` listener keeps working untouched, and
+// the enhancement dispatches a normal `change` event when the user picks.
+//
+// Screens rebuild via innerHTML, so new selects are picked up by an observer
+// rather than a one-shot pass at startup.
+// ─────────────────────────────────────────────────────────────────────────
+const QBSelect = (() => {
+  let openInstance = null;
+
+  function labelOf(sel) {
+    const o = sel.options[sel.selectedIndex];
+    return o ? o.textContent : "";
+  }
+
+  function build(sel) {
+    if (sel.dataset.qbsel === "1" || sel.multiple || sel.size > 1) return;
+    // Opt-out hook for a select that must stay native.
+    if (sel.closest("[data-no-qbselect]")) return;
+    sel.dataset.qbsel = "1";
+
+    const cs = getComputedStyle(sel);
+    const wrap = document.createElement("div");
+    wrap.className = "qb-select";
+    // Inherit the select's own sizing so inserting the wrapper cannot change
+    // any layout it sits in.
+    wrap.style.flex = cs.flex;
+    wrap.style.width = cs.width;
+    wrap.style.minWidth = cs.minWidth;
+    if (sel.id) wrap.dataset.for = sel.id;
+
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "qb-select-trigger";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.innerHTML = '<span class="qb-select-value"></span><span class="qb-select-icon" aria-hidden="true"></span>';
+
+    const popup = document.createElement("div");
+    popup.className = "qb-select-popup";
+    popup.setAttribute("role", "listbox");
+    popup.hidden = true;
+
+    wrap.appendChild(trigger);
+    wrap.appendChild(popup);
+
+    const valueEl = trigger.querySelector(".qb-select-value");
+    const sync = () => {
+      valueEl.textContent = labelOf(sel);
+      trigger.disabled = sel.disabled;
+      wrap.classList.toggle("disabled", !!sel.disabled);
+    };
+
+    const renderItems = () => {
+      popup.innerHTML = [...sel.options].map((o, i) =>
+        '<div class="qb-select-item" role="option" data-i="' + i + '"' +
+        (o.selected ? ' data-selected="true" aria-selected="true"' : ' aria-selected="false"') +
+        (o.disabled ? ' data-disabled="true"' : "") +
+        '><span class="qb-select-check" aria-hidden="true"></span><span class="qb-select-label"></span></div>'
+      ).join("");
+      // Option text is set as textContent, never interpolated into HTML.
+      [...popup.children].forEach((el, i) => {
+        el.querySelector(".qb-select-label").textContent = sel.options[i].textContent;
+      });
+    };
+
+    const close = () => {
+      if (popup.hidden) return;
+      popup.hidden = true;
+      wrap.dataset.open = "false";
+      trigger.setAttribute("aria-expanded", "false");
+      if (openInstance === api) openInstance = null;
+    };
+
+    const open = () => {
+      if (sel.disabled) return;
+      if (openInstance && openInstance !== api) openInstance.close();
+      renderItems();
+      popup.hidden = false;
+      wrap.dataset.open = "true";
+      trigger.setAttribute("aria-expanded", "true");
+      openInstance = api;
+      // Flip above the trigger when there is not room below.
+      const r = trigger.getBoundingClientRect();
+      wrap.classList.toggle("up", r.bottom + 240 > window.innerHeight && r.top > 240);
+      const cur = popup.querySelector('[data-selected="true"]');
+      if (cur) { cur.classList.add("active"); cur.scrollIntoView({ block: "nearest" }); }
+    };
+
+    const pick = (i) => {
+      const o = sel.options[i];
+      if (!o || o.disabled) return;
+      if (sel.selectedIndex !== i) {
+        sel.selectedIndex = i;
+        sel.dispatchEvent(new Event("input", { bubbles: true }));
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      sync();
+      close();
+      trigger.focus();
+    };
+
+    const move = (delta) => {
+      const items = [...popup.querySelectorAll(".qb-select-item:not([data-disabled])")];
+      if (!items.length) return;
+      let idx = items.findIndex((x) => x.classList.contains("active"));
+      idx = idx < 0 ? 0 : Math.max(0, Math.min(items.length - 1, idx + delta));
+      items.forEach((x) => x.classList.remove("active"));
+      items[idx].classList.add("active");
+      items[idx].scrollIntoView({ block: "nearest" });
+    };
+
+    const api = { close, open, sync, wrap };
+
+    trigger.addEventListener("click", (e) => { e.preventDefault(); popup.hidden ? open() : close(); });
+    popup.addEventListener("mousedown", (e) => {
+      const it = e.target.closest(".qb-select-item");
+      if (!it) return;
+      e.preventDefault();
+      pick(+it.dataset.i);
+    });
+    popup.addEventListener("mousemove", (e) => {
+      const it = e.target.closest(".qb-select-item");
+      if (!it) return;
+      popup.querySelectorAll(".qb-select-item").forEach((x) => x.classList.remove("active"));
+      it.classList.add("active");
+    });
+    trigger.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (popup.hidden) { open(); return; }
+        move(e.key === "ArrowDown" ? 1 : -1);
+      } else if (e.key === "Enter" || e.key === " ") {
+        if (popup.hidden) { e.preventDefault(); open(); return; }
+        e.preventDefault();
+        const act = popup.querySelector(".qb-select-item.active");
+        if (act) pick(+act.dataset.i);
+      } else if (e.key === "Escape") {
+        if (!popup.hidden) { e.preventDefault(); e.stopPropagation(); close(); }
+      } else if (e.key === "Home" || e.key === "End") {
+        if (!popup.hidden) { e.preventDefault(); move(e.key === "Home" ? -999 : 999); }
+      } else if (e.key.length === 1) {
+        // Type-ahead, matching the native control.
+        const ch = e.key.toLowerCase();
+        const start = sel.selectedIndex + 1;
+        for (let n = 0; n < sel.options.length; n++) {
+          const i = (start + n) % sel.options.length;
+          if ((sel.options[i].textContent || "").trim().toLowerCase().startsWith(ch)) { pick(i); break; }
+        }
+      }
+    });
+
+    // Code elsewhere sets `.value` directly and dispatches change; mirror that.
+    sel.addEventListener("change", sync);
+    sync();
+  }
+
+  function scan(root) {
+    if (!root || root.nodeType !== 1) return;
+    if (root.tagName === "SELECT") build(root);
+    root.querySelectorAll && root.querySelectorAll("select").forEach(build);
+  }
+
+  document.addEventListener("mousedown", (e) => {
+    if (openInstance && !e.target.closest(".qb-select")) openInstance.close();
+  });
+  window.addEventListener("blur", () => { if (openInstance) openInstance.close(); });
+
+  return {
+    start() {
+      scan(document.body);
+      new MutationObserver((recs) => {
+        for (const r of recs) for (const n of r.addedNodes) scan(n);
+      }).observe(document.body, { childList: true, subtree: true });
+    },
+    refresh(root) { scan(root || document.body); },
+  };
+})();
+window.QBSelect = QBSelect;
+
 init();
+QBSelect.start();
