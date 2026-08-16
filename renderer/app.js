@@ -6928,8 +6928,14 @@ async function openPacket(setName, packetNumber) {
 function _catAddOpt(sel, v) { const o = document.createElement("option"); o.value = v; o.textContent = v; sel.appendChild(o); }
 function _catSetDisabled(sel, dis) { sel.disabled = dis; sel.style.opacity = dis ? "0.5" : "1"; sel.title = dis ? "Not applicable for this selection" : ""; }
 function wireCatCascade(catSel, subSel, altSel, onChange) {
+  // Every fetch below is async and the user can keep clicking. A generation
+  // token means only the LATEST request may write options — without it a
+  // pending "Other Literature" lookup lands after you have moved to Mythology
+  // and appends Literature alternates under it.
+  let gen = 0;
   _catSetDisabled(subSel, true); _catSetDisabled(altSel, true);
   catSel.addEventListener("change", async () => {
+    const mine = ++gen;
     subSel.innerHTML = '<option value="">All subcategories</option>';
     altSel.innerHTML = '<option value="">All alternate subcategories</option>';
     _catSetDisabled(altSel, true);
@@ -6941,13 +6947,14 @@ function wireCatCascade(catSel, subSel, altSel, onChange) {
     } else {
       let subs = [];
       try { subs = (await API.get(`/api/subcategories?type=tossups&category=${encodeURIComponent(cat)}`)).subcategories || []; } catch {}
-      if (cat !== catSel.value) return; // selection changed while fetching — drop this stale response
+      if (mine !== gen || cat !== catSel.value) return; // superseded — drop it
       if (subs.length) { subs.forEach((s) => _catAddOpt(subSel, s.subcategory)); _catSetDisabled(subSel, false); }
-      else _catSetDisabled(subSel, true);
+      else _catSetDisabled(subSel, true);   // no subcategories: only "All", disabled
     }
     onChange();
   });
   subSel.addEventListener("change", async () => {
+    const mine = ++gen;
     altSel.innerHTML = '<option value="">All alternate subcategories</option>';
     const cat = catSel.value, sub = subSel.value;
     let alts = [];
@@ -6959,9 +6966,11 @@ function wireCatCascade(catSel, subSel, altSel, onChange) {
       } catch {}
       if (!alts.length && /^Other /.test(sub) && ALT_SUBCATS[sub]) alts = ALT_SUBCATS[sub];
     }
-    if (sub !== subSel.value) return; // selection changed while we were fetching
+    // Guard on the CATEGORY too: switching category resets this list, and a
+    // late reply from the previous category would otherwise refill it.
+    if (mine !== gen || sub !== subSel.value || cat !== catSel.value) return;
     if (alts.length) { alts.forEach((a) => _catAddOpt(altSel, a)); _catSetDisabled(altSel, false); }
-    else _catSetDisabled(altSel, true);
+    else _catSetDisabled(altSel, true);   // none for this pair: only "All", disabled
     onChange();
   });
   altSel.addEventListener("change", onChange);
