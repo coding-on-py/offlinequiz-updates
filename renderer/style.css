@@ -907,7 +907,9 @@ select {
 }
 
 /* ── Dual-thumb range slider (one bar, two non-crossing thumbs) ── */
-.dual-range { position: relative; height: 22px; margin: 2px 0; }
+/* flex-basis + min-width: in a toolbar row this was shrinking to a few px,
+   which is why the year slider came out tiny. */
+.dual-range { position: relative; height: 22px; margin: 2px 0; flex: 1 1 180px; min-width: 160px; }
 .dual-range-track {
   position: absolute; top: 50%; transform: translateY(-50%); left: 0; right: 0; height: 5px;
   border-radius: 4px; background: var(--bg-tertiary); border: 1px solid var(--border);
@@ -1780,8 +1782,9 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
 }
 .db-tab:hover { color: var(--text); }
 .db-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.db-toolbar:last-of-type { border-bottom: 1px solid var(--border); }
 .db-content { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
-.db-toolbar { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); align-items: center; }
+.db-toolbar { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 16px; background: var(--bg-secondary); align-items: center; }
 .db-input {
   font-family: var(--font); font-size: 13px; padding: 5px 8px; flex: 1; min-width: 140px;
   background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px; color: var(--text); outline: none;
@@ -1789,7 +1792,7 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
 .db-input-sm { flex: 0 0 auto; min-width: 120px; }
 .db-input-xs { flex: 0 0 auto; width: 72px; min-width: 0; }
 .db-opt { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 4px; }
-.db-toolbar-adv { padding-top: 0; border-bottom: 1px solid var(--border); }
+.db-toolbar-adv { padding-top: 0; }
 .db-adv-label { font-size: 11px; font-weight: 700; color: var(--text-secondary); letter-spacing: 0.5px; }
 .db-diff { font-size: 12px; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
 .db-diff input { cursor: pointer; }
@@ -2435,5 +2438,5 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
    minimum width, and a select with nothing to offer (Geography has no
    subcategories) is dimmed by _catSetDisabled rather than hidden, so the row
    never reflows as you change category. */
-.db-toolbar-cats { padding-top: 0; border-bottom: 1px solid var(--border); }
+.db-toolbar-cats { padding-top: 0; }
 .db-input-cat { flex: 1 1 200px; min-width: 180px; max-width: 320px; }

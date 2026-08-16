@@ -687,7 +687,7 @@ function showEscHint() {
     el = document.createElement("div");
     el.id = "esc-hint";
     el.className = "esc-hint";
-    el.textContent = "Press [Esc] again to leave — your session is kept";
+    el.textContent = "Press [Esc] again to leave";
     // Anchor to whatever is on screen: #question-area only exists on the
     // practice screen, so on multiplayer the hint would be invisible and the
     // first press would look like it did nothing.
