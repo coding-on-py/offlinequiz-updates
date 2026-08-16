@@ -6601,6 +6601,9 @@ function loadDatabase() {
       });
     });
   }
+  // Mark the tab strip too — rendering the body alone left every tab
+  // unselected when you returned to the Database after leaving it.
+  syncDbTabActive();
   renderDbTab();
 }
 
