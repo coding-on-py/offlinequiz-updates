@@ -7594,9 +7594,12 @@ const QBSelect = (() => {
     wrap.className = "qb-select";
     // Inherit the select's own sizing so inserting the wrapper cannot change
     // any layout it sits in.
-    wrap.style.flex = cs.flex;
-    wrap.style.width = cs.width;
-    wrap.style.minWidth = cs.minWidth;
+    // Carry the select's own sizing as CUSTOM PROPERTIES rather than inline
+    // width/flex. An inline width cannot be overridden by a stylesheet, which
+    // left themes unable to widen a cramped filter row; a property default can.
+    wrap.style.setProperty("--qbsel-flex", cs.flex);
+    wrap.style.setProperty("--qbsel-w", cs.width);
+    wrap.style.setProperty("--qbsel-minw", cs.minWidth);
     if (sel.id) wrap.dataset.for = sel.id;
 
     sel.parentNode.insertBefore(wrap, sel);

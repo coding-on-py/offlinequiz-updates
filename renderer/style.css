@@ -2382,7 +2382,13 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
    an inline width (style="width:120px"), the wrapper inherits it, and without
    these the trigger's text overflows the wrapper and paints over whatever sits
    next to it in the row. */
-.qb-select { position: relative; display: inline-flex; align-items: center; overflow: hidden; min-width: 0; }
+.qb-select {
+  position: relative; display: inline-flex; align-items: center; overflow: hidden;
+  /* defaults come from the wrapped <select>; a stylesheet can override them */
+  flex: var(--qbsel-flex, 0 1 auto);
+  width: var(--qbsel-w, auto);
+  min-width: var(--qbsel-minw, 0);
+}
 .qb-select-trigger { min-width: 0; }
 /* Hidden with visibility, NOT opacity: app code sets `select.style.opacity`
    inline as a disabled cue (see _catSetDisabled), and an inline opacity would
