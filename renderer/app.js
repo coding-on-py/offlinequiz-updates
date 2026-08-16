@@ -4090,6 +4090,21 @@ function openHiddenManager() {
   document.body.appendChild(el);
 }
 
+// A selection only counts for a given element's menu if it actually lies
+// INSIDE that element — otherwise a stale highlight elsewhere on the page
+// would hijack the menu.
+function selectionInside(el) {
+  const sel = window.getSelection();
+  const text = String(sel || "").trim();
+  if (!text || text.length < 2) return "";
+  if (el && sel.rangeCount) {
+    const n = sel.getRangeAt(0).commonAncestorContainer;
+    const node = n.nodeType === 1 ? n : n.parentElement;
+    if (node && !el.contains(node)) return "";
+  }
+  return text.slice(0, 80);
+}
+
 // Selection-aware search entries shared by several menus — database searches
 // plus cross-plugin jumps (Keyword Frequency, Fact Sheet) when installed.
 function selectionMenuItems() {
@@ -4104,6 +4119,19 @@ function selectionMenuItems() {
 document.addEventListener("contextmenu", (e) => {
   const card = e.target.closest?.(".qcard");
   if (!card || !window.QB?.contextMenu) return;
+  // Highlighted text wins: offer actions for WHAT WAS SELECTED, not for the
+  // card's answer. The answer menu is what you get when nothing is selected.
+  const picked = selectionInside(card);
+  if (picked) {
+    e.preventDefault();
+    const selItems = selectionTermItems(picked).filter((it) => !it.sep);
+    window.QB.contextMenu(e.clientX, e.clientY, [
+      { label: "Copy", onClick: () => copyToClipboard(picked) },
+      { sep: true },
+      ...selItems,
+    ], { title: "\u201C" + picked.slice(0, 40) + "\u201D" });
+    return;
+  }
   const items = [];
   const text = card.querySelector(".qcard-text")?.textContent?.trim();
   const ans = card.querySelector(".ans")?.textContent?.trim();
@@ -4128,7 +4156,6 @@ document.addEventListener("contextmenu", (e) => {
       onClick: () => toggleQuestionHidden(qid, qtype, ans || text || qid),
     });
   }
-  items.push(...selectionMenuItems());
   e.preventDefault();
   window.QB.contextMenu(e.clientX, e.clientY, items, { title: cleanAns || (text || "").slice(0, 44) });
 });
@@ -4215,6 +4242,16 @@ $("#question-content")?.addEventListener("contextmenu", (e) => {
   const q = state.currentQuestion;
   const isBonus = state.mode === "bonuses";
   const revealed = !isBonus && state.resultAreaVisible && q.answer_sanitized;
+  const picked = selectionInside($("#question-content"));
+  if (picked) {
+    e.preventDefault();
+    window.QB.contextMenu(e.clientX, e.clientY, [
+      { label: "Copy", onClick: () => copyToClipboard(picked) },
+      { sep: true },
+      ...selectionTermItems(picked).filter((it) => !it.sep),
+    ], { title: "\u201C" + picked.slice(0, 40) + "\u201D" });
+    return;
+  }
   const items = [];
   if (revealed) {
     const pa = primaryAnswerText(q.answer_sanitized);
@@ -4231,7 +4268,6 @@ $("#question-content")?.addEventListener("contextmenu", (e) => {
     danger: !isQuestionHidden(q.id, qtype),
     onClick: () => toggleQuestionHidden(q.id, qtype, q.answer_sanitized || q.id),
   });
-  items.push(...selectionMenuItems());
   e.preventDefault();
   window.QB.contextMenu(e.clientX, e.clientY, items, { title: revealed ? primaryAnswerText(q.answer_sanitized) : (isBonus ? "Bonus" : "Tossup") });
 });
@@ -6538,6 +6574,9 @@ function syncDbTabActive() {
 
 function loadDatabase() {
   _screenBuilt.add("database");
+  // A fresh entry starts a new search history — reviveScreen (the Back path)
+  // does not call this, so stepping back through searches still works.
+  _dbSearchStack = [];
   refreshDbStarred();
   renderDbProviderTabs();
   if (!_dbWired) {
@@ -6821,7 +6860,33 @@ let _dbBrowse = null;
 // stack only tracks screens (recordNav no-ops on a same-screen navigation), so
 // without this Back would pop straight past the Database to whatever opened it.
 let _dbTabFrom = null;
+// Searching again FROM the search tab (right-click → "Search answers for it")
+// is a same-screen transition, so the nav stack never sees it and Back would
+// jump past the Database entirely. Remember each previous search instead.
+let _dbSearchStack = [];
+function currentSearchState() {
+  const g = (id) => document.getElementById(id);
+  if (!g("db-search-input")) return null;
+  return {
+    query: g("db-search-input").value || "",
+    field: g("db-search-type") ? g("db-search-type").value : "all",
+    qtype: g("db-qtype") ? g("db-qtype").value : "all",
+    exact: g("db-exact") ? !!g("db-exact").checked : false,
+    page: _dbPage,
+  };
+}
 function dbBrowseBack() {
+  // Step back through earlier searches before leaving the screen.
+  if (_dbSearchStack.length && document.querySelector("#database-screen.active") && (state.dbTab || "search") === "search") {
+    const prev = _dbSearchStack.pop();
+    const g = (id) => document.getElementById(id);
+    if (g("db-search-input")) g("db-search-input").value = prev.query;
+    if (g("db-search-type")) g("db-search-type").value = prev.field;
+    if (g("db-qtype")) g("db-qtype").value = prev.qtype;
+    if (g("db-exact")) g("db-exact").checked = prev.exact;
+    performDbSearch({ page: prev.page || 0, _restoring: true });
+    return true;
+  }
   if (_dbTabFrom && document.querySelector("#database-screen.active")) {
     const from = _dbTabFrom;
     _dbTabFrom = null;
@@ -7115,6 +7180,10 @@ function searchDatabase(opts) {
   // that list instead of leaving the screen. Must be read before dbTab is
   // overwritten below.
   const fromTab = state.dbTab || "search";
+  // Capture the outgoing search BEFORE the rebuild; it is pushed after
+  // loadDatabase() below, which resets the stack on a fresh entry.
+  const _prevSearch = (document.querySelector("#database-screen.active") && fromTab === "search")
+    ? currentSearchState() : null;
   _dbTabFrom = document.querySelector("#database-screen.active") && fromTab !== "search"
     ? { tab: fromTab, freq: fromTab === "frequency" ? currentFrequencySelection() : null }
     : null;
@@ -7123,6 +7192,11 @@ function searchDatabase(opts) {
   state.dbTab = "search";
   showScreen("database");
   loadDatabase();
+  // Re-push after the rebuild so Back steps through earlier searches.
+  if (_prevSearch && _prevSearch.query && _prevSearch.query !== (opts.query || "")) {
+    _dbSearchStack.push(_prevSearch);
+    if (_dbSearchStack.length > 20) _dbSearchStack.shift();
+  }
   document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === "search"));
   const typeSel = document.getElementById("db-search-type");
   const qtypeSel = document.getElementById("db-qtype");
