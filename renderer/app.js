@@ -1029,6 +1029,7 @@ function openReviewMenu(items) {
     const m = matching();
     el.querySelector("#rv-matchcount").textContent = m.length + " of " + items.length + " match";
   }
+  clampDualRange(lo, hi);
   lo.addEventListener("input", paint); hi.addEventListener("input", paint);
   if (catSel) catSel.addEventListener("change", paint);
   if (typeSel) typeSel.addEventListener("change", paint);
@@ -1638,6 +1639,7 @@ function updateModeFields() {
     if (packetMode) el.classList.add("collapsed");
   });
   $$(".packet-disable").forEach((el) => el.classList.toggle("filter-disabled", packetMode));
+  clampDualRange($("#year-min"), $("#year-max"));
   ["#year-min", "#year-max", "#filter-powermark", "#filter-starred"].forEach((sel) => {
     const el = $(sel); if (el) el.disabled = packetMode;
   });
@@ -6665,6 +6667,22 @@ function highlightTerms(container, terms) {
 }
 
 // Indeterminate loading bar used wherever a query/scan takes noticeable time.
+// Keep the two thumbs of a dual range apart: without this either handle can be
+// dragged past the other and they stack on one end, which reads as a single
+// broken slider.
+function clampDualRange(lo, hi) {
+  if (!lo || !hi) return;
+  const apply = (moved) => {
+    let a = parseFloat(lo.value), b = parseFloat(hi.value);
+    if (a >= b) {
+      if (moved === lo) { a = Math.min(a, b - (parseFloat(lo.step) || 1)); lo.value = String(Math.max(parseFloat(lo.min), a)); }
+      else { b = Math.max(b, a + (parseFloat(hi.step) || 1)); hi.value = String(Math.min(parseFloat(hi.max), b)); }
+    }
+  };
+  lo.addEventListener("input", () => apply(lo));
+  hi.addEventListener("input", () => apply(hi));
+}
+
 function loadingBarHtml(label) {
   return `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div><span>${escapeHtml(label || "Loading…")}</span></div>`;
 }
