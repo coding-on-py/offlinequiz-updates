@@ -7228,7 +7228,6 @@ async function renderStarredTab() {
     '<div class="db-toolbar">' +
       '<button class="btn btn-sm btn-primary" id="db-practice-starred">Practice starred (tossups)</button>' +
       actionBtns +
-      '<span class="text-muted" style="font-size:11px">Opens Tossups practice with "starred only" on</span>' +
     "</div>" +
     '<div class="search-results" id="db-results"></div>';
   document.getElementById("db-practice-starred")?.addEventListener("click", () => {
