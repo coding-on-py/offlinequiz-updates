@@ -355,9 +355,31 @@ export class QuestionDatabase {
     let where = "WHERE alternate_subcategory IS NOT NULL AND alternate_subcategory != ''";
     if (category) { where += " AND category = :cat"; params.cat = category; }
     if (subcategory) { where += " AND subcategory = :sub"; params.sub = subcategory; }
-    return this.db
+    // Drop mis-tagged noise. The dump contains a handful of nonsense pairings
+    // (2 "Poetry" tossups inside Geography/Geography, out of 6,182), and those
+    // were filling the alternate-subcategory picker with options that belong to
+    // other categories. Genuine alternates are a large share of their pair —
+    // 11-36% in Science/Literature/Fine Arts — while the noise is under 0.03%,
+    // so a 1% share with a small absolute floor separates them cleanly.
+    const rows = this.db
       .prepare(`SELECT alternate_subcategory, COUNT(*) as count FROM ${table} ${where} GROUP BY alternate_subcategory ORDER BY count DESC`)
-      .all(params)
+      .all(params);
+    if (!rows.length) return [];
+    // Share is measured against the whole (category, subcategory) pair, not just
+    // the rows that happen to carry an alternate.
+    let total = rows.reduce((a, r) => a + r.count, 0);
+    if (category || subcategory) {
+      const pw = [];
+      const pp = {};
+      if (category) { pw.push("category = :cat"); pp.cat = category; }
+      if (subcategory) { pw.push("subcategory = :sub"); pp.sub = subcategory; }
+      try {
+        const t = this.db.prepare(`SELECT COUNT(*) as n FROM ${table} WHERE ${pw.join(" AND ")}`).get(pp);
+        if (t && t.n) total = t.n;
+      } catch { /* fall back to the summed count */ }
+    }
+    return rows
+      .filter((r) => r.count >= 5 && r.count / total >= 0.01)
       .map((r) => r.alternate_subcategory);
   }
 
