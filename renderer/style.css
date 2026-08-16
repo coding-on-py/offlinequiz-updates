@@ -2376,7 +2376,11 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
    the trigger + popup below are what the user sees, so themes can restyle a
    dropdown that the OS would otherwise draw itself. */
 .qb-select { position: relative; display: inline-flex; align-items: center; }
-.qb-select > select { position: absolute; opacity: 0; pointer-events: none; width: 100%; height: 100%; }
+/* Hidden with visibility, NOT opacity: app code sets `select.style.opacity`
+   inline as a disabled cue (see _catSetDisabled), and an inline opacity would
+   beat this rule and bring the native control back into view on top of the
+   trigger. The wrapper's .disabled class carries that cue instead. */
+.qb-select > select { position: absolute; visibility: hidden; pointer-events: none; width: 100%; height: 100%; }
 .qb-select-trigger {
   width: 100%;
   min-height: 32px;
@@ -2425,3 +2429,11 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
 .qb-select-item[data-disabled] { opacity: 0.5; cursor: default; }
 .qb-select-check { width: 16px; text-align: center; color: var(--accent); }
 .qb-select-item[data-selected="true"] .qb-select-check::before { content: "\2713"; }
+
+/* Category filters get their own toolbar row — the labels are long enough that
+   sharing the search row squeezed them into each other. Each keeps a real
+   minimum width, and a select with nothing to offer (Geography has no
+   subcategories) is dimmed by _catSetDisabled rather than hidden, so the row
+   never reflows as you change category. */
+.db-toolbar-cats { padding-top: 0; border-bottom: 1px solid var(--border); }
+.db-input-cat { flex: 1 1 200px; min-width: 180px; max-width: 320px; }

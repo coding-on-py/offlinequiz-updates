@@ -6594,11 +6594,16 @@ function renderSearchTab() {
       '<input type="text" id="db-search-input" class="db-input" placeholder="Search questions…" autocomplete="off">' +
       '<select id="db-qtype" class="db-input db-input-sm"><option value="all">Tossups + Bonuses</option><option value="tossup">Tossups only</option><option value="bonus">Bonuses only</option></select>' +
       '<select id="db-search-type" class="db-input db-input-sm"><option value="all">All text</option><option value="question">Question only</option><option value="answer">Answer only</option></select>' +
-      '<select id="db-cat-filter" class="db-input db-input-sm"><option value="">All categories</option></select>' +
-      '<select id="db-sub-filter" class="db-input db-input-sm"><option value="">All subcategories</option></select>' +
-      '<select id="db-alt-filter" class="db-input db-input-sm"><option value="">All alternate subcategories</option></select>' +
       '<label class="db-opt"><input type="checkbox" id="db-exact" checked> Exact phrase</label>' +
       '<label class="db-opt"><input type="checkbox" id="db-hide-ans"> Hide answers</label>' +
+    "</div>" +
+    // The three category selects carry long labels ("All alternate
+    // subcategories"); crowded onto the search row they overlapped. Their own
+    // row gives each a real minimum width.
+    '<div class="db-toolbar db-toolbar-cats">' +
+      '<select id="db-cat-filter" class="db-input db-input-cat"><option value="">All categories</option></select>' +
+      '<select id="db-sub-filter" class="db-input db-input-cat"><option value="">All subcategories</option></select>' +
+      '<select id="db-alt-filter" class="db-input db-input-cat"><option value="">All alternate subcategories</option></select>' +
     "</div>" +
     '<div class="db-toolbar db-toolbar-adv">' +
       '<span class="db-adv-label">Difficulty:</span>' + diffChecks +
@@ -7611,6 +7616,12 @@ const QBSelect = (() => {
 
     // Code elsewhere sets `.value` directly and dispatches change; mirror that.
     sel.addEventListener("change", sync);
+    // …but plenty of code mutates a select WITHOUT dispatching anything —
+    // the category cascade calls `sel.disabled = false` and rewrites the
+    // <option> list in place. Watch the element itself so the trigger cannot
+    // be left showing a stale label, or stuck disabled after being re-enabled.
+    const mo = new MutationObserver(() => { sync(); if (!popup.hidden) renderItems(); });
+    mo.observe(sel, { attributes: true, attributeFilter: ["disabled", "style", "class"], childList: true, subtree: true });
     sync();
   }
 
