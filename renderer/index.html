@@ -5,8 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OfflineQuiz</title>
   <link rel="stylesheet" href="style.css">
+  <script>
+    // Paint the boot cover in the background colour this profile last used, so
+    // a light theme does not flash the stylesheet's dark default before the
+    // theme has loaded. Inline and synchronous on purpose: it must run before
+    // the first paint.
+    try {
+      var c = localStorage.getItem("qb-boot-bg");
+      if (c) document.documentElement.style.setProperty("--boot-bg", c);
+    } catch (e) {}
+  </script>
 </head>
 <body>
+  <!-- Painted on the very first frame, before any screen or theme has had a
+       chance to render, so boot never flashes an unstyled title screen. It is
+       plain background only — no logo, no text — and app.js removes it once the
+       app is ready. Inline styles because style.css may not have applied yet. -->
+  <div id="boot-cover" style="position:fixed;inset:0;z-index:100000;background:var(--boot-bg,var(--bg,#0d1117))"></div>
   <div id="splash-screen" class="hidden">
     <canvas id="splash-canvas"></canvas>
   </div>

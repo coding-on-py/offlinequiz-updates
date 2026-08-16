@@ -7253,20 +7253,29 @@ async function renderStarredTab() {
 }
 
 
+// Boot shows nothing but the theme's background until the app is ready — no
+// logo, no animation. The cover is already in the HTML (so it owns the first
+// frame); this just starts the app and fades it away.
 function startSplash() {
-  const splash = document.getElementById("splash-screen");
-  if (!splash) { initApp(); return; }
-  splash.classList.remove("hidden");
-  splash.setAttribute("style", "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:var(--bg)");
-  const el = document.createElement("div");
-  el.style.cssText = "font-family:var(--font);font-size:22px;color:var(--accent);letter-spacing:4px";
-  el.textContent = "OFFLINEQUIZ";
-  splash.innerHTML = "";
-  splash.appendChild(el);
-  let dots = 0;
-  const interval = setInterval(() => { dots = (dots + 1) % 4; el.textContent = "OFFLINEQUIZ" + ".".repeat(dots); }, 400);
-  setTimeout(() => { clearInterval(interval); splash.style.opacity = "0"; splash.style.transition = "opacity 400ms"; }, 2000);
-  setTimeout(() => { splash.classList.add("hidden"); splash.innerHTML = ""; initApp(); }, 2400);
+  const cover = document.getElementById("boot-cover");
+  document.getElementById("splash-screen")?.classList.add("hidden");
+  initApp();
+  if (!cover) return;
+  const done = () => {
+    cover.style.transition = "opacity 220ms ease";
+    cover.style.opacity = "0";
+    setTimeout(() => cover.remove(), 260);
+  };
+  // Wait for a painted frame so the themed screen is in place behind it,
+  // with a hard cap so a slow start can never leave the cover stuck.
+  // Remember the resolved background so the NEXT boot can paint the right
+  // colour before any theme has loaded.
+  try {
+    const bg = getComputedStyle(document.body).backgroundColor;
+    if (bg && bg !== "rgba(0, 0, 0, 0)") localStorage.setItem("qb-boot-bg", bg);
+  } catch (e) {}
+  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 120)));
+  setTimeout(done, 4000);
 }
 
 
