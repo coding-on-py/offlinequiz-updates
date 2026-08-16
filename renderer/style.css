@@ -2378,7 +2378,12 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
    The native <select> stays in the DOM as the source of truth but is hidden;
    the trigger + popup below are what the user sees, so themes can restyle a
    dropdown that the OS would otherwise draw itself. */
-.qb-select { position: relative; display: inline-flex; align-items: center; }
+/* overflow:hidden + min-width:0 are load-bearing: callers give their <select>
+   an inline width (style="width:120px"), the wrapper inherits it, and without
+   these the trigger's text overflows the wrapper and paints over whatever sits
+   next to it in the row. */
+.qb-select { position: relative; display: inline-flex; align-items: center; overflow: hidden; min-width: 0; }
+.qb-select-trigger { min-width: 0; }
 /* Hidden with visibility, NOT opacity: app code sets `select.style.opacity`
    inline as a disabled cue (see _catSetDisabled), and an inline opacity would
    beat this rule and bring the native control back into view on top of the
@@ -2405,7 +2410,7 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
 .qb-select-trigger:hover { border-color: var(--accent); }
 .qb-select-trigger:focus-visible { outline: none; border-color: var(--accent); }
 .qb-select.disabled .qb-select-trigger { opacity: 0.5; cursor: default; }
-.qb-select-value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qb-select-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qb-select-icon {
   flex: 0 0 auto; width: 8px; height: 8px;
   border-right: 1.6px solid var(--text-secondary);
@@ -2414,6 +2419,9 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
   transition: transform 150ms ease;
 }
 .qb-select[data-open="true"] .qb-select-icon { transform: translateY(1px) rotate(-135deg); }
+/* the popup escapes the wrapper's overflow clip */
+.qb-select { overflow: visible; }
+.qb-select > .qb-select-trigger { overflow: hidden; }
 .qb-select-popup {
   position: absolute; z-index: 50; left: 0; top: calc(100% + 4px); min-width: 100%;
   max-height: 240px; overflow-y: auto; padding: 4px;
