@@ -1,5 +1,5 @@
 {
-  "version": "14.0",
+  "version": "14.1",
   "renderer": [
     "index.html",
     "style.css",
@@ -8,11 +8,6 @@
     "app.js"
   ],
   "plugins": [
-    {
-      "id": "achievement-icons",
-      "name": "Achievement Icons",
-      "file": "achievement-icons.zip"
-    },
     {
       "id": "achievement-lab",
       "name": "Achievement Lab",

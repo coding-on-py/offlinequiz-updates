@@ -215,7 +215,7 @@ function persistSettingsToLocalStorage() {
     "qb-buzz-timeout": st.buzzTimeout, "qb-buzz-window": st.buzzWindow, "qb-bonus-timer": st.bonusTimer,
     "qb-strictness": st.strictness, "qb-allow-rebuzzes": st.allowRebuzzes,
     "qb-stop-on-power": st.stopOnPower, "qb-allow-skips": st.allowSkips,
-    "qb-show-qmeta": st.showQuestionMeta, "qb-hide-pron": st.hidePronunciations, "qb-use-weights": st.useWeights,
+    "qb-show-qmeta": st.showQuestionMeta, "qb-hide-pron": st.hidePronunciations, "qb-hide-notes": st.hideNotes, "qb-use-weights": st.useWeights,
     "qb-app-accent": st.appAccent, "qb-app-radius": st.appRadius, "qb-app-btngap": st.appBtnGap,
     "qb-app-mode": st.appAppearanceMode, "qb-app-custom-accent": st.appCustomAccent, "qb-app-font": st.appFont,
     "qb-review-wrongend": st.reviewWrongEnd, "qb-session-retention": st.sessionRetentionDays,
@@ -292,6 +292,7 @@ const state = {
     allowSkips: localStorage.getItem("qb-allow-skips") !== "false",
     showQuestionMeta: localStorage.getItem("qb-show-qmeta") !== "false",
     hidePronunciations: localStorage.getItem("qb-hide-pron") === "true",
+    hideNotes: localStorage.getItem("qb-hide-notes") === "true",
     appAccent: localStorage.getItem("qb-app-accent") || "gold",
     appAppearanceMode: localStorage.getItem("qb-app-mode") || "preset",
     appCustomAccent: localStorage.getItem("qb-app-custom-accent") || "#dfb347",
@@ -1291,7 +1292,7 @@ function saveFilterState() {
   };
   saveModeFilters(filterState);
 }
-const PER_MODE_SETTING_KEYS = ["allowRebuzzes", "stopOnPower", "allowSkips", "strictness", "useWeights", "buzzTimeout", "buzzWindow", "bonusTimer", "revealSpeed", "autoReveal", "bonusAfter", "hidePronunciations", "showQuestionMeta"];
+const PER_MODE_SETTING_KEYS = ["allowRebuzzes", "stopOnPower", "allowSkips", "strictness", "useWeights", "buzzTimeout", "buzzWindow", "bonusTimer", "revealSpeed", "autoReveal", "bonusAfter", "hidePronunciations", "hideNotes", "showQuestionMeta"];
 function applyModeSettings(saved) {
   if (!saved || typeof saved.settings !== "object") return;
   for (const k of PER_MODE_SETTING_KEYS) if (k in saved.settings) state.settings[k] = saved.settings[k];
@@ -2589,6 +2590,7 @@ function renderQuestion(question) {
 function renderTossup(q) {
   let text = q.question_sanitized || q.question || "";
   if (state.settings.hidePronunciations) text = stripPronunciations(text);
+  text = applyNoteFilter(text);
   text = window.QB?.applyTextTransforms?.(text, { type: "tossup", question: q }) ?? text;
   const powerIdx = text.indexOf("(*)");
   const displayText = text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "");
@@ -2621,6 +2623,7 @@ function renderTossup(q) {
 async function renderBonus(q) {
   let leadin = q.leadin_sanitized || q.leadin || "";
   if (state.settings.hidePronunciations) leadin = stripPronunciations(leadin);
+  leadin = applyNoteFilter(leadin);
   leadin = window.QB?.applyTextTransforms?.(leadin, { type: "bonus-leadin", question: q }) ?? leadin;
   let parts;
   try {
@@ -2650,6 +2653,7 @@ async function renderBonus(q) {
   for (let i = 0; i < 3; i++) {
     let partText = parts[i] || `Part ${i + 1}`;
     if (state.settings.hidePronunciations) partText = stripPronunciations(partText);
+    partText = applyNoteFilter(partText);
     partText = window.QB?.applyTextTransforms?.(partText, { type: "bonus-part", question: q, part: i }) ?? partText;
     $(`#bonus-text-${i}`).textContent = partText;
     $(`#bonus-input-${i}`).value = "";
@@ -3580,6 +3584,52 @@ function reviewDueUrl() {
 }
 
 const PRON_ACRONYMS = new Set(["USA", "USSR", "NATO", "DNA", "RNA", "UN", "US", "UK", "EU", "TV", "FBI", "CIA", "NASA", "WWI", "WWII", "NBA", "NFL", "MLB", "NHL", "NCAA", "GDP", "AIDS", "HIV", "BC", "AD", "BCE", "CE", "II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "MVP", "CEO", "PhD", "JFK", "FDR", "POW", "AI", "IQ", "OK"]);
+// Remove notes aimed at the MODERATOR/READER/EDITOR, keeping the ones aimed at
+// players. That distinction matters: 645 spans in the dump say "Note to
+// players: two answers required" and carry the answer requirement, while 837
+// moderator/reader and 191 editor/writer notes are reading directions or
+// outright spoilers. A blanket "contains the word note" strip would eat
+// answerlines ("Notes from the Underground", "hell notes"), so every pattern
+// below is anchored to an explicit audience.
+const NOTE_AUDIENCE = "(?:moderators?|readers?|editors?|writers?|authors?|ed)";
+// A moderator-addressed span that ALSO speaks to players carries an answer
+// requirement — "[MODERATOR, please read aloud to teams: both type of work and
+// composer required]" — so it stays. Found by sweeping the real corpus.
+// Merely naming players is not enough — "read the answerline to yourself before
+// reading to players" is still a moderator instruction. Keep only spans that
+// state an answer REQUIREMENT to the players, or are explicitly to be read out.
+function noteMentionsPlayers(span) {
+  const aboutPlayers = /\b(players?|teams?)\b/i.test(span);
+  const isRequirement = /\b(required|acceptable|needed|prompt(?:able)?|do not accept)\b/i.test(span);
+  // "...(do not read aloud to teams)" is the opposite instruction, so the
+  // negated form must not count as player-facing.
+  const readAloud = /\bread\s+(?:this\s+|the\s+following\s+)?aloud\s+to\b/i.test(span)
+    && !/\b(?:do\s+not|don't|never|not)\s+(?:to\s+be\s+)?read\b/i.test(span);
+  return (aboutPlayers && isRequirement) || readAloud;
+}
+function stripModeratorNotes(text) {
+  let t = String(text || "");
+  const cut = (re) => { t = t.replace(re, (m) => (noteMentionsPlayers(m) ? m : "")); };
+  // bracketed / parenthesised / curly / angled, in any of the observed shapes:
+  //   [Note to moderator: …]  (Moderator Note: …)  [Ed's note: …]
+  //   [NOTE TO READER, NOT TO BE READ ALOUD: …]     [moderator: emphasize here]
+  const inner = `(?:notes?\\s+to\\s+(?:the\\s+)?${NOTE_AUDIENCE}\\b|${NOTE_AUDIENCE}(?:'s|s')?\\s+notes?\\b|${NOTE_AUDIENCE}\\s*[:,])`;
+  cut(new RegExp(`\\s*\\[\\s*${inner}[^\\]]*\\]`, "gi"));
+  cut(new RegExp(`\\s*\\(\\s*${inner}[^)]*\\)`, "gi"));
+  cut(new RegExp(`\\s*\\{\\s*${inner}[^}]*\\}`, "gi"));
+  cut(new RegExp(`\\s*<\\s*${inner}[^>]*>`, "gi"));
+  // BARE form — the largest group (628). Runs from "Note to moderator" to the
+  // end of that sentence. The dump sometimes omits the space after the period
+  // ("…required.A paramagnetic gas"), so a following capital also terminates it.
+  t = t.replace(new RegExp(`(?:^|\\s)notes?\\s+to\\s+(?:the\\s+)?${NOTE_AUDIENCE}\\b[^.!?]*[.!?]+\\s*`, "gi"), (m) => (noteMentionsPlayers(m) ? m : " "));
+  t = t.replace(new RegExp(`(?:^|\\s)${NOTE_AUDIENCE}(?:'s|s')?\\s+notes?\\s*:[^.!?]*[.!?]+\\s*`, "gi"), (m) => (noteMentionsPlayers(m) ? m : " "));
+  return t.replace(/\s{2,}/g, " ").trim();
+}
+// Applied wherever question or answer text is shown, gated on the setting.
+function applyNoteFilter(text) {
+  return state.settings.hideNotes ? stripModeratorNotes(text) : text;
+}
+
 function stripPronunciations(text) {
   let t = String(text || "");
   // Quoted guide in brackets/parens: ("kee-HO-tay"), ['zhawnr']
@@ -5304,6 +5354,18 @@ function setHidePron(on) {
   const b = $("#filter-hide-pron"); if (b) b.checked = on;
 }
 $("#opt-hide-pron")?.addEventListener("change", (e) => setHidePron(e.target.checked));
+
+function setHideNotes(on) {
+  state.settings.hideNotes = on;
+  lsSet("qb-hide-notes", on.toString());
+  const a = $("#opt-hide-notes"); if (a) a.checked = on;
+  const b = $("#filter-hide-notes"); if (b) b.checked = on;
+  if (state.currentQuestion) { try { state.mode === "bonuses" ? renderBonus(state.currentQuestion) : renderTossup(state.currentQuestion); } catch (e) {} }
+}
+$("#opt-hide-notes")?.addEventListener("change", (e) => setHideNotes(e.target.checked));
+$("#filter-hide-notes")?.addEventListener("change", (e) => setHideNotes(e.target.checked));
+{ const b = $("#filter-hide-notes"); if (b) b.checked = state.settings.hideNotes; }
+{ const a = $("#opt-hide-notes"); if (a) a.checked = state.settings.hideNotes; }
 $("#opt-bonus-after")?.addEventListener("change", (e) => { state.settings.bonusAfter = e.target.checked; lsSet("qb-bonus-after", e.target.checked.toString()); });
 $("#opt-review-negs")?.addEventListener("change", (e) => { state.settings.reviewNegs = e.target.checked; lsSet("qb-review-negs", e.target.checked.toString()); refreshReviewBadge(); });
 $("#opt-review-unans")?.addEventListener("change", (e) => { state.settings.reviewUnans = e.target.checked; lsSet("qb-review-unans", e.target.checked.toString()); refreshReviewBadge(); });
@@ -5768,6 +5830,7 @@ function formatSessionTitle(sid) {
 }
 
 function answerLineHtml(raw, sanitizedFallback) {
+  raw = applyNoteFilter(raw); sanitizedFallback = applyNoteFilter(sanitizedFallback);
   const src = (raw && String(raw).trim()) ? String(raw) : String(sanitizedFallback || "");
   const html = escapeHtml(src).replace(/&lt;(\/?)(b|u|i|em|strong)&gt;/gi, "<$1$2>");
   const d = document.createElement("div");
