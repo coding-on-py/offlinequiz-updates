@@ -1992,6 +1992,12 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .mp-chat-msg strong { color: var(--accent); }
 .mp-chat-sys { color: var(--text-muted); font-style: italic; }
 #mp-chat-input { width: 100%; }
+.mp-chatrow { display: flex; gap: 6px; align-items: stretch; }
+.mp-chatrow .mode-input { flex: 1; min-width: 0; }
+#mp-chat-scope { flex: 0 0 auto; min-width: 46px; }
+#mp-chat-scope.mp-scope-team { color: var(--accent); border-color: var(--accent); }
+.mp-chat-teamtag { font-size: 9px; font-weight: 700; letter-spacing: 0.5px; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 3px; margin-right: 2px; vertical-align: 1px; }
+.mp-chat-team { opacity: 0.95; }
 .ext-card-title { font-size: 14px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ext-card-desc { font-size: 12px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
 .ext-card-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }

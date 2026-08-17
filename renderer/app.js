@@ -1585,6 +1585,108 @@ function getSelectedSubcategories() {
   return collectSubcatFilters().subcategories;
 }
 
+// ── Filter-selection snapshot ──────────────────────────────────────────────
+// A lossless picture of the filter panel's SELECTION (what getActiveFilters
+// derives from), so another machine can mirror the panel exactly. The derived
+// filters object can't do this: it collapses fully-checked categories and
+// carries no parent info for subcategories, so the cascade can't be rebuilt
+// from it. Multiplayer uses this pair to keep every player's panel in sync.
+function getFilterSelectionSnapshot() {
+  const cats = [];
+  $$("#category-filters .category-group").forEach((g) => {
+    const cb = g.querySelector(".cat-checkbox");
+    if (!cb) return;
+    const subs = [...g.querySelectorAll(".subcat-checkbox:checked")].map((x) => x.value);
+    const alts = [...g.querySelectorAll(".altsub-checkbox:checked")].map((x) => x.value);
+    if (cb.checked || subs.length || alts.length) cats.push({ name: cb.value, subs, alts });
+  });
+  const _ya = parseInt($("#year-min")?.value || 2000), _yb = parseInt($("#year-max")?.value || 2026);
+  return {
+    v: 1,
+    cats,
+    difficulties: getSelectedDifficulties(),
+    yearMin: Math.min(_ya, _yb),
+    yearMax: Math.max(_ya, _yb),
+    powermarkOnly: !!$("#filter-powermark")?.checked,
+    standard: !!$("#filter-standard")?.checked,
+    starredOnly: !!$("#filter-starred")?.checked,
+  };
+}
+
+let _applySnapGen = 0;
+async function applyFilterSelectionSnapshot(snap) {
+  if (!snap || !Array.isArray(snap.cats)) return false;
+  const gen = ++_applySnapGen;   // a newer snapshot arriving mid-apply wins
+  const typeKey = state.mode === "bonuses" ? "bonuses" : "tossups";
+  if (!document.querySelector("#category-filters .category-group")) {
+    try { await loadCategories(typeKey); } catch { return false; }
+    if (gen !== _applySnapGen) return false;
+  }
+  const want = {};
+  snap.cats.forEach((c) => { if (c && c.name) want[c.name] = c; });
+  const setWeight = (label, on) => {
+    const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
+    if (w) w.value = on ? (parseFloat(w.value) > 0 ? w.value : "10") : "0";
+  };
+  for (const g of $$("#category-filters .category-group")) {
+    const cb = g.querySelector(".cat-checkbox");
+    const expand = g.querySelector(".cat-expand");
+    const subList = g.querySelector(".subcategory-list");
+    if (!cb) continue;
+    const w = want[cb.value];
+    // No events are dispatched anywhere here: the change handlers run the
+    // check-all cascade and saveFilterState, both wrong for a mirrored apply.
+    if (!w) {
+      cb.checked = false;
+      setWeight(cb.closest(".filter-item"), false);
+      if (expand) expand.textContent = "▸";
+      if (subList) {
+        subList.classList.add("hidden");
+        subList.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach((x) => {
+          x.checked = false;
+          setWeight(x.closest(".filter-item"), false);
+        });
+      }
+      continue;
+    }
+    cb.checked = true;
+    setWeight(cb.closest(".filter-item"), true);
+    if (expand) expand.textContent = "▾";
+    if (subList) {
+      try { await loadSubcategories(cb.value, typeKey, subList, true, false); } catch {}
+      if (gen !== _applySnapGen) return false;
+      if (subList.querySelector(".filter-item")) subList.classList.remove("hidden");
+      const subs = (w.subs || []), alts = (w.alts || []);
+      subList.querySelectorAll(".subcat-checkbox").forEach((x) => {
+        x.checked = subs.includes(x.value);
+        setWeight(x.closest(".filter-item"), x.checked);
+      });
+      subList.querySelectorAll(".altsub-checkbox").forEach((x) => {
+        x.checked = alts.includes(x.value);
+        setWeight(x.closest(".filter-item"), x.checked);
+      });
+      subList.querySelectorAll(".altsub-list").forEach((l) => {
+        const open = [...l.querySelectorAll(".altsub-checkbox")].some((x) => x.checked);
+        l.classList.toggle("hidden", !open);
+        const arrow = l.previousElementSibling?.querySelector?.(".altsub-expand");
+        if (arrow) arrow.textContent = open ? "▾" : "▸";
+      });
+    }
+  }
+  if (Array.isArray(snap.difficulties)) {
+    const wd = snap.difficulties.map(String);
+    $$("#difficulty-filters .diff-checkbox").forEach((x) => { x.checked = wd.includes(String(x.value)); });
+  }
+  if (snap.yearMin != null) { const e = $("#year-min"); if (e) e.value = snap.yearMin; }
+  if (snap.yearMax != null) { const e = $("#year-max"); if (e) e.value = snap.yearMax; }
+  updateYearLabel();
+  if (snap.powermarkOnly != null) { const e = $("#filter-powermark"); if (e) e.checked = !!snap.powermarkOnly; }
+  if (snap.standard != null) { const e = $("#filter-standard"); if (e) e.checked = !!snap.standard; }
+  if (snap.starredOnly != null) { const e = $("#filter-starred"); if (e) e.checked = !!snap.starredOnly; }
+  clearPrefetch();
+  return true;
+}
+
 function collectSubcatFilters() {
   const subs = new Set();
   const alts = new Set();
@@ -2258,6 +2360,10 @@ async function nextQuestion() {
     // Bonus-after-correct-tossup only exists in tossup practice.
     if (state._practiceBase === "tossups") {
       let b = b0;
+      if (!b && state._pairPrefetch && state._bonusFromQ && state._pairPrefetch.qid === state._bonusFromQ.id) {
+        try { b = await state._pairPrefetch.p; } catch { b = null; }
+      }
+      state._pairPrefetch = null;
       if (!b) b = await fetchMatchingBonus(state._bonusFromQ);
       if (b) {
         switchPracticeType("bonuses", "PRACTICE");
@@ -2283,40 +2389,38 @@ async function nextQuestion() {
       ? "/api/tossups/random"
       : "/api/bonuses/random";
 
-  const params = new URLSearchParams();
-  if (filters.categories?.length) params.set("categories", filters.categories.join(","));
-  if (filters.subcategories?.length) params.set("subcategories", filters.subcategories.join(","));
-  if (filters.alternateSubcategories?.length) params.set("alternateSubcategories", filters.alternateSubcategories.join(","));
-  if (filters.setNames?.length) params.set("setNames", filters.setNames.join(","));
-  if (filters.packetNumbers?.length) params.set("packetNumbers", filters.packetNumbers.join(","));
-  if (filters.difficulties?.length) params.set("difficulties", filters.difficulties.join(","));
-  if (filters.standard) params.set("standard", "1");
-  if (filters.powermarkOnly) params.set("powermarkOnly", "true");
-  if (filters.starredOnly) params.set("starredOnly", "true");
-  if (filters.yearMin) params.set("yearMin", filters.yearMin);
-  if (filters.yearMax) params.set("yearMax", filters.yearMax);
-  params.set("random", "1");
+  const params = _randomQuestionParams(filters);
 
-  let data;
-  try {
-    data = await API.get(`${endpoint}?${params}`);
-  } catch (e) {
-    console.error(e);
-    showError(e.name === "AbortError"
-      ? "Request timed out. The database may be too large."
-      : "Couldn't load question: " + (e.message || e));
-    return;
+  const qType = state.mode === "tossups" ? "tossup" : "bonus";
+  const servable = (q) => q && !isQuestionHidden(q.id, qType) &&
+    (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode }));
+
+  // Serve from the prefetch queue when it has something valid — this is what
+  // makes "next" instant. Fall back to a live fetch otherwise.
+  let question = null;
+  const _plist = state.mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
+  while (_plist.length && !question) {
+    const cand = _plist.shift();
+    if (servable(cand)) question = cand;
   }
-  let question = state.mode === "tossups" ? data.tossup : data.bonus;
-  if (data.error) { showError("Error: " + data.error); return; }
+
   if (!question) {
-    showError("No questions match your filters. Try broadening your criteria.");
-    return;
-  }
-  {
-    const qType = state.mode === "tossups" ? "tossup" : "bonus";
-    const servable = (q) => q && !isQuestionHidden(q.id, qType) &&
-      (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode }));
+    let data;
+    try {
+      data = await API.get(`${endpoint}?${params}`);
+    } catch (e) {
+      console.error(e);
+      showError(e.name === "AbortError"
+        ? "Request timed out. The database may be too large."
+        : "Couldn't load question: " + (e.message || e));
+      return;
+    }
+    question = state.mode === "tossups" ? data.tossup : data.bonus;
+    if (data.error) { showError("Error: " + data.error); return; }
+    if (!question) {
+      showError("No questions match your filters. Try broadening your criteria.");
+      return;
+    }
     for (let tries = 0; tries < 8 && !servable(question); tries++) {
       try {
         const retry = await API.get(`${endpoint}?${params}`);
@@ -2335,6 +2439,78 @@ async function nextQuestion() {
     return;
   }
   $("#session-counter").textContent = `${state.questionCount}`;
+  setTimeout(refillPrefetch, 0);
+}
+
+// ── Question preloading ────────────────────────────────────────────────────
+// Random-mode questions are fetched a few ahead in the background so pressing
+// "next" renders instantly instead of waiting on the year-filtered random
+// query (~150ms). Any filter-panel change empties the queue (a capture-phase
+// listener below), and hidden/plugin-filtered questions are re-checked at
+// serve time, so a stale entry can never be served.
+const _PREFETCH_TARGET = 3;
+const _prefetch = { tossups: [], bonuses: [], gen: 0, filling: false };
+function clearPrefetch() {
+  _prefetch.tossups.length = 0;
+  _prefetch.bonuses.length = 0;
+  _prefetch.gen++;
+}
+document.getElementById("filters-panel")?.addEventListener("change", clearPrefetch, true);
+document.getElementById("filters-panel")?.addEventListener("input", clearPrefetch, true);
+
+function _randomQuestionParams(filters) {
+  const params = new URLSearchParams();
+  if (filters.categories?.length) params.set("categories", filters.categories.join(","));
+  if (filters.subcategories?.length) params.set("subcategories", filters.subcategories.join(","));
+  if (filters.alternateSubcategories?.length) params.set("alternateSubcategories", filters.alternateSubcategories.join(","));
+  if (filters.setNames?.length) params.set("setNames", filters.setNames.join(","));
+  if (filters.packetNumbers?.length) params.set("packetNumbers", filters.packetNumbers.join(","));
+  if (filters.difficulties?.length) params.set("difficulties", filters.difficulties.join(","));
+  if (filters.standard) params.set("standard", "1");
+  if (filters.powermarkOnly) params.set("powermarkOnly", "true");
+  if (filters.starredOnly) params.set("starredOnly", "true");
+  if (filters.yearMin) params.set("yearMin", filters.yearMin);
+  if (filters.yearMax) params.set("yearMax", filters.yearMax);
+  params.set("random", "1");
+  return params;
+}
+
+function _prefetchEligible() {
+  const mv = $("#mode-select")?.value;
+  return state.sessionActive && !state.reviewIds && !state.bonusIds && !state._wantBonus &&
+    mv !== "import" && mv !== "set" &&
+    !$("#filter-starred")?.checked &&
+    (state.mode === "tossups" || state.mode === "bonuses") &&
+    (!state._practiceBase || state._practiceBase === state.mode);   // not the bonus-after-correct interlude
+}
+
+async function refillPrefetch() {
+  if (_prefetch.filling || !_prefetchEligible()) return;
+  _prefetch.filling = true;
+  const gen = _prefetch.gen;
+  const mode = state.mode;
+  const list = mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
+  const endpoint = mode === "tossups" ? "/api/tossups/random" : "/api/bonuses/random";
+  try {
+    let attempts = 0;
+    while (list.length < _PREFETCH_TARGET && attempts++ < _PREFETCH_TARGET * 3) {
+      // Fresh filters per fetch: in weighted mode every question is its own
+      // category roll, exactly as if it had been fetched on demand.
+      const filters = getFilters();
+      if (filters.starredOnly) break;
+      let q = null;
+      try {
+        const d = await API.get(`${endpoint}?${_randomQuestionParams(filters)}`);
+        q = mode === "tossups" ? d.tossup : d.bonus;
+      } catch { break; }
+      if (gen !== _prefetch.gen || mode !== state.mode) return;   // filters/mode moved on
+      if (!q) break;
+      const dup = list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id);
+      if (!dup) list.push(q);
+    }
+  } finally {
+    _prefetch.filling = false;
+  }
 }
 
 async function skipQuestion() {
@@ -2515,6 +2691,14 @@ async function fetchMatchingBonus(q) {
   if (q.difficulty != null) params.set("difficulties", String(q.difficulty));
   if ($("#mode-select")?.value === "set") { const sn = $("#mode-set-name")?.value; if (sn) params.set("setNames", sn); }
   try { const d = await API.get("/api/bonuses/random?" + params.toString()); return d.bonus || null; } catch { return null; }
+}
+
+// Start fetching the bonus-after-correct-tossup bonus the moment the tossup is
+// judged correct, so it's already here when the player presses next.
+function _primePairBonus() {
+  if (state._pendingPairedBonus || !state._bonusFromQ) { state._pairPrefetch = null; return; }
+  const q = state._bonusFromQ;
+  state._pairPrefetch = { qid: q.id, p: fetchMatchingBonus(q).catch(() => null) };
 }
 
 function restoreTossupDisplay() {
@@ -3257,6 +3441,7 @@ function displayTossupResult(result, userAnswer) {
     state._bonusFromQ = state.currentQuestion;
     const _mv = $("#mode-select")?.value;
     state._pendingPairedBonus = (_mv === "import" || _mv === "set") ? (state._currentPaired || null) : null;
+    _primePairBonus();
   }
 
   if (result.isPower) Sound.power();
@@ -3910,6 +4095,7 @@ function toggleResultOverride(markCorrect) {
       state._bonusFromQ = state.currentQuestion;
       const _mv = $("#mode-select")?.value;
       state._pendingPairedBonus = (_mv === "import" || _mv === "set") ? (state._currentPaired || null) : null;
+      _primePairBonus();
     } else if (!markCorrect && wasCorrect) {
       state._wantBonus = false;
       state._pendingPairedBonus = null;
@@ -7460,6 +7646,10 @@ function init() {
       getActiveFilters: () => getActiveFilters(),
       ensureFiltersLoaded: () => { if (!document.querySelector("#category-filters .category-group")) setMode(state.mode || "tossups"); },
       resetPracticeFilters: () => resetPracticeFiltersToDefaults(),
+      // Lossless panel-selection mirror (multiplayer keeps every player's
+      // category panel in sync through this pair).
+      getFilterSelectionSnapshot: () => getFilterSelectionSnapshot(),
+      applyFilterSelectionSnapshot: (snap) => applyFilterSelectionSnapshot(snap),
       getPracticeConfig: () => ({
         filters: getActiveFilters(),
         strictness: parseInt($("#strictness-slider")?.value || "10"),
