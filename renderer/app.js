@@ -2372,7 +2372,11 @@ function startSession() {
   state._wantBonus = false; state._pendingPairedBonus = null; state._currentPaired = null;
   state._starredQueue = null; state._starredSig = null; state._starredIdx = 0;
 
-  updateLiveStats();
+  // Repaint EVERYTHING the reset touched — the score pill and the session
+  // history panel otherwise keep showing the previous session until the
+  // first answer lands.
+  updateSessionStats();
+  renderHistoryPanel();
   $("#btn-start-session").innerHTML = state.mode === "tossups"
     ? keyLabelHtml("buzz", "Buzz")
     : keyLabelHtml("start-skip", "Skip");
