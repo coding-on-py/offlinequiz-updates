@@ -451,10 +451,37 @@
               </div>
             </div>
             <div id="theme-appearance-host"></div>
+            <div class="setting-row" style="margin-top:10px">
+              <span class="setting-label">Updates</span>
+              <span style="display:flex;gap:8px">
+                <span id="appearance-quick-app"><button class="btn btn-sm" id="btn-app-update-quick">Check app updates</button></span>
+                <button class="btn btn-sm" id="btn-update-db-quick">Check question updates</button>
+              </span>
+            </div>
           </div>
+        <div class="stats-section" id="settings-nav">
+            <div class="stats-section-title">SETTINGS</div>
+            <div class="settings-nav-grid">
+              <button class="btn settings-nav-btn" data-ovl="ovl-gameplay">Gameplay</button>
+              <button class="btn settings-nav-btn" data-ovl="ovl-updates">Updates &amp; Database</button>
+              <button class="btn settings-nav-btn" data-ovl="ovl-extensions">Extensions</button>
+              <button class="btn settings-nav-btn" data-ovl="ovl-hotkeys">Hotkeys</button>
+            </div>
+        </div>
+        </div>
+          <div class="settings-art-panel">
+            <div id="settings-art-content" style="flex:1;overflow:hidden"></div>
+          </div>
+      </div>
+    </div>
+
+
+    <div class="qb-overlay settings-ovl hidden" id="ovl-gameplay">
+      <div class="settings-modal">
+        <div class="settings-modal-head"><span>GAMEPLAY</span><button class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
+        <div class="settings-modal-body">
         <div class="stats-section">
-            <div class="stats-section-title">GAMEPLAY</div>
-            <div class="setting-row">
+                        <div class="setting-row">
               <span class="setting-label">Reveal speed<span class="qb-info" data-tip="How fast question text appears, in milliseconds per character. 0 shows the whole question instantly.">i</span></span>
               <div class="slider-group">
                 <input type="range" id="speed-slider" min="0" max="100" step="5" value="50">
@@ -492,10 +519,6 @@
             <input type="checkbox" id="opt-review-nopower">
           </div>
           <div class="setting-row">
-            <span class="setting-label">Skip if unpowerable<span class="qb-info" data-tip="Don&#39;t add correct answers when the question has no power mark at all.">i</span></span>
-            <input type="checkbox" id="opt-review-skipnomark" checked>
-          </div>
-          <div class="setting-row">
             <span class="setting-label">Answer timer<span class="qb-info" data-tip="Seconds you get to type an answer after buzzing. 0 means no limit.">i</span></span>
             <div class="slider-group">
               <input type="range" id="buzz-timeout-slider" min="0" max="30" step="1" value="10">
@@ -503,6 +526,15 @@
             </div>
           </div>
         </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="qb-overlay settings-ovl hidden" id="ovl-updates">
+      <div class="settings-modal">
+        <div class="settings-modal-head"><span>UPDATES &amp; DATABASE</span><button class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
+        <div class="settings-modal-body">
           <div class="stats-section">
             <div class="stats-section-title">DATABASE</div>
             <div class="setting-row">
@@ -541,19 +573,33 @@
             </div>
             <div id="app-update-status" class="text-muted" style="font-size:11px;margin-top:6px"></div>
           </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="qb-overlay settings-ovl hidden" id="ovl-extensions">
+      <div class="settings-modal">
+        <div class="settings-modal-head"><span>EXTENSIONS</span><button class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
+        <div class="settings-modal-body">
           <div class="stats-section" id="ext-settings-section">
-            <div class="stats-section-title">EXTENSIONS</div>
-            <div id="ext-settings-host"></div>
+                        <div id="ext-settings-host"></div>
           </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="qb-overlay settings-ovl hidden" id="ovl-hotkeys">
+      <div class="settings-modal">
+        <div class="settings-modal-head"><span>HOTKEYS</span><button class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
+        <div class="settings-modal-body">
           <div class="stats-section hotkey-section">
-            <div class="stats-section-title">HOTKEY BINDINGS</div>
-            
+                        
             <div id="hotkey-table"></div>
           </div>
+
         </div>
-          <div class="settings-art-panel">
-            <div id="settings-art-content" style="flex:1;overflow:hidden"></div>
-          </div>
       </div>
     </div>
 

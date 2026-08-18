@@ -2489,3 +2489,12 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
 /* bonus verdicts become clickable once the bonus is recorded */
 #bonus-parts-area .bonus-verdict { cursor: pointer; }
 #bonus-parts-area .bonus-verdict:hover { filter: brightness(1.35); text-decoration: underline; }
+
+/* ── settings section buttons + modals ── */
+.settings-nav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.settings-nav-btn { justify-content: flex-start; font-weight: 600; min-height: 46px; font-size: 13px; }
+.settings-ovl { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 1300; }
+.settings-ovl.hidden { display: none; }
+.settings-modal { width: min(720px, 92vw); max-height: 84vh; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px 20px; box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45); }
+.settings-modal-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; letter-spacing: 1px; font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; }
+.settings-modal .stats-section { border: none; background: transparent; box-shadow: none; padding: 0; margin: 0 0 10px; }

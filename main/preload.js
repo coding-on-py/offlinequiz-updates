@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 
 contextBridge.exposeInMainWorld("qbreader", {
   getSets: () => ipcRenderer.invoke("get-sets"),
@@ -135,4 +135,7 @@ contextBridge.exposeInMainWorld("qbreader", {
     return () => ipcRenderer.removeListener("app-update-progress", handler);
   },
   relaunchApp: () => ipcRenderer.invoke("app-relaunch"),
+  // Real Chromium page zoom — scales layout, vh/vw and canvases coherently,
+  // exactly like a browser's Cmd+/- (CSS zoom does not).
+  setZoomFactor: (f) => { try { webFrame.setZoomFactor(Number(f) || 1); } catch {} },
 });

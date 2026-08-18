@@ -340,6 +340,7 @@ const DEFAULT_HOTKEYS = {
   "nav-extensions": "7",
   "text-bigger": "Meta+=",
   "text-smaller": "Meta+-",
+  "text-reset": "Meta+0",
 };
 
 const HOTKEY_LABELS = {
@@ -361,6 +362,7 @@ const HOTKEY_LABELS = {
   "nav-extensions": "Plugins & Themes",
   "text-bigger": "Bigger text",
   "text-smaller": "Smaller text",
+  "text-reset": "Reset text size",
 };
 
 function getHotkey(action) {
@@ -388,19 +390,27 @@ const KEY_GLYPHS = {
   Enter: "↵", " ": "Space", Escape: "Esc",
   Meta: "⌘", Cmd: "⌘", Alt: "⌥", Option: "⌥", Ctrl: "⌃", Shift: "⇧",
 };
-function keyDisplay(action) {
-  const b = getHotkey(action);
+function bindingGlyphs(b) {
   if (!b || b === "Not Set") return "—";
   return b.split("+").map((p) => KEY_GLYPHS[p] || (p.length === 1 ? p.toUpperCase() : p)).join("+");
 }
+function keyDisplay(action) {
+  return bindingGlyphs(getHotkey(action));
+}
 
-// UI text scale (Cmd+= / Cmd+- by default). body.zoom scales everything and
-// survives in both Electron and the dev browser.
+// UI text scale (Cmd+= / Cmd+- / Cmd+0 by default). In Electron this is REAL
+// Chromium page zoom via webFrame — layout, vh/vw units and canvases all scale
+// together, exactly like a browser's Cmd+/-; CSS zoom (the dev-browser
+// fallback) can't do that, which is why the old version pushed the UI around.
+function _applyUiScale(v) {
+  if (window.qbreader?.setZoomFactor) window.qbreader.setZoomFactor(v);
+  else document.documentElement.style.zoom = v === 1 ? "" : String(v);
+}
 function setUiScale(v) {
-  v = Math.max(0.7, Math.min(1.6, Math.round(v * 20) / 20));
+  v = Math.max(0.5, Math.min(2, Math.round(v * 20) / 20));
   state.settings.uiScale = v;
   lsSet("qb-ui-scale", String(v));
-  document.body.style.zoom = v === 1 ? "" : String(v);
+  _applyUiScale(v);
   window.QB?.toast?.("Text size " + Math.round(v * 100) + "%");
 }
 
@@ -760,7 +770,7 @@ document.addEventListener("keydown", (e) => {
     const conflict = bindingConflict(action, newBinding);
     if (conflict) {
       state._hotkeyError = action;
-      window.QB?.toast?.(`"${newBinding}" is already used by "${conflict.label}"`, "error");
+      window.QB?.toast?.(`"${bindingGlyphs(newBinding)}" is already used by "${conflict.label}"`, "error");
       renderHotkeySettings();
       setTimeout(() => { state._hotkeyError = null; renderHotkeySettings(); }, 1600);
       return;
@@ -774,6 +784,7 @@ document.addEventListener("keydown", (e) => {
 
   if (matchesHotkey(e, "text-bigger")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) + 0.05); return; }
   if (matchesHotkey(e, "text-smaller")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) - 0.05); return; }
+  if (matchesHotkey(e, "text-reset")) { e.preventDefault(); setUiScale(1); return; }
 
   {
     const tag = e.target.tagName;
@@ -956,7 +967,7 @@ setInterval(_maybeIdleUpdateReminder, 60 * 1000);
 
 {
   const z = parseFloat(lsGet("qb-ui-scale") || "1");
-  if (z && z !== 1) { state.settings.uiScale = z; document.body.style.zoom = String(z); }
+  if (z && z !== 1) { state.settings.uiScale = z; _applyUiScale(z); }
 }
 
 
@@ -5113,9 +5124,7 @@ function windowedChart(canvas, items, drawSlice) {
   st.drawSlice = drawSlice;
   st.render = () => {
     drawSlice(st.items.slice(st.offset, st.offset + st.visible));
-    drawWindowScrollbar(canvas, st);
     canvas.style.cursor = st.maxOff > 0 ? "grab" : "";
-    canvas.title = "";
   };
   st.render();
   if (!canvas.__winWired) {
@@ -5151,24 +5160,6 @@ function windowedChart(canvas, items, drawSlice) {
     canvas.addEventListener("pointerup", endDrag);
     canvas.addEventListener("pointercancel", endDrag);
   }
-}
-function drawWindowScrollbar(canvas, st) {
-  if (st.maxOff <= 0) return;
-  const ctx = canvas.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
-  const W = canvas.width / dpr, H = canvas.height / dpr;
-  const t = chartTheme();
-  const x0 = 50, x1 = W - 16, track = x1 - x0;
-  const frac = st.visible / st.items.length;
-  const thumbW = Math.max(24, track * frac);
-  const thumbX = x0 + (track - thumbW) * (st.maxOff ? st.offset / st.maxOff : 0);
-  ctx.save();
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = t.border; ctx.globalAlpha = 0.4;
-  rrect(ctx, x0, H - 5, track, 3, 2); ctx.fill();
-  ctx.globalAlpha = 1; ctx.fillStyle = t.muted;
-  rrect(ctx, thumbX, H - 5, thumbW, 3, 2); ctx.fill();
-  ctx.restore();
 }
 function statsPeriodCutoff() {
   const p = _statsPeriod;
@@ -6006,6 +5997,29 @@ function renderArtToFit(container, artText, retries) {
 $("#btn-update-db")?.addEventListener("click", checkForUpdatesUI);
 
 $("#opt-app-autoupdate")?.addEventListener("change", (e) => lsSet("qb-app-autoupdate", e.target.checked.toString()));
+
+// ── settings section overlays ──────────────────────────────────────────────
+// Everything except APPEARANCE lives behind a section button that opens a
+// modal. Esc / backdrop / Close all dismiss (capture-phase Esc so the global
+// Back never fires while a modal is up; a pending hotkey rebind keeps its own
+// Esc-to-cancel).
+function openSettingsOverlay(id) { const o = document.getElementById(id); if (o) o.classList.remove("hidden"); }
+function closeSettingsOverlays() {
+  let any = false;
+  document.querySelectorAll(".settings-ovl:not(.hidden)").forEach((o) => { o.classList.add("hidden"); any = true; });
+  return any;
+}
+$$(".settings-nav-btn").forEach((b) => b.addEventListener("click", () => openSettingsOverlay(b.dataset.ovl)));
+document.addEventListener("click", (e) => {
+  if (e.target.classList?.contains("settings-ovl")) e.target.classList.add("hidden");
+  else if (e.target.closest?.(".settings-ovl-close")) e.target.closest(".settings-ovl").classList.add("hidden");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !state.hotkeyRebinding && closeSettingsOverlays()) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+// Quick access from APPEARANCE: same two checks, opened inside their section.
+$("#btn-app-update-quick")?.addEventListener("click", () => { openSettingsOverlay("ovl-updates"); $("#btn-app-update")?.click(); });
+$("#btn-update-db-quick")?.addEventListener("click", () => { openSettingsOverlay("ovl-updates"); $("#btn-update-db")?.click(); });
 $("#opt-app-critical-auto")?.addEventListener("change", (e) => lsSet("qb-app-critical-auto", e.target.checked.toString()));
 function isNetworkErr(msg) {
   return /failed to fetch|fetch failed|network|err_|enotfound|getaddrinfo|timed ?out|econn|\bdns\b/i.test(String(msg || ""));
@@ -6071,7 +6085,7 @@ async function syncAppUpdateUI() {
   try {
     const info = await API.get("/api/app-update-info");
     const sec = $("#app-update-section"); if (!sec) return;
-    if (info.dev) { sec.style.display = "none"; return; }
+    if (info.dev) { sec.style.display = "none"; const q = $("#appearance-quick-app"); if (q) q.style.display = "none"; return; }
     const auto = $("#opt-app-autoupdate"); if (auto) auto.checked = localStorage.getItem("qb-app-autoupdate") !== "false";
     const crit = $("#opt-app-critical-auto"); if (crit) crit.checked = localStorage.getItem("qb-app-critical-auto") !== "false";
     const status = $("#app-update-status");
@@ -6233,7 +6247,7 @@ function renderHotkeySettings() {
         <td>${escapeHtml(label)}</td>
         <td><span class="hk-scope">${escapeHtml(hotkeyScopeLabel(action))}</span></td>
         <td class="hotkey-binding">
-          ${isRebinding ? '<span class="hotkey-listening">Press key…</span>' : escapeHtml(binding)}
+          ${isRebinding ? '<span class="hotkey-listening">Press key…</span>' : escapeHtml(bindingGlyphs(binding))}
         </td>
       </tr>`;
   }

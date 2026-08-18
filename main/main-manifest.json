@@ -1,5 +1,5 @@
 {
-  "version": "14.7",
+  "version": "14.8",
   "files": {
     "index.js": "a878f1e13da58e79e96933cc143d7732bd54b77bd166db4cfc7b0de34050aace",
     "database.js": "c716e1f295ea55def133d6677d4a1f16e0f28ff78b3f6851b97dbf16495a9d9e",
@@ -8,8 +8,8 @@
     "scoring.js": "ddd77cebe56bc87fdc1676d8ea528342c9c2720a4357dfd809cea0a2a65369a6",
     "stats.js": "f869527a4efbc8594fba28814d1d36e238097f26a16c2e34db032e96674e65bd",
     "updater.js": "a804069ba96b0891464a1c0d4a22bb9d95201158458a5a765478f7da3dd3a1e3",
-    "preload.js": "05bd5a6c65f6898033a0556ea798f22bfb8b718d7d2572eabc9d3b92d1818bae",
+    "preload.js": "8d7f3792c809562345e5991baad795798ff27876d4ad87dc65c1c9557dc10ddc",
     "runtime.js": "44ab1c527583933add5d4ff882d79c2e32c017211d964491e3e4d41378c50fb5"
   },
-  "signature": "W7AQZsgcnxFeYkFXKw3qznkBuEb4AV9XL/f1ZUQz8i+8GHcQ460n3ViLj6OGuQa47N0wwUGy5mBMrRJAR5agAw=="
+  "signature": "hPEXLkBczsQ1gYqdJiinZajk9BrEFeuJecnBDNj4yqqaXaOmRzKS7vPIyBa6RCFfLftOosTnCAl62hLcy10yAQ=="
 }
