@@ -96,7 +96,7 @@ const API = isElectron
         if (path === "/api/sessions/prune") return window.qbreader.pruneSessions(data.days);
         if (path === "/api/plugin-data") return window.qbreader.setPluginData(data.plugin, data.key, data.value);
         if (path === "/api/plugin-sql") return window.qbreader.pluginSql(data.plugin, data.sql, data.params);
-        if (path === "/api/check-bonus") return window.qbreader.checkBonus(data.questionId, data.answers, data.sessionId, data.strictness);
+        if (path === "/api/check-bonus") return window.qbreader.checkBonus(data.questionId, data.answers, data.sessionId, data.strictness, data.overrides);
         if (path === "/api/starred/toggle") return window.qbreader.toggleStar(data.questionId, data.type);
         if (path === "/api/profiles") return window.qbreader.createProfile(data.name);
         if (path === "/api/profiles/activate") return window.qbreader.setActiveProfile(data.id);
@@ -338,6 +338,8 @@ const DEFAULT_HOTKEYS = {
   "nav-settings": "5",
   "nav-player": "6",
   "nav-extensions": "7",
+  "text-bigger": "Meta+=",
+  "text-smaller": "Meta+-",
 };
 
 const HOTKEY_LABELS = {
@@ -357,6 +359,8 @@ const HOTKEY_LABELS = {
   "nav-settings": "Settings",
   "nav-player": "Player",
   "nav-extensions": "Plugins & Themes",
+  "text-bigger": "Bigger text",
+  "text-smaller": "Smaller text",
 };
 
 function getHotkey(action) {
@@ -366,14 +370,15 @@ function getHotkey(action) {
 function matchesHotkey(e, action) {
   const binding = getHotkey(action);
   if (!binding || binding === "Not Set") return false;
-  if (e.metaKey || e.altKey) return false;
+  // EXACT modifier match: "Shift+E" never fires on plain E, and Cmd/Alt combos
+  // are real bindings now instead of being rejected outright.
   const parts = binding.toLowerCase().split("+");
-  const ctrl = parts.includes("ctrl");
-  const shift = parts.includes("shift");
   const key = parts[parts.length - 1];
   return (
-    e.ctrlKey === ctrl &&
-    e.shiftKey === shift &&
+    e.ctrlKey === parts.includes("ctrl") &&
+    e.shiftKey === parts.includes("shift") &&
+    e.metaKey === (parts.includes("meta") || parts.includes("cmd")) &&
+    e.altKey === (parts.includes("alt") || parts.includes("option")) &&
     (e.key.toLowerCase() === key || (key === "space" && (e.key === " " || e.code === "Space")))
   );
 }
@@ -381,11 +386,22 @@ function matchesHotkey(e, action) {
 const KEY_GLYPHS = {
   ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
   Enter: "↵", " ": "Space", Escape: "Esc",
+  Meta: "⌘", Cmd: "⌘", Alt: "⌥", Option: "⌥", Ctrl: "⌃", Shift: "⇧",
 };
 function keyDisplay(action) {
   const b = getHotkey(action);
   if (!b || b === "Not Set") return "—";
   return b.split("+").map((p) => KEY_GLYPHS[p] || (p.length === 1 ? p.toUpperCase() : p)).join("+");
+}
+
+// UI text scale (Cmd+= / Cmd+- by default). body.zoom scales everything and
+// survives in both Electron and the dev browser.
+function setUiScale(v) {
+  v = Math.max(0.7, Math.min(1.6, Math.round(v * 20) / 20));
+  state.settings.uiScale = v;
+  lsSet("qb-ui-scale", String(v));
+  document.body.style.zoom = v === 1 ? "" : String(v);
+  window.QB?.toast?.("Text size " + Math.round(v * 100) + "%");
 }
 
 function keyLabelHtml(action, label) {
@@ -733,7 +749,9 @@ document.addEventListener("keydown", (e) => {
     }
     if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
     const parts = [];
+    if (e.metaKey) parts.push("Meta");
     if (e.ctrlKey) parts.push("Ctrl");
+    if (e.altKey) parts.push("Alt");
     if (e.shiftKey) parts.push("Shift");
     parts.push(e.code === "Space" ? "Space" : e.key);
     const newBinding = parts.join("+");
@@ -753,6 +771,9 @@ document.addEventListener("keydown", (e) => {
     updateKeyLabels();
     return;
   }
+
+  if (matchesHotkey(e, "text-bigger")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) + 0.05); return; }
+  if (matchesHotkey(e, "text-smaller")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) - 0.05); return; }
 
   {
     const tag = e.target.tagName;
@@ -856,6 +877,10 @@ document.addEventListener("keydown", (e) => {
       if (matchesHotkey(e, "mark-correct")) { e.preventDefault(); toggleResultOverride(true); }
       else if (matchesHotkey(e, "mark-incorrect")) { e.preventDefault(); toggleResultOverride(false); }
     }
+    if (state.resultAreaVisible && state.mode === "bonuses" && state._bonusRecorded) {
+      if (matchesHotkey(e, "mark-correct")) { e.preventDefault(); applyBonusOverride(state._bonusLastIdx != null ? state._bonusLastIdx : 2, true); }
+      else if (matchesHotkey(e, "mark-incorrect")) { e.preventDefault(); applyBonusOverride(state._bonusLastIdx != null ? state._bonusLastIdx : 2, false); }
+    }
     if (e.key === "Enter" && state.resultAreaVisible && !isInput) {
       e.preventDefault();
       nextQuestion();
@@ -870,6 +895,81 @@ function applyTheme() {
 }
 
 applyTheme();
+
+// ── custom info tooltips (.qb-info[data-tip]) ──────────────────────────────
+// Our own hover card, not the OS title bubble: instant-ish, themed, and it
+// works identically in Electron and the dev browser.
+{
+  let tipEl = null, tipTimer = null;
+  const showTip = (icon) => {
+    if (!tipEl) { tipEl = document.createElement("div"); tipEl.id = "qb-tooltip"; document.body.appendChild(tipEl); }
+    tipEl.textContent = icon.dataset.tip || "";
+    tipEl.classList.remove("on");
+    const r = icon.getBoundingClientRect();
+    tipEl.style.left = "0px"; tipEl.style.top = "0px";
+    // measure after content is set, then clamp inside the viewport
+    requestAnimationFrame(() => {
+      const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+      let x = r.left + r.width / 2 - tw / 2;
+      x = Math.max(8, Math.min(window.innerWidth - tw - 8, x));
+      let y = r.top - th - 8;
+      if (y < 8) y = r.bottom + 8;
+      tipEl.style.left = x + "px"; tipEl.style.top = y + "px";
+      tipEl.classList.add("on");
+    });
+  };
+  const hideTip = () => { clearTimeout(tipTimer); tipTimer = null; if (tipEl) tipEl.classList.remove("on"); };
+  document.addEventListener("mouseover", (e) => {
+    const icon = e.target.closest?.(".qb-info");
+    if (!icon || !icon.dataset.tip) return;
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => showTip(icon), 120);
+  });
+  document.addEventListener("mouseout", (e) => {
+    if (e.target.closest?.(".qb-info")) hideTip();
+  });
+  document.addEventListener("scroll", hideTip, true);
+}
+
+// ── idle update reminder ───────────────────────────────────────────────────
+// If an update is available and the user has been away for 30+ minutes, a
+// small card appears in the corner. One reminder per idle stretch; "Later"
+// silences that version until a newer one ships. (Checks are a manifest peek —
+// nothing downloads until the user acts.)
+let _lastActive = Date.now(), _idleReminded = false;
+["pointerdown", "keydown", "mousemove", "wheel"].forEach((ev) =>
+  document.addEventListener(ev, () => { _lastActive = Date.now(); _idleReminded = false; }, { passive: true })
+);
+const IDLE_REMIND_MS = 30 * 60 * 1000;
+async function _maybeIdleUpdateReminder() {
+  if (_idleReminded || Date.now() - _lastActive < IDLE_REMIND_MS) return;
+  if (document.getElementById("qb-idle-update")) return;
+  _idleReminded = true;   // one attempt per idle stretch, even on errors
+  let peek = null;
+  try { peek = await peekAppUpdate(); } catch { return; }
+  if (!peek || !peek.available) return;
+  if (lsGet("qb-idle-upd-dismissed") === String(peek.version)) return;
+  const el = document.createElement("div");
+  el.id = "qb-idle-update";
+  el.innerHTML = `
+    <div class="qb-idle-box">
+      <div class="qb-idle-title">Update available</div>
+      <div class="qb-idle-body">OfflineQuiz v${escapeHtml(String(peek.version))} is ready${peek.critical ? " — it includes an important fix" : ""}. Install it from Settings; it applies the next time the app opens.</div>
+      <div class="qb-idle-actions">
+        <button class="btn btn-sm btn-primary" id="qb-idle-go">Open Settings</button>
+        <button class="btn btn-sm btn-ghost" id="qb-idle-later">Later</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  el.querySelector("#qb-idle-go").onclick = () => { el.remove(); navigateTo("settings"); };
+  el.querySelector("#qb-idle-later").onclick = () => { lsSet("qb-idle-upd-dismissed", String(peek.version)); el.remove(); };
+}
+setInterval(_maybeIdleUpdateReminder, 60 * 1000);
+
+{
+  const z = parseFloat(lsGet("qb-ui-scale") || "1");
+  if (z && z !== 1) { state.settings.uiScale = z; document.body.style.zoom = String(z); }
+}
 
 
 function computeDailyStreak(byDate) {
@@ -1460,6 +1560,11 @@ async function loadSubcategories(category, type, container, silent = false, chec
     // silently ticked inside, and the row still shows the closed arrow.
     container.querySelectorAll(".altsub-list").forEach((l) => l.classList.remove("hidden"));
     container.querySelectorAll(".altsub-expand").forEach((x) => { x.textContent = "▾"; });
+    // Tell panel listeners (multiplayer sync, prefetch invalidation) that the
+    // cascade FINISHED: these boxes are checked programmatically after an async
+    // fetch, so without an event a multiplayer host whose debounce fired first
+    // would broadcast a half-loaded selection and never correct it.
+    container.dispatchEvent(new Event("change", { bubbles: true }));
   };
 
   if (state.subcategoryCache[cacheKey]) {
@@ -2312,6 +2417,7 @@ async function nextQuestion() {
   state.revealIndex = 0;
   state.prePowerEnd = 0;
   state.bonusPartsAnswered = 0;
+  state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = [null, null, null]; state._bonusJudged = []; state._bonusLastIdx = null;
   state.bonusUserAnswers = [];
   state.resultAreaVisible = false;
 
@@ -2832,6 +2938,7 @@ async function renderBonus(q) {
   bonusArea.classList.remove("hidden");
 
   state.bonusPartsAnswered = 0;
+  state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = [null, null, null]; state._bonusJudged = []; state._bonusLastIdx = null;
   state.bonusUserAnswers = [];
 
   for (let i = 0; i < 3; i++) {
@@ -2888,6 +2995,7 @@ function bonusPartTimeUp(idx) {
 
 function finalizeBonusPart(idx) {
   stopEventTimer();
+  state._bonusLastIdx = idx;
   revealBonusPartAnswer(idx);
   if (idx < 2) { state.bonusAwait = idx + 1; showBonusNextHint(idx + 1); }
   else { $("#btn-submit-bonus").classList.add("hidden"); submitBonusAnswers(); }
@@ -2945,6 +3053,10 @@ async function submitBonusAnswers() {
       sessionId: state.sessionId,
       strictness: state.settings.strictness, // same strictness as the per-part ✓/✗ verdicts
     });
+    state._bonusResult = result;
+    state._bonusJudged = (result.parts || []).map((pt) => !!pt.correct);
+    state._bonusOverrides = [null, null, null];
+    state._bonusRecorded = true;
     displayBonusResult(result, answers);
     updateSessionStats({ points: result.totalPoints, correct: result.totalPoints > 0 });
   } catch (e) {
@@ -4150,6 +4262,69 @@ function toggleResultOverride(markCorrect) {
   Sound.toggle();
 }
 
+// ── bonus mark up / mark down ──────────────────────────────────────────────
+// After a bonus is recorded, any part's ✓/✗ verdict can be overruled — click
+// it, or use the mark-correct/incorrect hotkeys on the last revealed part.
+// The re-record goes through /api/check-bonus with an overrides array, which
+// upserts the same session row with the recomputed score.
+async function applyBonusOverride(idx, force) {
+  if (!state._bonusRecorded || !state.currentQuestion || state.mode !== "bonuses") return;
+  if (idx == null || idx < 0 || idx > 2) return;
+  if (state._bonusBusy) return;
+  const judged = state._bonusJudged || [];
+  const shown = state._bonusOverrides[idx] != null ? state._bonusOverrides[idx] : judged[idx];
+  const next = force != null ? !!force : !shown;
+  if (next === shown) return;
+  state._bonusOverrides[idx] = next === !!judged[idx] ? null : next;
+  state._bonusBusy = true;
+  const prevPts = state._bonusResult ? state._bonusResult.totalPoints : 0;
+  let result;
+  try {
+    result = await API.post("/api/check-bonus", {
+      questionId: state.currentQuestion.id,
+      answers: [state.bonusUserAnswers[0] || "", state.bonusUserAnswers[1] || "", state.bonusUserAnswers[2] || ""],
+      sessionId: state.sessionId,
+      strictness: state.settings.strictness,
+      overrides: state._bonusOverrides.slice(),
+    });
+  } catch (e) {
+    state._bonusBusy = false;
+    return;
+  }
+  state._bonusBusy = false;
+  state._bonusResult = result;
+  state._bonusLastIdx = idx;
+
+  // verdict glyph
+  const holder = $("#bonus-answer-" + idx);
+  const vs = holder && holder.querySelector(".bonus-verdict");
+  if (vs) { vs.className = "bonus-verdict " + (next ? "correct" : "incorrect"); vs.textContent = next ? "✓ " : "✗ "; }
+
+  // banner
+  const overridden = state._bonusOverrides.some((o) => o != null);
+  const banner = $("#result-banner");
+  if (banner) {
+    banner.className = "result-banner " + (result.totalPoints > 20 ? "power" : result.totalPoints > 0 ? "correct" : "incorrect");
+    banner.textContent = `BONUS: ${result.totalPoints}/30 pts (${result.partsCorrect}/3)` + (overridden ? " (overridden)" : "");
+  }
+
+  // running score + history entry
+  state.totalPoints += result.totalPoints - prevPts;
+  const hist = [...state.sessionHistory].reverse().find((e) => e.type === "bonus" && e.id === state.currentQuestion.id);
+  if (hist) { hist.points = result.totalPoints; hist.partsCorrect = result.partsCorrect; hist.correct = result.totalPoints > 20; }
+  renderHistoryPanel();
+  updateSessionStats();
+  Sound.toggle();
+}
+
+document.addEventListener("click", (e) => {
+  const v = e.target.closest?.("#bonus-parts-area .bonus-verdict");
+  if (!v || state.mode !== "bonuses" || !state._bonusRecorded) return;
+  const holder = v.closest('[id^="bonus-answer-"]');
+  if (!holder) return;
+  applyBonusOverride(parseInt(holder.id.replace("bonus-answer-", ""), 10));
+});
+
 function displayBonusResult(result, userAnswers) {
   const banner = $("#result-banner");
   const answerDiv = $("#result-answer");
@@ -4162,7 +4337,7 @@ function displayBonusResult(result, userAnswers) {
   banner.textContent = `BONUS: ${result.totalPoints}/30 pts (${result.partsCorrect}/3)`;
 
   const actualAnswers = result.answers || [];
-  answerDiv.innerHTML = "";
+  answerDiv.innerHTML = `<div class="text-muted" style="font-size:11px;margin-top:4px">Click a part's ✓/✗ to overrule it · <kbd>${escapeHtml(keyDisplay("mark-correct"))}</kbd>/<kbd>${escapeHtml(keyDisplay("mark-incorrect"))}</kbd> adjust the last part</div>`;
 
   state.sessionHistory.push({
     id: state.currentQuestion?.id,
@@ -4914,6 +5089,12 @@ async function redrawFilteredGraphs(breakdown) {
     } catch { bd = _breakdownCache || []; }
   }
 
+  // The session list arrives newest-first — charts read left→right in time.
+  bd = bd.slice().reverse();
+  // The stats time-period select applies here too, not just the number cards.
+  const cutoff = statsPeriodCutoff();
+  if (cutoff) bd = bd.filter((s) => new Date(s.startedAt).getTime() >= cutoff);
+
   const cOutcomes = document.getElementById("graph-session-outcomes");
   const cPpg = document.getElementById("graph-ppg");
   const cRates = document.getElementById("graph-rates");
@@ -4925,28 +5106,120 @@ async function redrawFilteredGraphs(breakdown) {
   if (cCel) drawCelerityDetail(cCel, bd, cat, diff);
 }
 
+// ── windowed session charts ────────────────────────────────────────────────
+// Every session is chartable, not just the last 12: each canvas shows a
+// WINDOW of whole sessions (so a bar is never cut in half at an edge) and
+// pans by whole columns — scroll horizontally / shift+scroll / drag. A slim
+// scrollbar at the bottom shows where the window sits; the newest sessions
+// are shown by default.
+const CHART_COL = 58;
+function windowedChart(canvas, items, drawSlice) {
+  const cw = canvas.clientWidth || (canvas.getBoundingClientRect().width | 0) || 600;
+  const visible = Math.max(3, Math.floor((cw - 66) / CHART_COL));
+  const st = canvas.__win || (canvas.__win = { offset: -1, acc: 0, lastLen: -1 });
+  st.items = items;
+  st.visible = visible;
+  st.maxOff = Math.max(0, items.length - visible);
+  if (st.lastLen !== items.length) { st.offset = -1; st.lastLen = items.length; }
+  if (st.offset < 0 || st.offset > st.maxOff) st.offset = st.maxOff;   // default: newest
+  st.drawSlice = drawSlice;
+  st.render = () => {
+    drawSlice(st.items.slice(st.offset, st.offset + st.visible));
+    drawWindowScrollbar(canvas, st);
+    canvas.style.cursor = st.maxOff > 0 ? "grab" : "";
+    canvas.title = "";
+  };
+  st.render();
+  if (!canvas.__winWired) {
+    canvas.__winWired = true;
+    canvas.addEventListener("wheel", (e) => {
+      const s = canvas.__win;
+      if (!s || s.maxOff <= 0) return;
+      const d = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : (e.shiftKey ? e.deltaY : 0);
+      if (!d) return;   // plain vertical wheel keeps scrolling the page
+      e.preventDefault();
+      s.acc += d;
+      let next = s.offset;
+      while (s.acc >= 40) { s.acc -= 40; next++; }
+      while (s.acc <= -40) { s.acc += 40; next--; }
+      next = Math.max(0, Math.min(s.maxOff, next));
+      if (next !== s.offset) { s.offset = next; s.render(); }
+    }, { passive: false });
+    let drag = null;
+    canvas.addEventListener("pointerdown", (e) => {
+      const s = canvas.__win;
+      if (!s || s.maxOff <= 0) return;
+      drag = { x: e.clientX, off: s.offset };
+      canvas.style.cursor = "grabbing";
+      try { canvas.setPointerCapture(e.pointerId); } catch {}
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const s = canvas.__win;
+      const next = Math.max(0, Math.min(s.maxOff, drag.off - Math.round((e.clientX - drag.x) / CHART_COL)));
+      if (next !== s.offset) { s.offset = next; s.render(); }
+    });
+    const endDrag = () => { drag = null; const s = canvas.__win; canvas.style.cursor = s && s.maxOff > 0 ? "grab" : ""; };
+    canvas.addEventListener("pointerup", endDrag);
+    canvas.addEventListener("pointercancel", endDrag);
+  }
+}
+function drawWindowScrollbar(canvas, st) {
+  if (st.maxOff <= 0) return;
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.width / dpr, H = canvas.height / dpr;
+  const t = chartTheme();
+  const x0 = 50, x1 = W - 16, track = x1 - x0;
+  const frac = st.visible / st.items.length;
+  const thumbW = Math.max(24, track * frac);
+  const thumbX = x0 + (track - thumbW) * (st.maxOff ? st.offset / st.maxOff : 0);
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = t.border; ctx.globalAlpha = 0.4;
+  rrect(ctx, x0, H - 5, track, 3, 2); ctx.fill();
+  ctx.globalAlpha = 1; ctx.fillStyle = t.muted;
+  rrect(ctx, thumbX, H - 5, thumbW, 3, 2); ctx.fill();
+  ctx.restore();
+}
+function statsPeriodCutoff() {
+  const p = _statsPeriod;
+  if (!p || p === "all") return 0;
+  const now = new Date();
+  if (p === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const days = parseInt(p, 10);
+  return days ? Date.now() - days * 86400e3 : 0;
+}
+
 function drawSessionOutcomes(canvas, breakdown) {
   const t = chartTheme();
-  const recent = (breakdown || []).slice(-12);
-  const groups = recent.map((s) => ({ label: shortDate(s.startedAt), segments: [ { value: s.powers, color: t.accent }, { value: s.tens, color: t.green }, { value: s.deads, color: t.muted }, { value: s.negs, color: t.red } ] }));
-  stackedChart(canvas, groups, { title: "Outcomes per Session", empty: "No sessions yet", legend: [ { label: "Power", color: t.accent }, { label: "+10", color: t.green }, { label: "Dead", color: t.muted }, { label: "Neg", color: t.red } ] });
+  windowedChart(canvas, breakdown || [], (slice) => {
+    const groups = slice.map((s) => ({ label: shortDate(s.startedAt), segments: [ { value: s.powers, color: t.accent }, { value: s.tens, color: t.green }, { value: s.deads, color: t.muted }, { value: s.negs, color: t.red } ] }));
+    stackedChart(canvas, groups, { title: "Outcomes per Session", empty: "No sessions yet", legend: [ { label: "Power", color: t.accent }, { label: "+10", color: t.green }, { label: "Dead", color: t.muted }, { label: "Neg", color: t.red } ] });
+  });
 }
 function drawPointsPerTU(canvas, breakdown) {
   const t = chartTheme();
-  const recent = (breakdown || []).filter((s) => s.totalTU > 0).slice(-12);
-  const bars = recent.map((s) => ({ label: shortDate(s.startedAt), value: Math.round(s.pointsPerTU * 10) / 10, color: s.pointsPerTU >= 0 ? t.green : t.red }));
-  barChart(canvas, bars, { title: "Points per Tossup (by session)", fmt: (v) => v.toFixed(1), empty: "No tossup sessions yet" });
+  const all = (breakdown || []).filter((s) => s.totalTU > 0);
+  windowedChart(canvas, all, (slice) => {
+    const bars = slice.map((s) => ({ label: shortDate(s.startedAt), value: Math.round(s.pointsPerTU * 10) / 10, color: s.pointsPerTU >= 0 ? t.green : t.red }));
+    barChart(canvas, bars, { title: "Points per Tossup (by session)", fmt: (v) => v.toFixed(1), empty: "No tossup sessions yet" });
+  });
 }
 function drawRatesGraph(canvas, breakdown) {
   const t = chartTheme();
-  const recent = (breakdown || []).filter((s) => s.totalTU > 0).slice(-12);
-  const groups = recent.map((s) => ({ label: shortDate(s.startedAt), segments: [ { value: Math.round(s.powerRate * 100), color: t.accent }, { value: Math.round(s.negRate * 100), color: t.red } ] }));
-  stackedChart(canvas, groups, { title: "Power vs Neg Rate (by session)", yMax: 100, empty: "No tossup sessions yet", legend: [ { label: "Power %", color: t.accent }, { label: "Neg %", color: t.red } ] });
+  const all = (breakdown || []).filter((s) => s.totalTU > 0);
+  windowedChart(canvas, all, (slice) => {
+    const groups = slice.map((s) => ({ label: shortDate(s.startedAt), segments: [ { value: Math.round(s.powerRate * 100), color: t.accent }, { value: Math.round(s.negRate * 100), color: t.red } ] }));
+    stackedChart(canvas, groups, { title: "Power vs Neg Rate (by session)", yMax: 100, empty: "No tossup sessions yet", legend: [ { label: "Power %", color: t.accent }, { label: "Neg %", color: t.red } ] });
+  });
 }
 function drawCelerityDetail(canvas, breakdown) {
-  const recent = (breakdown || []).filter((s) => s.totalTU > 0).slice(-15);
-  const points = recent.map((s) => ({ x: shortDate(s.startedAt), y: Math.round((s.avgCorrectCelerity || 0) * 100) }));
-  lineChart(canvas, points, { title: "Avg Buzz Celerity per Session", fmt: (v) => v + "%", empty: "No tossup sessions yet" });
+  const all = (breakdown || []).filter((s) => s.totalTU > 0);
+  windowedChart(canvas, all, (slice) => {
+    const points = slice.map((s) => ({ x: shortDate(s.startedAt), y: Math.round((s.avgCorrectCelerity || 0) * 100) }));
+    lineChart(canvas, points, { title: "Avg Buzz Celerity per Session", fmt: (v) => v + "%", empty: "No tossup sessions yet" });
+  });
 }
 
 async function exportStatsImage() {

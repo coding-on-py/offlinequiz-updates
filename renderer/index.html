@@ -160,12 +160,12 @@
           <div class="filter-section">
             <div class="filter-label">TIMERS</div>
             <div class="slider-group">
-              <span style="font-size:11px;min-width:78px" title="Time to buzz after the question finishes reading">Buzz window</span>
+              <span style="font-size:11px;min-width:78px">Buzz window <span class="qb-info" data-tip="Seconds you get to buzz once the question finishes reading.">i</span></span>
               <input type="range" id="panel-buzz-window" min="0" max="30" step="1" value="10">
               <span class="slider-value" id="panel-buzz-window-label">10s</span>
             </div>
             <div class="slider-group" style="margin-top:6px">
-              <span style="font-size:11px;min-width:78px" title="Time to type your answer after buzzing">Answer time</span>
+              <span style="font-size:11px;min-width:78px">Answer time <span class="qb-info" data-tip="Seconds you get to type your answer after buzzing.">i</span></span>
               <input type="range" id="panel-buzz-timer" min="0" max="30" step="1" value="10">
               <span class="slider-value" id="panel-buzz-timer-label">10s</span>
             </div>
@@ -455,48 +455,48 @@
         <div class="stats-section">
             <div class="stats-section-title">GAMEPLAY</div>
             <div class="setting-row">
-              <span class="setting-label">Text Reveal Speed</span>
+              <span class="setting-label">Reveal speed<span class="qb-info" data-tip="How fast question text appears, in milliseconds per character. 0 shows the whole question instantly.">i</span></span>
               <div class="slider-group">
                 <input type="range" id="speed-slider" min="0" max="100" step="5" value="50">
                 <span class="slider-value" id="speed-slider-label">50ms</span>
               </div>
             </div>
           <div class="setting-row">
-            <span class="setting-label">Auto-reveal past power</span>
+            <span class="setting-label">Auto-reveal past power<span class="qb-info" data-tip="When the reading passes the power mark, the rest of the question reveals instantly.">i</span></span>
             <input type="checkbox" id="auto-reveal" checked>
           </div>
           <div class="setting-row">
-            <span class="setting-label">Show question info bar (category / difficulty / set)</span>
+            <span class="setting-label">Question info bar<span class="qb-info" data-tip="Shows the category, difficulty and set name above each question.">i</span></span>
             <input type="checkbox" id="opt-show-qmeta" checked>
           </div>
           <div class="setting-row">
-            <span class="setting-label">Hide pronunciation guides while reading</span>
+            <span class="setting-label">Hide pronunciation guides<span class="qb-info" data-tip="Strips pronunciation hints like (&quot;KAH-fka&quot;) out of the question text.">i</span></span>
             <input type="checkbox" id="opt-hide-pron">
           </div>
-          <div class="setting-subhead">Auto-add to review when I get a tossup wrong by…</div>
+          <div class="setting-subhead">Auto-add wrong tossups to Review</div>
           <div class="setting-row">
-            <span class="setting-label">Negging (wrong buzz before the end)</span>
+            <span class="setting-label">Negs<span class="qb-info" data-tip="A wrong buzz before the question finishes (−5).">i</span></span>
             <input type="checkbox" id="opt-review-negs" checked>
           </div>
           <div class="setting-row">
-            <span class="setting-label">Answering wrong at the end (after a full read)</span>
+            <span class="setting-label">Wrong at the end<span class="qb-info" data-tip="Answered wrong after the question was fully read (0 points).">i</span></span>
             <input type="checkbox" id="opt-review-wrongend" checked>
           </div>
           <div class="setting-row">
-            <span class="setting-label">Never buzzing (unanswered / dead)</span>
+            <span class="setting-label">Unanswered<span class="qb-info" data-tip="The question ended without you buzzing at all.">i</span></span>
             <input type="checkbox" id="opt-review-unans" checked>
           </div>
-          <div class="setting-subhead">Auto-add to review when I get a tossup right but…</div>
+          <div class="setting-subhead">Auto-add correct tossups to Review</div>
           <div class="setting-row">
-            <span class="setting-label">Don't power it (answered correctly, no power)</span>
+            <span class="setting-label">No power<span class="qb-info" data-tip="Answered correctly, but after the power mark — worth reviewing for a faster buzz.">i</span></span>
             <input type="checkbox" id="opt-review-nopower">
           </div>
           <div class="setting-row">
-            <span class="setting-label">…except when the question has no power mark</span>
+            <span class="setting-label">Skip if unpowerable<span class="qb-info" data-tip="Don&#39;t add correct answers when the question has no power mark at all.">i</span></span>
             <input type="checkbox" id="opt-review-skipnomark" checked>
           </div>
           <div class="setting-row">
-            <span class="setting-label">Buzz Answer Timer</span>
+            <span class="setting-label">Answer timer<span class="qb-info" data-tip="Seconds you get to type an answer after buzzing. 0 means no limit.">i</span></span>
             <div class="slider-group">
               <input type="range" id="buzz-timeout-slider" min="0" max="30" step="1" value="10">
               <span class="slider-value" id="buzz-timeout-label">10s</span>
@@ -506,12 +506,12 @@
           <div class="stats-section">
             <div class="stats-section-title">DATABASE</div>
             <div class="setting-row">
-              <span class="setting-label">Update Questions</span>
+              <span class="setting-label">Question database<span class="qb-info" data-tip="Downloads new and updated questions. Needs internet; the app stays fully usable during the update.">i</span></span>
               <button class="btn btn-sm" id="btn-update-db">Check for Updates</button>
             </div>
             <div id="update-status" class="text-muted" style="font-size:11px;margin-top:6px"></div>
             <div class="setting-row">
-              <span class="setting-label">Auto-delete sessions older than</span>
+              <span class="setting-label">Keep sessions for<span class="qb-info" data-tip="Practice sessions older than this are deleted automatically. Statistics keep only what remains.">i</span></span>
               <select id="session-retention" class="mode-input" style="width:150px">
                 <option value="0">Never</option>
                 <option value="30">30 days</option>
@@ -521,22 +521,22 @@
               </select>
             </div>
             <div class="setting-row">
-              <span class="setting-label">Hidden questions</span>
+              <span class="setting-label">Hidden questions<span class="qb-info" data-tip="Questions you marked &quot;never serve again&quot;. Manage or restore them here.">i</span></span>
               <button class="btn btn-sm" id="btn-hidden-manager">Manage</button>
             </div>
           </div>
           <div class="stats-section" id="app-update-section">
             <div class="stats-section-title">APP UPDATES</div>
             <div class="setting-row">
-              <span class="setting-label">Update the app (no reinstall)</span>
+              <span class="setting-label">App updates<span class="qb-info" data-tip="Updates the app in place — no reinstall or new download. Applies on the next launch.">i</span></span>
               <button class="btn btn-sm" id="btn-app-update">Check for updates</button>
             </div>
             <div class="setting-row">
-              <span class="setting-label">Check automatically on launch</span>
+              <span class="setting-label">Check on launch</span>
               <input type="checkbox" id="opt-app-autoupdate" checked>
             </div>
             <div class="setting-row">
-              <span class="setting-label">Install important updates automatically</span>
+              <span class="setting-label">Auto-install critical fixes<span class="qb-info" data-tip="Critical fixes install on their own; regular updates still ask first.">i</span></span>
               <input type="checkbox" id="opt-app-critical-auto" checked>
             </div>
             <div id="app-update-status" class="text-muted" style="font-size:11px;margin-top:6px"></div>

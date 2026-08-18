@@ -229,11 +229,11 @@ export async function start(env) {
     ipcMain.handle("clear-review", () => qbApp.clearReview());
     ipcMain.handle("review-manual", (_e, { questionId, add, type }) => (add === false ? qbApp.removeReviewManual(questionId) : qbApp.addReviewManual(questionId, type)));
 
-    ipcMain.handle("check-bonus", (_e, { questionId, answers, sessionId, strictness }) => {
+    ipcMain.handle("check-bonus", (_e, { questionId, answers, sessionId, strictness, overrides }) => {
       const bonus = qbApp.getBonus(questionId);
       if (!bonus) return { error: "Question not found" };
 
-      const result = qbApp.scoreBonusResult(answers || [], bonus, parseInt(strictness) || 10);
+      const result = qbApp.scoreBonusResult(answers || [], bonus, parseInt(strictness) || 10, overrides);
 
       qbApp.addSessionEntry({
         session_id: sessionId || "default",

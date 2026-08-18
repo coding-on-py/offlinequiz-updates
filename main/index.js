@@ -342,11 +342,17 @@ export class App {
     );
   }
 
-  scoreBonusResult(userAnswers, bonus, strictness = 10) {
+  scoreBonusResult(userAnswers, bonus, strictness = 10, overrides = null) {
     const result = checkBonus(userAnswers, bonus, strictness);
+    // Manual per-part overrides (mark up / mark down): null keeps the judged
+    // verdict, true/false replaces it; the score is recomputed from the mix.
+    let parts = result.parts;
+    if (Array.isArray(overrides)) {
+      parts = parts.map((pt, i) => (overrides[i] == null ? pt : { ...pt, correct: !!overrides[i] }));
+    }
     return {
-      ...scoreBonus(result.parts),
-      parts: result.parts,
+      ...scoreBonus(parts),
+      parts,
     };
   }
 
