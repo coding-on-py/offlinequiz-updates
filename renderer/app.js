@@ -932,10 +932,11 @@ applyTheme();
 }
 
 // ── idle update reminder ───────────────────────────────────────────────────
-// If an update is available and the user has been away for 30+ minutes, a
-// small card appears in the corner. One reminder per idle stretch; "Later"
-// silences that version until a newer one ships. (Checks are a manifest peek —
-// nothing downloads until the user acts.)
+// If an update is available and the user has been away for 30+ minutes, the
+// SAME update dialog that appears at launch pops up (Update / Ignore). One
+// attempt per idle stretch; "Ignore" silences that version everywhere, and a
+// newer version prompts again. The check is a manifest peek — nothing
+// downloads until the user clicks Update.
 let _lastActive = Date.now(), _idleReminded = false;
 ["pointerdown", "keydown", "mousemove", "wheel"].forEach((ev) =>
   document.addEventListener(ev, () => { _lastActive = Date.now(); _idleReminded = false; }, { passive: true })
@@ -943,26 +944,13 @@ let _lastActive = Date.now(), _idleReminded = false;
 const IDLE_REMIND_MS = 30 * 60 * 1000;
 async function _maybeIdleUpdateReminder() {
   if (_idleReminded || Date.now() - _lastActive < IDLE_REMIND_MS) return;
-  if (document.getElementById("qb-idle-update")) return;
+  if (document.getElementById("update-dialog")) return;   // one is already up
   _idleReminded = true;   // one attempt per idle stretch, even on errors
   let peek = null;
   try { peek = await peekAppUpdate(); } catch { return; }
-  if (!peek || !peek.available) return;
-  if (lsGet("qb-idle-upd-dismissed") === String(peek.version)) return;
-  const el = document.createElement("div");
-  el.id = "qb-idle-update";
-  el.innerHTML = `
-    <div class="qb-idle-box">
-      <div class="qb-idle-title">Update available</div>
-      <div class="qb-idle-body">OfflineQuiz v${escapeHtml(String(peek.version))} is ready${peek.critical ? " — it includes an important fix" : ""}. Install it from Settings; it applies the next time the app opens.</div>
-      <div class="qb-idle-actions">
-        <button class="btn btn-sm btn-primary" id="qb-idle-go">Open Settings</button>
-        <button class="btn btn-sm btn-ghost" id="qb-idle-later">Later</button>
-      </div>
-    </div>`;
-  document.body.appendChild(el);
-  el.querySelector("#qb-idle-go").onclick = () => { el.remove(); navigateTo("settings"); };
-  el.querySelector("#qb-idle-later").onclick = () => { lsSet("qb-idle-upd-dismissed", String(peek.version)); el.remove(); };
+  if (!peek || peek.dev || peek.error || peek.configured === false || !peek.available) return;
+  if (lsGet("qb-ignored-update") === String(peek.version)) return;
+  showUpdateDialog(peek, { installed: false });
 }
 setInterval(_maybeIdleUpdateReminder, 60 * 1000);
 
