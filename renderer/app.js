@@ -397,7 +397,10 @@ const KEY_GLYPHS = {
 };
 function bindingGlyphs(b) {
   if (!b || b === "Not Set") return "—";
-  return b.split("+").map((p) => KEY_GLYPHS[p] || (p.length === 1 ? p.toUpperCase() : p)).join("+");
+  const parts = b.split("+").map((p) => KEY_GLYPHS[p] || (p.length === 1 ? p.toUpperCase() : p));
+  // mac glyphs read as one unit (⇧E, ⌘=); word-based parts keep the + so
+  // "Ctrl+Shift+E" doesn't collapse into "CtrlShiftE".
+  return IS_MAC ? parts.join("") : parts.join("+");
 }
 function keyDisplay(action) {
   return bindingGlyphs(getHotkey(action));
