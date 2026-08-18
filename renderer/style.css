@@ -1987,8 +1987,10 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 
 /* Chat lives at the bottom of the right panel */
 .mp-chatwrap { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
-.mp-chat { flex: 1; min-height: 120px; overflow-y: auto; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
-.mp-chat-msg { line-height: 1.4; }
+.mp-chat { flex: 1; min-height: 120px; overflow-y: auto; overflow-x: hidden; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+/* Long messages wrap onto extra lines — even unbroken strings — instead of
+   stretching the chat window sideways. */
+.mp-chat-msg { line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
 .mp-chat-msg strong { color: var(--accent); }
 .mp-chat-sys { color: var(--text-muted); font-style: italic; }
 #mp-chat-input { width: 100%; }
