@@ -2491,7 +2491,8 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
 #bonus-parts-area .bonus-verdict:hover { filter: brightness(1.35); text-decoration: underline; }
 
 /* ── settings section buttons + modals ── */
-.settings-nav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.settings-nav-grid { display: flex; flex-direction: column; gap: 10px; }
+.settings-nav-grid .settings-nav-btn { width: 100%; }
 .settings-nav-btn { justify-content: flex-start; font-weight: 600; min-height: 46px; font-size: 13px; }
 .settings-ovl { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 1300; }
 .settings-ovl.hidden { display: none; }

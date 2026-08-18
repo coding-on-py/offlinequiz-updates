@@ -638,6 +638,9 @@ function goBack() {
 }
 
 function showScreen(name, opts) {
+  // A settings modal left open would float its click-eating backdrop over the
+  // next screen (the "Back did nothing / buttons stopped working" bug).
+  try { closeSettingsOverlays(); } catch (e) {}
   const back = opts ? !!opts.back : _navBack;
   saveScreenScroll(); // must run while the outgoing screen is still visible
   recordNav(name);
@@ -2897,6 +2900,20 @@ function renderTossup(q) {
   $("#bonus-parts-area").classList.add("hidden");
 
   if (state.settings.revealSpeed === 0 && state.settings.autoReveal) {
+    // Instant reveal still honours "Stop on power": hold at the mark, paused;
+    // resuming (P) shows the rest instantly (revealText's own speed-0 path).
+    if (state.settings.stopOnPower && state.prePowerEnd > 0) {
+      state.revealIndex = state.prePowerEnd;
+      state.buzzPosition = state.revealIndex;
+      $("#question-text").innerHTML = formatQuestionText(displayText, state.revealIndex, state.prePowerEnd);
+      state._stoppedAtPower = true;
+      state.isPaused = true;
+      const pel = document.createElement("div");
+      pel.className = "pause-overlay"; pel.id = "pause-overlay";
+      pel.textContent = "PAUSED";
+      $("#question-area")?.appendChild(pel);
+      return;
+    }
     state.revealIndex = displayText.length;
     state.questionFullyRead = true;
     $("#question-text").innerHTML = formatQuestionText(displayText, displayText.length, state.prePowerEnd);
@@ -3072,6 +3089,20 @@ function revealText(text) {
 
   const speed = state.settings.revealSpeed;
   if (speed === 0) {
+    // Instant reading still honours "Stop on power": reveal exactly to the
+    // power mark and pause there; resuming reveals the rest instantly.
+    if (state.settings.stopOnPower && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) {
+      state.revealIndex = state.prePowerEnd;
+      state.buzzPosition = state.revealIndex;
+      $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
+      state._stoppedAtPower = true;
+      state.isPaused = true;
+      const el = document.createElement("div");
+      el.className = "pause-overlay"; el.id = "pause-overlay";
+      el.textContent = "PAUSED";
+      $("#question-area")?.appendChild(el);
+      return;
+    }
     state.revealIndex = text.length;
     state.questionFullyRead = true;
     $("#question-text").innerHTML = formatQuestionText(text, text.length, state.prePowerEnd);
@@ -3085,6 +3116,18 @@ function revealText(text) {
     if (state.revealIndex >= text.length) return;
     const curSpeed = state.settings.revealSpeed;
     if (curSpeed === 0) {
+      if (state.settings.stopOnPower && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) {
+        state.revealIndex = state.prePowerEnd;
+        state.buzzPosition = state.revealIndex;
+        $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
+        state._stoppedAtPower = true;
+        state.isPaused = true;
+        const el = document.createElement("div");
+        el.className = "pause-overlay"; el.id = "pause-overlay";
+        el.textContent = "PAUSED";
+        $("#question-area")?.appendChild(el);
+        return;
+      }
       state.revealIndex = text.length;
       state.questionFullyRead = true;
       $("#question-text").innerHTML = formatQuestionText(text, text.length, state.prePowerEnd);
@@ -3105,7 +3148,7 @@ function revealText(text) {
       state.isPaused = true;
       const el = document.createElement("div");
       el.className = "pause-overlay"; el.id = "pause-overlay";
-      el.textContent = "AT POWER — press P to continue";
+      el.textContent = "PAUSED";
       $("#question-area")?.appendChild(el);
       return;
     }
@@ -6009,17 +6052,16 @@ function closeSettingsOverlays() {
   document.querySelectorAll(".settings-ovl:not(.hidden)").forEach((o) => { o.classList.add("hidden"); any = true; });
   return any;
 }
-$$(".settings-nav-btn").forEach((b) => b.addEventListener("click", () => openSettingsOverlay(b.dataset.ovl)));
 document.addEventListener("click", (e) => {
+  const nav = e.target.closest?.(".settings-nav-btn");
+  if (nav) { openSettingsOverlay(nav.dataset.ovl); return; }
   if (e.target.classList?.contains("settings-ovl")) e.target.classList.add("hidden");
   else if (e.target.closest?.(".settings-ovl-close")) e.target.closest(".settings-ovl").classList.add("hidden");
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !state.hotkeyRebinding && closeSettingsOverlays()) { e.preventDefault(); e.stopPropagation(); }
 }, true);
-// Quick access from APPEARANCE: same two checks, opened inside their section.
-$("#btn-app-update-quick")?.addEventListener("click", () => { openSettingsOverlay("ovl-updates"); $("#btn-app-update")?.click(); });
-$("#btn-update-db-quick")?.addEventListener("click", () => { openSettingsOverlay("ovl-updates"); $("#btn-update-db")?.click(); });
+
 $("#opt-app-critical-auto")?.addEventListener("change", (e) => lsSet("qb-app-critical-auto", e.target.checked.toString()));
 function isNetworkErr(msg) {
   return /failed to fetch|fetch failed|network|err_|enotfound|getaddrinfo|timed ?out|econn|\bdns\b/i.test(String(msg || ""));
@@ -6085,7 +6127,7 @@ async function syncAppUpdateUI() {
   try {
     const info = await API.get("/api/app-update-info");
     const sec = $("#app-update-section"); if (!sec) return;
-    if (info.dev) { sec.style.display = "none"; const q = $("#appearance-quick-app"); if (q) q.style.display = "none"; return; }
+    if (info.dev) { sec.style.display = "none"; return; }
     const auto = $("#opt-app-autoupdate"); if (auto) auto.checked = localStorage.getItem("qb-app-autoupdate") !== "false";
     const crit = $("#opt-app-critical-auto"); if (crit) crit.checked = localStorage.getItem("qb-app-critical-auto") !== "false";
     const status = $("#app-update-status");
