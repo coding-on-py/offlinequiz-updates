@@ -321,6 +321,9 @@ function _historyKey() {
 }
 
 
+// Platform-aware: text-size shortcuts follow the OS convention (⌘ on mac,
+// Ctrl on Windows/Linux), and binding displays use mac glyphs only on mac.
+const IS_MAC = /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.userAgent);
 const DEFAULT_HOTKEYS = {
   "buzz": "Space",
   "start-skip": "s",
@@ -338,9 +341,9 @@ const DEFAULT_HOTKEYS = {
   "nav-settings": "5",
   "nav-player": "6",
   "nav-extensions": "7",
-  "text-bigger": "Meta+=",
-  "text-smaller": "Meta+-",
-  "text-reset": "Meta+0",
+  "text-bigger": IS_MAC ? "Meta+=" : "Ctrl+=",
+  "text-smaller": IS_MAC ? "Meta+-" : "Ctrl+-",
+  "text-reset": IS_MAC ? "Meta+0" : "Ctrl+0",
 };
 
 const HOTKEY_LABELS = {
@@ -388,7 +391,9 @@ function matchesHotkey(e, action) {
 const KEY_GLYPHS = {
   ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
   Enter: "↵", " ": "Space", Escape: "Esc",
-  Meta: "⌘", Cmd: "⌘", Alt: "⌥", Option: "⌥", Ctrl: "⌃", Shift: "⇧",
+  ...(IS_MAC
+    ? { Meta: "⌘", Cmd: "⌘", Alt: "⌥", Option: "⌥", Ctrl: "⌃", Shift: "⇧" }
+    : { Meta: "Win", Cmd: "Win", Option: "Alt" }),
 };
 function bindingGlyphs(b) {
   if (!b || b === "Not Set") return "—";
@@ -799,9 +804,13 @@ document.addEventListener("keydown", (e) => {
   }
 
   if (e.key === "Escape") {
+    // Only VISIBLE overlays count, and the persistent settings modals are
+    // excluded — they live in the DOM even while hidden, so the old selector
+    // silently .remove()d one per Esc press until the section buttons had
+    // nothing left to open (the "Esc kills the settings buttons" bug).
     const overlays = [
-      ...document.querySelectorAll("#confirm-dialog, #save-menu, #review-menu, #review-viewer, #history-overlay, #hotkey-sheet, .qb-overlay, .fo-overlay, .ar-overlay"),
-    ];
+      ...document.querySelectorAll("#confirm-dialog, #save-menu, #review-menu, #review-viewer, #history-overlay, #hotkey-sheet, .qb-overlay:not(.settings-ovl), .fo-overlay, .ar-overlay"),
+    ].filter((el) => !el.classList.contains("hidden") && getComputedStyle(el).display !== "none");
     if (overlays.length) { e.preventDefault(); overlays[overlays.length - 1].remove(); return; }
     if (needsEscConfirm()) {
       if (state.escOnce) {

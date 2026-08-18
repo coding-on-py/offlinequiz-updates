@@ -2,11 +2,16 @@ export function stripTags(text) {
   return text.replace(/<[^>]+>/g, "").trim();
 }
 
+// Umlaut folding mode: the standard pass keeps the German transliteration
+// (ö→oe, ü→ue — "goering" for Göring). evaluateAnswer's second pass flips
+// this to the plain English-keyboard form (ö→o — "mjolnir" for Mjölnir).
+let _plainUmlauts = false;
+
 export function normalizeText(text) {
   return text
     .toLowerCase()
-    .replace(/ö/g, "oe")
-    .replace(/ü/g, "ue")
+    .replace(/ö/g, _plainUmlauts ? "o" : "oe")
+    .replace(/ü/g, _plainUmlauts ? "u" : "ue")
     .replace(/[áàâäãå]/g, "a")
     .replace(/[éèêë]/g, "e")
     .replace(/[íìîï]/g, "i")
@@ -762,7 +767,24 @@ function partialTargets(d) {
   return [...out];
 }
 
+// Both umlaut transliterations are acceptable: only when the standard pass
+// REJECTS and the answerline actually contains ö/ü does a second pass run
+// with the plain folding — a pure widening, so no existing verdict changes.
 export function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, strictness = 10, opts = {}) {
+  const v = evaluateAnswerCore(userAnswer, answerline, sanitizedAnswerline, strictness, opts);
+  if (v.status === "reject" && /[öüÖÜ]/.test(String(answerline || "") + String(sanitizedAnswerline || ""))) {
+    _plainUmlauts = true;
+    try {
+      const v2 = evaluateAnswerCore(userAnswer, answerline, sanitizedAnswerline, strictness, opts);
+      if (v2.status !== "reject") return v2;
+    } finally {
+      _plainUmlauts = false;
+    }
+  }
+  return v;
+}
+
+function evaluateAnswerCore(userAnswer, answerline, sanitizedAnswerline, strictness = 10, opts = {}) {
   if (!userAnswer || !userAnswer.trim()) return { status: "reject", matchedAnswer: null, prompt: null };
   const userNorm = normalizeText(userAnswer.trim());
   if (!userNorm) return { status: "reject", matchedAnswer: null, prompt: null };
