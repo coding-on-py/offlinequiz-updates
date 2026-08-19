@@ -598,9 +598,32 @@ function restoreScreenScroll(screen) {
 
 // Building a screen is destructive (innerHTML rebuilds at default values);
 // reviving one only refreshes what can go stale behind the user's back.
+// An ENDED session must not haunt the practice page: next visit starts
+// fresh — placeholder, 0 points, empty history. A merely SUSPENDED session
+// (sessionActive still true) keeps its page exactly as left.
+function resetEndedPracticeView() {
+  if (state.sessionActive) return;
+  if (!state.questionCount && !state.totalPoints && !state.currentQuestion &&
+      !state.histories.tossups.length && !state.histories.bonuses.length) return;   // already fresh
+  if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+  stopBuzzTimer();
+  stopEventTimer();
+  state.questionCount = 0; state.totalPoints = 0; state.powers = 0; state.negs = 0; state.correct = 0;
+  state.correctCelerityHistory = []; state.incorrectCelerityHistory = [];
+  state.histories = { tossups: [], bonuses: [] };
+  state.currentQuestion = null; state.lastResult = null; state.resultOverridden = false;
+  state._wantBonus = false; state._pendingPairedBonus = null; state._pairPrefetch = null;
+  resetQuestionUI();
+  const sc = $("#session-counter"); if (sc) sc.textContent = "0";
+  updateSessionStats();
+  renderHistoryPanel();
+  const sb = $("#btn-start-session"); if (sb) sb.innerHTML = keyLabelHtml("start-skip", "Start Session");
+  updateLiveStats();
+}
+
 function buildScreen(name) {
-  if (name === "practice-tossups") setMode("tossups");
-  else if (name === "practice-bonuses") setMode("bonuses");
+  if (name === "practice-tossups") { setMode("tossups"); resetEndedPracticeView(); }
+  else if (name === "practice-bonuses") { setMode("bonuses"); resetEndedPracticeView(); }
   else if (name === "stats") loadStats();
   else if (name === "database") loadDatabase();
   else if (name === "settings") initSettings();
@@ -619,6 +642,7 @@ function reviveScreen(name) {
     // Keep the mode pinned without re-running the filter restore.
     state.mode = name === "practice-tossups" ? "tossups" : "bonuses";
     state._practiceBase = state.mode;
+    resetEndedPracticeView();
   }
 }
 function navigateTo(name, opts) {
