@@ -3970,7 +3970,7 @@ const PRON_ACRONYMS = new Set(["USA", "USSR", "NATO", "DNA", "RNA", "UN", "US", 
 // outright spoilers. A blanket "contains the word note" strip would eat
 // answerlines ("Notes from the Underground", "hell notes"), so every pattern
 // below is anchored to an explicit audience.
-const NOTE_AUDIENCE = "(?:moderators?|readers?|editors?|writers?|authors?|ed)";
+const NOTE_AUDIENCE = "(?:moderators?|mods?|readers?|editors?|writers?|authors?|ed)\\.?";
 // A moderator-addressed span that ALSO speaks to players carries an answer
 // requirement — "[MODERATOR, please read aloud to teams: both type of work and
 // composer required]" — so it stays. Found by sweeping the real corpus.
@@ -3992,15 +3992,20 @@ function stripModeratorNotes(text) {
   // bracketed / parenthesised / curly / angled, in any of the observed shapes:
   //   [Note to moderator: …]  (Moderator Note: …)  [Ed's note: …]
   //   [NOTE TO READER, NOT TO BE READ ALOUD: …]     [moderator: emphasize here]
-  const inner = `(?:notes?\\s+to\\s+(?:the\\s+)?${NOTE_AUDIENCE}\\b|${NOTE_AUDIENCE}(?:'s|s')?\\s+notes?\\b|${NOTE_AUDIENCE}\\s*[:,])`;
+  const inner = `(?:notes?\\s+to\\s+(?:the\\s+)?${NOTE_AUDIENCE}(?=[\\s:,\\])>}]|$)|${NOTE_AUDIENCE}(?:'s|s')?\\s+notes?\\b|${NOTE_AUDIENCE}\\s*[:,])`;
   cut(new RegExp(`\\s*\\[\\s*${inner}[^\\]]*\\]`, "gi"));
   cut(new RegExp(`\\s*\\(\\s*${inner}[^)]*\\)`, "gi"));
   cut(new RegExp(`\\s*\\{\\s*${inner}[^}]*\\}`, "gi"));
   cut(new RegExp(`\\s*<\\s*${inner}[^>]*>`, "gi"));
+  // Generic "[note: …]" / "(NOTE: …)" spans with no audience prefix are
+  // moderator trivia ("not a typo", "spell it out") — strip UNLESS the note
+  // states an answer requirement (those speak to the players).
+  const keepGeneric = (m) => noteMentionsPlayers(m) || /\b(requir(?:ed|es)?|accept(?:ed|able|s)?|needed|prompt(?:able|ed)?)\b/i.test(m);
+  t = t.replace(/\s*[\[(]\s*(?:ed\.?\s+|mod\.?\s+)?notes?\s*:[^\])]*[\])]/gi, (m) => (keepGeneric(m) ? m : ""));
   // BARE form — the largest group (628). Runs from "Note to moderator" to the
   // end of that sentence. The dump sometimes omits the space after the period
   // ("…required.A paramagnetic gas"), so a following capital also terminates it.
-  t = t.replace(new RegExp(`(?:^|\\s)notes?\\s+to\\s+(?:the\\s+)?${NOTE_AUDIENCE}\\b[^.!?]*[.!?]+\\s*`, "gi"), (m) => (noteMentionsPlayers(m) ? m : " "));
+  t = t.replace(new RegExp(`(?:^|\\s)notes?\\s+to\\s+(?:the\\s+)?${NOTE_AUDIENCE}(?=[\\s:,])[^.!?]*[.!?]+\\s*`, "gi"), (m) => (noteMentionsPlayers(m) ? m : " "));
   t = t.replace(new RegExp(`(?:^|\\s)${NOTE_AUDIENCE}(?:'s|s')?\\s+notes?\\s*:[^.!?]*[.!?]+\\s*`, "gi"), (m) => (noteMentionsPlayers(m) ? m : " "));
   return t.replace(/\s{2,}/g, " ").trim();
 }
@@ -4009,6 +4014,11 @@ function applyNoteFilter(text) {
   return state.settings.hideNotes ? stripModeratorNotes(text) : text;
 }
 
+const PRON_KEEP_WORDS = new Set(("a an the and or but nor so yet of in on at to for with by from as is are was were be been being am " +
+  "do does did has have had he she it they them him her his hers its their theirs we us our you your i me my mine " +
+  "this that these those who whom which what not no all any some each such than then there when where how why if " +
+  "sic blank here ones one").split(" "));
+
 function stripPronunciations(text) {
   let t = String(text || "");
   // Quoted guide in brackets/parens: ("kee-HO-tay"), ['zhawnr']
@@ -4016,7 +4026,24 @@ function stripPronunciations(text) {
   // Anything that says it's a pronunciation
   t = t.replace(/\s*[\[(][^\])]*pronounc[^\])]*[\])]/gi, "");
   // Moderator / reader instructions in brackets (notes addressed to PLAYERS stay)
-  t = t.replace(/\s*\[\s*(?:notes?\s+to\s+(?:the\s+)?(?:moderators?|readers?)\b[^\]]*|moderators?\s+notes?\b[^\]]*|moderators?\s*[:,][^\]]*|emphasi[sz]e[^\]]*|read\s+slowly[^\]]*|read\s+(?:the\s+)?answerline[^\]]*|pause\b[^\]]*|spell\s+(?:it|out)\b[^\]]*|slowly\s*:?[^\]]*)\]/gi, "");
+  t = t.replace(/\s*\[\s*(?:notes?\s+to\s+(?:the\s+)?(?:moderators?|readers?)\b[^\]]*|moderators?\s+notes?\b[^\]]*|moderators?\s*[:,][^\]]*|emphasi[sz]e[^\]]*|read\s+(?:notes\s+)?slowly[^\]]*|read\s+(?:the\s+)?answerline[^\]]*|pause\b[^\]]*|spell\s+(?:it|out)\b[^\]]*|slowly\s*:?[^\]]*)\]/gi, "");
+  // Single-word respellings after a name: "Ceyx [seeks]", "Pepys [peeps]",
+  // "Louis XIV [fourteenth]". Quote-edit insertions are protected three ways:
+  // they abut the word ("hate[s]" — no space), follow a quotation mark, or
+  // are closed-class function words ("feeds [him] bread"); [sic], [blank],
+  // [here], [ones] are redactions/placeholders and always stay.
+  t = t.replace(/([A-Za-z][A-Za-z'’.()\]]*)(\s+)\[([a-z][a-z'’]{2,25})\]/g, (m, prev, sp, inner, off, whole) => {
+    if (PRON_KEEP_WORDS.has(inner)) return m;
+    if (/["“”]$/.test(prev)) return m;
+    if (!/^[A-Z]/.test(prev.replace(/^["'’(]+/, ""))) return m;
+    // Inside an OPEN quotation this is a quote-edit ("Orpheus [leading] the
+    // savage race"), never a respelling — check quote parity up to here.
+    const before = whole.slice(0, off);
+    const straight = (before.match(/"/g) || []).length;
+    const curly = ((before.match(/“/g) || []).length) - ((before.match(/”/g) || []).length);
+    if (straight % 2 === 1 || curly > 0) return m;
+    return prev;
+  });
   // Phonetic-looking brackets: short runs of letter tokens where a token is
   // hyphenated ("eel duh lah see-tay") or a CAPS syllable sits beside a
   // lowercase one ("mool AHN"). Editorial inserts like [this man], [s], [10],
@@ -6638,7 +6665,9 @@ async function refreshAchievementsRealtime() {
 }
 function scheduleAchievementCheck() {
   if (_rtAchTimer) clearTimeout(_rtAchTimer);
-  _rtAchTimer = setTimeout(refreshAchievementsRealtime, 1200);
+  // 250ms: enough to coalesce a result + an override double-fire, short
+  // enough that the popup lands WITH the result — not on the next tossup.
+  _rtAchTimer = setTimeout(refreshAchievementsRealtime, 250);
 }
 
 function resolveAchievementIcon(ach) {
