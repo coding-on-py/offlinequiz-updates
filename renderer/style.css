@@ -2512,3 +2512,6 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
 .settings-modal { width: min(720px, 92vw); max-height: 84vh; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px 20px; box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45); }
 .settings-modal-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; letter-spacing: 1px; font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; }
 .settings-modal .stats-section { border: none; background: transparent; box-shadow: none; padding: 0; margin: 0 0 10px; }
+
+/* MP: the power mark revealed on ended questions */
+.mp-power-mark { color: var(--accent); font-weight: 700; }

@@ -1736,17 +1736,30 @@ function getSelectedSubcategories() {
 // from it. Multiplayer uses this pair to keep every player's panel in sync.
 function getFilterSelectionSnapshot() {
   const cats = [];
+  const weights = {};
+  const grabW = (label, key) => {
+    const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
+    const v = w ? parseFloat(w.value) : NaN;
+    if (Number.isFinite(v) && v !== 10 && v !== 0) weights[key] = v;   // only non-defaults travel
+  };
   $$("#category-filters .category-group").forEach((g) => {
     const cb = g.querySelector(".cat-checkbox");
     if (!cb) return;
     const subs = [...g.querySelectorAll(".subcat-checkbox:checked")].map((x) => x.value);
     const alts = [...g.querySelectorAll(".altsub-checkbox:checked")].map((x) => x.value);
-    if (cb.checked || subs.length || alts.length) cats.push({ name: cb.value, subs, alts });
+    if (cb.checked || subs.length || alts.length) {
+      cats.push({ name: cb.value, subs, alts });
+      grabW(cb.closest(".filter-item"), "c:" + cb.value);
+      g.querySelectorAll(".subcat-checkbox:checked").forEach((x) => grabW(x.closest(".filter-item"), "s:" + x.value));
+      g.querySelectorAll(".altsub-checkbox:checked").forEach((x) => grabW(x.closest(".filter-item"), "a:" + x.value));
+    }
   });
   const _ya = parseInt($("#year-min")?.value || 2000), _yb = parseInt($("#year-max")?.value || 2026);
   return {
-    v: 1,
+    v: 2,
     cats,
+    weights,
+    useWeights: !!$("#enable-cat-weights")?.checked,
     difficulties: getSelectedDifficulties(),
     yearMin: Math.min(_ya, _yb),
     yearMax: Math.max(_ya, _yb),
@@ -1767,9 +1780,12 @@ async function applyFilterSelectionSnapshot(snap) {
   }
   const want = {};
   snap.cats.forEach((c) => { if (c && c.name) want[c.name] = c; });
-  const setWeight = (label, on) => {
+  const wmap = snap.weights || {};
+  const setWeight = (label, on, key) => {
     const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
-    if (w) w.value = on ? (parseFloat(w.value) > 0 ? w.value : "10") : "0";
+    if (!w) return;
+    if (!on) { w.value = "0"; return; }
+    w.value = key != null && wmap[key] != null ? String(wmap[key]) : (parseFloat(w.value) > 0 ? w.value : "10");
   };
   for (const g of $$("#category-filters .category-group")) {
     const cb = g.querySelector(".cat-checkbox");
@@ -1793,7 +1809,7 @@ async function applyFilterSelectionSnapshot(snap) {
       continue;
     }
     cb.checked = true;
-    setWeight(cb.closest(".filter-item"), true);
+    setWeight(cb.closest(".filter-item"), true, "c:" + cb.value);
     if (expand) expand.textContent = "▾";
     if (subList) {
       try { await loadSubcategories(cb.value, typeKey, subList, true, false); } catch {}
@@ -1802,11 +1818,11 @@ async function applyFilterSelectionSnapshot(snap) {
       const subs = (w.subs || []), alts = (w.alts || []);
       subList.querySelectorAll(".subcat-checkbox").forEach((x) => {
         x.checked = subs.includes(x.value);
-        setWeight(x.closest(".filter-item"), x.checked);
+        setWeight(x.closest(".filter-item"), x.checked, "s:" + x.value);
       });
       subList.querySelectorAll(".altsub-checkbox").forEach((x) => {
         x.checked = alts.includes(x.value);
-        setWeight(x.closest(".filter-item"), x.checked);
+        setWeight(x.closest(".filter-item"), x.checked, "a:" + x.value);
       });
       subList.querySelectorAll(".altsub-list").forEach((l) => {
         const open = [...l.querySelectorAll(".altsub-checkbox")].some((x) => x.checked);
@@ -1826,6 +1842,13 @@ async function applyFilterSelectionSnapshot(snap) {
   if (snap.powermarkOnly != null) { const e = $("#filter-powermark"); if (e) e.checked = !!snap.powermarkOnly; }
   if (snap.standard != null) { const e = $("#filter-standard"); if (e) e.checked = !!snap.standard; }
   if (snap.starredOnly != null) { const e = $("#filter-starred"); if (e) e.checked = !!snap.starredOnly; }
+  // Weighted-draw toggle rides along (v2 snapshots). Dispatching change is
+  // safe here — its handler only flips state/persistence, no cascade — and
+  // it is what makes weighted mode actually take effect on the applier.
+  if (snap.useWeights != null) {
+    const ew = $("#enable-cat-weights");
+    if (ew && ew.checked !== !!snap.useWeights) { ew.checked = !!snap.useWeights; ew.dispatchEvent(new Event("change", { bubbles: true })); }
+  }
   clearPrefetch();
   return true;
 }
