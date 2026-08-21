@@ -1755,11 +1755,20 @@ function getFilterSelectionSnapshot() {
     }
   });
   const _ya = parseInt($("#year-min")?.value || 2000), _yb = parseInt($("#year-max")?.value || 2026);
+  const modeSel = $("#mode-select");
   return {
     v: 2,
     cats,
     weights,
     useWeights: !!$("#enable-cat-weights")?.checked,
+    // panel-level knobs: these are part of "the room's settings" too
+    revealSpeed: state.settings.revealSpeed,
+    strictness: parseInt($("#strictness-slider")?.value || "10"),
+    hidePron: !!$("#filter-hide-pron")?.checked,
+    hideNotes: !!$("#filter-hide-notes")?.checked,
+    mode: modeSel ? modeSel.value : "random",
+    setName: $("#mode-set-name")?.value || "",
+    packet: $("#mode-packet")?.value || "",
     difficulties: getSelectedDifficulties(),
     yearMin: Math.min(_ya, _yb),
     yearMax: Math.max(_ya, _yb),
@@ -1849,6 +1858,26 @@ async function applyFilterSelectionSnapshot(snap) {
     const ew = $("#enable-cat-weights");
     if (ew && ew.checked !== !!snap.useWeights) { ew.checked = !!snap.useWeights; ew.dispatchEvent(new Event("change", { bubbles: true })); }
   }
+  // Panel-level knobs travel too (their handlers are cascade-free, so real
+  // events are safe; any echo re-broadcast dedupes on the receiving side).
+  const setCtl = (sel, v, evts) => {
+    const el = $(sel);
+    if (!el || v == null || String(el.value) === String(v)) return;
+    el.value = v;
+    (evts || ["change"]).forEach((e2) => el.dispatchEvent(new Event(e2, { bubbles: true })));
+  };
+  const setBox = (sel, v) => {
+    const el = $(sel);
+    if (el && v != null && el.checked !== !!v) { el.checked = !!v; el.dispatchEvent(new Event("change", { bubbles: true })); }
+  };
+  if (snap.mode != null) {
+    setCtl("#mode-select", snap.mode);
+    if (snap.mode === "set") { setCtl("#mode-set-name", snap.setName); setCtl("#mode-packet", snap.packet); }
+  }
+  setCtl("#panel-speed-slider", snap.revealSpeed, ["input", "change"]);
+  setCtl("#strictness-slider", snap.strictness, ["input", "change"]);
+  setBox("#filter-hide-pron", snap.hidePron);
+  setBox("#filter-hide-notes", snap.hideNotes);
   clearPrefetch();
   return true;
 }
