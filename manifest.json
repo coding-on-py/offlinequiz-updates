@@ -1,5 +1,5 @@
 {
-  "version": "14.17",
+  "version": "14.18",
   "renderer": [
     "index.html",
     "style.css",
@@ -72,6 +72,16 @@
       "id": "packet-builder",
       "name": "Packet Builder",
       "file": "packet-builder.zip"
+    },
+    {
+      "id": "fact-sheet",
+      "name": "Fact Sheet",
+      "file": "plugin1.zip"
+    },
+    {
+      "id": "class-sync",
+      "name": "Class Sync",
+      "file": "plugin2.zip"
     }
   ],
   "main": true

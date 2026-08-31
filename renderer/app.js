@@ -1402,21 +1402,58 @@ function getModeFilters() { const b = loadFilterBlob(); return b[filtersMode()] 
 function saveModeFilters(fs) { const b = loadFilterBlob(); b[filtersMode()] = fs; lsSet("qb-filters", JSON.stringify(b)); }
 
 function saveFilterState() {
+  // Never persist a half-rendered panel: during loadCategories the container
+  // is a "Loading…" placeholder, and freshly-rendered checked categories have
+  // EMPTY sub lists until their async fetch lands — an unguarded save wiped
+  // curated subcategories and weights.
+  if (_applyingSnapshot) return;
+  if (!document.querySelector("#category-filters .category-group")) return;
+  const prev = getModeFilters();
   const cats = getSelectedCategories();
   const subs = {};
+  const carried = new Set();
   $$("#category-filters .category-group").forEach(group => {
     const catCheck = group.querySelector(".cat-checkbox");
     if (!catCheck?.checked) return;
     const catName = catCheck.value;
+    const subList = group.querySelector(".subcategory-list");
+    if (subList && !subList.dataset.loaded) {
+      // sub fetch still pending — carry the previous save forward untouched
+      if (prev?.subcategories?.[catName]) { subs[catName] = prev.subcategories[catName]; carried.add(catName); }
+      return;
+    }
     const checkedSubs = [
       ...[...group.querySelectorAll(".subcat-checkbox:checked")].map(cb => cb.value),
       ...[...group.querySelectorAll(".altsub-checkbox:checked")].map(cb => cb.value),
     ];
     subs[catName] = checkedSubs;
   });
+  const weights = {};
+  const grabWeight = (label, key) => {
+    const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
+    const v = w ? parseFloat(w.value) : NaN;
+    // 10 is the implicit default; a deliberate 0 on a CHECKED item must save
+    // ("keep it in filters, never weighted-draw it").
+    if (Number.isFinite(v) && v !== 10) weights[key] = v;
+  };
+  $$("#category-filters .category-group").forEach(group => {
+    const catCheck = group.querySelector(".cat-checkbox");
+    if (!catCheck?.checked) return;
+    if (carried.has(catCheck.value)) {
+      // sub list not rendered — carry this category's previous weights too
+      if (prev?.weights) for (const [k, v] of Object.entries(prev.weights)) {
+        if (k === "c:" + catCheck.value || (prev.subcategories?.[catCheck.value] || []).some((s2) => k === "s:" + s2 || k === "a:" + s2)) weights[k] = v;
+      }
+      return;
+    }
+    grabWeight(catCheck.closest(".filter-item"), "c:" + catCheck.value);
+    group.querySelectorAll(".subcat-checkbox:checked").forEach(cb => grabWeight(cb.closest(".filter-item"), "s:" + cb.value));
+    group.querySelectorAll(".altsub-checkbox:checked").forEach(cb => grabWeight(cb.closest(".filter-item"), "a:" + cb.value));
+  });
   const filterState = {
     categories: cats,
     subcategories: subs,
+    weights,
     standard: $("#filter-standard")?.checked,
     difficulties: getSelectedDifficulties(),
     mode: $("#mode-select")?.value || "random",
@@ -1534,13 +1571,14 @@ async function loadCategories(type) {
       const catDiv = document.createElement("div");
       catDiv.className = "category-group";
       const isChecked = saved?.categories ? saved.categories.includes(c.category) : false;
+      const savedCatW = isChecked && saved?.weights?.["c:" + c.category] != null ? saved.weights["c:" + c.category] : null;
       catDiv.innerHTML = `
         <label class="filter-item">
           <input type="checkbox" value="${escapeHtml(c.category)}" class="cat-checkbox" ${isChecked ? "checked" : ""}>
           <span class="cat-expand">${isChecked ? "▾" : "▸"}</span>
           <span>${escapeHtml(c.category)}</span>
           <span class="text-muted" style="margin-left:auto;font-size:11px">${c.count}</span>
-          <input type="number" class="cat-weight" value="${isChecked ? 10 : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
+          <input type="number" class="cat-weight" value="${isChecked ? (savedCatW != null ? savedCatW : 10) : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
         </label>
         <div class="subcategory-list hidden" id="subcats-${escapeHtml(c.category)}"></div>
       `;
@@ -1575,7 +1613,8 @@ async function loadCategories(type) {
       container.appendChild(catDiv);
 
       if (checkbox.checked) {
-        setTimeout(() => loadSubcategories(c.category, typeKey, subList, true), 50);
+        const epoch = _panelEpoch;
+        setTimeout(() => { if (epoch === _panelEpoch) loadSubcategories(c.category, typeKey, subList, true); }, 50);
       }
     }
   } catch (e) {
@@ -1588,6 +1627,10 @@ async function loadSubcategories(category, type, container, silent = false, chec
   const cacheKey = `${type}:${category}`;
   const applyCheckAll = () => {
     if (!checkAll) return;
+    // The user may have UNchecked the category while this fetch was in
+    // flight — a stale cascade would re-check every sub under an unchecked box.
+    const catCb = container.parentElement?.querySelector?.(".cat-checkbox");
+    if (catCb && !catCb.checked) return;
     container.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach((cb) => {
       cb.checked = true;
       const w = cb.closest(".filter-item")?.querySelector(".subcat-weight, .altsub-weight");
@@ -1630,6 +1673,7 @@ async function loadSubcategories(category, type, container, silent = false, chec
 }
 
 function renderSubcategoryList(container, category, subs) {
+  container.dataset.loaded = "1";
   container.classList.remove("hidden");
   if (!subs || subs.length === 0) {
     const group = container.parentElement;
@@ -1655,10 +1699,13 @@ function renderSubcategoryList(container, category, subs) {
   const parentChecked = catCheck?.checked;
 
   const isSubChecked = (name) => (!parentChecked || !savedSubs) ? false : savedSubs.includes(name);
+  let savedWeights = null;
+  try { savedWeights = getModeFilters()?.weights || null; } catch {}
+  const wOf = (key) => (savedWeights && savedWeights[key] != null ? savedWeights[key] : null);
 
   if (category === "Social Science" && ALT_SUBCATS["Social Science"]) {
     container.innerHTML = ALT_SUBCATS["Social Science"]
-      .map((alt) => altItemHtml(alt, "Social Science", category, isSubChecked(alt) || isSubChecked("Social Science")))
+      .map((alt) => altItemHtml(alt, "Social Science", category, isSubChecked(alt) || isSubChecked("Social Science"), wOf("a:" + alt)))
       .join("");
     return;
   }
@@ -1673,11 +1720,16 @@ function renderSubcategoryList(container, category, subs) {
       ${hasAlts ? `<span class="altsub-expand" title="alternate subcategories">${isChecked ? "▾" : "▸"}</span>` : ""}
       <span>${escapeHtml(s.subcategory)}</span>
       <span class="text-muted" style="margin-left:auto;font-size:10px">${s.count}</span>
-      <input type="number" class="subcat-weight" value="${isChecked ? 10 : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
+      <input type="number" class="subcat-weight" value="${isChecked ? (wOf("s:" + s.subcategory) != null ? wOf("s:" + s.subcategory) : 10) : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
     </label>`;
       if (hasAlts) {
+        // Each alternate restores from ITS OWN saved entry (the save list mixes
+        // subs and alts) — restoring from the parent sub resurrected alts the
+        // user had deselected. A checked sub whose save predates alt entries
+        // falls back to all-checked.
+        const savedHasAlts = !!savedSubs && ALT_SUBCATS[s.subcategory].some((a) => savedSubs.includes(a));
         html += `<div class="altsub-list ${isChecked ? "" : "hidden"}" data-parent="${escapeHtml(s.subcategory)}">` +
-          ALT_SUBCATS[s.subcategory].map((alt) => altItemHtml(alt, s.subcategory, category, isChecked)).join("") +
+          ALT_SUBCATS[s.subcategory].map((alt) => altItemHtml(alt, s.subcategory, category, isChecked && (savedHasAlts ? isSubChecked(alt) : true), wOf("a:" + alt))).join("") +
           "</div>";
       }
       return html;
@@ -1685,12 +1737,12 @@ function renderSubcategoryList(container, category, subs) {
     .join("");
 }
 
-function altItemHtml(alt, parentSub, category, checked) {
+function altItemHtml(alt, parentSub, category, checked, weight) {
   return `
     <label class="filter-item altsub-item">
       <input type="checkbox" value="${escapeHtml(alt)}" data-parent-sub="${escapeHtml(parentSub)}" data-category="${escapeHtml(category)}" class="altsub-checkbox" ${checked ? "checked" : ""}>
       <span>${escapeHtml(alt)}</span>
-      <input type="number" class="altsub-weight" value="${checked ? 10 : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
+      <input type="number" class="altsub-weight" value="${checked ? (weight != null ? weight : 10) : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
     </label>`;
 }
 
@@ -1740,7 +1792,7 @@ function getFilterSelectionSnapshot() {
   const grabW = (label, key) => {
     const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
     const v = w ? parseFloat(w.value) : NaN;
-    if (Number.isFinite(v) && v !== 10 && v !== 0) weights[key] = v;   // only non-defaults travel
+    if (Number.isFinite(v) && v !== 10) weights[key] = v;   // 10 is implied; deliberate 0s travel
   };
   $$("#category-filters .category-group").forEach((g) => {
     const cb = g.querySelector(".cat-checkbox");
@@ -1779,9 +1831,20 @@ function getFilterSelectionSnapshot() {
 }
 
 let _applySnapGen = 0;
+let _applyingSnapshot = false;   // saveFilterState refuses while a mirror-apply runs
+let _panelEpoch = 0;             // bumping this kills deferred saved-blob restore timers
 async function applyFilterSelectionSnapshot(snap) {
   if (!snap || !Array.isArray(snap.cats)) return false;
   const gen = ++_applySnapGen;   // a newer snapshot arriving mid-apply wins
+  _panelEpoch++;                 // pending loadCategories restore timers must not clobber this apply
+  _applyingSnapshot = true;
+  try {
+    return await _applySnapshotInner(snap, gen);
+  } finally {
+    if (gen === _applySnapGen) _applyingSnapshot = false;
+  }
+}
+async function _applySnapshotInner(snap, gen) {
   const typeKey = state.mode === "bonuses" ? "bonuses" : "tossups";
   if (!document.querySelector("#category-filters .category-group")) {
     try { await loadCategories(typeKey); } catch { return false; }
@@ -1794,7 +1857,9 @@ async function applyFilterSelectionSnapshot(snap) {
     const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
     if (!w) return;
     if (!on) { w.value = "0"; return; }
-    w.value = key != null && wmap[key] != null ? String(wmap[key]) : (parseFloat(w.value) > 0 ? w.value : "10");
+    // snapshots omit the default weight — absence MEANS 10, so a leftover
+    // room weight can never survive a restore
+    w.value = key != null && wmap[key] != null ? String(wmap[key]) : "10";
   };
   for (const g of $$("#category-filters .category-group")) {
     const cb = g.querySelector(".cat-checkbox");
@@ -1851,33 +1916,55 @@ async function applyFilterSelectionSnapshot(snap) {
   if (snap.powermarkOnly != null) { const e = $("#filter-powermark"); if (e) e.checked = !!snap.powermarkOnly; }
   if (snap.standard != null) { const e = $("#filter-standard"); if (e) e.checked = !!snap.standard; }
   if (snap.starredOnly != null) { const e = $("#filter-starred"); if (e) e.checked = !!snap.starredOnly; }
-  // Weighted-draw toggle rides along (v2 snapshots). Dispatching change is
-  // safe here — its handler only flips state/persistence, no cascade — and
-  // it is what makes weighted mode actually take effect on the applier.
+  // Panel knobs apply EVENT-FREE: real change events broke multiplayer's
+  // no-events invariant — every apply echoed a setConfig, chat blamed the
+  // wrong player for "changed mode", saves persisted room state into the solo
+  // blob, and a suspended set-mode session lost its _gameSig. State and DOM
+  // are written directly instead.
   if (snap.useWeights != null) {
     const ew = $("#enable-cat-weights");
-    if (ew && ew.checked !== !!snap.useWeights) { ew.checked = !!snap.useWeights; ew.dispatchEvent(new Event("change", { bubbles: true })); }
+    if (ew) ew.checked = !!snap.useWeights;
+    state.settings.useWeights = !!snap.useWeights;
+    $("#category-filters")?.classList.toggle("weights-on", !!snap.useWeights);
   }
-  // Panel-level knobs travel too (their handlers are cascade-free, so real
-  // events are safe; any echo re-broadcast dedupes on the receiving side).
-  const setCtl = (sel, v, evts) => {
-    const el = $(sel);
-    if (!el || v == null || String(el.value) === String(v)) return;
-    el.value = v;
-    (evts || ["change"]).forEach((e2) => el.dispatchEvent(new Event(e2, { bubbles: true })));
-  };
-  const setBox = (sel, v) => {
-    const el = $(sel);
-    if (el && v != null && el.checked !== !!v) { el.checked = !!v; el.dispatchEvent(new Event("change", { bubbles: true })); }
-  };
   if (snap.mode != null) {
-    setCtl("#mode-select", snap.mode);
-    if (snap.mode === "set") { setCtl("#mode-set-name", snap.setName); setCtl("#mode-packet", snap.packet); }
+    const ms = $("#mode-select");
+    if (ms && ms.value !== snap.mode) { ms.value = snap.mode; try { updateModeFields(); } catch {} }
+    if (snap.mode === "set") {
+      const sn = $("#mode-set-name");
+      if (sn && snap.setName != null && sn.value !== snap.setName) {
+        sn.value = snap.setName;
+        // packet validation must clamp against the NEW set's packet list, so
+        // the packet value is written only after that list loads
+        try { await loadSetPackets(); } catch {}
+        if (gen !== _applySnapGen) return false;
+      }
+      const pk = $("#mode-packet");
+      if (pk && snap.packet != null) pk.value = snap.packet;
+    }
   }
-  setCtl("#panel-speed-slider", snap.revealSpeed, ["input", "change"]);
-  setCtl("#strictness-slider", snap.strictness, ["input", "change"]);
-  setBox("#filter-hide-pron", snap.hidePron);
-  setBox("#filter-hide-notes", snap.hideNotes);
+  if (snap.revealSpeed != null) {
+    const s = $("#panel-speed-slider");
+    if (s) s.value = snap.revealSpeed;
+    const s2 = $("#speed-slider"); if (s2) s2.value = snap.revealSpeed;
+    state.settings.revealSpeed = snap.revealSpeed;
+    const l = $("#panel-speed-label"); if (l) l.textContent = snap.revealSpeed + "ms";
+    const l2 = $("#speed-slider-label"); if (l2) l2.textContent = snap.revealSpeed + "ms";
+  }
+  if (snap.strictness != null) {
+    const s = $("#strictness-slider");
+    if (s) s.value = snap.strictness;
+    state.settings.strictness = parseInt(snap.strictness) || 10;
+    const l = $("#strictness-label"); if (l) l.textContent = String(snap.strictness);
+  }
+  if (snap.hidePron != null) {
+    const e = $("#filter-hide-pron"); if (e) e.checked = !!snap.hidePron;
+    state.settings.hidePronunciations = !!snap.hidePron;
+  }
+  if (snap.hideNotes != null) {
+    const e = $("#filter-hide-notes"); if (e) e.checked = !!snap.hideNotes;
+    state.settings.hideNotes = !!snap.hideNotes;
+  }
   clearPrefetch();
   return true;
 }
@@ -2141,6 +2228,11 @@ function getFilters() {
 }
 
 $("#difficulty-filters")?.addEventListener("change", debounceSaveFilters);
+// Weight edits never triggered a save (only the checkbox cascade did) —
+// weight values silently vanished on the next screen build.
+$("#category-filters")?.addEventListener("change", (e) => {
+  if (e.target?.classList?.contains("cat-weight") || e.target?.classList?.contains("subcat-weight") || e.target?.classList?.contains("altsub-weight")) debounceSaveFilters();
+});
 $("#year-min")?.addEventListener("input", () => { clampYearDual("min"); debounceSaveFilters(); });
 $("#year-max")?.addEventListener("input", () => { clampYearDual("max"); debounceSaveFilters(); });
 ["#filter-starred", "#filter-powermark", "#filter-standard"].forEach((sel) => {
@@ -2367,6 +2459,7 @@ function applyPendingPacketPlay() {
 
 function setMode(mode) {
   if (state.mode && state.mode !== mode && $("#category-filters .category-group")) saveFilterState();
+  clearTimeout(_debounceTimer);   // a pending debounce would save the OLD panel into the NEW mode's bucket
   state.mode = mode;
   state._practiceBase = mode;
   const type = mode === "tossups" ? "tossups" : "bonuses";
