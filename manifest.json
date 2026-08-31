@@ -1,5 +1,5 @@
 {
-  "version": "14.18",
+  "version": "14.19",
   "renderer": [
     "index.html",
     "style.css",
@@ -24,9 +24,19 @@
       "file": "answerline-lab.zip"
     },
     {
+      "id": "buzz-trainer",
+      "name": "Beat Your Buzz",
+      "file": "buzz-trainer.zip"
+    },
+    {
       "id": "buzz-words",
       "name": "Buzz Words",
       "file": "buzz-words.zip"
+    },
+    {
+      "id": "canon-tracker",
+      "name": "Canon Tracker",
+      "file": "canon-tracker.zip"
     },
     {
       "id": "class-admin",
@@ -37,6 +47,11 @@
       "id": "class-sync",
       "name": "Class Sync",
       "file": "class-sync.zip"
+    },
+    {
+      "id": "clue-recall",
+      "name": "Clue Recall",
+      "file": "clue-recall.zip"
     },
     {
       "id": "coach-mode",
