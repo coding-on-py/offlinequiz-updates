@@ -1,5 +1,5 @@
 {
-  "version": "14.22",
+  "version": "14.23",
   "renderer": [
     "index.html",
     "style.css",
@@ -97,6 +97,11 @@
       "id": "class-sync",
       "name": "Class Sync",
       "file": "plugin2.zip"
+    },
+    {
+      "id": "power-facts",
+      "name": "Power Facts",
+      "file": "power-facts.zip"
     }
   ],
   "main": true
