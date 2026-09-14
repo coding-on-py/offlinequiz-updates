@@ -529,6 +529,11 @@ export class App {
     const ids = this.userData.getPoweredAnswerIds();
     const counts = {};
     const classes = {};
+    // norm -> { "cat|sub|alt": [question ids] } so an achievement described as
+    // "N different <topic> QUESTIONS" can count distinct questions rather than
+    // distinct names (ten powers on Thor are one Norse figure but may be ten
+    // questions) — see computeAchievementData distinct:"questions".
+    const questions = {};
     for (const qid of ids) {
       let t;
       try { t = this.questionDb.getTossup(qid); } catch (e) { t = null; }
@@ -541,8 +546,11 @@ export class App {
       const ck = (t.category || "") + "|" + (t.subcategory || "") + "|" + (t.alternate_subcategory || "");
       const cm = classes[norm] || (classes[norm] = {});
       cm[ck] = (cm[ck] || 0) + 1;
+      const qm = questions[norm] || (questions[norm] = {});
+      const list = qm[ck] || (qm[ck] = []);
+      if (!list.includes(qid)) list.push(qid);
     }
-    return { answer_counts: counts, answer_classes: classes };
+    return { answer_counts: counts, answer_classes: classes, answer_questions: questions };
   }
 
   getSessionBreakdown(category, difficulty) {

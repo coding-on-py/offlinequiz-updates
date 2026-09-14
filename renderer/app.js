@@ -6671,7 +6671,7 @@ async function loadPlayer() {
     const powers = stats.tossupPowers || 0;
     const negs = stats.tossupNegs || 0;
 
-    const achData = computeAchievementData(stats, apCounts, apClasses);
+    const achData = computeAchievementData(stats, apCounts, apClasses, apData.answer_questions || {});
     const pluginAchs = collectPluginAchievements(stats, apCounts);
     const achievementsHtml = buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs);
     maybeShowAchievementPopups(achData, pluginAchs, profileKey);
@@ -6830,7 +6830,7 @@ function apClassCount(classMap, cat, sub, alt) {
   }
   return n;
 }
-function computeAchievementData(stats, apCounts, apClasses) {
+function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
   stats = stats || {};
   apCounts = apCounts || {};
   apClasses = apClasses || {};
@@ -6858,17 +6858,47 @@ function computeAchievementData(stats, apCounts, apClasses) {
     } else if (ach.type === "streak") {
       progress = streak;
     } else if (ach.type === "answer_power") {
-      const targets = (Array.isArray(ach.target) ? ach.target : [ach.target]).map(apNorm).filter(Boolean);
+      // A target entry is one name or an ALIAS GROUP (array). The DB spells
+      // Freyja "freya" 14× and "freyja" 12×, Kronos three ways, Heimdall mostly
+      // "heimdallr" — apMatch is exact per word, so without groups a figure the
+      // player powered under the other spelling was silently lost (Norse sat at
+      // 4/10 on a profile with 20 powered Norse questions). A group counts ONCE.
+      const groups = (Array.isArray(ach.target) ? ach.target : [ach.target])
+        .map((t) => (Array.isArray(t) ? t : [t]).map(apNorm).filter(Boolean)).filter((g) => g.length);
       const cat = ach.cat || apAchCategory(ach.id), sub = ach.sub || null, alt = ach.alt || null;
       const locked = !!(cat || sub || alt);
       const cnt = (ans) => (locked ? apClassCount(apClasses[ans], cat, sub, alt) : (apCounts[ans] || 0));
-      if (ach.distinct && targets.length > 1) {
-        for (const norm of targets) {
-          if (Object.keys(apCounts).some((ans) => apMatch(ans, norm) && cnt(ans) > 0)) progress++;
+      const matchesAny = (ans, g) => g.some((norm) => apMatch(ans, norm));
+      const answers = Object.keys(apCounts);
+      if (ach.distinct === "questions") {
+        // "N different <topic> QUESTIONS": distinct question ids across every
+        // answer matching any alias, class-locked. Ten powers on Thor are ten
+        // questions only if they were ten different questions.
+        const haveQ = apQuestions && Object.keys(apQuestions).length > 0;
+        if (haveQ) {
+          const seen = new Set();
+          for (const ans of answers) {
+            if (!groups.some((g) => matchesAny(ans, g))) continue;
+            const byClass = apQuestions[ans] || {};
+            for (const ck in byClass) {
+              const p = ck.split("|");
+              if (locked && !(apDimOk(p[0], cat) && apDimOk(p[1], sub) && apDimOk(p[2], alt))) continue;
+              for (const qid of byClass[ck]) seen.add(qid);
+            }
+          }
+          progress = seen.size;
+        } else {
+          // Renderer updated before the main process restarted (Cmd+R vs
+          // Cmd+Q): no per-question data yet — count powers rather than show 0.
+          for (const ans of answers) if (groups.some((g) => matchesAny(ans, g))) progress += cnt(ans);
+        }
+      } else if (ach.distinct && groups.length > 1) {
+        for (const g of groups) {
+          if (answers.some((ans) => matchesAny(ans, g) && cnt(ans) > 0)) progress++;
         }
       } else {
-        for (const ans of Object.keys(apCounts)) {
-          if (targets.some((norm) => apMatch(ans, norm))) progress += cnt(ans);
+        for (const ans of answers) {
+          if (groups.some((g) => matchesAny(ans, g))) progress += cnt(ans);
         }
       }
     }
@@ -6895,7 +6925,7 @@ async function refreshAchievementsRealtime() {
     const stats = statsData.stats || {};
     const apCounts = apData.answer_counts || {};
     const apClasses = apData.answer_classes || {};
-    const achData = computeAchievementData(stats, apCounts, apClasses);
+    const achData = computeAchievementData(stats, apCounts, apClasses, apData.answer_questions || {});
     const pluginAchs = collectPluginAchievements(stats, apCounts);
     maybeShowAchievementPopups(achData, pluginAchs, _rtAchProfileKey);
   } catch (e) {}
@@ -7191,7 +7221,7 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-lit-norwegian",name:"Norwegian Wood",desc:"Power on a Haruki Murakami question",type:"answer_power",threshold:1,target:"haruki murakami",icon:"森"},
   {id:"ap-lit-dante",name:"Descent into Hell",desc:"Power on a Dante question",type:"answer_power",threshold:1,target:"dante",icon:"獄"},
   {id:"ap-lit-paradise",name:"Fall of Man",desc:"Power on a Paradise Lost question",type:"answer_power",threshold:1,target:"paradise lost",icon:"堕"},
-  {id:"ap-lit-twelfth",name:"Twelfth Night",desc:"Power on 12 different Shakespeare works",type:"answer_power",threshold:12,target:["hamlet","macbeth","othello","king lear","romeo and juliet","the tempest","a midsummer night's dream","julius caesar","antony and cleopatra","richard iii","henry v","much ado about nothing","twelfth night","the merchant of venice","as you like it","the taming of the shrew","the winter's tale","coriolanus","titus andronicus","henry iv"],distinct:true,icon:"劇"},
+  {id:"ap-lit-twelfth",name:"Twelfth Night",desc:"Power on 12 different Shakespeare works",type:"answer_power",threshold:12,target:["hamlet","macbeth","othello","king lear","romeo and juliet","the tempest","a midsummer night's dream","julius caesar","antony and cleopatra","richard iii",["henry v","henry iv"],"much ado about nothing","twelfth night","the merchant of venice","as you like it","the taming of the shrew","the winter's tale","coriolanus","titus andronicus"],distinct:true,icon:"劇"},
   {id:"ap-hist-wars",name:"Wars of the Three Meanings",desc:"Power on War of the Three Henries, War of the Triple Alliance, and Punic Wars",type:"answer_power",threshold:3,target:["war of the three henries","war of the triple alliance","punic wars"],distinct:true,icon:"戦"},
   {id:"ap-hist-teto",name:"Kasane Teto",desc:"Power on a Tito or Yugoslavia question",type:"answer_power",threshold:1,target:["tito","yugoslavia"],icon:"統"},
   {id:"ap-hist-memento",name:"Memento Mori",desc:"Power on a Goths, Vandals, or Huns question",type:"answer_power",threshold:1,target:["goths","vandals","huns"],icon:"蛮"},
@@ -7199,7 +7229,7 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-hist-grant",name:"Unconditional Surrender Grant",desc:"Power on a Ulysses S. Grant question",type:"answer_power",threshold:1,target:"ulysses s. grant",icon:"将"},
   {id:"ap-hist-luther",name:"Hater of German Serfs",desc:"Power on a Martin Luther question",type:"answer_power",threshold:1,target:"martin luther",icon:"改"},
   {id:"ap-hist-capet",name:"House of Capet",desc:"Power on 16 questions answered Louis",type:"answer_power",threshold:16,target:"louis",icon:"冠"},
-  {id:"ap-hist-union",name:"Union Jack",desc:"Power on England, Scotland, Wales, Ireland, and Britain",type:"answer_power",threshold:5,target:["england","scotland","wales","ireland","britain"],distinct:true,icon:"連"},
+  {id:"ap-hist-union",name:"Union Jack",desc:"Power on England, Scotland, Wales, Ireland, and Britain",type:"answer_power",threshold:5,target:["england","scotland","wales","ireland",["britain","great britain","united kingdom"]],distinct:true,icon:"連"},
   {id:"ap-hist-autumn",name:"Autumn of Nations",desc:"Power on a Berlin Wall or Soviet Union question",type:"answer_power",threshold:1,target:["berlin wall","soviet union"],icon:"壁"},
   {id:"ap-hist-fdj",name:"Freie Deutsche Jugend",desc:"Power on an East Germany question",type:"answer_power",threshold:1,target:"east germany",icon:"東"},
   {id:"ap-hist-bismarck",name:"Iron and Blood",desc:"Power on a Bismarck question",type:"answer_power",threshold:1,target:"bismarck",icon:"血"},
@@ -7254,7 +7284,7 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-sci-v12",name:"V12 Engine",desc:"Power on an internal combustion or Otto cycle question",type:"answer_power",threshold:1,target:["internal combustion","otto cycle","engine"],icon:"輪"},
   {id:"ap-sci-stress",name:"Stress-Strain Curve",desc:"Power on a materials science question",type:"answer_power",threshold:1,target:["materials science","stress-strain","material"],icon:"張"},
   {id:"ap-sci-hydrology",name:"Water Cycle",desc:"Power on a hydrology or precipitation question",type:"answer_power",threshold:1,target:["hydrology","precipitation","water cycle"],icon:"雨"},
-  {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different element questions",type:"answer_power",threshold:7,target:["hydrogen","helium","lithium","beryllium","boron","carbon","nitrogen","oxygen","fluorine","neon","sodium","magnesium","aluminium","silicon","phosphorus","sulfur","chlorine","argon","potassium","calcium","iron","copper","zinc","silver","gold","mercury","lead","uranium","platinum","titanium","nickel","cobalt","manganese","chromium","vanadium","bromine","iodine","strontium","barium","radium","thorium"],distinct:true,icon:"元"},
+  {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different element questions",type:"answer_power",threshold:7,target:["hydrogen","helium","lithium","beryllium","boron","carbon","nitrogen","oxygen","fluorine","neon","sodium","magnesium",["aluminium","aluminum"],"silicon","phosphorus",["sulfur","sulphur"],"chlorine","argon","potassium","calcium","iron","copper","zinc","silver","gold","mercury","lead","uranium","platinum","titanium","nickel","cobalt","manganese","chromium","vanadium","bromine","iodine","strontium","barium","radium","thorium"],distinct:true,icon:"元"},
   {id:"ap-sci-spectroscopy",name:"Spectroscopy",desc:"Power on NMR, IR, UV-Vis, mass spec, and X-ray crystallography",type:"answer_power",threshold:5,target:["nmr","ir","uv-vis","mass spectrometry","x-ray crystallography"],distinct:true,icon:"光"},
   {id:"ap-sci-solvay",name:"Solvay Conference",desc:"Power on Einstein, Bohr, Heisenberg, Dirac, Pauli, Curie, and Schrödinger",type:"answer_power",threshold:7,target:["einstein","bohr","heisenberg","dirac","pauli","curie","schrödinger"],distinct:true,icon:"学"},
   {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on 5 different space missions or observatories",type:"answer_power",threshold:5,target:["apollo","gemini","mercury","soyuz","space shuttle","hubble","voyager","international space station","cassini","kepler","james webb","new horizons","curiosity","sputnik","vostok"],distinct:true,icon:"宙"},
@@ -7270,9 +7300,9 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-myth-genesis",name:"Genesis",desc:"Power on a creation myth question",type:"answer_power",threshold:1,target:"creation myth",icon:"創"},
   {id:"ap-myth-quetzal",name:"Feathered Serpent",desc:"Power on a Quetzalcoatl question",type:"answer_power",threshold:1,target:"quetzalcoatl",icon:"蛇"},
   {id:"ap-myth-labours",name:"The Labours",desc:"Power on a Heracles or Hercules question",type:"answer_power",threshold:1,target:"heracles",icon:"獅"},
-  {id:"ap-myth-theogony",name:"Theogony",desc:"Power on 12 different Greek deities or Titans",type:"answer_power",threshold:12,target:["zeus","hera","poseidon","demeter","athena","apollo","artemis","ares","hephaestus","aphrodite","hermes","dionysus","hades","hestia","cronus","rhea","oceanus","tethys","hyperion","theia","coeus","phoebe","mnemosyne","themis","crius","iapetus","atlas","prometheus","epimetheus"],distinct:true,icon:"神"},
+  {id:"ap-myth-theogony",name:"Theogony",desc:"Power on 12 different Greek deities or Titans",type:"answer_power",threshold:12,target:["zeus","hera","poseidon","demeter",["athena","athene"],"apollo","artemis","ares",["hephaestus","hephaistos","vulcan"],"aphrodite","hermes",["dionysus","dionysos","bacchus"],["hades","pluto"],"hestia",["persephone","proserpina"],["cronus","kronos","cronos"],"rhea",["gaia","gaea"],["uranus","ouranos"],"eros","pan","helios","selene","eos","nike","iris","nemesis","hecate","asclepius","hebe","nyx","hypnos","thanatos","morpheus","tyche","eris","oceanus","tethys","hyperion","theia","coeus","phoebe","mnemosyne","themis","crius","iapetus","atlas","prometheus","epimetheus"],distinct:true,icon:"神"},
   {id:"ap-myth-iliad",name:"Iliad Heroes",desc:"Power on Achilles, Hector, Agamemnon, Odysseus, Ajax, Diomedes, and Patroclus",type:"answer_power",threshold:7,target:["achilles","hector","agamemnon","odysseus","ajax","diomedes","patroclus"],distinct:true,icon:"英"},
-  {id:"ap-myth-allfather",name:"Allfather's Blessing",desc:"Power on 10 different Norse mythology questions",type:"answer_power",threshold:10,target:["odin","thor","loki","freyja","freyr","baldr","tyr","heimdall","frigg","hel","jörmungandr","fenrir","yggdrasil","valhalla","ragnarök","valkyrie","njord","skadi","mimir","norns"],distinct:true,icon:"北"},
+  {id:"ap-myth-allfather",name:"Allfather's Blessing",desc:"Power on 10 different Norse mythology questions",type:"answer_power",threshold:10,target:["odin","thor","loki","freyja","freya","freyr","baldr","balder","baldur","tyr","heimdall","heimdallr","frigg","frigga","hel","jörmungandr","midgard serpent","fenrir","fenris","yggdrasil","valhalla","ragnarök","valkyrie","valkyries","njord","njordr","skadi","mimir","norns","mjolnir","sleipnir","gungnir","bifrost","asgard","aesir","vanir","idunn","idun","bragi","sif","huginn","muninn","draupnir","gjallarhorn","kvasir","ymir","audhumla","nidhogg","norse","norse mythology","jotunheim","midgard","gleipnir","fafnir","sigurd","brunhild","brynhildr","volsung","nine worlds","einherjar"],distinct:"questions",icon:"北"},
   {id:"ap-pop-kanye",name:"I Guess We'll Never Know",desc:"Power on a Kanye West question",type:"answer_power",threshold:1,target:"kanye",icon:"韻"},
   {id:"ap-pop-mj",name:"King of Pop",desc:"Power on a Michael Jackson question",type:"answer_power",threshold:1,target:"michael jackson",icon:"舞"},
   {id:"ap-pop-starwars",name:"Skywalker",desc:"Power on a Star Wars question",type:"answer_power",threshold:1,target:"star wars",icon:"星"},
@@ -8343,7 +8373,7 @@ function init() {
           API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
         ]);
         const stats = statsData.stats || {};
-        const achData = computeAchievementData(stats, apData.answer_counts || {}, apData.answer_classes || {});
+        const achData = computeAchievementData(stats, apData.answer_counts || {}, apData.answer_classes || {}, apData.answer_questions || {});
         const out = ACHIEVEMENT_LIST.map((a) => ({
           id: a.id, name: a.name, desc: a.desc, threshold: a.threshold,
           earned: !!(achData[a.id] && achData[a.id].earned),
