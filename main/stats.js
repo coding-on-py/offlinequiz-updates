@@ -25,6 +25,7 @@ export function computeStats(entries) {
     totalPoints: 0,
     averagePointsPerQuestion: 0,
     byCategory: {},
+    byAltSubcategory: {},
     byDifficulty: {},
     celerityDistribution: { power: [], early: [], mid: [], late: [], end: [] },
     questionsByDate: {},
@@ -59,6 +60,11 @@ export function computeStats(entries) {
     }
 
     addToCategoryStats(stats.byCategory, t, "tossup");
+    // "Math" / "Computer Science" exist only as ALTERNATE subcategories
+    // (Science > Other Science > Math), so the cat_specific achievements for
+    // them tally here. Entries carry alternate_subcategory only when the
+    // caller resolved it (index.js getOverallStats); session rows do not.
+    if (t.alternate_subcategory) addToCategoryStats(stats.byAltSubcategory, { ...t, category: t.alternate_subcategory }, "tossup");
     addToDifficultyStats(stats.byDifficulty, t, "tossup");
     addToDateStats(stats.questionsByDate, t);
   }
@@ -73,6 +79,7 @@ export function computeStats(entries) {
     stats.bonusDist[bkt]++;
 
     addToCategoryStats(stats.byCategory, b, "bonus");
+    if (b.alternate_subcategory) addToCategoryStats(stats.byAltSubcategory, { ...b, category: b.alternate_subcategory }, "bonus");
     addToDifficultyStats(stats.byDifficulty, b, "bonus");
     addToDateStats(stats.questionsByDate, b);
   }
@@ -198,6 +205,7 @@ export function emptyStats() {
     totalPoints: 0,
     averagePointsPerQuestion: 0,
     byCategory: {},
+    byAltSubcategory: {},
     byDifficulty: {},
     celerityDistribution: { power: [], early: [], mid: [], late: [], end: [] },
     questionsByDate: {},

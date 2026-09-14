@@ -704,15 +704,24 @@ function numVal(w) {
   return null;
 }
 
-function wordMatches(tw, uw, strictness) {
+// `fuzzy` is REQUIRED, no default: acceptMatch decides per candidate word
+// whether the answer's one-typo budget may be spent here, and a default would
+// silently restore the old all-or-nothing behaviour for a future caller.
+function wordMatches(tw, uw, strictness, fuzzy) {
   if (tw === uw) return true;
   const na = numVal(tw), nb = numVal(uw);
   if (na !== null && nb !== null) return na === nb;
-  if (strictness < 20 && tw.length >= 4 && uw.length >= 4 && !/\d/.test(tw) && !/\d/.test(uw)) {
-    const maxDist = strictness >= 14 ? 1 : Math.max(1, Math.floor(Math.min(tw.length, uw.length) / 4));
-    if (levenshtein(tw, uw) <= maxDist) return true;
-  }
-  return false;
+  if (!fuzzy || /\d/.test(tw) || /\d/.test(uw)) return false;
+  // At max strictness spelling counts, so an edit is forgiven only in a word
+  // long enough that one letter is unlikely to spell a DIFFERENT answer
+  // ("Ming"/"Qing", "Fuji"/"Fiji" are 4), and only when the first letter still
+  // matches — "citric"/"nitric" acid and "asexual"/"sexual" reproduction are
+  // one edit apart at position 0, while real typos almost never are.
+  const minLen = strictness >= 20 ? 5 : 4;
+  if (tw.length < minLen || uw.length < minLen) return false;
+  if (strictness >= 20 && tw[0] !== uw[0]) return false;
+  const maxDist = strictness >= 14 ? 1 : Math.max(1, Math.floor(Math.min(tw.length, uw.length) / 4));
+  return levenshtein(tw, uw) <= maxDist;
 }
 
 function acceptMatch(term, userNorm, strictness, wordForms) {
@@ -724,11 +733,40 @@ function acceptMatch(term, userNorm, strictness, wordForms) {
   const termWords = contentWords(t), userWords = contentWords(userNorm);
   if (!termWords.length || !userWords.length) return false;
   const used = new Array(userWords.length).fill(false);
-  for (const tw of termWords) {
+  // At max strictness a ONE-word answer must be spelled exactly ("Manet" is
+  // never "Monet" — no edit-distance rule can separate that from
+  // "popul"/"Popol"). A MULTI-word answer may absorb ONE typo, because its
+  // other words corroborate it: "popul vuh" -> "Popol Vuh".
+  let typos = strictness >= 20 && termWords.length >= 2 ? 1 : 0;
+  let pass2 = termWords;
+  if (typos > 0) {
+    // EXACT/NUMERIC PRE-PASS, max strictness only. The loop below is greedy, so
+    // without this a fuzzy match can spend the budget on a user word that a
+    // LATER term word needed exactly — turning 66 previously-ACCEPTED corpus
+    // answers into rejects ("jumbo mumbo" for Mumbo Jumbo, "friday lights
+    // night" for Friday Night Lights). Claiming the exact matches first makes
+    // this a provable superset of the old behaviour at 20. Gated on typos > 0,
+    // so every strictness below 20 stays bit-identical.
+    const pending = [];
+    for (const tw of termWords) {
+      let f = false;
+      for (let i = 0; i < userWords.length; i++) {
+        if (!used[i] && wordMatches(tw, userWords[i], strictness, false)) { used[i] = true; f = true; break; }
+      }
+      if (!f) pending.push(tw);
+    }
+    pass2 = pending;
+  }
+  for (const tw of pass2) {
     let found = false;
     for (let i = 0; i < userWords.length; i++) {
       if (used[i]) continue;
-      if (wordMatches(tw, userWords[i], strictness)) { used[i] = true; found = true; break; }
+      if (wordMatches(tw, userWords[i], strictness, strictness < 20 || typos > 0)) {
+        // Only a real edit spends the budget: numeric equivalence on BOTH sides
+        // ("2" == "two") is exact for our purposes and must stay free.
+        if (typos > 0 && tw !== userWords[i] && (numVal(tw) === null || numVal(userWords[i]) === null)) typos--;
+        used[i] = true; found = true; break;
+      }
       if (wordForms) {
         const a = tw, b = userWords[i];
         const pre = Math.min(a.length, b.length);

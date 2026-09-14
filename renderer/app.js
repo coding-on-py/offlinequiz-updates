@@ -2133,9 +2133,14 @@ function getActiveFilters() {
   if (state.settings.useWeights) {
     const picked = weightedPickCategoryFilter();
     if (picked) {
+      // The category is ALWAYS sent. A subcategory/alternate name is not unique
+      // to its category — "Poetry", "Long Fiction" and "Short Fiction" each
+      // appear under 9 categories, "Auditory Fine Arts" under 2 — and
+      // _buildWhere ANDs the category clause with the sub/alt clause, so
+      // omitting it drew from every category that reuses the name.
+      filters.categories = [picked.category];
       if (picked.alternateSubcategory) filters.alternateSubcategories = [picked.alternateSubcategory];
       else if (picked.subcategory) filters.subcategories = [picked.subcategory];
-      else filters.categories = [picked.category];
       return filters;
     }
   }
@@ -2143,6 +2148,14 @@ function getActiveFilters() {
   if (fullyChecked && selectedCats.length > 0 && selectedAlts.length === 0) {
     filters.categories = selectedCats;
   } else if (selectedSubs.length > 0 || selectedAlts.length > 0) {
+    // AND the category constraint in. fullyChecked above is GLOBAL, so ONE
+    // partially-selected group demotes EVERY other fully-checked category from
+    // `categories` to an enumerated sub list — and subcategory names are not
+    // unique to a category, so "Literature (all) + Biology" leaked 9,106 Fine
+    // Arts tossups into the pool through the shared label "Auditory Fine Arts".
+    // _buildWhere keeps the two clauses separate and ANDs them, so this is a
+    // pure narrowing.
+    if (selectedCats.length > 0) filters.categories = selectedCats;
     if (selectedSubs.length > 0) filters.subcategories = selectedSubs;
     if (selectedAlts.length > 0) filters.alternateSubcategories = selectedAlts;
   } else if (selectedCats.length > 0) {
@@ -2159,8 +2172,13 @@ function describeActiveFilters() {
   const parts = [];
   if (f.setNames) parts.push("Set: " + f.setNames.join(", ") + (f.packetNumbers ? " (packets " + f.packetNumbers.join(",") + ")" : ""));
   if (f.categories) parts.push("Categories: " + f.categories.join(", "));
-  if (f.subcategories) parts.push("Subcats: " + f.subcategories.join(", "));
-  if (!f.categories && !f.subcategories && !f.setNames) parts.push("All categories (natural mix)");
+  // alternateSubcategories were never listed: an alt-only selection (every
+  // click in Social Science is one — its list has no .subcat-checkbox at all)
+  // rendered as "All categories (natural mix)", and multiplayer broadcasts this
+  // string to the lobby as the filter summary.
+  const subBits = [...(f.subcategories || []), ...(f.alternateSubcategories || [])];
+  if (subBits.length) parts.push("Subcats: " + subBits.join(", "));
+  if (!f.categories && !subBits.length && !f.setNames) parts.push("All categories (natural mix)");
   if (f.difficulties && f.difficulties.length) parts.push("Difficulty: " + f.difficulties.join(", "));
   if (f.yearMin || f.yearMax) parts.push("Years: " + (f.yearMin || 2000) + "–" + (f.yearMax || 2026));
   if (state.settings.useWeights) parts.push("weighted");
@@ -2298,7 +2316,64 @@ document.addEventListener("change", (e) => {
       const parentCb = parentItem?.querySelector(".subcat-checkbox");
       if (parentCb && !parentCb.checked) {
         parentCb.checked = true;
+        // Marked so the teardown below undoes exactly what WE ticked, never a
+        // subcategory the user ticked themselves.
+        parentCb.dataset.autoChecked = "1";
         const pw = parentItem.querySelector(".subcat-weight"); if (pw) pw.value = "10";
+      }
+    }
+    // SUBCAT IMPLIES CATEGORY. collectSubcatFilters, saveFilterState (1417) and
+    // weightedPickCategoryFilter all skip groups whose .cat-checkbox is off, so
+    // ticking "Biology" under an unticked "Science" meant NO category filter at
+    // all (the whole database) and was never saved — while
+    // getFilterSelectionSnapshot DID carry it, so the panel, the save blob and
+    // the multiplayer snapshot disagreed about the same DOM.
+    // SILENT on purpose (never dispatchEvent on a .cat-checkbox): that fires the
+    // listener at 1590, whose loadSubcategories(checkAll=true) cascade ticks
+    // EVERY sub and alt in the group — the opposite of the one sub the user
+    // picked. Runs after the altsub->subcat block so the alt -> sub -> category
+    // chain completes in one pass, and before this handler's saveFilterState()
+    // so the new state persists in the same tick. The weight-input path below
+    // re-dispatches change on the checkbox, so typing a weight lands here too.
+    delete cb.dataset.autoChecked;   // a direct change on a box = the user owns it
+    if (!cb.classList.contains("cat-checkbox")) {
+      // .category-group, never sibling traversal: Social Science renders its
+      // alternates straight into the container with no .subcat-checkbox and no
+      // .altsub-list wrapper at all (1706).
+      const group = cb.closest(".category-group");
+      const catCb = group?.querySelector(".cat-checkbox");
+      const catW = catCb?.closest(".filter-item")?.querySelector(".cat-weight");
+      if (cb.checked) {
+        if (catCb && !catCb.checked) {
+          catCb.checked = true;
+          catCb.dataset.autoChecked = "1";
+          // An unchecked category renders at weight 0, which
+          // weightedPickCategoryFilter reads as "never draw this" — the user's
+          // pick would be silently un-drawable in weighted mode. Guarded by
+          // !catCb.checked so a deliberate 0 or 30 on an ALREADY-checked
+          // category is never clobbered.
+          if (catW) catW.value = "10";
+          const catExp = group.querySelector(".cat-expand");
+          if (catExp) catExp.textContent = "▾";
+          group.querySelector(".subcategory-list")?.classList.remove("hidden");
+        }
+      } else {
+        // Symmetric teardown: tick-then-untick must be a true no-op. Only boxes
+        // THIS handler ticked are undone, so the "tick the category, untick
+        // every sub" workflow still means the whole category.
+        const altList = cb.classList.contains("altsub-checkbox") ? cb.closest(".altsub-list") : null;
+        const pItem = altList?.previousElementSibling;
+        const pCb = pItem?.querySelector(".subcat-checkbox");
+        if (pCb?.dataset.autoChecked && !altList.querySelector(".altsub-checkbox:checked")) {
+          pCb.checked = false;
+          delete pCb.dataset.autoChecked;
+          const pw2 = pItem.querySelector(".subcat-weight"); if (pw2) pw2.value = "0";
+        }
+        if (catCb?.dataset.autoChecked && !group.querySelector(".subcat-checkbox:checked, .altsub-checkbox:checked")) {
+          catCb.checked = false;
+          delete catCb.dataset.autoChecked;
+          if (catW) catW.value = "0";
+        }
       }
     }
   }
@@ -2307,6 +2382,12 @@ document.addEventListener("change", (e) => {
     const item = wInput.closest(".filter-item");
     const box = item?.querySelector(".cat-checkbox, .subcat-checkbox, .altsub-checkbox");
     const val = parseFloat(wInput.value) || 0;
+    // Typing a weight into a row is a deliberate act on THAT row: the user now
+    // owns it, so the auto-select teardown above must leave it alone. Without
+    // this, "tick Biology, give Science weight 30, untick Biology" silently
+    // wiped the 30 — the box was still marked autoChecked because a weight edit
+    // on an already-checked box never dispatches change on the box itself.
+    if (box && val > 0) delete box.dataset.autoChecked;
     if (box && val <= 0 && box.checked) { box.checked = false; box.dispatchEvent(new Event("change", { bubbles: true })); }
     else if (box && val > 0 && !box.checked) { box.checked = true; box.dispatchEvent(new Event("change", { bubbles: true })); }
   }
@@ -6635,8 +6716,17 @@ async function loadPlayer() {
   }
 }
 
+// MUST stay byte-identical to apFold in src/main/index.js: the server keys
+// recorded powers with it and this folds the achievement targets. Diacritics
+// used to become SPACES ("Brontë" -> "bront"), so an ASCII-spelled answer
+// ("Emily Bronte" -> "emily bronte") never matched its own target. Lowercase
+// first, NFD strips combining accents, the map covers what NFD leaves.
 function apNorm(s) {
-  return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return String(s == null ? "" : s)
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/ß/g, "ss").replace(/æ/g, "ae").replace(/œ/g, "oe").replace(/ø/g, "o").replace(/ð/g, "d").replace(/þ/g, "th").replace(/ł/g, "l")
+    .replace(/[^a-z0-9]+/g, " ").trim();
 }
 // Faithful renderer port of src/main/answerChecker.js primaryAnswer() so the
 // Achievement Lab keys a power the same way the server does (it cannot import
@@ -6758,7 +6848,9 @@ function computeAchievementData(stats, apCounts, apClasses) {
       const cats = stats.byCategory || {};
       progress = Math.max(...Object.values(cats).map(c => c.totalQuestions || 0), 0);
     } else if (ach.type === "cat_specific") {
-      const catData = (stats.byCategory || {})[ach.category];
+      // ach.alt reads the per-alternate-subcategory tally (Math / Computer
+      // Science are alternates under Science > Other Science, not categories).
+      const catData = ach.alt ? (stats.byAltSubcategory || {})[ach.alt] : (stats.byCategory || {})[ach.category];
       progress = catData ? catData.totalQuestions || 0 : 0;
     } else if (ach.type === "daily") {
       const days = stats.questionsByDate || {};
@@ -7078,9 +7170,9 @@ const ACHIEVEMENT_LIST = [
   { id:"cat3333_Philosophy", name:"Keskil Questioner", desc:"3333 in Philosophy", type:"cat_specific", threshold:3333, icon:"哲", category:"Philosophy" },
   { id:"cat3333_Current Events", name:"Keskil King", desc:"3333 in Current Events", type:"cat_specific", threshold:3333, icon:"王", category:"Current Events" },
   { id:"cat3333_Geography", name:"Keskil Cartographer", desc:"3333 in Geography", type:"cat_specific", threshold:3333, icon:"地", category:"Geography" },
-  { id:"cat3333_Math", name:"Keskil Calculator", desc:"3333 in Math", type:"cat_specific", threshold:3333, icon:"数", category:"Math" },
-  { id:"cat3333_Computer Science", name:"Keskil claude user", desc:"3333 in Computer Science", type:"cat_specific", threshold:3333, icon:"算", category:"Computer Science" },
-  { id:"cat3333_Trash", name:"Keskil's Opps", desc:"3333 in Trash", type:"cat_specific", threshold:3333, icon:"屑", category:"Trash" },
+  { id:"cat3333_Math", name:"Keskil Calculator", desc:"3333 in Math", type:"cat_specific", threshold:3333, icon:"数", category:"Math", alt:"Math" },
+  { id:"cat3333_Computer Science", name:"Keskil claude user", desc:"3333 in Computer Science", type:"cat_specific", threshold:3333, icon:"算", category:"Computer Science", alt:"Computer Science" },
+  { id:"cat3333_Trash", name:"Keskil's Opps", desc:"3333 in Pop Culture (Trash)", type:"cat_specific", threshold:3333, icon:"屑", category:"Pop Culture" },
   { id:"day25", name:"Full Round", desc:"Answer 25 questions in a day", type:"daily", threshold:25, icon:"準" },
   { id:"day50", name:"Prelims", desc:"Answer 50 questions in a day", type:"daily", threshold:50, icon:"予" },
   { id:"day100", name:"Playoffs", desc:"Answer 100 questions in a day", type:"daily", threshold:100, icon:"決" },
@@ -7133,16 +7225,16 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-geo-penguins",name:"Penguins",desc:"Power on a Madagascar question",type:"answer_power",threshold:1,target:"madagascar",icon:"狐"},
   {id:"ap-geo-arteries",name:"Arteries of the World",desc:"Power on Nile, Yangtze, Amazon, Mississippi, and Danube",type:"answer_power",threshold:5,target:["nile","yangtze","amazon","mississippi","danube"],distinct:true,icon:"河"},
   {id:"ap-geo-potassium",name:"Greatest Exporter of Potassium",desc:"Power on a Kazakhstan question",type:"answer_power",threshold:1,target:"kazakhstan",icon:"鉀"},
-  {id:"ap-geo-stans",name:"Stan(d) Up Comedy",desc:"Power on 6 different -stan countries",type:"answer_power",threshold:6,target:["kazakhstan","uzbekistan","turkmenistan","kyrgyzstan","tajikistan","afghanistan","pakistan"],distinct:true,icon:"邦"},
+  {id:"ap-geo-stans",name:"Stan(d) Up Comedy",desc:"Power on 5 different -stan countries",type:"answer_power",threshold:5,target:["kazakhstan","uzbekistan","turkmenistan","kyrgyzstan","tajikistan","afghanistan","pakistan"],distinct:true,icon:"邦"},
   {id:"ap-geo-seas",name:"Seven Seas",desc:"Power on 7 oceans and major seas",type:"answer_power",threshold:7,target:["pacific","atlantic","indian","arctic","southern","mediterranean","caribbean","baltic","black","red","caspian","north sea"],distinct:true,icon:"海"},
   {id:"ap-sci-alloys",name:"Too Complicated for Simple Wikipedia",desc:"Power on an alloys question",type:"answer_power",threshold:1,target:"alloys",icon:"合"},
   {id:"ap-sci-mito",name:"Powerhouse of the Cell",desc:"Power on a mitochondria question",type:"answer_power",threshold:1,target:"mitochondria",icon:"粒"},
   {id:"ap-sci-blackhole",name:"Hail Mary",desc:"Power on a black hole question",type:"answer_power",threshold:1,target:"black hole",icon:"孔"},
-  {id:"ap-sci-nobel",name:"Nobel Intentions",desc:"Power on a Nobel Prize-winning discovery",type:"answer_power",threshold:1,target:["nobel prize","nobel"],icon:"賞"},
+  {id:"ap-sci-nobel",name:"Nobel Intentions",desc:"Power on a Nobel Prize-winning discovery",type:"answer_power",threshold:1,target:["nobel prize","nobel","penicillin","radioactivity","insulin","transistor","green fluorescent protein","crispr","graphene","prions","superconductivity","photoelectric effect","cosmic microwave background","higgs boson","gravitational waves","nuclear fission","telomeres","ribosome","polymerase chain reaction","quasicrystals","laser"],icon:"賞"},
   {id:"ap-sci-dna",name:"Double Helix",desc:"Power on a DNA question",type:"answer_power",threshold:1,target:"dna",icon:"螺"},
   {id:"ap-sci-gut",name:"Gut Instinct",desc:"Power on a digestive system or enzyme question",type:"answer_power",threshold:1,target:["digestive","enzyme","stomach","intestine"],icon:"腸"},
   {id:"ap-sci-ideal",name:"Ideal Gas",desc:"Power on a thermodynamics question",type:"answer_power",threshold:1,target:"thermodynamics",icon:"熱"},
-  {id:"ap-sci-em",name:"Electromagnetism",desc:"Power on an electromagnetism question",type:"answer_power",threshold:1,target:"electromagnetism",icon:"磁"},
+  {id:"ap-sci-em",name:"Electromagnetism",desc:"Power on an electromagnetism question",type:"answer_power",threshold:1,target:["electromagnetism","electromagnetic","maxwell's equations","faraday's law","gauss's law","ampere's law","coulomb's law","lorentz force","magnetic field","electric field","magnetism","inductance"],icon:"磁"},
   {id:"ap-sci-schrodinger",name:"Schrödinger's Cat",desc:"Power on a quantum mechanics question",type:"answer_power",threshold:1,target:"quantum",icon:"量"},
   {id:"ap-sci-lagrangian",name:"Lagrangian",desc:"Power on a classical mechanics question",type:"answer_power",threshold:1,target:"lagrangian",icon:"力"},
   {id:"ap-sci-selection",name:"Law of the Jungle",desc:"Power on a natural selection question",type:"answer_power",threshold:1,target:"natural selection",icon:"進"},
@@ -7150,8 +7242,8 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-sci-standard",name:"Standard Model",desc:"Power on a particle physics question",type:"answer_power",threshold:1,target:["standard model","particle physics"],icon:"粒"},
   {id:"ap-sci-speciation",name:"Speciation",desc:"Power on an evolution or speciation question",type:"answer_power",threshold:1,target:"speciation",icon:"種"},
   {id:"ap-sci-chloroplast",name:"Chloroplast",desc:"Power on a photosynthesis question",type:"answer_power",threshold:1,target:"photosynthesis",icon:"葉"},
-  {id:"ap-sci-mendel",name:"Mendelian",desc:"Power on a genetics question",type:"answer_power",threshold:1,target:"genetics",icon:"遺"},
-  {id:"ap-sci-aero",name:"Curious",desc:"Power on an aerospace or aerodynamics question",type:"answer_power",threshold:1,target:["aerospace","aerodynamics","airfoil"],icon:"翼"},
+  {id:"ap-sci-mendel",name:"Mendelian",desc:"Power on a genetics question",type:"answer_power",threshold:1,target:["genetics","mendel","gregor mendel","chromosomes","chromosome","alleles","allele","meiosis","genome","dna","genes","gene"],icon:"遺"},
+  {id:"ap-sci-aero",name:"Curious",desc:"Power on an aerospace or aerodynamics question",type:"answer_power",threshold:1,target:["aerospace","aerodynamics","airfoil","bernoulli","lift","drag","reynolds number","boundary layer","navier stokes","turbulence","mach","supersonic","airplanes","jet engine","flight"],icon:"翼"},
   {id:"ap-sci-fibonacci",name:"Fibonacci",desc:"Power on a golden ratio question",type:"answer_power",threshold:1,target:"golden ratio",icon:"比"},
   {id:"ap-sci-gaussian",name:"Gaussian",desc:"Power on a Gauss or normal distribution question",type:"answer_power",threshold:1,target:["gauss","normal distribution"],icon:"鐘"},
   {id:"ap-sci-sort",name:"Stalin Sort",desc:"Power on a sorting question",type:"answer_power",threshold:1,target:"sorting",icon:"序"},
@@ -7165,7 +7257,7 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different element questions",type:"answer_power",threshold:7,target:["hydrogen","helium","lithium","beryllium","boron","carbon","nitrogen","oxygen","fluorine","neon","sodium","magnesium","aluminium","silicon","phosphorus","sulfur","chlorine","argon","potassium","calcium","iron","copper","zinc","silver","gold","mercury","lead","uranium","platinum","titanium","nickel","cobalt","manganese","chromium","vanadium","bromine","iodine","strontium","barium","radium","thorium"],distinct:true,icon:"元"},
   {id:"ap-sci-spectroscopy",name:"Spectroscopy",desc:"Power on NMR, IR, UV-Vis, mass spec, and X-ray crystallography",type:"answer_power",threshold:5,target:["nmr","ir","uv-vis","mass spectrometry","x-ray crystallography"],distinct:true,icon:"光"},
   {id:"ap-sci-solvay",name:"Solvay Conference",desc:"Power on Einstein, Bohr, Heisenberg, Dirac, Pauli, Curie, and Schrödinger",type:"answer_power",threshold:7,target:["einstein","bohr","heisenberg","dirac","pauli","curie","schrödinger"],distinct:true,icon:"学"},
-  {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on Apollo, Gemini, Mercury, Soyuz, and Space Shuttle",type:"answer_power",threshold:5,target:["apollo","gemini","mercury","soyuz","space shuttle"],distinct:true,icon:"宙"},
+  {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on 5 different space missions or observatories",type:"answer_power",threshold:5,target:["apollo","gemini","mercury","soyuz","space shuttle","hubble","voyager","international space station","cassini","kepler","james webb","new horizons","curiosity","sputnik","vostok"],distinct:true,icon:"宙"},
   {id:"ap-myth-lightning",name:"God of Lightning",desc:"Power on Thor, Zeus, and Indra",type:"answer_power",threshold:3,target:["thor","zeus","indra"],distinct:true,icon:"雷"},
   {id:"ap-myth-freaky",name:"Freaky Deaky",desc:"Power on an Oedipus Rex question",type:"answer_power",threshold:1,target:"oedipus",icon:"眼"},
   {id:"ap-myth-underworld",name:"Underworld",desc:"Power on Anubis, Hades, and Osiris",type:"answer_power",threshold:3,target:["anubis","hades","osiris"],distinct:true,icon:"冥"},
@@ -7173,8 +7265,8 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-myth-trickster",name:"Trickster God",desc:"Power on Loki and Coyote",type:"answer_power",threshold:2,target:["loki","coyote"],distinct:true,icon:"狡"},
   {id:"ap-myth-gilgamesh",name:"Uuudreeeeeeeaaaa",desc:"Power on a Gilgamesh question",type:"answer_power",threshold:1,target:"gilgamesh",icon:"王"},
   {id:"ap-myth-ragnarok",name:"Ragnarök",desc:"Power on a Norse apocalypse question",type:"answer_power",threshold:1,target:"ragnarök",icon:"滅"},
-  {id:"ap-myth-shinto",name:"Shinto Shrine",desc:"Power on a Japanese mythology question",type:"answer_power",threshold:1,target:"japanese myth",icon:"社"},
-  {id:"ap-myth-morrigan",name:"The Morrigan",desc:"Power on a Celtic mythology question",type:"answer_power",threshold:1,target:"celtic",icon:"巫"},
+  {id:"ap-myth-shinto",name:"Shinto Shrine",desc:"Power on a Japanese mythology question",type:"answer_power",threshold:1,target:["japanese myth","amaterasu","susanoo","izanagi","izanami","shinto","kami","raijin","hachiman","jimmu"],icon:"社"},
+  {id:"ap-myth-morrigan",name:"The Morrigan",desc:"Power on a Celtic mythology question",type:"answer_power",threshold:1,target:["celtic","morrigan","cu chulainn","dagda","lugh","fionn","finn maccool","danu","fomorians","oisin"],icon:"巫"},
   {id:"ap-myth-genesis",name:"Genesis",desc:"Power on a creation myth question",type:"answer_power",threshold:1,target:"creation myth",icon:"創"},
   {id:"ap-myth-quetzal",name:"Feathered Serpent",desc:"Power on a Quetzalcoatl question",type:"answer_power",threshold:1,target:"quetzalcoatl",icon:"蛇"},
   {id:"ap-myth-labours",name:"The Labours",desc:"Power on a Heracles or Hercules question",type:"answer_power",threshold:1,target:"heracles",icon:"獅"},
@@ -7189,9 +7281,9 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-pop-lebron",name:"LeSunshine",desc:"Power on a LeBron James question",type:"answer_power",threshold:1,target:"lebron james",icon:"覇"},
   {id:"ap-pop-zelda",name:"Hyrule",desc:"Power on a Legend of Zelda question",type:"answer_power",threshold:1,target:"zelda",icon:"剣"},
   {id:"ap-pop-fortnite",name:"Battle Royale",desc:"Power on a Fortnite or battle royale question",type:"answer_power",threshold:1,target:["fortnite","battle royale"],icon:"闘"},
-  {id:"ap-pop-harry",name:"Wizarding World",desc:"Power on a Harry Potter question",type:"answer_power",threshold:1,target:"harry potter",icon:"杖"},
+  {id:"ap-pop-harry",name:"Wizarding World",desc:"Power on a Harry Potter question",type:"answer_power",threshold:1,target:["harry potter","hogwarts","hermione","dumbledore","quidditch","rowling"],icon:"杖"},
   {id:"ap-pop-lol",name:"Get a Life",desc:"Power on a League of Legends question",type:"answer_power",threshold:1,target:"league of legends",icon:"戯"},
-  {id:"ap-pop-nfl",name:"Touchdown",desc:"Power on an NFL question",type:"answer_power",threshold:1,target:"nfl",icon:"突"},
+  {id:"ap-pop-nfl",name:"Touchdown",desc:"Power on an NFL question",type:"answer_power",threshold:1,target:["nfl","super bowl","tom brady","patrick mahomes","new england patriots","dallas cowboys","green bay packers","kansas city chiefs","peyton manning","philadelphia eagles","bill belichick","quarterback"],icon:"突"},
   {id:"ap-pop-nintendo",name:"64",desc:"Power on a Nintendo franchise question",type:"answer_power",threshold:1,target:"nintendo",icon:"遊"},
   {id:"ap-pop-mario",name:"Wahoo!",desc:"Power on a Mario question",type:"answer_power",threshold:1,target:"mario",icon:"跳"},
   {id:"ap-fa-requiem",name:"Requiem",desc:"Power on a Mozart question",type:"answer_power",threshold:1,target:"mozart",icon:"奏"},

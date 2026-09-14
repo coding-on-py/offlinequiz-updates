@@ -18,6 +18,22 @@ const DEFAULT_USER_DB_PATH = join(
   "user_data.db"
 );
 
+// Answer-power key normalization. MUST stay byte-identical to apNorm in
+// src/renderer/app.js (and the Achievement Lab fallback): the renderer folds
+// achievement TARGETS with it and the server folds RECORDED powers with it, so
+// any drift silently breaks every answer_power achievement. Lowercase FIRST so
+// the special-letter map sees "æ" for "Æ"; NFD strips combining accents
+// ("Brontë" -> "bronte", "García" -> "garcia"), and the map covers the letters
+// NFD does not decompose. Before this, diacritics became SPACES ("bront",
+// "garc a m rquez"), so ASCII-spelled answers never matched their targets.
+function apFold(s) {
+  return String(s == null ? "" : s)
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/ß/g, "ss").replace(/æ/g, "ae").replace(/œ/g, "oe").replace(/ø/g, "o").replace(/ð/g, "d").replace(/þ/g, "th").replace(/ł/g, "l")
+    .replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 export class App {
   
 
@@ -477,7 +493,31 @@ export class App {
   getOverallStats(since) {
     let entries = this.userData.getAllSessionEntries();
     if (since) entries = entries.filter((e) => (e.timestamp || 0) >= since);
-    return computeStats(entries);
+    return computeStats(this._withAltSubcategory(entries));
+  }
+
+  // Session rows store category + subcategory but NOT the alternate
+  // subcategory, and "Math" / "Computer Science" only exist as alternates
+  // (Science > Other Science > Math) — so the cat_specific achievements for
+  // them could never progress. Resolve the alternate from the question row:
+  // one indexed primary-key lookup per DISTINCT question, cached. Both
+  // transports reach stats through this method, so this is the only place.
+  _withAltSubcategory(entries) {
+    const cache = new Map();
+    return entries.map((e) => {
+      if (!e.question_id) return e;
+      const key = (e.type === "bonus" ? "b:" : "t:") + e.question_id;
+      if (!cache.has(key)) {
+        let alt = "";
+        try {
+          const q = e.type === "bonus" ? this.questionDb.getBonus(e.question_id) : this.questionDb.getTossup(e.question_id);
+          alt = (q && q.alternate_subcategory) || "";
+        } catch { alt = ""; }
+        cache.set(key, alt);
+      }
+      const alt = cache.get(key);
+      return alt ? { ...e, alternate_subcategory: alt } : e;
+    });
   }
 
   getSessionStats(sessionId) {
@@ -495,7 +535,7 @@ export class App {
       if (!t) continue;
       let head;
       try { head = primaryAnswer(t.answer || "", t.answer_sanitized || ""); } catch (e) { head = ""; }
-      const norm = (head || t.answer_sanitized || t.answer || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const norm = apFold(head || t.answer_sanitized || t.answer || "");
       if (!norm) continue;
       counts[norm] = (counts[norm] || 0) + 1;
       const ck = (t.category || "") + "|" + (t.subcategory || "") + "|" + (t.alternate_subcategory || "");
