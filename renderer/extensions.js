@@ -1383,7 +1383,7 @@ QB.registerTheme({
     const pluginsHtml = QB._plugins.length ? QB._plugins.map((p) => card(p, "plugin")).join("") : '<div class="ext-empty">No plugins installed yet.</div>';
 
     container.innerHTML =
-      '<div class="ext-section">' +
+      '<div class="ext-section" data-coll="ext:themes">' +
         '<div class="ext-section-head"><span class="ext-section-title">Themes</span></div>' +
         '<div class="ext-dropzone" id="ext-drop-theme">' + UPLOAD_ICON +
           "<div>Drag a theme <strong>.zip</strong> here</div>" +
@@ -1391,7 +1391,7 @@ QB.registerTheme({
           '<input type="file" id="ext-file-theme" accept=".zip" multiple hidden></div>' +
         '<div class="ext-list">' + themesHtml + "</div>" +
       "</div>" +
-      '<div class="ext-section">' +
+      '<div class="ext-section" data-coll="ext:plugins">' +
         '<div class="ext-section-head"><span class="ext-section-title">Plugins</span>' +
           (QB._plugins.length ? '<span class="ext-bulk"><button class="btn btn-sm" id="ext-enable-all">Enable all</button><button class="btn btn-sm" id="ext-disable-all">Disable all</button></span>' : "") +
         "</div>" +
@@ -1401,6 +1401,9 @@ QB.registerTheme({
           '<input type="file" id="ext-file-plugin" accept=".zip" multiple hidden></div>' +
         '<div class="ext-list">' + pluginsHtml + "</div>" +
       "</div>";
+    // Long lists collapse (app.js initCollapsibles; the Enable/Disable-all buttons
+    // in the header are ignored by the toggle). Older bases simply skip it.
+    try { if (QB._host && QB._host.initCollapsibles) QB._host.initCollapsibles(container); } catch (e) {}
     wireScreen();
   };
 

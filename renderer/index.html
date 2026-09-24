@@ -123,15 +123,6 @@
               </div>
             </div>
           </div>
-          <div class="filter-section collapsible collapsed" id="sec-categories">
-            <button type="button" class="collapse-header"><span class="collapse-chevron"></span>CATEGORIES</button>
-            <div class="filter-body">
-              <div class="filter-list" id="category-filters"></div>
-              <label class="checkbox-row" style="margin-top:6px">
-                <input type="checkbox" id="enable-cat-weights"> Use category / subcategory weights
-              </label>
-            </div>
-          </div>
           <div class="filter-section collapsible collapsed" id="sec-difficulty">
             <button type="button" class="collapse-header"><span class="collapse-chevron"></span>DIFFICULTY</button>
             <div class="filter-body">
@@ -149,6 +140,12 @@
                 <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="10"><span>10 · Open</span></label>
               </div>
             </div>
+          </div>
+          <!-- CATEGORIES launcher. The tree itself lives in #cat-ovl at the end of this panel
+               (see AGENTS.md "CATEGORY GUI"). Keep the id sec-categories: packet-builder hides it by id. -->
+          <div class="filter-section" id="sec-categories">
+            <div class="filter-label">CATEGORIES</div>
+            <button type="button" class="btn btn-sm btn-full cat-open-btn" id="btn-open-categories" aria-haspopup="dialog" aria-controls="cat-ovl"><span class="cat-open-summary" id="cat-summary">All categories</span><span class="cat-open-edit">Edit</span></button>
           </div>
           <div class="filter-section">
             <div class="filter-label">READING SPEED</div>
@@ -229,6 +226,22 @@
               <input type="range" id="year-max" min="2000" max="2026" value="2026">
             </div>
             <div class="range-values" id="year-range-label">2010 – 2026</div>
+          </div>
+          <!-- CATEGORY GUI. Must stay INSIDE #filters-panel (it travels with every panel borrow, and the
+               panel's capture listeners — prefetch invalidation, multiplayer sync — must see its edits) and
+               must carry settings-ovl (the global Esc handler .remove()s any other .qb-overlay, which would
+               detach #category-filters for good). No other form controls in here: their events would reach
+               those capture listeners too. -->
+          <div class="qb-overlay settings-ovl cat-ovl hidden" id="cat-ovl" role="dialog" aria-modal="true" aria-labelledby="cat-ovl-title">
+            <div class="settings-modal cat-modal" tabindex="-1">
+              <div class="settings-modal-head"><span id="cat-ovl-title">CATEGORIES</span><button type="button" class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
+              <div class="cat-modal-tools">
+                <label class="checkbox-row"><input type="checkbox" id="enable-cat-weights"> Use category / subcategory weights</label>
+                <span class="text-muted cat-modal-hint">Nothing ticked plays every category. Weights are ratios (default 10); 0 unticks a row.</span>
+                <button type="button" class="btn btn-sm btn-ghost" id="btn-cat-clear">Clear all</button>
+              </div>
+              <div class="filter-list" id="category-filters"></div>
+            </div>
           </div>
         </aside>
 

@@ -2517,3 +2517,46 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
 
 /* MP: the power mark revealed on ended questions */
 .mp-power-mark { color: var(--accent); font-weight: 700; }
+
+/* ── CATEGORY GUI (launcher under Mode + Difficulty, overlay inside the panel) ──
+   Appended LAST on purpose: .cat-open-btn ties .btn's justify-content and
+   .cat-modal ties .settings-modal's width on specificity, so order decides. */
+.cat-open-btn { justify-content: space-between; gap: 8px; overflow: hidden; text-align: left; }
+.cat-open-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-open-edit { flex: 0 0 auto; font-size: 11px; color: var(--text-muted); }
+.cat-modal { width: min(980px, 94vw); }
+.cat-modal-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border-light, var(--border)); }
+.cat-modal-tools #btn-cat-clear { margin-left: auto; }
+.cat-modal-hint { font-size: 11px; }
+/* id selectors beat the mobile .filter-list{max-height:80px} rule */
+#cat-ovl #category-filters { max-height: none; overflow: visible; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 16px; align-items: start; }
+#cat-ovl .subcategory-list { max-height: none; overflow: visible; }
+/* A transform/filter/backdrop-filter on any ancestor would turn position:fixed
+   into "fixed to the panel" and trap the GUI inside it (measured 278x722 with
+   backdrop-filter). No theme does this today; this guard keeps it that way. */
+:is(#app, .screen, .practice-layout, .ext-page-body, .filters-panel):has(#cat-ovl:not(.hidden)) { transform: none !important; filter: none !important; backdrop-filter: none !important; perspective: none !important; contain: none !important; will-change: auto !important; }
+
+/* ── COLLAPSIBLE long content (data-coll sections + Show more lists) ── */
+
+/* ── Collapsible sections (data-coll → initCollapsibles) + "Show more" ─── */
+.qb-coll-head { cursor: pointer; user-select: none; -webkit-user-select: none; }
+.qb-coll-head:hover { opacity: 0.85; }
+.qb-coll-head > .collapse-chevron { flex: 0 0 auto; }
+.qb-coll.qb-collapsed > .qb-coll-head > .collapse-chevron { transform: rotate(0deg); }
+.qb-coll.qb-collapsed > .qb-coll-body { display: none; }
+.qb-coll.qb-collapsed > .stats-section-title { margin-bottom: 0; }
+.qb-more-hidden { display: none !important; }
+.qb-more { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; }
+/* Achievements: each category is its own collapsible group in the flex grid.
+   (Inside a group the header is always :first-child, which would zero the
+   margin from .achievement-category:first-child — restore it here.) */
+.ach-group { width: 100%; }
+.ach-group > .achievement-category { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.ach-count { margin-left: auto; font-weight: 400; color: var(--text-muted); letter-spacing: 0; }
+
+/* ── DATABASE SEARCH: "More filters" row, count line ── */
+.db-toolbar[hidden] { display: none !important; }   /* .db-toolbar's display:flex (and coss-ui's) beat [hidden] */
+.db-input-set { flex: 1 1 240px; min-width: 200px; max-width: 360px; }
+.db-more-count:not(:empty) { margin-left: 4px; padding: 0 6px; border-radius: 8px; background: var(--accent-dim, rgba(88,166,255,.22)); color: var(--accent); font-size: 11px; }
+.db-opt.is-disabled { opacity: .5; }
+.db-count { padding: 8px 16px 0; font-size: 12px; }

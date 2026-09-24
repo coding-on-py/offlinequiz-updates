@@ -88,6 +88,8 @@ export async function start(env) {
       const y = parseInt(data.yearMax);
       if (!isNaN(y)) f.yearMax = y;
     }
+    // Keep in lockstep with server.js parseFilters (dual-transport parity).
+    if (typeof data.sort === "string" && data.sort) f.sort = data.sort;   // whitelisted in database.js
     return f;
   }
 

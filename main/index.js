@@ -68,11 +68,23 @@ export class App {
   }
 
   queryTossups(filters) {
-    return this.questionDb.queryTossups(filters);
+    const f = this._scopeToStarred(filters, "tossup");
+    return f ? this.questionDb.queryTossups(f) : { rows: [], total: 0 };
   }
 
   queryBonuses(filters) {
-    return this.questionDb.queryBonuses(filters);
+    const f = this._scopeToStarred(filters, "bonus");
+    return f ? this.questionDb.queryBonuses(f) : { rows: [], total: 0 };
+  }
+
+  // Database browse/search honour starredOnly WITHOUT dropping the other
+  // filters. (_resolveStarredFilter keeps only the category ones — right for
+  // practice draws, wrong for a search that also filters by year, set, sort…)
+  // The starred table is profile-scoped.
+  _scopeToStarred(filters = {}, type) {
+    if (!filters || !filters.starredOnly) return filters;
+    const ids = this.userData.getStarredQuestions(type).map((s) => s.question_id);
+    return ids.length ? { ...filters, ids } : null;
   }
 
   getRandomTossup(filters) {
@@ -109,11 +121,13 @@ export class App {
   }
 
   searchTossups(query, filters) {
-    return this.questionDb.searchTossups(query, filters);
+    const f = this._scopeToStarred(filters, "tossup");
+    return f ? this.questionDb.searchTossups(query, f) : { rows: [], total: 0 };
   }
 
   searchBonuses(query, filters) {
-    return this.questionDb.searchBonuses(query, filters);
+    const f = this._scopeToStarred(filters, "bonus");
+    return f ? this.questionDb.searchBonuses(query, f) : { rows: [], total: 0 };
   }
 
   getSets() {

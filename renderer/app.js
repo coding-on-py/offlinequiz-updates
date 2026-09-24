@@ -520,6 +520,7 @@ const Sound = {
   document.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     if (e.target.closest("input,select,button,textarea,a,.dual-range")) return;
+    if (e.target.closest("#cat-ovl")) return;   // the category GUI sits inside the panel
     const panel = e.target.closest(".filters-panel");
     if (!panel) return;
     const r = panel.getBoundingClientRect();
@@ -682,6 +683,7 @@ function showScreen(name, opts) {
   // A settings modal left open would float its click-eating backdrop over the
   // next screen (the "Back did nothing / buttons stopped working" bug).
   try { closeSettingsOverlays(); } catch (e) {}
+  try { flushPendingFilterSave(); } catch (e) {}   // while state.mode still names the outgoing tab
   const back = opts ? !!opts.back : _navBack;
   saveScreenScroll(); // must run while the outgoing screen is still visible
   recordNav(name);
@@ -1342,6 +1344,8 @@ async function openReviewViewer(items) {
 
 function startReviewSession(ids) {
   if (!ids.length) return;
+  state.bonusIds = null;          // a stale list of the other type must not resume later
+  state.customType = "tossups";
   state.reviewIds = [...ids];
   state._reviewRemoveAfter = reviewRemoveAfter();
   showScreen("practice-tossups");
@@ -1350,6 +1354,8 @@ function startReviewSession(ids) {
 }
 function startBonusIdsSession(ids) {
   if (!ids || !ids.length) return;
+  state.reviewIds = null;
+  state.customType = "bonuses";
   state.bonusIds = [...ids];
   showScreen("practice-bonuses");
   setMode("bonuses");
@@ -1423,7 +1429,12 @@ function saveFilterState() {
   // curated subcategories and weights.
   if (_applyingSnapshot) return;
   if (!document.querySelector("#category-filters .category-group")) return;
-  const prev = getModeFilters();
+  // Custom list showing: save into the LIST's bucket (state.mode may already be
+  // null or the other type by the time a debounced save fires) and substitute
+  // the user's real mode + difficulties for the emptied display.
+  const cv = _customView;
+  const bucket = cv ? cv.type : filtersMode();
+  const prev = loadFilterBlob()[bucket] || null;
   const cats = getSelectedCategories();
   const subs = {};
   const carried = new Set();
@@ -1470,8 +1481,8 @@ function saveFilterState() {
     subcategories: subs,
     weights,
     standard: $("#filter-standard")?.checked,
-    difficulties: getSelectedDifficulties(),
-    mode: $("#mode-select")?.value || "random",
+    difficulties: cv ? cv.prevDiffs.slice() : getSelectedDifficulties(),
+    mode: cv ? cv.prevMode : ($("#mode-select")?.value || "random"),
     setName: $("#mode-set-name")?.value || "",
     packet: $("#mode-packet")?.value || "",
     starredOnly: $("#filter-starred")?.checked,
@@ -1480,7 +1491,10 @@ function saveFilterState() {
     yearMax: $("#year-max")?.value,
     settings: Object.fromEntries(PER_MODE_SETTING_KEYS.map((k) => [k, state.settings[k]])),
   };
-  saveModeFilters(filterState);
+  if (filterState.mode === "custom") filterState.mode = "random";   // never persist the placeholder
+  const blob = loadFilterBlob();
+  blob[bucket] = filterState;
+  lsSet("qb-filters", JSON.stringify(blob));
 }
 const PER_MODE_SETTING_KEYS = ["allowRebuzzes", "stopOnPower", "allowSkips", "strictness", "useWeights", "buzzTimeout", "buzzWindow", "bonusTimer", "revealSpeed", "autoReveal", "bonusAfter", "hidePronunciations", "hideNotes", "showQuestionMeta"];
 function applyModeSettings(saved) {
@@ -1605,7 +1619,8 @@ async function loadCategories(type) {
       checkbox.addEventListener("change", () => {
         if (checkbox.checked) {
           expand.textContent = "\u25BE";
-          loadSubcategories(c.category, typeKey, subList, false, true).then(saveFilterState);
+          const b = filtersMode();   // the tab may change before the fetch lands
+          loadSubcategories(c.category, typeKey, subList, false, true).then(() => { if (filtersMode() === b) saveFilterState(); });
         } else {
           expand.textContent = "\u25B8";
           subList.classList.add("hidden");
@@ -1618,7 +1633,10 @@ async function loadCategories(type) {
         e.preventDefault();
         if (subList.classList.contains("hidden")) {
           expand.textContent = "\u25BE";
-          loadSubcategories(c.category, typeKey, subList);
+          // Already rendered: just show it. Re-rendering rebuilt it from the SAVED
+          // blob, silently undoing a mirrored multiplayer selection on screen.
+          if (subList.dataset.loaded && subList.querySelector(".filter-item")) subList.classList.remove("hidden");
+          else loadSubcategories(c.category, typeKey, subList);
         } else {
           expand.textContent = "\u25B8";
           subList.classList.add("hidden");
@@ -1632,6 +1650,7 @@ async function loadCategories(type) {
         setTimeout(() => { if (epoch === _panelEpoch) loadSubcategories(c.category, typeKey, subList, true); }, 50);
       }
     }
+    refreshCategorySummary();
   } catch (e) {
     container.innerHTML = '<div class="text-muted" style="padding:8px">Failed to load categories. Is the server running?</div>';
     console.error("Failed to load categories:", e);
@@ -1666,6 +1685,7 @@ async function loadSubcategories(category, type, container, silent = false, chec
   if (state.subcategoryCache[cacheKey]) {
     renderSubcategoryList(container, category, state.subcategoryCache[cacheKey]);
     applyCheckAll();
+    refreshCategorySummary();   // silent sub loads change the partial "*" marker
     return;
   }
 
@@ -1680,6 +1700,7 @@ async function loadSubcategories(category, type, container, silent = false, chec
     state.subcategoryCache[cacheKey] = subs;
     renderSubcategoryList(container, category, subs);
     applyCheckAll();
+    refreshCategorySummary();   // silent sub loads change the partial "*" marker
   } catch (e) {
     if (!silent) {
       container.innerHTML = '<div class="text-muted" style="padding:4px 8px;font-size:11px">Failed to load</div>';
@@ -1762,7 +1783,9 @@ function altItemHtml(alt, parentSub, category, checked, weight) {
 }
 
 function resetPracticeFiltersToDefaults() {
-  const ms = $("#mode-select"); if (ms) ms.value = "random";
+  const hadCustom = !!_customView;
+  removeCustomView();
+  const ms = $("#mode-select"); if (ms) { ms.value = "random"; _syncSel(ms); }
   updateModeFields();
   $$("#category-filters .cat-checkbox:checked").forEach((cb) => {
     cb.checked = false;
@@ -1784,6 +1807,8 @@ function resetPracticeFiltersToDefaults() {
   const ymax = $("#year-max"); if (ymax) ymax.value = 2026;
   updateYearLabel();
   saveFilterState();
+  refreshCategorySummary();
+  if (hadCustom) applyCustomView();
 }
 
 function getSelectedCategories() {
@@ -1833,10 +1858,10 @@ function getFilterSelectionSnapshot() {
     strictness: parseInt($("#strictness-slider")?.value || "10"),
     hidePron: !!$("#filter-hide-pron")?.checked,
     hideNotes: !!$("#filter-hide-notes")?.checked,
-    mode: modeSel ? modeSel.value : "random",
+    mode: _customView ? _customView.prevMode : (modeSel ? modeSel.value : "random"),
     setName: $("#mode-set-name")?.value || "",
     packet: $("#mode-packet")?.value || "",
-    difficulties: getSelectedDifficulties(),
+    difficulties: _customView ? _customView.prevDiffs.slice() : getSelectedDifficulties(),
     yearMin: Math.min(_ya, _yb),
     yearMax: Math.max(_ya, _yb),
     powermarkOnly: !!$("#filter-powermark")?.checked,
@@ -1847,16 +1872,40 @@ function getFilterSelectionSnapshot() {
 
 let _applySnapGen = 0;
 let _applyingSnapshot = false;   // saveFilterState refuses while a mirror-apply runs
+let _customView = null;          // { type, prevMode, prevDiffs } while the panel DISPLAYS "Custom"
 let _panelEpoch = 0;             // bumping this kills deferred saved-blob restore timers
+let _snapCustomPending = false;  // a Custom display an apply took down; owed back by whichever apply finishes LAST
 async function applyFilterSelectionSnapshot(snap) {
   if (!snap || !Array.isArray(snap.cats)) return false;
   const gen = ++_applySnapGen;   // a newer snapshot arriving mid-apply wins
   _panelEpoch++;                 // pending loadCategories restore timers must not clobber this apply
   _applyingSnapshot = true;
+  // A multiplayer mirror can arrive (from any screen) while this player runs a
+  // custom list: drop the Custom display for the apply — no flush, the room's
+  // state must never be saved into the solo blob — and put it back afterwards.
+  // The flag is module-level: a newer apply arriving mid-await sees no view to
+  // remove, and a per-call local left NEITHER apply restoring it.
+  if (_customView) _snapCustomPending = true;
+  removeCustomView({ noFlush: true });
   try {
-    return await _applySnapshotInner(snap, gen);
+    const ok = await _applySnapshotInner(snap, gen);
+    // Event-free apply: change listeners never see it, so the GUI summary is
+    // refreshed directly (this is how a multiplayer client's open GUI and its
+    // launcher label stay live).
+    if (gen === _applySnapGen) refreshCategorySummary();
+    return ok;
   } finally {
-    if (gen === _applySnapGen) _applyingSnapshot = false;
+    if (gen === _applySnapGen) {
+      _applyingSnapshot = false;
+      if (_snapCustomPending) {
+        _snapCustomPending = false;
+        applyCustomView();   // self-guarding: does nothing once the list has ended
+        // Rebuilt over the APPLIED (room) panel, so prevMode/prevDiffs are the
+        // room's: never flush it into the solo blob — multiplayer's
+        // restoreSoloPanel owns that save on leave.
+        if (_customView) _customView.mirrored = true;
+      }
+    }
   }
 }
 async function _applySnapshotInner(snap, gen) {
@@ -1887,23 +1936,36 @@ async function _applySnapshotInner(snap, gen) {
     if (!w) {
       cb.checked = false;
       setWeight(cb.closest(".filter-item"), false);
-      if (expand) expand.textContent = "▸";
       if (subList) {
-        subList.classList.add("hidden");
+        // GUI open: never close a list the user is browsing (every remote edit,
+        // even difficulty-only, re-applies the whole tree)
+        if (!isCatOverlayOpen()) subList.classList.add("hidden");
         subList.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach((x) => {
           x.checked = false;
           setWeight(x.closest(".filter-item"), false);
         });
       }
+      if (expand) expand.textContent = subList && !subList.classList.contains("hidden") ? "▾" : "▸";
       continue;
     }
+    const wasChecked = cb.checked;
     cb.checked = true;
     setWeight(cb.closest(".filter-item"), true, "c:" + cb.value);
-    if (expand) expand.textContent = "▾";
     if (subList) {
-      try { await loadSubcategories(cb.value, typeKey, subList, true, false); } catch {}
-      if (gen !== _applySnapGen) return false;
-      if (subList.querySelector(".filter-item")) subList.classList.remove("hidden");
+      // An already-rendered list is written in place instead of re-rendered:
+      // re-rendering on every remote apply re-expanded lists and destroyed a
+      // focused weight input while the category GUI was open (live MP edits).
+      // The re-render used to clear sub/alt autoChecked marks implicitly.
+      if (subList.dataset.loaded) {
+        subList.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach((x) => { delete x.dataset.autoChecked; });
+      } else {
+        try { await loadSubcategories(cb.value, typeKey, subList, true, false); } catch {}
+        if (gen !== _applySnapGen) return false;
+      }
+      // Open the list for a newly ticked category; never close one the user is
+      // browsing in the open GUI.
+      if (subList.querySelector(".filter-item") && (!wasChecked || !isCatOverlayOpen())) subList.classList.remove("hidden");
+      if (expand) expand.textContent = subList.classList.contains("hidden") ? "▸" : "▾";
       const subs = (w.subs || []), alts = (w.alts || []);
       subList.querySelectorAll(".subcat-checkbox").forEach((x) => {
         x.checked = subs.includes(x.value);
@@ -1913,11 +1975,12 @@ async function _applySnapshotInner(snap, gen) {
         x.checked = alts.includes(x.value);
         setWeight(x.closest(".filter-item"), x.checked, "a:" + x.value);
       });
+      const guiOpen = isCatOverlayOpen();
       subList.querySelectorAll(".altsub-list").forEach((l) => {
         const open = [...l.querySelectorAll(".altsub-checkbox")].some((x) => x.checked);
-        l.classList.toggle("hidden", !open);
+        if (open || !guiOpen) l.classList.toggle("hidden", !open);   // GUI open: only ever opens
         const arrow = l.previousElementSibling?.querySelector?.(".altsub-expand");
-        if (arrow) arrow.textContent = open ? "▾" : "▸";
+        if (arrow) arrow.textContent = l.classList.contains("hidden") ? "▸" : "▾";
       });
     }
   }
@@ -1942,9 +2005,9 @@ async function _applySnapshotInner(snap, gen) {
     state.settings.useWeights = !!snap.useWeights;
     $("#category-filters")?.classList.toggle("weights-on", !!snap.useWeights);
   }
-  if (snap.mode != null) {
+  if (snap.mode != null && snap.mode !== "custom") {
     const ms = $("#mode-select");
-    if (ms && ms.value !== snap.mode) { ms.value = snap.mode; try { updateModeFields(); } catch {} }
+    if (ms && ms.value !== snap.mode) { ms.value = snap.mode; _syncSel(ms); try { updateModeFields(); } catch {} }
     if (snap.mode === "set") {
       const sn = $("#mode-set-name");
       if (sn && snap.setName != null && sn.value !== snap.setName) {
@@ -2032,19 +2095,73 @@ function updateModeFields() {
   $("#import-mode-fields")?.classList.toggle("hidden", !isImport);
   state._gameSig = null;
   const packetMode = isSet || isImport;
+  const isCustom = modeVal === "custom";
   ["#sec-categories", "#sec-difficulty"].forEach((sel) => {
     const el = $(sel);
     if (!el) return;
-    el.classList.toggle("filter-disabled", packetMode);
+    el.classList.toggle("filter-disabled", packetMode || isCustom);
     if (packetMode) el.classList.add("collapsed");
+    // .filter-disabled is pointer-events only; inert also stops Tab + Space.
+    // The collapse header stays usable so the empty section can be looked at.
+    el.querySelectorAll(".filter-body").forEach((b) => { b.inert = isCustom; });
   });
+  if (packetMode || isCustom) closeCategoryOverlay();
   $$(".packet-disable").forEach((el) => el.classList.toggle("filter-disabled", packetMode));
   clampDualRange($("#year-min"), $("#year-max"));
   ["#year-min", "#year-max", "#filter-powermark", "#filter-starred"].forEach((sel) => {
     const el = $(sel); if (el) el.disabled = packetMode;
   });
   if (isSet) loadSetPackets();
+  refreshCategorySummary();
 }
+
+// ── CUSTOM MODE ──────────────────────────────────────────────────────────────
+// A custom question list (a plugin's "Play", the Review queue, a folder…) shows
+// Mode = "Custom" and locks Difficulty + Categories, displayed EMPTY because the
+// list is played as-is. The user's own filters are never touched:
+//  • difficulties are unticked on screen only — the previous mode + difficulties
+//    live in _customView and are substituted into every save and snapshot;
+//  • the category tree is NOT unticked (a snapshot taken before sub lists load
+//    records subs:[] and would wipe curated picks and weights); it stays behind
+//    the disabled launcher, whose summary reads "None";
+//  • saves are pinned to the list's own bucket (tossups / bonuses);
+//  • the host API keeps reporting the REAL filters (multiplayer).
+// state.customType marks the list for the session; _customView is only the
+// on-screen display, torn down whenever the practice screen is not showing it.
+function _syncSel(el) { try { if (el && el._qbSync) el._qbSync(); } catch (e) {} }
+function _customOpt(on) {
+  const ms = $("#mode-select"); if (!ms) return;
+  let o = ms.querySelector('option[value="custom"]');
+  if (on && !o) { o = document.createElement("option"); o.value = "custom"; o.textContent = "Custom"; o.disabled = true; ms.appendChild(o); }
+  if (!on && o) o.remove();
+}
+// Idempotent. Captures the previous state ONLY on the off -> on edge, and only
+// once the panel matches the saved blob (setMode's chain end).
+function applyCustomView() {
+  const t = state.customType;
+  const onPractice = !!$("#practice-screen")?.classList.contains("active");
+  if (!t || !state.sessionActive || !onPractice || filtersMode() !== t) { removeCustomView(); return; }
+  const ms = $("#mode-select"); if (!ms) return;
+  if (!_customView) _customView = { type: t, prevMode: (ms.value && ms.value !== "custom") ? ms.value : "random", prevDiffs: getSelectedDifficulties() };
+  _customOpt(true); ms.value = "custom"; _syncSel(ms);
+  $$("#difficulty-filters .diff-checkbox").forEach((cb) => { cb.checked = false; });   // display only, no events
+  closeCategoryOverlay();
+  updateModeFields(); clearPrefetch();
+}
+// Synchronous, event-free. Flushes any pending save while the pin is still on
+// (a debounced save firing later would otherwise land in the wrong bucket).
+function removeCustomView(opts) {
+  const v = _customView; if (!v) return;
+  clearTimeout(_debounceTimer); clearTimeout(_modeSettingTimer); _debounceTimer = _modeSettingTimer = null;
+  if (!(opts && opts.noFlush) && !v.mirrored) saveFilterState();
+  _customView = null;
+  _customOpt(false);
+  const ms = $("#mode-select"); if (ms) { ms.value = v.prevMode; _syncSel(ms); }
+  const want = v.prevDiffs.map(String);
+  $$("#difficulty-filters .diff-checkbox").forEach((cb) => { cb.checked = want.includes(String(cb.value)); });
+  updateModeFields(); clearPrefetch();
+}
+function endCustom() { removeCustomView(); state.customType = null; }
 
 function parsePacketNumbers(str) {
   const out = [];
@@ -2083,7 +2200,22 @@ function validatePacketInput() {
   if (changed) { el.value = parts.join(","); el.classList.add("input-error"); setTimeout(() => el.classList.remove("input-error"), 2500); }
 }
 
-$("#mode-select")?.addEventListener("change", () => { updateModeFields(); debounceSaveFilters(); });
+$("#mode-select")?.addEventListener("change", () => {
+  const ms = $("#mode-select");
+  // Picking another mode while a custom list is SHOWING ends that list. Gated
+  // on _customView, not state.customType: plugins that borrow the panel force
+  // "random" after the view is already down, and must not kill a suspended list.
+  if (_customView && ms && ms.value !== "custom") {
+    const v = _customView, chosen = ms.value;
+    _customView = null; state.customType = null; state.reviewIds = null; state.bonusIds = null;
+    _customOpt(false); ms.value = chosen; _syncSel(ms);
+    const want = v.prevDiffs.map(String);
+    $$("#difficulty-filters .diff-checkbox").forEach((cb) => { cb.checked = want.includes(String(cb.value)); });
+    clearPrefetch();
+    if (state.sessionActive && !state.currentQuestion) endSession();   // exhausted list: let Start work
+  }
+  updateModeFields(); debounceSaveFilters();
+});
 $("#import-packet-btn")?.addEventListener("click", () => $("#import-packet-file")?.click());
 $("#import-packet-file")?.addEventListener("change", async (e) => {
   const file = e.target.files && e.target.files[0];
@@ -2107,8 +2239,13 @@ $("#mode-set-name")?.addEventListener("change", () => { state._gameSig = null; l
 $("#mode-packet")?.addEventListener("change", () => { state._gameSig = null; validatePacketInput(); debounceSaveFilters(); });
 $("#mode-packet")?.addEventListener("input", debounceSaveFilters);
 
-function getActiveFilters() {
-  const modeVal = $("#mode-select")?.value;
+function getActiveFilters(opts) {
+  // A custom list is played as-is, so internally there is no constraint. The
+  // host API passes {real:true}: a multiplayer host running a list in the
+  // background must still serve the room from the user's REAL filters.
+  const cv = _customView;
+  if (cv && !(opts && opts.real)) return { random: true };
+  const modeVal = cv ? cv.prevMode : $("#mode-select")?.value;
   if (modeVal === "import") return { random: true };
   if (modeVal === "set") {
     const setName = $("#mode-set-name")?.value || "";
@@ -2129,7 +2266,7 @@ function getActiveFilters() {
       ![...g.querySelectorAll(".altsub-checkbox")].some(cb => !cb.checked)
     );
 
-  const difficulties = getSelectedDifficulties();
+  const difficulties = cv ? cv.prevDiffs.slice() : getSelectedDifficulties();
 
   const _ya = parseInt($("#year-min")?.value || 2000), _yb = parseInt($("#year-max")?.value || 2026);
   const yearMin = Math.min(_ya, _yb);
@@ -2182,8 +2319,9 @@ function getActiveFilters() {
   return filters;
 }
 
-function describeActiveFilters() {
-  const f = getActiveFilters();
+function describeActiveFilters(opts) {
+  if (_customView && !(opts && opts.real)) return "Custom list";
+  const f = getActiveFilters(opts);
   const parts = [];
   if (f.setNames) parts.push("Set: " + f.setNames.join(", ") + (f.packetNumbers ? " (packets " + f.packetNumbers.join(",") + ")" : ""));
   if (f.categories) parts.push("Categories: " + f.categories.join(", "));
@@ -2290,7 +2428,15 @@ function clampYearDual() { updateYearLabel(); }
 let _debounceTimer = null;
 function debounceSaveFilters() {
   clearTimeout(_debounceTimer);
-  _debounceTimer = setTimeout(saveFilterState, 300);
+  _debounceTimer = setTimeout(() => { _debounceTimer = null; saveFilterState(); }, 300);
+}
+// Run a pending debounced save NOW. showScreen calls this before it reassigns
+// state.mode: a timer firing afterwards resolved filtersMode() to the NEW screen
+// (null -> "tossups") and wrote the Bonuses panel over the saved Tossups filters.
+function flushPendingFilterSave() {
+  if (!_debounceTimer && !_modeSettingTimer) return;
+  clearTimeout(_debounceTimer); clearTimeout(_modeSettingTimer); _debounceTimer = _modeSettingTimer = null;
+  if ($("#category-filters .category-group")) saveFilterState();
 }
 
 function updateYearLabel() {
@@ -2409,6 +2555,7 @@ document.addEventListener("change", (e) => {
   if (e.target.closest("#category-filters")) {
     saveFilterState();
   }
+  if (e.target.closest?.("#category-filters") || e.target.id === "enable-cat-weights") refreshCategorySummary();
 });
 
 document.addEventListener("click", (e) => {
@@ -2423,6 +2570,120 @@ document.addEventListener("click", (e) => {
     exp.textContent = hidden ? "▸" : "▾";
   }
 });
+
+// ── CATEGORY GUI ─────────────────────────────────────────────────────────────
+// The launcher (#sec-categories, under Mode and Difficulty) opens #cat-ovl, the
+// full category / subcategory / alternate tree plus the weight settings. #cat-ovl
+// lives INSIDE #filters-panel on purpose (see index.html): it travels with every
+// panel borrow (multiplayer, coach, flashcards, packet builder…), and category
+// events keep bubbling through the panel's capture listeners (clearPrefetch,
+// multiplayer's onAnyFilterChange). Remote multiplayer changes are written into
+// this same tree, so an open GUI updates live. Never portal it to <body>.
+// Function declarations only: updateModeFields runs from earlier call sites.
+function isPacketModeSelected() {
+  const v = $("#mode-select")?.value;
+  return v === "set" || v === "import" || v === "custom";
+}
+function isCatOverlayOpen() {
+  const o = document.getElementById("cat-ovl");
+  // getClientRects: multiplayer can hand the panel back to a HIDDEN practice
+  // screen without a screen change; an "open" but invisible GUI must not keep
+  // swallowing hotkeys. (offsetParent is always null for position:fixed.)
+  return !!o && !o.classList.contains("hidden") && o.getClientRects().length > 0;
+}
+function openCategoryOverlay() {
+  const b = document.getElementById("btn-open-categories"), o = document.getElementById("cat-ovl");
+  if (!b || !o || b.disabled || isPacketModeSelected()) return;
+  o.classList.remove("hidden");
+  refreshCategorySummary();
+  try { o.querySelector(".cat-modal")?.focus({ preventScroll: true }); } catch (e) {}
+}
+function closeCategoryOverlay() {
+  const o = document.getElementById("cat-ovl");
+  if (!o || o.classList.contains("hidden")) return false;
+  o.classList.add("hidden");
+  return true;
+}
+// Built from the DOM, never from getActiveFilters (weighted mode returns ONE
+// random pick there).
+function categorySummary() {
+  const modeVal = $("#mode-select")?.value;
+  if (modeVal === "custom") return { locked: true, text: "None — custom list plays every question", title: "Locked while a custom question list is playing" };
+  if (modeVal === "set") return { locked: true, text: "Set by the chosen set", title: "Categories follow the chosen set" };
+  if (modeVal === "import") return { locked: true, text: "Set by the packet file", title: "Categories follow the imported packet" };
+  const weighted = !!document.getElementById("enable-cat-weights")?.checked;
+  const picked = [];
+  for (const g of document.querySelectorAll("#category-filters .category-group")) {
+    const cb = g.querySelector(".cat-checkbox");
+    if (!cb || !cb.checked) continue;
+    const boxes = [...g.querySelectorAll(".subcat-checkbox, .altsub-checkbox")];
+    const partial = boxes.some((x) => x.checked) && boxes.some((x) => !x.checked);   // none ticked plays the whole category
+    picked.push(cb.value + (partial ? "*" : ""));
+  }
+  if (!picked.length) return { locked: false, text: "All categories" + (weighted ? " · weighted" : ""), title: "Nothing ticked plays every category" };
+  return {
+    locked: false,
+    text: picked.slice(0, 2).join(", ") + (picked.length > 2 ? " +" + (picked.length - 2) : "") + (weighted ? " · weighted" : ""),
+    title: picked.join(", ") + (picked.some((x) => x.endsWith("*")) ? "\n* = only some subcategories" : ""),
+  };
+}
+function refreshCategorySummary() {
+  try {
+    const tree = document.getElementById("category-filters");
+    if (tree) tree.classList.toggle("weights-on", !!document.getElementById("enable-cat-weights")?.checked);
+    const el = document.getElementById("cat-summary"), b = document.getElementById("btn-open-categories");
+    if (!el || !b) return;
+    const s = categorySummary();
+    el.textContent = s.text;
+    b.title = s.title;
+    b.disabled = s.locked;   // pointer-events:none alone would still let the keyboard open it
+    if (s.locked) closeCategoryOverlay();
+  } catch (e) {}
+}
+// ONE bubbling change on the container, never per-box dispatches: that single
+// event saves (the delegated handler's closest("#category-filters") matches the
+// container itself), clears the prefetch and syncs multiplayer through the
+// panel's capture listeners — no per-box chat lines, no check-all cascades.
+function clearAllCategories() {
+  const tree = document.getElementById("category-filters");
+  if (!tree) return;
+  tree.querySelectorAll(".cat-checkbox, .subcat-checkbox, .altsub-checkbox").forEach((cb) => { cb.checked = false; delete cb.dataset.autoChecked; });
+  tree.querySelectorAll(".cat-weight, .subcat-weight, .altsub-weight").forEach((w) => { w.value = "0"; });
+  tree.querySelectorAll(".subcategory-list").forEach((l) => l.classList.add("hidden"));
+  tree.querySelectorAll(".cat-expand").forEach((x) => { x.textContent = "\u25B8"; });
+  tree.dispatchEvent(new Event("change", { bubbles: true }));
+}
+document.getElementById("btn-open-categories")?.addEventListener("click", openCategoryOverlay);
+document.getElementById("btn-cat-clear")?.addEventListener("click", clearAllCategories);
+// Both showScreen and QB.showPage emit this AFTER the new screen is active and
+// BEFORE any plugin's onShow borrows the panel (their hand-backs are deferred),
+// so a Custom display is gone before coach / flashcards / multiplayer read it.
+window.QB?.on?.("screen:change", () => {
+  closeCategoryOverlay();
+  if (!$("#practice-screen")?.classList.contains("active")) removeCustomView();
+});
+// While the GUI is open no hotkey may fire (Space would buzz, S would start a
+// session behind the backdrop). WINDOW capture runs before every document
+// listener; a document-capture stopPropagation would not stop the others.
+// Escape passes through so the settings-ovl handler closes the GUI, and so do
+// the zoom hotkeys (whatever they are bound to). Every other combo is blocked —
+// a hotkey rebound to Ctrl/Cmd+K must not start a session behind the backdrop.
+// Default actions (typing, copy/paste, Space on a checkbox, menu accelerators)
+// are untouched — only propagation stops. Tab wraps inside the modal.
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" || !isCatOverlayOpen()) return;
+  if (["text-bigger", "text-smaller", "text-reset"].some((a) => matchesHotkey(e, a))) return;
+  if (e.key === "Tab") {
+    const modal = document.querySelector("#cat-ovl .cat-modal");
+    const f = modal ? [...modal.querySelectorAll("button, input, select")].filter((x) => !x.disabled && x.getClientRects().length) : [];
+    if (f.length) {
+      const i = f.indexOf(document.activeElement);
+      if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+    }
+  }
+  e.stopPropagation();
+}, true);
 
 function setRevealSpeed(val) {
   state.settings.revealSpeed = val;
@@ -2468,6 +2729,104 @@ document.addEventListener("click", (e) => {
   if (section) section.classList.toggle("collapsed");
 });
 
+// ── Collapsible sections + "Show more" lists ────────────────────────────────
+// Markup contract: any element carrying data-coll="<key>" whose FIRST element
+// child is its header. initCollapsibles(root) moves everything after the
+// header into a .qb-coll-body (+ data-coll-body classes), prepends the shared
+// .collapse-chevron, and restores the saved state from localStorage
+// "qb-collapsed" ({key: 1 collapsed | 0 open}); an unsaved key falls back to
+// data-coll-default="collapsed". Idempotent (skips .qb-coll). Plain
+// localStorage on purpose — lsSet would push profile settings on every click.
+// This is NOT the filter panel's .collapsible/.collapse-header mechanism
+// (that one is reset by collapseFilterSections and must stay unpersisted).
+const _COLL_LS = "qb-collapsed";
+function _collMap() { try { return JSON.parse(localStorage.getItem(_COLL_LS) || "{}") || {}; } catch (e) { return {}; } }
+function _collSave(key, collapsed) {
+  const m = _collMap();
+  m[key] = collapsed ? 1 : 0;
+  try { localStorage.setItem(_COLL_LS, JSON.stringify(m)); } catch (e) {}
+}
+function initCollapsibles(root) {
+  if (!root || !root.querySelectorAll) return;
+  const m = _collMap();
+  root.querySelectorAll("[data-coll]:not(.qb-coll)").forEach((sec) => {
+    const head = sec.firstElementChild;
+    if (!head) return;
+    const body = document.createElement("div");
+    body.className = "qb-coll-body" + (sec.dataset.collBody ? " " + sec.dataset.collBody : "");
+    while (head.nextSibling) body.appendChild(head.nextSibling);
+    sec.appendChild(body);
+    const chev = document.createElement("span");
+    chev.className = "collapse-chevron";
+    chev.setAttribute("aria-hidden", "true");
+    head.insertBefore(chev, head.firstChild);
+    head.classList.add("qb-coll-head");
+    head.setAttribute("role", "button");
+    const key = sec.dataset.coll;
+    const shut = key in m ? !!m[key] : sec.dataset.collDefault === "collapsed";
+    sec.classList.add("qb-coll");
+    sec.classList.toggle("qb-collapsed", shut);
+    head.setAttribute("aria-expanded", String(!shut));
+  });
+}
+// One delegated toggle for every data-coll section (base + plugins). Clicks on
+// controls INSIDE a header are ignored — the SESSION BREAKDOWN title carries
+// two <select>s. Opening fires a bubbling "qb-coll-open" so canvases that were
+// drawn while hidden (clientWidth 0 → blank) can redraw.
+document.addEventListener("click", (e) => {
+  const head = e.target.closest(".qb-coll-head");
+  if (!head || e.target.closest("select, input, textarea, button, a, label, .qb-select")) return;
+  const sec = head.parentElement;
+  if (!sec || !sec.classList.contains("qb-coll") || head !== sec.firstElementChild) return;
+  const open = sec.classList.contains("qb-collapsed");
+  sec.classList.toggle("qb-collapsed", !open);
+  head.setAttribute("aria-expanded", String(open));
+  if (sec.dataset.coll) _collSave(sec.dataset.coll, !open);
+  if (open) sec.dispatchEvent(new CustomEvent("qb-coll-open", { bubbles: true }));
+});
+
+// Long list → the first `first` items plus a "Show N more / Show all" footer.
+// Items stay in the DOM (listeners already wired, in-place filters keep
+// working); hidden ones get .qb-more-hidden. The footer goes INSIDE a plain
+// container (so the caller's next innerHTML rebuild drops it with the list)
+// and right AFTER a <table> (it can't live inside one). How many are showing
+// is remembered per key for the app's lifetime, so a rebuild (loadStats(true)
+// after deleting a session) keeps the list as long as it was.
+const _moreShown = new Map();
+function limitList(listEl, itemSel, key, first = 10, step = 25) {
+  if (!listEl || !listEl.parentNode) return;
+  const items = [...listEl.querySelectorAll(itemSel)];
+  const isTable = listEl.tagName === "TABLE";
+  let foot = isTable ? listEl.nextElementSibling : listEl.lastElementChild;
+  if (!foot || !foot.classList.contains("qb-more")) {
+    foot = document.createElement("div");
+    foot.className = "qb-more";
+    if (isTable) listEl.after(foot); else listEl.appendChild(foot);
+  }
+  const paint = () => {
+    const shown = Math.min(items.length, Math.max(first, _moreShown.get(key) || 0));
+    items.forEach((it, i) => it.classList.toggle("qb-more-hidden", i >= shown));
+    const left = items.length - shown;
+    foot.innerHTML = left > 0
+      ? `<span class="text-muted">Showing ${shown} of ${items.length}</span>` +
+        `<button type="button" class="btn btn-sm btn-ghost" data-more="step">Show ${Math.min(step, left)} more</button>` +
+        `<button type="button" class="btn btn-sm btn-ghost" data-more="all">Show all</button>`
+      : items.length > first ? `<button type="button" class="btn btn-sm btn-ghost" data-more="less">Show fewer</button>` : "";
+    foot.style.display = foot.innerHTML ? "" : "none";
+  };
+  foot.onclick = (e) => {
+    const b = e.target.closest("[data-more]");
+    if (!b) return;
+    const cur = Math.max(first, _moreShown.get(key) || 0);
+    const act = b.dataset.more;
+    _moreShown.set(key, act === "all" ? items.length : act === "less" ? first : cur + step);
+    paint();
+    if (act === "less") foot.scrollIntoView({ block: "nearest" });
+  };
+  paint();
+}
+
+
 function initGameplayControls() {
   const map = {
     "opt-allow-rebuzzes": "allowRebuzzes",
@@ -2488,13 +2847,14 @@ function initGameplayControls() {
   const bt = $("#panel-buzz-timer"); if (bt) { bt.value = state.settings.buzzTimeout; const l = $("#panel-buzz-timer-label"); if (l) l.textContent = state.settings.buzzTimeout === 0 ? "off" : `${state.settings.buzzTimeout}s`; }
   const bw = $("#panel-buzz-window"); if (bw) { bw.value = state.settings.buzzWindow; const l = $("#panel-buzz-window-label"); if (l) l.textContent = state.settings.buzzWindow === 0 ? "off" : `${state.settings.buzzWindow}s`; }
   const bnt = $("#panel-bonus-timer"); if (bnt) { bnt.value = state.settings.bonusTimer; const l = $("#panel-bonus-timer-label"); if (l) l.textContent = state.settings.bonusTimer === 0 ? "off" : `${state.settings.bonusTimer}s`; }
+  refreshCategorySummary();   // also re-syncs .weights-on with the (silently set) toggle
 }
 
 const _MODE_SETTING_IDS = new Set(["opt-allow-rebuzzes", "opt-stop-on-power", "opt-allow-skips", "strictness-slider", "enable-cat-weights", "panel-buzz-timer", "panel-buzz-window", "panel-bonus-timer", "panel-speed-slider", "speed-slider", "opt-bonus-after", "opt-hide-pron", "opt-show-qmeta", "filter-hide-pron", "auto-reveal"]);
 let _modeSettingTimer = null;
 function scheduleModeSettingSave() {
   clearTimeout(_modeSettingTimer);
-  _modeSettingTimer = setTimeout(() => { if ($("#category-filters .category-group")) saveFilterState(); }, 250);
+  _modeSettingTimer = setTimeout(() => { _modeSettingTimer = null; if ($("#category-filters .category-group")) saveFilterState(); }, 250);
 }
 document.addEventListener("change", (e) => { if (e.target && _MODE_SETTING_IDS.has(e.target.id)) scheduleModeSettingSave(); });
 document.addEventListener("input", (e) => { if (e.target && (e.target.id === "strictness-slider" || e.target.id === "panel-speed-slider" || e.target.id === "speed-slider")) scheduleModeSettingSave(); });
@@ -2538,6 +2898,7 @@ function playSetPacket(setName, packetNumber, asBonuses) {
 function applyPendingPacketPlay() {
   const p = state._pendingPacketPlay;
   if (!p) return;
+  if (state.customType) { if (state.sessionActive) endSession(); else endCustom(); }
   state._pendingPacketPlay = null;
   // Values FIRST, change event LAST — the change handler loads the set's
   // packet list and validates the packet number against the CURRENT fields.
@@ -2554,8 +2915,11 @@ function applyPendingPacketPlay() {
 }
 
 function setMode(mode) {
+  // FIRST: before loadCategories puts the other type's saved filters in place,
+  // or switching Tossups -> Bonuses would leak one bucket into the other.
+  removeCustomView();
   if (state.mode && state.mode !== mode && $("#category-filters .category-group")) saveFilterState();
-  clearTimeout(_debounceTimer);   // a pending debounce would save the OLD panel into the NEW mode's bucket
+  clearTimeout(_debounceTimer); _debounceTimer = null;   // a pending debounce would save the OLD panel into the NEW mode's bucket
   state.mode = mode;
   state._practiceBase = mode;
   const type = mode === "tossups" ? "tossups" : "bonuses";
@@ -2569,8 +2933,9 @@ function setMode(mode) {
       const saved = restoreFilterState();
       if (saved) restoreCategorySelections(saved);
       $("#category-filters")?.classList.toggle("weights-on", !!state.settings.useWeights);
+      refreshCategorySummary();
     }),
-  ]).then(() => { restoreFilterState(); applyPendingPacketPlay(); });
+  ]).then(() => { restoreFilterState(); applyPendingPacketPlay(); applyCustomView(); });
   updateModeFields();
   initGameplayControls();
   updateKeyLabels();
@@ -2618,6 +2983,7 @@ function applyModeVisibility(mode) {
 
 
 function startSession() {
+  if (state.customType && !state.reviewIds && !state.bonusIds) endCustom();   // defensive
   state.sessionActive = true;
   state.sessionId = "session-" + Date.now();
   state.questionCount = 0;
@@ -2675,6 +3041,7 @@ function suspendSession() {
 }
 
 function endSession() {
+  endCustom();
   state.sessionActive = false;
   state.reviewIds = null;
   state.bonusIds = null;
@@ -2867,7 +3234,7 @@ function _randomQuestionParams(filters) {
 function _prefetchEligible() {
   const mv = $("#mode-select")?.value;
   return state.sessionActive && !state.reviewIds && !state.bonusIds && !state._wantBonus &&
-    mv !== "import" && mv !== "set" &&
+    mv !== "import" && mv !== "set" && mv !== "custom" &&
     !$("#filter-starred")?.checked &&
     (state.mode === "tossups" || state.mode === "bonuses") &&
     (!state._practiceBase || state._practiceBase === state.mode);   // not the bonus-after-correct interlude
@@ -4454,6 +4821,7 @@ function renderHistoryPanel() {
     });
   }).join("");
 
+  limitList(list, ":scope > .qcard", "hist", 50, 50);
   list.querySelectorAll(".star-toggle").forEach(el => {
     el.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -5135,6 +5503,7 @@ function openHistoryOverlay(opts) {
   el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
   document.body.appendChild(el);
   _histFilter = { res: "", type: "", cat: "", q: "" };
+  _moreShown.delete("hist");
   const syncF = () => {
     _histFilter = {
       res: el.querySelector("#hist-fres").value,
@@ -5239,6 +5608,15 @@ function setupCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
+  if (!(w > 0 && h > 0)) {
+    // No layout box (a collapsed section). Sizing the bitmap to 0x0 erased the
+    // aspect ratio height:auto relies on, so the chart stayed 0px tall after
+    // expanding. Keep the bitmap and draw into a throwaway context at its own
+    // size; the qb-coll-open redraw paints the real canvas.
+    const ctx = (setupCanvas._scratch ||= document.createElement("canvas").getContext("2d"));
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return { ctx, W: canvas.width / dpr || 300, H: canvas.height / dpr || 150 };
+  }
   if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
     canvas.width = w * dpr;
     canvas.height = h * dpr;
@@ -5673,6 +6051,7 @@ function qhDetailHtml(q, type) {
   return '<div class="qh-qtext">' + escapeHtml(q.question_sanitized || "") + "</div>" +
     '<div class="qh-ans">Answer: ' + answerLineHtml(q.answer, q.answer_sanitized || "") + "</div>";
 }
+let _statsRedraw = null;
 async function loadStats(preserveScroll = false) {
   _screenBuilt.add("stats");
   const screen = document.getElementById("stats-screen");
@@ -5736,7 +6115,7 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    html += `<div class="stats-section">
+    html += `<div class="stats-section" data-coll="stats:overview">
       <div class="stats-section-title">OVERVIEW${selectedCat ? " — " + escapeHtml(selectedCat) : ""}</div>
       <div class="stats-grid">
         <div class="stat-card">
@@ -5767,13 +6146,13 @@ async function loadStats(preserveScroll = false) {
     </div>`;
 
     if (!sid) {
-      html += `<div class="stats-section">
+      html += `<div class="stats-section" data-coll="stats:graph">
         <div class="stats-section-title">GRAPH</div>
         <canvas id="stats-graph" class="chart-canvas" width="700" height="300" style="width:100%;max-width:760px"></canvas>
       </div>`;
     }
 
-    html += `<div class="stats-section">
+    html += `<div class="stats-section" data-coll="stats:tossups">
       <div class="stats-section-title">TOSSUPS: ${view.tossupsAttempted}</div>
       <div class="stats-grid">
         <div class="stat-card">
@@ -5797,7 +6176,7 @@ async function loadStats(preserveScroll = false) {
 
     if (view.bonusesAttempted > 0) {
       const bd = view.bonusDist || null; // per-category views don't carry a distribution
-      html += `<div class="stats-section">
+      html += `<div class="stats-section" data-coll="stats:bonuses">
         <div class="stats-section-title">BONUSES: ${view.bonusesAttempted}</div>
         <div class="stats-grid">
           <div class="stat-card">
@@ -5820,7 +6199,7 @@ async function loadStats(preserveScroll = false) {
       .filter((c) => c.totalQuestions > 0)
       .sort((a, b) => (b.totalPoints / b.totalQuestions) - (a.totalPoints / a.totalQuestions));
     if (categoryData.length > 0) {
-      html += `<div class="stats-section">
+      html += `<div class="stats-section" data-coll="stats:by-category">
         <div class="stats-section-title">BY CATEGORY</div>
         <table class="stats-table">
           <thead><tr>
@@ -5872,7 +6251,7 @@ async function loadStats(preserveScroll = false) {
         '<tr class="qh-detail hidden" data-qhd="' + i + '"><td colspan="5"><div class="text-muted">Loading…</div></td></tr>';
       }).join("");
       const qhCats = [...new Set(sessionEntries.map((en) => en.category).filter(Boolean))].sort();
-      html += '<div class="stats-section">' +
+      html += '<div class="stats-section" data-coll="stats:question-history">' +
         '<div class="stats-section-title">QUESTION HISTORY (<span id="qh-count">' + sessionEntries.length + "</span>)</div>" +
         '<div class="db-toolbar" style="border:none;background:none;padding:8px 0">' +
           '<select id="qh-fres" class="db-input db-input-sm"><option value="">All results</option><option value="power">Powers</option><option value="correct">Correct</option><option value="neg">Negs</option><option value="miss">Misses</option><option value="partial">Partial bonuses</option></select>' +
@@ -5892,7 +6271,7 @@ async function loadStats(preserveScroll = false) {
       (celDist.late?.length || 0) +
       (celDist.end?.length || 0);
     if (celTotal > 0) {
-      html += `<div class="stats-section">
+      html += `<div class="stats-section" data-coll="stats:celerity">
         <div class="stats-section-title">CELERITY DISTRIBUTION</div>
         <table class="stats-table">
           <thead><tr>
@@ -5925,15 +6304,14 @@ async function loadStats(preserveScroll = false) {
     }
 
     if (!sid && sessionList.length > 0) {
-      html += `<div class="stats-section">
+      html += `<div class="stats-section" data-coll="stats:sessions">
         <div class="stats-section-title">SESSIONS (${sessionList.length})</div>
-        <table class="stats-table">
+        <table class="stats-table stats-sessions-table">
           <thead><tr>
             <th>Session</th><th>Questions</th><th>Points</th><th>Started</th><th></th>
           </tr></thead>
           <tbody>
             ${sessionList
-              .slice(0, 50)
               .map((s) => {
                 const outOfPeriod = since && (s.ended_at || s.started_at || 0) < since;
                 const sCats = (s.categories || "").split(",").map((c) => c.trim()).filter(Boolean);
@@ -5956,7 +6334,7 @@ async function loadStats(preserveScroll = false) {
 
     const diffKeys = Object.keys(stats.byDifficulty || {}).sort((a,b) => parseInt(a) - parseInt(b));
     if (diffKeys.length >= 2) {
-      html += `<div class="stats-section">
+      html += `<div class="stats-section" data-coll="stats:by-difficulty">
         <div class="stats-section-title">BY DIFFICULTY</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
           <canvas id="graph-diff-accuracy" class="chart-canvas" width="420" height="260" style="flex:1;min-width:340px;max-width:520px"></canvas>
@@ -5966,7 +6344,7 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    if (!sid) html += `<div class="stats-section">
+    if (!sid) html += `<div class="stats-section" data-coll="stats:breakdown">
       <div class="stats-section-title">SESSION BREAKDOWN
         <select id="graph-filter-cat" style="margin-left:12px;font-family:var(--font);font-size:10px;padding:1px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:3px;color:var(--text)">
           <option value="">All categories</option>
@@ -5994,15 +6372,19 @@ async function loadStats(preserveScroll = false) {
     }
 
     container.innerHTML = html;
+    initCollapsibles(container);
+    limitList(container.querySelector(".stats-sessions-table"), "tbody > tr", "stats:sessions", 10, 25);
 
     if (!sid) {
       for (const prov of (window.QB?.getStatsProviders?.() || [])) {
         const sec = document.createElement("div");
         sec.className = "stats-section";
+        sec.dataset.coll = "stats:plugin:" + (prov.pluginId || "") + ":" + (prov.id || "");
         sec.innerHTML = `<div class="stats-section-title">${escapeHtml(prov.title.toUpperCase())}</div>`;
         const bodyEl = document.createElement("div");
         sec.appendChild(bodyEl);
         container.appendChild(sec);
+        initCollapsibles(container);   // wraps bodyEl in .qb-coll-body before the plugin renders into it
         try { await prov.render(bodyEl); } catch { bodyEl.innerHTML = '<div class="text-muted" style="font-size:12px">Failed to load.</div>'; }
       }
     }
@@ -6130,7 +6512,9 @@ async function loadStats(preserveScroll = false) {
 
     populateGraphFilters(stats);
 
-    setTimeout(() => {
+    // Canvases size from clientWidth, so one drawn inside a collapsed section
+    // comes out blank — draw now, and again whenever a section is opened.
+    const drawCharts = (initial) => {
       const canvas = document.getElementById("stats-graph");
       if (canvas) drawStatsGraph(canvas, stats);
       const c1 = document.getElementById("graph-diff-accuracy");
@@ -6139,8 +6523,17 @@ async function loadStats(preserveScroll = false) {
       if (c1) drawDiffAccuracy(c1, stats);
       if (c2) drawDiffCelerity(c2, stats);
       if (c3) drawDiffBonus(c3, stats);
-      redrawFilteredGraphs(breakdown);
-    }, 100);
+      // initial: the breakdown fetched above; later: re-read with the graph filters.
+      if (document.getElementById("graph-session-outcomes")) redrawFilteredGraphs(initial ? breakdown : undefined);
+    };
+    _statsRedraw = () => drawCharts(false);
+    if (!container.__collWired) {
+      container.__collWired = true;
+      container.addEventListener("qb-coll-open", (ev) => {
+        if (ev.target.querySelector && ev.target.querySelector("canvas") && _statsRedraw) _statsRedraw();
+      });
+    }
+    setTimeout(() => drawCharts(true), 100);
   } catch (e) {
     container.innerHTML = `<div class="text-muted">Failed to load stats: ${e.message}</div>`;
   }
@@ -6733,6 +7126,7 @@ async function loadPlayer() {
       </div>
     `;
 
+    initCollapsibles(container);
     $("#player-avatar")?.addEventListener("click", showAvatarPicker);
 
     $("#player-username-input")?.addEventListener("input", (e) => {
@@ -7048,35 +7442,31 @@ function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
     ["streak", "Streaks"],
   ];
 
+  // Each category is a collapsible group (loadPlayer runs initCollapsibles);
+  // the ~130 Answer Powers cards start collapsed, everything else open.
+  const group = (key, label, list, collapsed) => {
+    if (!list.length) return "";
+    const earned = list.filter(([, d]) => d && d.earned).length;
+    return `<div class="ach-group" data-coll="ach:${escapeHtml(key)}" data-coll-body="achievements-grid"${collapsed ? ' data-coll-default="collapsed"' : ""}>` +
+      `<div class="achievement-category">${escapeHtml(label)}<span class="ach-count">${earned}/${list.length}</span></div>` +
+      list.map(([a, d]) => renderAchievementCard(a, d)).join("") + "</div>";
+  };
+
   let html = '<div class="achievement-section-title">Global</div>';
   for (const [type, label] of globalSections) {
-    const typeAchs = ACHIEVEMENT_LIST.filter(a => a.type === type);
-    if (typeAchs.length === 0) continue;
-    html += `<div class="achievement-category">${escapeHtml(label)}</div>`;
-    for (const ach of typeAchs) {
-      const data = achData[ach.id];
-      if (!data) continue;
-      html += renderAchievementCard(ach, data);
-    }
+    const list = ACHIEVEMENT_LIST.filter(a => a.type === type && achData[a.id]).map((a) => [a, achData[a.id]]);
+    html += group("g:" + type, label, list, false);
   }
 
   const apAchs = ACHIEVEMENT_LIST.filter(a => a.type === "answer_power");
   if (apAchs.length) {
     html += '<div class="achievement-section-title">Answer Powers</div>';
     for (const [prefix, label] of AP_CATEGORY_PREFIXES) {
-      const group = apAchs.filter(a => a.id.startsWith(prefix));
-      if (!group.length) continue;
-      html += `<div class="achievement-category">${escapeHtml(label)}</div>`;
-      for (const ach of group) {
-        html += renderAchievementCard(ach, achData[ach.id]);
-      }
+      html += group("ap:" + prefix, label, apAchs.filter(a => a.id.startsWith(prefix)).map((a) => [a, achData[a.id]]), true);
     }
     const known = new Set(AP_CATEGORY_PREFIXES.map(p => p[0]));
     const other = apAchs.filter(a => ![...known].some(p => a.id.startsWith(p)));
-    if (other.length) {
-      html += `<div class="achievement-category">Other</div>`;
-      for (const ach of other) html += renderAchievementCard(ach, achData[ach.id]);
-    }
+    html += group("ap:other", "Other", other.map((a) => [a, achData[a.id]]), true);
   }
 
   if (Array.isArray(pluginAchs) && pluginAchs.length) {
@@ -7087,10 +7477,7 @@ function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
     }
     html += '<div class="achievement-section-title">Plugins</div>';
     for (const src of Object.keys(bySource)) {
-      html += `<div class="achievement-category">${escapeHtml(src)}</div>`;
-      for (const p of bySource[src]) {
-        html += renderAchievementCard(p, { earned: p.earned, progress: p.progress });
-      }
+      html += group("plugin:" + src, src, bySource[src].map((p) => [p, { earned: p.earned, progress: p.progress }]), false);
     }
   }
 
@@ -7576,9 +7963,11 @@ function renderSearchTab() {
     '<div class="db-toolbar">' +
       '<input type="text" id="db-search-input" class="db-input" placeholder="Search questions…" autocomplete="off">' +
       '<select id="db-qtype" class="db-input db-input-sm"><option value="all">Tossups + Bonuses</option><option value="tossup">Tossups only</option><option value="bonus">Bonuses only</option></select>' +
-      '<select id="db-search-type" class="db-input db-input-sm"><option value="all">All text</option><option value="question">Question only</option><option value="answer">Answer only</option></select>' +
-      '<label class="db-opt"><input type="checkbox" id="db-exact" checked> Exact phrase</label>' +
+      '<select id="db-search-type" class="db-input db-input-sm" title="All text also matches category, subcategory and set names"><option value="all">All text</option><option value="question">Question only</option><option value="answer">Answer only</option></select>' +
+      '<select id="db-match" class="db-input db-input-sm" title="How the words must match"><option value="phrase">Exact phrase</option><option value="all">All words</option><option value="any">Any word</option></select>' +
+      '<label class="db-opt" title="Match word beginnings: symphon matches symphony, symphonies"><input type="checkbox" id="db-prefix"> Word starts</label>' +
       '<label class="db-opt"><input type="checkbox" id="db-hide-ans"> Hide answers</label>' +
+      '<button type="button" class="btn btn-sm btn-ghost" id="db-more-toggle" aria-expanded="false" aria-controls="db-more">More filters<span id="db-more-count" class="db-more-count"></span></button>' +
     "</div>" +
     // The three category selects carry long labels ("All alternate
     // subcategories"); crowded onto the search row they overlapped. Their own
@@ -7596,13 +7985,47 @@ function renderSearchTab() {
         '<input type="range" id="db-year-max" min="2000" max="2026" value="2026"></div>' +
       '<span class="db-adv-label" id="db-year-label">2000 – 2026</span>' +
     "</div>" +
+    // Collapsible (the "More filters" button); remembered per machine. Placeholders
+    // avoid "search|find|answer|query" — the coss-ui theme decorates those inputs.
+    '<div class="db-toolbar db-toolbar-adv db-toolbar-more" id="db-more" hidden>' +
+      '<input type="text" id="db-set-filter" class="db-input db-input-set" list="db-set-options" placeholder="Set or tournament (e.g. ACF Nationals)" autocomplete="off">' +
+      '<datalist id="db-set-options"></datalist>' +
+      '<select id="db-packet-filter" class="db-input db-input-xs" disabled><option value="">All packets</option></select>' +
+      '<span class="db-adv-label" id="db-set-hint"></span>' +
+      '<input type="text" id="db-exclude" class="db-input db-input-sm" placeholder="Exclude words" autocomplete="off" title="Hide results containing any of these words (needs search text)">' +
+      '<select id="db-sort" class="db-input db-input-sm" title="Result order"><option value="relevance">Best match</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="easiest">Easiest first</option><option value="hardest">Hardest first</option></select>' +
+      '<label class="db-opt"><input type="checkbox" id="db-standard"> Standard sets only</label>' +
+      '<label class="db-opt" id="db-powermark-lbl" title="Tossups that have a power mark (*)"><input type="checkbox" id="db-powermark"> Powermarked (tossups)</label>' +
+      '<label class="db-opt"><input type="checkbox" id="db-starred"> Starred only</label>' +
+    "</div>" +
     '<div class="search-results" id="db-results"><div class="text-muted" style="padding:24px;text-align:center">Type a search term above</div></div>';
-  const deb = () => { clearTimeout(_dbTimer); _dbTimer = setTimeout(performDbSearch, 300); };
+  // _dbRestoring: Back restores many controls at once; their events must not
+  // each fire a search (applySearchState runs exactly one at the end).
+  const deb = () => { if (_dbRestoring) return; clearTimeout(_dbTimer); _dbTimer = setTimeout(performDbSearch, 300); };
+  _dbPacketsFor = null;
   fillCategoryDropdown(document.getElementById("db-cat-filter")).then(() => {
     wireCatCascade(document.getElementById("db-cat-filter"), document.getElementById("db-sub-filter"), document.getElementById("db-alt-filter"), deb);
   });
-  c.querySelectorAll("#db-search-input, #db-qtype, #db-search-type, #db-exact, .db-diff-cb, #db-year-min, #db-year-max")
+  c.querySelectorAll("#db-search-input, #db-qtype, #db-search-type, #db-match, #db-prefix, .db-diff-cb, #db-year-min, #db-year-max, #db-set-filter, #db-packet-filter, #db-exclude, #db-sort, #db-standard, #db-powermark, #db-starred")
     .forEach((el) => el.addEventListener(el.type === "text" || el.type === "number" || el.type === "range" ? "input" : "change", deb));
+  getDbSets().then((s) => {
+    const dl = document.getElementById("db-set-options");
+    if (dl) dl.innerHTML = s.map((x) => '<option value="' + escapeHtml(x.name || "") + '">').join("");
+  });
+  // Powermark exists only on tossups: the backend ignores it for bonuses, so
+  // "Bonuses only" disables it (and performDbSearch skips the bonus side).
+  const qt = document.getElementById("db-qtype"), pmCb = document.getElementById("db-powermark"), pmLbl = document.getElementById("db-powermark-lbl");
+  const syncPm = () => { const off = qt.value === "bonus"; pmCb.disabled = off; pmLbl.classList.toggle("is-disabled", off); };
+  qt.addEventListener("change", syncPm); syncPm();
+  const more = document.getElementById("db-more"), mt = document.getElementById("db-more-toggle");
+  let moreOpen = false; try { moreOpen = localStorage.getItem("qb-db-more") === "1"; } catch (e) {}
+  const setMore = (open) => {
+    more.hidden = !open; mt.setAttribute("aria-expanded", String(open));
+    // plain localStorage: lsSet would schedule a profile push for a UI toggle
+    try { localStorage.setItem("qb-db-more", open ? "1" : "0"); } catch (e) {}
+  };
+  more.hidden = !moreOpen; mt.setAttribute("aria-expanded", String(moreOpen));
+  mt.addEventListener("click", () => setMore(more.hidden));
   // Hiding answers is instant — a CSS cover over each answer, no re-query.
   document.getElementById("db-hide-ans").addEventListener("change", (e) => {
     document.getElementById("db-results")?.classList.toggle("db-hide-ans", e.target.checked);
@@ -7613,15 +8036,18 @@ function renderSearchTab() {
 
 // Google-style highlighting: wrap search-term matches in <mark> inside the
 // results container. DOM-walks text nodes so existing markup stays intact.
-function highlightTerms(container, terms) {
+function highlightTerms(container, terms, opts) {
   const clean = (terms || []).map((t) => String(t || "").trim()).filter((t) => t.length >= 2);
   if (!clean.length || !container) return;
-  const re = new RegExp("(" + clean.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  const prefix = !!(opts && opts.prefix);   // "Word starts": highlight the whole word
+  const re = new RegExp("(" + clean.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")" + (prefix ? "[\\p{L}\\p{N}]*" : ""), prefix ? "giu" : "gi");
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
-      if (!n.nodeValue || !re.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
+      if (!n.nodeValue) return NodeFilter.FILTER_REJECT;
+      re.lastIndex = 0;   // a /g regex carries lastIndex between .test() calls and skipped nodes
+      if (!re.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
       const p = n.parentElement;
-      if (!p || p.closest("mark, script, style, .pill, .qb-star, .star-btn")) return NodeFilter.FILTER_REJECT;
+      if (!p || p.closest("mark, script, style, .pill, .qb-star, .star-btn, .db-count, .db-pager")) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });
@@ -7684,25 +8110,61 @@ async function performDbSearch(opts) {
   // Sequence token: only the LATEST invocation may write results — kills the
   // race where an earlier (e.g. empty-input) query resolves last and clobbers.
   const seq = ++_dbSearchSeq;
-  _dbPage = opts && opts.page != null ? Math.max(0, opts.page) : 0;
-  const query = document.getElementById("db-search-input")?.value?.trim();
-  const qtype = document.getElementById("db-qtype")?.value || "all";
-  const textType = document.getElementById("db-search-type")?.value || "all";
-  const catSel = document.getElementById("db-cat-filter"), subSel = document.getElementById("db-sub-filter"), altSel = document.getElementById("db-alt-filter");
+  const g = (id) => document.getElementById(id);
+  const query = g("db-search-input")?.value?.trim();
+  const qtype = g("db-qtype")?.value || "all";
+  const textType = g("db-search-type")?.value || "all";
+  const catSel = g("db-cat-filter"), subSel = g("db-sub-filter"), altSel = g("db-alt-filter");
   const { category: cat, subcategory: sub, alternateSubcategory: alt } = catSel ? getCatCascadeFilter(catSel, subSel, altSel) : { category: "", subcategory: "", alternateSubcategory: "" };
-  const exact = document.getElementById("db-exact")?.checked;
-  const hideAns = document.getElementById("db-hide-ans")?.checked;
+  const match = g("db-match")?.value || "phrase";
+  const prefix = !!g("db-prefix")?.checked;
+  const hideAns = g("db-hide-ans")?.checked;
   const diffs = [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value);
-  const _ya = parseInt(document.getElementById("db-year-min")?.value || 2000);
-  const _yb = parseInt(document.getElementById("db-year-max")?.value || 2026);
+  const _ya = parseInt(g("db-year-min")?.value || 2000);
+  const _yb = parseInt(g("db-year-max")?.value || 2026);
   const yearMin = Math.min(_ya, _yb), yearMax = Math.max(_ya, _yb);
-  const yl = document.getElementById("db-year-label");
-  if (yl) yl.textContent = `${yearMin} \u2013 ${yearMax}`;
-  const fill = document.getElementById("db-year-fill");
+  const sort = g("db-sort")?.value || "relevance";
+  const std = !!g("db-standard")?.checked;
+  const pm = !!g("db-powermark")?.checked && qtype !== "bonus";
+  const starred = !!g("db-starred")?.checked;
+  const setRaw = (g("db-set-filter")?.value || "").trim();
+  const yl = g("db-year-label");
+  if (yl) yl.textContent = `${yearMin} – ${yearMax}`;
+  const fill = g("db-year-fill");
   if (fill) { fill.style.left = ((yearMin - 2000) / 26) * 100 + "%"; fill.style.right = ((2026 - yearMax) / 26) * 100 + "%"; }
-  const container = document.getElementById("db-results");
+  const container = g("db-results");
   if (!container) return;
   container.classList.toggle("db-hide-ans", !!hideAns);
+
+  const tokens = query ? (query.match(/[\p{L}\p{N}]+/gu) || []) : [];   // phrase mode + highlighting
+  const qWords = dbFtsWords(query);
+  // FTS cannot run a pure NOT, so exclusions only apply alongside search text.
+  const excl = tokens.length ? dbFtsWords(g("db-exclude")?.value) : [];
+
+  const sets = await dbResolveSets();
+  if (seq !== _dbSearchSeq) return;
+  dbSyncPackets(sets.single);   // not awaited: fills the packet list when exactly one set matches
+  const pktSel = g("db-packet-filter");
+  const pkt = pktSel && !pktSel.disabled ? (pktSel.value || "") : "";
+
+  // Page rule: an explicit page wins; otherwise only a CHANGED search resets to
+  // page 1. Late cascade / debounced calls after a Back restore used to reset
+  // the restored page to 0.
+  const sig = JSON.stringify([query, qtype, textType, match, prefix, excl, cat, sub, alt, diffs, yearMin, yearMax, setRaw, pkt, sort, std, pm, starred]);
+  if (opts && opts.page != null) _dbPage = Math.max(0, opts.page);
+  else if (sig !== _dbLastSig) _dbPage = 0;
+  _dbLastSig = sig;
+
+  const setsOn = !!setRaw && sets.n > 0 && sets.n <= DB_SET_CAP;
+  const hint = g("db-set-hint");
+  if (hint) hint.textContent = !setRaw ? "" : sets.n === 0 ? "No set matches" : sets.n > DB_SET_CAP ? `${sets.n} sets — type more` : sets.n === 1 ? "1 set" : `${sets.n} sets`;
+  const active = [setsOn, !!pkt, excl.length > 0, sort !== "relevance", std, pm, starred].filter(Boolean).length;
+  const badge = g("db-more-count");
+  if (badge) badge.textContent = active ? String(active) : "";
+  if (setRaw && sets.n === 0) {
+    container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">No set matches "' + escapeHtml(setRaw) + '"</div>';
+    return;
+  }
 
   const common =
     `limit=${DB_PAGE_SIZE}&offset=${_dbPage * DB_PAGE_SIZE}` +
@@ -7711,49 +8173,48 @@ async function performDbSearch(opts) {
     (alt ? `&alternateSubcategories=${encodeURIComponent(alt)}` : "") +
     (diffs.length ? `&difficulties=${diffs.join(",")}` : "") +
     (yearMin > 2000 ? `&yearMin=${yearMin}` : "") +
-    (yearMax < 2026 ? `&yearMax=${yearMax}` : "");
+    (yearMax < 2026 ? `&yearMax=${yearMax}` : "") +
+    // setIds, never setNames: names are comma-split on both transports, so
+    // "2023 Planes, Trains, and Automobiles" matched nothing.
+    (setsOn ? `&setIds=${sets.ids.map(encodeURIComponent).join(",")}` : "") +
+    (pkt ? `&packetNumbers=${encodeURIComponent(pkt)}` : "") +
+    (std ? "&standard=1" : "") +   // never standard=0: that means NON-standard only
+    (pm ? "&powermarkOnly=true" : "") +
+    (starred ? "&starredOnly=true" : "") +
+    (sort !== "relevance" ? `&sort=${encodeURIComponent(sort)}` : "");
 
-  const tokens = query ? (query.match(/[\p{L}\p{N}]+/gu) || []) : [];
-  if (!query || !tokens.length) {
-    container.innerHTML = loadingBarHtml("Loading questions…");
-    try {
-      const [t, b] = await Promise.all([
-        qtype === "bonus" ? Promise.resolve({ rows: [] }) : API.get(`/api/tossups/query?${common}`),
-        qtype === "tossup" ? Promise.resolve({ rows: [] }) : API.get(`/api/bonuses/query?${common}`),
-      ]);
-      if (seq !== _dbSearchSeq) return;
-      const rows = [...(t.rows || []), ...(b.rows || [])];
-      const perSource = Math.max((t.rows || []).length, (b.rows || []).length);
-      if (!rows.length) {
-        container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">' + (_dbPage > 0 ? "No more results" : "No questions match these filters") + "</div>" + (_dbPage > 0 ? dbPagerHtml(false) : "");
-      } else {
-        container.innerHTML = rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(perSource >= DB_PAGE_SIZE);
-      }
-      wireDbPager(container);
-    } catch (e) { if (seq === _dbSearchSeq) container.innerHTML = '<div class="text-muted" style="padding:16px">Failed: ' + escapeHtml(e.message || "") + "</div>"; }
-    return;
-  }
-
-  const base = exact ? `"${tokens.join(" ")}"` : tokens.map((t) => `"${t}"`).join(" ");
-  const tossupFts = textType === "answer" ? `answer_sanitized : (${base})` : textType === "question" ? `question_sanitized : (${base})` : base;
-  const bonusFts = textType === "answer" ? `answers_sanitized : (${base})` : textType === "question" ? `{leadin_sanitized parts_sanitized} : (${base})` : base;
-
-  container.innerHTML = loadingBarHtml("Searching…");
+  const wantT = qtype !== "bonus", wantB = qtype !== "tossup" && !pm;
+  const none = Promise.resolve({ rows: [], total: 0 });
+  container.innerHTML = loadingBarHtml(tokens.length ? "Searching…" : "Loading questions…");
   try {
-    const [t, b] = await Promise.all([
-      qtype === "bonus" ? Promise.resolve({ rows: [] }) : API.get(`/api/tossups/search?query=${encodeURIComponent(tossupFts)}&${common}`),
-      qtype === "tossup" ? Promise.resolve({ rows: [] }) : API.get(`/api/bonuses/search?query=${encodeURIComponent(bonusFts)}&${common}`),
-    ]);
+    let t, b;
+    if (!tokens.length) {
+      [t, b] = await Promise.all([
+        wantT ? API.get(`/api/tossups/query?${common}`) : none,
+        wantB ? API.get(`/api/bonuses/query?${common}`) : none,
+      ]);
+    } else {
+      const expr = dbFtsExpr(tokens, qWords, excl, match, prefix);
+      [t, b] = await Promise.all([
+        wantT ? API.get(`/api/tossups/search?query=${encodeURIComponent(dbFtsFor(expr, textType, false))}&${common}`) : none,
+        wantB ? API.get(`/api/bonuses/search?query=${encodeURIComponent(dbFtsFor(expr, textType, true))}&${common}`) : none,
+      ]);
+    }
     if (seq !== _dbSearchSeq) return;
     const rows = [...(t.rows || []), ...(b.rows || [])];
-    const perSource = Math.max((t.rows || []).length, (b.rows || []).length);
-    if (rows.length === 0) {
-      container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">' + (_dbPage > 0 ? "No more results" : "No results") + "</div>" + (_dbPage > 0 ? dbPagerHtml(false) : "");
+    // Tossups and bonuses come from separate queries; a chosen order is applied
+    // to the merged page (bm25 relevance can't be compared across tables).
+    if (wantT && wantB && Object.hasOwn(DB_SORT_CMP, sort)) rows.sort(DB_SORT_CMP[sort]);
+    const totT = wantT ? (t.total || 0) : 0, totB = wantB ? (b.total || 0) : 0;
+    const hasMore = (_dbPage + 1) * DB_PAGE_SIZE < Math.max(totT, totB);
+    if (!rows.length) {
+      container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">' +
+        (_dbPage > 0 ? "No more results" : tokens.length ? "No results" : "No questions match these filters") + "</div>" + (_dbPage > 0 ? dbPagerHtml(false) : "");
     } else {
-      container.innerHTML = rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(perSource >= DB_PAGE_SIZE);
-      // Highlight what was searched — the whole phrase in exact mode, else
-      // each token (the phrase is tried first so it wins when present).
-      highlightTerms(container, exact ? [tokens.join(" "), ...tokens] : tokens);
+      const count = [wantT ? `${totT.toLocaleString()} tossup${totT === 1 ? "" : "s"}` : null, wantB ? `${totB.toLocaleString()} bonus${totB === 1 ? "" : "es"}` : null].filter(Boolean).join(" · ");
+      container.innerHTML = '<div class="db-count text-muted">' + count + "</div>" + rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(hasMore);
+      // Highlight what was searched — the whole phrase first in phrase mode.
+      if (tokens.length) highlightTerms(container, match === "phrase" ? [tokens.join(" "), ...tokens] : tokens, { prefix });
     }
     wireDbPager(container);
   } catch (e) { if (seq === _dbSearchSeq) container.innerHTML = '<div class="text-muted" style="padding:16px">Search failed: ' + escapeHtml(e.message || "") + "</div>"; }
@@ -7794,6 +8255,68 @@ function renderSearchResult(q) {
 }
 
 let _dbSets = null;
+async function getDbSets() {
+  if (!_dbSets) { try { _dbSets = (await API.get("/api/sets")).sets || []; } catch (e) { _dbSets = []; } }
+  return _dbSets;
+}
+const DB_SET_CAP = 250;   // ~6KB of ids in the dev URL; Node's header limit is 16KB
+// Set filter text -> set ids. An exact name picks that set; otherwise every set
+// whose name contains the text ("ACF Nationals" = every year).
+async function dbResolveSets() {
+  const raw = (document.getElementById("db-set-filter")?.value || "").trim().toLowerCase();
+  if (!raw) return { ids: [], n: 0, single: null };
+  const sets = await getDbSets();
+  const exact = sets.filter((s) => (s.name || "").toLowerCase() === raw);
+  const list = exact.length ? exact : sets.filter((s) => (s.name || "").toLowerCase().includes(raw));
+  return { ids: list.map((s) => s.id), n: list.length, single: list.length === 1 ? list[0].name : null };
+}
+// FTS expression from [\p{L}\p{N}]+ tokens only, so quoting can never produce a
+// syntax error (the backend fallback would turn NOT/OR into literal words).
+// Prefix * only on tokens of 3+ chars: very short prefixes are slow, and the
+// query runs synchronously in the Electron main process.
+//  • phrase: every token joined with FTS5's "+" (same as one quoted phrase), so
+//    Word starts applies to EVERY word — `"a b"*` only prefixed the last one;
+//  • all / any / exclude: one phrase per whitespace-separated WORD. Splitting
+//    Ophelia's / T-cell into lone tokens OR-ed or NOT-ed a bare "s" / "t", which
+//    matches most of the database.
+function dbFtsWords(str) {
+  return String(str || "").split(/\s+/).map((w) => (w.match(/[\p{L}\p{N}]+/gu) || []).join(" ")).filter(Boolean);
+}
+function dbFtsExpr(tokens, words, excl, match, prefix) {
+  const star = (w) => (prefix && w.split(" ").pop().length >= 3 ? "*" : "");   // a phrase's * prefixes its LAST token
+  const base = match === "phrase" ? tokens.map((t) => `"${t}"` + star(t)).join(" + ")
+    : words.map((w) => `"${w}"` + star(w)).join(match === "any" ? " OR " : " ");
+  return excl.length ? `(${base}) NOT (${excl.map((w) => `"${w}"`).join(" OR ")})` : base;
+}
+function dbFtsFor(expr, field, isBonus) {
+  if (field === "answer") return `${isBonus ? "answers_sanitized" : "answer_sanitized"} : (${expr})`;
+  if (field === "question") return `${isBonus ? "{leadin_sanitized parts_sanitized}" : "question_sanitized"} : (${expr})`;
+  return expr;
+}
+const DB_SORT_CMP = {   // client merge of the tossup + bonus page (Array#sort is stable)
+  newest: (a, b) => (b.set_year || 0) - (a.set_year || 0),
+  oldest: (a, b) => (a.set_year || 0) - (b.set_year || 0),
+  easiest: (a, b) => ((a.difficulty === 0) - (b.difficulty === 0)) || (a.difficulty || 0) - (b.difficulty || 0),
+  hardest: (a, b) => (b.difficulty || 0) - (a.difficulty || 0),
+};
+let _dbLastSig = null, _dbRestoring = false, _dbPacketsFor = null;
+// Packet picker: enabled only when exactly one set matches. The reset runs
+// synchronously before the await so a stale fetch can't refill it.
+async function dbSyncPackets(name) {
+  const sel = document.getElementById("db-packet-filter");
+  if (!sel || name === _dbPacketsFor) return;
+  _dbPacketsFor = name;
+  sel.innerHTML = '<option value="">All packets</option>';
+  _catSetDisabled(sel, !name);
+  _syncSel(sel);
+  if (!name) return;
+  let nums = [];
+  try { nums = (await API.get(`/api/set-packets?setName=${encodeURIComponent(name)}`)).packets || []; } catch (e) {}
+  if (_dbPacketsFor !== name) return;
+  nums.forEach((n) => _catAddOpt(sel, String(typeof n === "object" && n ? (n.number ?? n.packet_number ?? "") : n)));
+  _catSetDisabled(sel, !nums.length);
+  _syncSel(sel);
+}
 // Where the sets browser is drilled to — back steps up one level (packet →
 // set → set list) instead of leaving the Database screen.
 let _dbBrowse = null;
@@ -7809,24 +8332,60 @@ let _dbSearchStack = [];
 function currentSearchState() {
   const g = (id) => document.getElementById(id);
   if (!g("db-search-input")) return null;
+  const on = (id) => !!g(id)?.checked, val = (id, d = "") => (g(id) ? g(id).value : d);
+  const live = (id) => (g(id) && !g(id).disabled ? g(id).value || "" : "");
   return {
-    query: g("db-search-input").value || "",
-    field: g("db-search-type") ? g("db-search-type").value : "all",
-    qtype: g("db-qtype") ? g("db-qtype").value : "all",
-    exact: g("db-exact") ? !!g("db-exact").checked : false,
+    query: val("db-search-input"), field: val("db-search-type", "all"), qtype: val("db-qtype", "all"),
+    match: val("db-match", "phrase"), prefix: on("db-prefix"), exclude: val("db-exclude"), hideAns: on("db-hide-ans"),
+    cat: val("db-cat-filter"), sub: live("db-sub-filter"), alt: live("db-alt-filter"),
+    diffs: [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value),
+    yearMin: val("db-year-min", "2000"), yearMax: val("db-year-max", "2026"),
+    set: val("db-set-filter"), packet: live("db-packet-filter"), sort: val("db-sort", "relevance"),
+    standard: on("db-standard"), powermark: on("db-powermark"), starred: on("db-starred"),
     page: _dbPage,
   };
+}
+// Restore a saved search into the rebuilt controls, then run ONE search. Selects
+// dispatch change so their QBSelect labels follow; the cascade waits for its
+// options exactly like applyFrequencySelection.
+async function applySearchState(s) {
+  const g = (id) => document.getElementById(id);
+  const sel = (id, v) => { const el = g(id); if (el && v != null && el.value !== v) { el.value = v; el.dispatchEvent(new Event("change")); } };
+  const chk = (id, v) => { if (g(id)) g(id).checked = !!v; };
+  _dbRestoring = true;
+  try {
+    if (g("db-search-input")) g("db-search-input").value = s.query || "";
+    sel("db-search-type", s.field); sel("db-qtype", s.qtype);
+    sel("db-match", s.match || (s.exact === false ? "all" : "phrase"));   // older entries carried `exact`
+    sel("db-sort", s.sort || "relevance");
+    chk("db-prefix", s.prefix); chk("db-hide-ans", s.hideAns); chk("db-standard", s.standard); chk("db-powermark", s.powermark); chk("db-starred", s.starred);
+    if (g("db-exclude")) g("db-exclude").value = s.exclude || "";
+    document.querySelectorAll(".db-diff-cb").forEach((cb) => { cb.checked = (s.diffs || []).includes(cb.value); });
+    if (g("db-year-min")) g("db-year-min").value = s.yearMin || "2000";
+    if (g("db-year-max")) g("db-year-max").value = s.yearMax || "2026";
+    if (g("db-set-filter")) g("db-set-filter").value = s.set || "";
+    const cS = g("db-cat-filter"), sS = g("db-sub-filter"), aS = g("db-alt-filter");
+    if (cS && cS.value !== (s.cat || "") && (!s.cat || await waitForOption(cS, s.cat))) { cS.value = s.cat || ""; cS.dispatchEvent(new Event("change")); }
+    // An EMPTY saved value must clear the control too: with the category / set
+    // unchanged nothing else resets a sub / alt / packet picked after the jump.
+    if (sS) {
+      if (s.sub && await waitForOption(sS, s.sub)) { sS.value = s.sub; sS.dispatchEvent(new Event("change")); }
+      else if (sS.value) { sS.value = ""; sS.dispatchEvent(new Event("change")); }
+    }
+    if (aS) {
+      if (s.alt && await waitForOption(aS, s.alt)) { aS.value = s.alt; aS.dispatchEvent(new Event("change")); }
+      else if (aS.value) { aS.value = ""; aS.dispatchEvent(new Event("change")); }
+    }
+    if (s.packet) { await dbSyncPackets((await dbResolveSets()).single); if (await waitForOption(g("db-packet-filter"), s.packet)) sel("db-packet-filter", s.packet); }
+    else sel("db-packet-filter", "");
+  } finally { _dbRestoring = false; }
+  clearTimeout(_dbTimer);
+  performDbSearch({ page: s.page || 0 });
 }
 function dbBrowseBack() {
   // Step back through earlier searches before leaving the screen.
   if (_dbSearchStack.length && document.querySelector("#database-screen.active") && (state.dbTab || "search") === "search") {
-    const prev = _dbSearchStack.pop();
-    const g = (id) => document.getElementById(id);
-    if (g("db-search-input")) g("db-search-input").value = prev.query;
-    if (g("db-search-type")) g("db-search-type").value = prev.field;
-    if (g("db-qtype")) g("db-qtype").value = prev.qtype;
-    if (g("db-exact")) g("db-exact").checked = prev.exact;
-    performDbSearch({ page: prev.page || 0, _restoring: true });
+    applySearchState(_dbSearchStack.pop());
     return true;
   }
   if (_dbTabFrom && document.querySelector("#database-screen.active")) {
@@ -7856,12 +8415,15 @@ async function renderSetsTab() {
   c.innerHTML =
     '<div class="db-toolbar"><input type="text" id="db-set-search" class="db-input" placeholder="Filter sets…" autocomplete="off"></div>' +
     '<div class="db-browse" id="db-set-list"></div>';
+  let lastTerm = "";   // the rebuilt box is empty: Back / "← Sets" keeps "Show all"
   const render = () => {
     const term = (document.getElementById("db-set-search").value || "").toLowerCase();
+    if (term !== lastTerm) { _moreShown.delete("db:sets"); lastTerm = term; }
     const list = _dbSets.filter((s) => !term || (s.name || "").toLowerCase().includes(term));
     document.getElementById("db-set-list").innerHTML = list.map((s) =>
       `<div class="db-row" data-set="${escapeHtml(s.name)}"><span>${escapeHtml(s.name)}</span><span class="text-muted">${s.year || ""}</span></div>`
     ).join("") || '<div class="text-muted" style="padding:12px">No sets</div>';
+    limitList(document.getElementById("db-set-list"), ":scope > .db-row", "db:sets", 100, 200);
     document.querySelectorAll("#db-set-list .db-row").forEach((r) => {
       r.addEventListener("click", () => openSet(r.dataset.set));
       r.addEventListener("contextmenu", (ev) => {
@@ -8142,13 +8704,14 @@ function searchDatabase(opts) {
   document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === "search"));
   const typeSel = document.getElementById("db-search-type");
   const qtypeSel = document.getElementById("db-qtype");
-  const exact = document.getElementById("db-exact");
+  const match = document.getElementById("db-match");
   const inp = document.getElementById("db-search-input");
-  if (typeSel) typeSel.value = opts.field === "answer" ? "answer" : opts.field === "question" ? "question" : "all";
-  if (qtypeSel) qtypeSel.value = opts.qtype === "bonus" ? "bonus" : opts.qtype === "tossup" ? "tossup" : "all";
-  if (exact && opts.exact != null) exact.checked = !!opts.exact;
+  if (typeSel) { typeSel.value = opts.field === "answer" ? "answer" : opts.field === "question" ? "question" : "all"; _syncSel(typeSel); }
+  if (qtypeSel) { qtypeSel.value = opts.qtype === "bonus" ? "bonus" : opts.qtype === "tossup" ? "tossup" : "all"; _syncSel(qtypeSel); }
+  // opts.exact (plugin contract) maps onto the match mode; default stays phrase
+  if (match && opts.exact != null) { match.value = opts.exact ? "phrase" : "all"; _syncSel(match); }
   if (inp) inp.value = String(opts.query || "");
-  performDbSearch();
+  performDbSearch({ page: 0 });   // a fresh jump is page 1, even for a query viewed before
 }
 // The primary part of a rendered answer line ("Ibsen, Henrik [or …]" → "Ibsen, Henrik").
 function primaryAnswerText(s) {
@@ -8173,6 +8736,7 @@ async function renderStarredTab() {
     "</div>" +
     '<div class="search-results" id="db-results"></div>';
   document.getElementById("db-practice-starred")?.addEventListener("click", () => {
+    if (state.customType && state.sessionActive) endSession();   // a suspended list would be served first
     try {
       const b = loadFilterBlob();
       b.tossups = b.tossups || {};
@@ -8192,6 +8756,7 @@ async function renderStarredTab() {
   const container = document.getElementById("db-results");
   if (items.length === 0) { container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)"><p>No starred questions yet.</p></div>'; return; }
   container.innerHTML = items.filter((it) => it.question).map((it) => renderSearchResult(it.question)).join("");
+  limitList(container, ":scope > .qcard", "db:starred", 50, 50);
 }
 
 
@@ -8333,27 +8898,33 @@ function init() {
       showScreen,
       goHome,
       setReadingHold: (v) => { ttsHold = !!v; },
-      getActiveFilters: () => getActiveFilters(),
+      getActiveFilters: () => getActiveFilters({ real: true }),
       ensureFiltersLoaded: () => { if (!document.querySelector("#category-filters .category-group")) setMode(state.mode || "tossups"); },
       resetPracticeFilters: () => resetPracticeFiltersToDefaults(),
       // Lossless panel-selection mirror (multiplayer keeps every player's
       // category panel in sync through this pair).
       getFilterSelectionSnapshot: () => getFilterSelectionSnapshot(),
       applyFilterSelectionSnapshot: (snap) => applyFilterSelectionSnapshot(snap),
+      // The user's REAL practice mode. While a custom list shows, #mode-select
+      // holds the "custom" placeholder — never read it directly from a plugin.
+      getPracticeMode: () => (_customView ? _customView.prevMode : ($("#mode-select")?.value || "random")),
       getPracticeConfig: () => ({
-        filters: getActiveFilters(),
+        mode: _customView ? _customView.prevMode : ($("#mode-select")?.value || "random"),
+        filters: getActiveFilters({ real: true }),
         strictness: parseInt($("#strictness-slider")?.value || "10"),
         revealSpeed: state.settings.revealSpeed,
         hidePron: !!state.settings.hidePronunciations,
         stopOnPower: !!state.settings.stopOnPower,
         allowSkips: state.settings.allowSkips !== false,
-        filterSummary: describeActiveFilters(),
+        filterSummary: describeActiveFilters({ real: true }),
       }),
       stripPronunciations: (t) => stripPronunciations(t),
       recordNav: (name) => recordNav(name),
       saveScreenScroll: () => saveScreenScroll(),
       restoreScreenScroll: (el) => restoreScreenScroll(el),
       collapseFilterSections: () => collapseFilterSections(),
+      initCollapsibles: (root) => initCollapsibles(root),
+      limitList: (listEl, itemSel, key, first, step) => limitList(listEl, itemSel, key, first, step),
       searchDatabase: (opts) => searchDatabase(opts),
       playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),
       keyDisplay: (action) => keyDisplay(action),
@@ -8572,6 +9143,9 @@ const QBSelect = (() => {
       trigger.disabled = sel.disabled;
       wrap.classList.toggle("disabled", !!sel.disabled);
     };
+    // A plain `sel.value = …` changes no attribute, so the MutationObserver never
+    // sees it and the label goes stale. Programmatic writers call _syncSel(sel).
+    sel._qbSync = sync;
 
     const renderItems = () => {
       popup.innerHTML = [...sel.options].map((o, i) =>

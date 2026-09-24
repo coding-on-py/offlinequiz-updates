@@ -1,5 +1,18 @@
 import { DatabaseSync } from "node:sqlite";
 
+// Whitelisted ORDER BY for Database browse/search. `sort` is user input: never
+// interpolate it, and Object.hasOwn keeps "constructor"/"__proto__" from
+// reaching Object.prototype (that would yield a bare "ORDER BY " -> 500).
+// Absent/unknown sort = the exact legacy SQL (plugins page with offsets).
+const SORT_SQL = {
+  newest: (p) => `${p}set_year DESC, ${p}set_name, ${p}packet_number, ${p}question_number, ${p}id`,
+  oldest: (p) => `${p}set_year ASC, ${p}set_name, ${p}packet_number, ${p}question_number, ${p}id`,
+  // difficulty 0 = unrated / pop culture: last, not "easiest"
+  easiest: (p) => `(${p}difficulty = 0), ${p}difficulty ASC, ${p}set_year DESC, ${p}set_name, ${p}packet_number, ${p}question_number, ${p}id`,
+  hardest: (p) => `${p}difficulty DESC, ${p}set_year DESC, ${p}set_name, ${p}packet_number, ${p}question_number, ${p}id`,
+};
+const sortSql = (s, p) => (typeof s === "string" && Object.hasOwn(SORT_SQL, s) ? SORT_SQL[s](p) : null);
+
 function sanitizeFtsFallback(query) {
   const toks = String(query == null ? "" : query).match(/[\p{L}\p{N}]+/gu) || [];
   return toks.map((t) => `"${t}"`).join(" ");
@@ -127,7 +140,7 @@ export class QuestionDatabase {
     const offset = filters.offset || 0;
     const { where, params } = this._buildWhere(filters);
 
-    const orderBy = filters.random ? "ORDER BY RANDOM()" : "ORDER BY set_year DESC, set_name, question_number";
+    const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number");
 
     const countSql = `SELECT COUNT(*) as count FROM tossups ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -144,7 +157,7 @@ export class QuestionDatabase {
     const offset = filters.offset || 0;
     const { where, params } = this._buildWhere(filters, "", { isBonus: true });
 
-    const orderBy = filters.random ? "ORDER BY RANDOM()" : "ORDER BY set_year DESC, set_name, question_number";
+    const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number");
 
     const countSql = `SELECT COUNT(*) as count FROM bonuses ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -207,7 +220,7 @@ export class QuestionDatabase {
       SELECT t.* FROM tossups t
       JOIN tossups_fts ON t.rowid = tossups_fts.rowid
       WHERE ${fullWhere}
-      ORDER BY rank
+      ORDER BY ${sortSql(filters.sort, "t.") || "rank"}
       LIMIT :limit OFFSET :offset
     `;
     const run = (q) => {
@@ -241,7 +254,7 @@ export class QuestionDatabase {
       SELECT b.* FROM bonuses b
       JOIN bonuses_fts ON b.rowid = bonuses_fts.rowid
       WHERE ${fullWhere}
-      ORDER BY rank
+      ORDER BY ${sortSql(filters.sort, "b.") || "rank"}
       LIMIT :limit OFFSET :offset
     `;
     const run = (q) => {
