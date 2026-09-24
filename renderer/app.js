@@ -372,6 +372,15 @@ function getHotkey(action) {
   return state.settings.hotkeys[action] || DEFAULT_HOTKEYS[action];
 }
 
+// True while a live answer box is on screen: the tossup buzz input (shown and
+// enabled, including during a prompt) or any enabled bonus part input.
+function isAnsweringNow() {
+  const area = document.getElementById("buzz-area");
+  const input = document.getElementById("buzz-input");
+  if (area && !area.classList.contains("hidden") && input && !input.disabled) return true;
+  return [...document.querySelectorAll(".bonus-answer-input")].some((i) => !i.disabled && i.offsetParent !== null);
+}
+
 function matchesHotkey(e, action) {
   const binding = getHotkey(action);
   if (!binding || binding === "Not Set") return false;
@@ -820,6 +829,12 @@ document.addEventListener("keydown", (e) => {
   if (matchesHotkey(e, "text-bigger")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) + 0.05); return; }
   if (matchesHotkey(e, "text-smaller")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) - 0.05); return; }
   if (matchesHotkey(e, "text-reset")) { e.preventDefault(); setUiScale(1); return; }
+
+  // ANSWERING BLOCKS EVERY HOTKEY. Focus alone was not enough: buzzing focuses
+  // the input 50ms later and clicking the question text drops focus to the
+  // body, so "n" used to skip to the next question mid-answer. Escape still
+  // works (leaving/closing), and the zoom keys above are modifier-only.
+  if (e.key !== "Escape" && isAnsweringNow()) return;
 
   {
     const tag = e.target.tagName;
@@ -3525,14 +3540,23 @@ function resumeReveal() {
 
 function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) {
   const buzzMarks = marks || state.buzzMarks || [];
+  // Once the question is over (answered, or read out with nobody buzzing) the
+  // pre-power text reads in bold. A question with no power mark gets no bold at
+  // all. `rank` orders inserts that land on the same character: the bold closes
+  // BEFORE the (*) and any buzz mark there, so those keep their own colours.
+  const boldPre = !!showPower && _prePowerEnd > 0;
   function withMarks(segEnd) {
     const inserts = buzzMarks
       .filter((i) => i >= 0 && i <= segEnd)
-      .map((i) => ({ i, html: '<span class="buzz-mark">(#)</span>' }));
+      .map((i) => ({ i, rank: 1, html: '<span class="buzz-mark">(#)</span>' }));
     if (showPower && _prePowerEnd > 0 && _prePowerEnd <= segEnd) {
-      inserts.push({ i: _prePowerEnd, html: '<span class="power-mark-inline">(*)</span>' });
+      inserts.push({ i: _prePowerEnd, rank: 2, html: '<span class="power-mark-inline">(*)</span>' });
     }
-    inserts.sort((a, b) => a.i - b.i);
+    if (boldPre) {
+      inserts.push({ i: 0, rank: -1, html: '<strong class="pre-power">' });
+      inserts.push({ i: Math.min(_prePowerEnd, segEnd), rank: 0, html: "</strong>" });
+    }
+    inserts.sort((a, b) => a.i - b.i || a.rank - b.rank);
     let out = "", last = 0;
     for (const m of inserts) { out += escapeHtml(text.substring(last, m.i)) + m.html; last = m.i; }
     out += escapeHtml(text.substring(last, segEnd));
@@ -4296,8 +4320,15 @@ function stripPronunciations(text) {
   return t.replace(/  +/g, " ");
 }
 
+// (*) keeps the theme's power colour, and everything before it reads in bold —
+// the same cue practice shows once a question is over. Text with no power mark
+// is left entirely unstyled.
 function colorizePowerMarks(escapedHtml) {
-  return escapedHtml.replace(/\(\*\)/g, '<span class="power-mark-inline">(*)</span>');
+  const mark = '<span class="power-mark-inline">(*)</span>';
+  const i = escapedHtml.indexOf("(*)");
+  if (i < 0) return escapedHtml;
+  return '<strong class="pre-power">' + escapedHtml.slice(0, i) + "</strong>" + mark +
+    escapedHtml.slice(i + 3).replace(/\(\*\)/g, mark);
 }
 
 function historyQuestionHtml(e) {
@@ -4307,10 +4338,16 @@ function historyQuestionHtml(e) {
   const text = isTossup ? raw.replace(/\(\*\)/g, "") : raw;
   const marks = [];
   const pos = isTossup ? (e.buzzPosition || 0) : 0;
-  if (powerIdx >= 0 && powerIdx <= text.length) marks.push({ i: powerIdx, html: '<span class="power-mark-inline">(*)</span>' });
-  if (pos > 0 && pos <= text.length) marks.push({ i: pos, html: '<span class="buzz-mark">(#)</span>' });
+  if (powerIdx >= 0 && powerIdx <= text.length) marks.push({ i: powerIdx, rank: 2, html: '<span class="power-mark-inline">(*)</span>' });
+  if (pos > 0 && pos <= text.length) marks.push({ i: pos, rank: 1, html: '<span class="buzz-mark">(#)</span>' });
+  // A finished question shows its pre-power text in bold here too (history and
+  // review cards). No power mark means no bold.
+  if (powerIdx >= 0 && powerIdx <= text.length) {
+    marks.push({ i: 0, rank: -1, html: '<strong class="pre-power">' });
+    marks.push({ i: powerIdx, rank: 0, html: "</strong>" });
+  }
   if (!marks.length) return escapeHtml(text);
-  marks.sort((a, b) => a.i - b.i);
+  marks.sort((a, b) => a.i - b.i || a.rank - b.rank);
   let out = "", last = 0;
   for (const m of marks) { out += escapeHtml(text.substring(last, m.i)) + m.html; last = m.i; }
   out += escapeHtml(text.substring(last));

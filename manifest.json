@@ -1,5 +1,5 @@
 {
-  "version": "14.24",
+  "version": "14.25",
   "renderer": [
     "index.html",
     "style.css",
@@ -9,9 +9,19 @@
   ],
   "plugins": [
     {
+      "id": "achievement-icons",
+      "name": "Achievement Icons",
+      "file": "achievement-icons.zip"
+    },
+    {
       "id": "achievement-lab",
       "name": "Achievement Lab",
       "file": "achievement-lab.zip"
+    },
+    {
+      "id": "advanced-freq",
+      "name": "Advanced Frequency Lists",
+      "file": "advanced-frequency-lists.zip"
     },
     {
       "id": "answer-rules",
