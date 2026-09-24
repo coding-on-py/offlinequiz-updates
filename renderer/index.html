@@ -144,8 +144,7 @@
           <!-- CATEGORIES launcher. The tree itself lives in #cat-ovl at the end of this panel
                (see AGENTS.md "CATEGORY GUI"). Keep the id sec-categories: packet-builder hides it by id. -->
           <div class="filter-section" id="sec-categories">
-            <div class="filter-label">CATEGORIES</div>
-            <button type="button" class="btn btn-sm btn-full cat-open-btn" id="btn-open-categories" aria-haspopup="dialog" aria-controls="cat-ovl"><span class="cat-open-summary" id="cat-summary">All categories</span><span class="cat-open-edit">Edit</span></button>
+            <button type="button" class="btn btn-sm btn-full cat-open-btn" id="btn-open-categories" aria-haspopup="dialog" aria-controls="cat-ovl">Categories</button>
           </div>
           <div class="filter-section">
             <div class="filter-label">READING SPEED</div>
@@ -236,8 +235,7 @@
             <div class="settings-modal cat-modal" tabindex="-1">
               <div class="settings-modal-head"><span id="cat-ovl-title">CATEGORIES</span><button type="button" class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
               <div class="cat-modal-tools">
-                <label class="checkbox-row"><input type="checkbox" id="enable-cat-weights"> Use category / subcategory weights</label>
-                <span class="text-muted cat-modal-hint">Nothing ticked plays every category. Weights are ratios (default 10); 0 unticks a row.</span>
+                <span class="cat-weights-toggle"><label class="checkbox-row"><input type="checkbox" id="enable-cat-weights"> Use category / subcategory weights</label><span class="qb-info" data-tip="Nothing ticked plays every category. Weights are ratios (default 10); 0 unticks a row.">i</span></span>
                 <button type="button" class="btn btn-sm btn-ghost" id="btn-cat-clear">Clear all</button>
               </div>
               <div class="filter-list" id="category-filters"></div>
@@ -248,7 +246,6 @@
         <main class="question-area" id="question-area">
           <div class="question-placeholder" id="question-placeholder">
             <div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>
-            <p>Select categories and difficulty, then start a session.</p>
             <p class="text-muted">Press <kbd id="placeholder-start-key">S</kbd> to start.</p>
           </div>
 
@@ -383,7 +380,6 @@
     <div id="player-setup" class="setup-overlay hidden">
       <div class="setup-box">
         <div class="setup-title">WELCOME TO OFFLINEQUIZ</div>
-        <div class="setup-subtitle">Choose your identity</div>
         <div class="setup-field">
           <input type="text" id="setup-username" placeholder="Enter username..." maxlength="24">
         </div>
@@ -407,7 +403,6 @@
         <div class="settings-container">
           <div class="stats-section" id="appearance-section">
             <div class="stats-section-title">APPEARANCE</div>
-            <p class="text-muted" id="appearance-empty" style="font-size:12px;margin:0">Enable a theme in <strong>Extensions</strong> to customize the look here.</p>
             <div id="default-appearance">
               <div class="setting-row" id="app-mode-row">
                 <span class="setting-label">Appearance mode</span>

@@ -90,6 +90,8 @@ export async function start(env) {
     }
     // Keep in lockstep with server.js parseFilters (dual-transport parity).
     if (typeof data.sort === "string" && data.sort) f.sort = data.sort;   // whitelisted in database.js
+    if (typeof data.exclude === "string" && data.exclude) f.exclude = data.exclude;   // words; database.js builds the FTS
+    if (typeof data.excludeIn === "string" && data.excludeIn) f.excludeIn = data.excludeIn;
     return f;
   }
 

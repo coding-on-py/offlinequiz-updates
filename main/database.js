@@ -17,6 +17,19 @@ function sanitizeFtsFallback(query) {
   const toks = String(query == null ? "" : query).match(/[\p{L}\p{N}]+/gu) || [];
   return toks.map((t) => `"${t}"`).join(" ");
 }
+// Exclude words as an FTS expression built ONLY from [\p{L}\p{N}]+ fragments (one
+// quoted phrase per whitespace word), so no input can produce a syntax error.
+// FTS cannot run a pure NOT, so the caller applies it as rowid NOT IN (...),
+// which also works with no search text at all.
+function ftsExcludeExpr(words, field, isBonus) {
+  const phrases = String(words == null ? "" : words).split(/\s+/)
+    .map((w) => (w.match(/[\p{L}\p{N}]+/gu) || []).join(" ")).filter(Boolean).slice(0, 20);
+  if (!phrases.length) return null;
+  const expr = phrases.map((p) => `"${p}"`).join(" OR ");
+  const col = field === "answer" ? (isBonus ? "answers_sanitized" : "answer_sanitized")
+    : field === "question" ? (isBonus ? "{leadin_sanitized parts_sanitized}" : "question_sanitized") : null;
+  return col ? `${col} : (${expr})` : expr;
+}
 function isFtsSyntaxError(e) {
   return e && /fts5|syntax error|malformed|\bMATCH\b|no such column|unterminated|unknown special|expected/i.test(String(e.message || e));
 }
@@ -116,6 +129,15 @@ export class QuestionDatabase {
     if (filters.standard !== undefined && filters.standard !== null) {
       clauses.push(`${col("standard")} = :standard`);
       params["standard"] = filters.standard ? 1 : 0;
+    }
+
+    {
+      const ex = ftsExcludeExpr(filters.exclude, filters.excludeIn, opts.isBonus);
+      if (ex) {
+        const fts = opts.isBonus ? "bonuses_fts" : "tossups_fts";
+        clauses.push(`${col("rowid")} NOT IN (SELECT rowid FROM ${fts} WHERE ${fts} MATCH :excludeExpr)`);
+        params["excludeExpr"] = ex;
+      }
     }
 
     if (filters.powermarkOnly && !opts.isBonus) {

@@ -421,7 +421,12 @@ function keyDisplay(action) {
 // fallback) can't do that, which is why the old version pushed the UI around.
 function _applyUiScale(v) {
   if (window.qbreader?.setZoomFactor) window.qbreader.setZoomFactor(v);
-  else document.documentElement.style.zoom = v === 1 ? "" : String(v);
+  else {
+    document.documentElement.style.zoom = v === 1 ? "" : String(v);
+    // CSS zoom also scales vh; fixed-height windows divide by this (Electron's
+    // real page zoom leaves it unset, so they fall back to 1)
+    document.documentElement.style.setProperty("--ui-zoom", String(v));
+  }
 }
 function setUiScale(v) {
   v = Math.max(0.5, Math.min(2, Math.round(v * 20) / 20));
@@ -786,7 +791,7 @@ function toggleHotkeySheet() {
     .join("");
   el.innerHTML =
     `<div class="hotkey-sheet-box">
-      <div class="hotkey-sheet-title">KEYBOARD SHORTCUTS <span class="text-muted" style="font-weight:400;font-size:11px">? or Esc closes · rebind in Settings [5]</span></div>
+      <div class="hotkey-sheet-title">KEYBOARD SHORTCUTS</div>
       ${rows}
       <div class="hk-row"><span>Show this sheet</span><kbd>?</kbd></div>
     </div>`;
@@ -969,6 +974,7 @@ applyTheme();
 {
   let tipEl = null, tipTimer = null;
   const showTip = (icon) => {
+    if (!icon.isConnected) return;   // re-rendered away during the delay
     if (!tipEl) { tipEl = document.createElement("div"); tipEl.id = "qb-tooltip"; document.body.appendChild(tipEl); }
     tipEl.textContent = icon.dataset.tip || "";
     tipEl.classList.remove("on");
@@ -976,6 +982,7 @@ applyTheme();
     tipEl.style.left = "0px"; tipEl.style.top = "0px";
     // measure after content is set, then clamp inside the viewport
     requestAnimationFrame(() => {
+      if (!icon.isConnected) return;
       const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
       let x = r.left + r.width / 2 - tw / 2;
       x = Math.max(8, Math.min(window.innerWidth - tw - 8, x));
@@ -986,9 +993,12 @@ applyTheme();
     });
   };
   const hideTip = () => { clearTimeout(tipTimer); tipTimer = null; if (tipEl) tipEl.classList.remove("on"); };
+  // Any pointer move onto something that is not an ⓘ hides the tip: when a
+  // hotkey re-renders the icon away under the pointer, no mouseout ever fires
+  // for it, and the tip used to stay up on every screen after.
   document.addEventListener("mouseover", (e) => {
     const icon = e.target.closest?.(".qb-info");
-    if (!icon || !icon.dataset.tip) return;
+    if (!icon || !icon.dataset.tip) { hideTip(); return; }
     clearTimeout(tipTimer);
     tipTimer = setTimeout(() => showTip(icon), 120);
   });
@@ -996,6 +1006,9 @@ applyTheme();
     if (e.target.closest?.(".qb-info")) hideTip();
   });
   document.addEventListener("scroll", hideTip, true);
+  // hotkeys re-render what the tip points at. WINDOW capture, registered before
+  // the Categories window's key guard (which stops propagation), so it always runs.
+  window.addEventListener("keydown", hideTip, true);
 }
 
 // ── idle update reminder ───────────────────────────────────────────────────
@@ -1135,14 +1148,14 @@ function openReviewMenu(items) {
             ${[0,1,2,3,4,5,6,7,8,9,10].map((d) => `<label class="rv-diff-chip"><input type="checkbox" class="rv-diff" value="${d}"> ${d}</label>`).join("")}
           </div>
         </div>
-        <label class="checkbox-row" style="font-size:12px"><input type="checkbox" id="rv-remove"${reviewRemoveAfter() ? " checked" : ""}> Remove from review after I get it right</label>
+        <label class="checkbox-row" style="font-size:12px"><input type="checkbox" id="rv-remove"${reviewRemoveAfter() ? " checked" : ""}> Remove when correct</label>
         <div class="rv-count text-muted" id="rv-matchcount"></div>
       </div>
       <div class="review-menu-actions">
         <button class="btn btn-primary btn-full" id="rv-play">Play matching as tossups</button>
         ${hasFlashcards ? '<button class="btn btn-full" id="rv-cards">Study matching as flashcards</button>' : ""}
         <button class="btn btn-full" id="rv-view">View matching questions</button>
-        <button class="btn btn-full" id="rv-saved">Saved items (keywords, buzz words, cards) — ${itemReviewList().length}</button>
+        <button class="btn btn-full" id="rv-saved">Saved items — ${itemReviewList().length}</button>
         <button class="btn btn-ghost btn-full" id="rv-clearall">Remove all from review</button>
       </div>
     </div>`;
@@ -2096,6 +2109,8 @@ function updateModeFields() {
   state._gameSig = null;
   const packetMode = isSet || isImport;
   const isCustom = modeVal === "custom";
+  const msEl = $("#mode-select");
+  if (msEl) msEl.disabled = isCustom;   // QBSelect follows the attribute
   ["#sec-categories", "#sec-difficulty"].forEach((sel) => {
     const el = $(sel);
     if (!el) return;
@@ -2331,7 +2346,7 @@ function describeActiveFilters(opts) {
   // string to the lobby as the filter summary.
   const subBits = [...(f.subcategories || []), ...(f.alternateSubcategories || [])];
   if (subBits.length) parts.push("Subcats: " + subBits.join(", "));
-  if (!f.categories && !subBits.length && !f.setNames) parts.push("All categories (natural mix)");
+  if (!f.categories && !subBits.length && !f.setNames) parts.push("All categories");
   if (f.difficulties && f.difficulties.length) parts.push("Difficulty: " + f.difficulties.join(", "));
   if (f.yearMin || f.yearMax) parts.push("Years: " + (f.yearMin || 2000) + "–" + (f.yearMax || 2026));
   if (state.settings.useWeights) parts.push("weighted");
@@ -2604,40 +2619,19 @@ function closeCategoryOverlay() {
   o.classList.add("hidden");
   return true;
 }
-// Built from the DOM, never from getActiveFilters (weighted mode returns ONE
-// random pick there).
-function categorySummary() {
-  const modeVal = $("#mode-select")?.value;
-  if (modeVal === "custom") return { locked: true, text: "None — custom list plays every question", title: "Locked while a custom question list is playing" };
-  if (modeVal === "set") return { locked: true, text: "Set by the chosen set", title: "Categories follow the chosen set" };
-  if (modeVal === "import") return { locked: true, text: "Set by the packet file", title: "Categories follow the imported packet" };
-  const weighted = !!document.getElementById("enable-cat-weights")?.checked;
-  const picked = [];
-  for (const g of document.querySelectorAll("#category-filters .category-group")) {
-    const cb = g.querySelector(".cat-checkbox");
-    if (!cb || !cb.checked) continue;
-    const boxes = [...g.querySelectorAll(".subcat-checkbox, .altsub-checkbox")];
-    const partial = boxes.some((x) => x.checked) && boxes.some((x) => !x.checked);   // none ticked plays the whole category
-    picked.push(cb.value + (partial ? "*" : ""));
-  }
-  if (!picked.length) return { locked: false, text: "All categories" + (weighted ? " · weighted" : ""), title: "Nothing ticked plays every category" };
-  return {
-    locked: false,
-    text: picked.slice(0, 2).join(", ") + (picked.length > 2 ? " +" + (picked.length - 2) : "") + (weighted ? " · weighted" : ""),
-    title: picked.join(", ") + (picked.some((x) => x.endsWith("*")) ? "\n* = only some subcategories" : ""),
-  };
-}
+// Custom lists, sets and packet files decide their own questions.
+function categoriesLocked() { return ["custom", "set", "import"].includes($("#mode-select")?.value); }
+// The launcher always reads just "Categories"; only its locked state and the
+// tree's weights class are live.
 function refreshCategorySummary() {
   try {
     const tree = document.getElementById("category-filters");
     if (tree) tree.classList.toggle("weights-on", !!document.getElementById("enable-cat-weights")?.checked);
-    const el = document.getElementById("cat-summary"), b = document.getElementById("btn-open-categories");
-    if (!el || !b) return;
-    const s = categorySummary();
-    el.textContent = s.text;
-    b.title = s.title;
-    b.disabled = s.locked;   // pointer-events:none alone would still let the keyboard open it
-    if (s.locked) closeCategoryOverlay();
+    const b = document.getElementById("btn-open-categories");
+    if (!b) return;
+    const locked = categoriesLocked();
+    b.disabled = locked;   // pointer-events:none alone would still let the keyboard open it
+    if (locked) closeCategoryOverlay();
   } catch (e) {}
 }
 // ONE bubbling change on the container, never per-box dispatches: that single
@@ -3083,7 +3077,7 @@ async function nextQuestion() {
   if (state.reviewIds && state.mode === "tossups") {
     if (!state.reviewIds.length) {
       state.reviewIds = null;
-      endOfQueue("Review complete \u2014 nice work! Press Esc to leave.");
+      endOfQueue("Review complete");
       return;
     }
     const id = state.reviewIds.shift();
@@ -3174,7 +3168,7 @@ async function nextQuestion() {
     question = state.mode === "tossups" ? data.tossup : data.bonus;
     if (data.error) { showError("Error: " + data.error); return; }
     if (!question) {
-      showError("No questions match your filters. Try broadening your criteria.");
+      showError("No questions match your filters");
       return;
     }
     for (let tries = 0; tries < 8 && !servable(question); tries++) {
@@ -3384,7 +3378,7 @@ async function serveOrdered() {
     while (state._gameIdx < queue.length && queue[state._gameIdx] && isQuestionHidden(queue[state._gameIdx].id, t)) state._gameIdx++;
   }
   if (state._gameIdx >= queue.length) {
-    endOfQueue("Packet finished \u2014 you've read every question. Press Esc to leave.");
+    endOfQueue("Packet finished");
     return;
   }
   const i = state._gameIdx++;
@@ -3429,9 +3423,9 @@ async function serveStarredQuestion(filters) {
   // Hidden questions are never served — skip at serve time so mid-session
   // hides take effect immediately.
   while (state._starredIdx < queue.length && queue[state._starredIdx] && isQuestionHidden(queue[state._starredIdx].id, type)) state._starredIdx++;
-  if (!queue.length) { endOfQueue(`You have no starred ${noun} matching these filters. Star some questions first (or broaden the filters).`); return; }
+  if (!queue.length) { endOfQueue(`No starred ${noun} match these filters`); return; }
   if (state._starredIdx >= queue.length) {
-    endOfQueue(`You've gone through all ${queue.length} starred ${noun}! Press Esc to leave, or start a new session to go again.`);
+    endOfQueue(`All ${queue.length} starred ${noun} done`);
     return;
   }
   state.currentQuestion = queue[state._starredIdx++];
@@ -4365,11 +4359,18 @@ function themeAppearanceMode(theme) {
   return (m === "preset" || m === "custom") ? m : null;
 }
 
+// APPEARANCE is hidden outright when the active theme opts out of the default
+// controls and brings no panel or settings of its own (nothing to show).
+function syncAppearanceSection() {
+  const sec = $("#appearance-section"); if (!sec) return;
+  const def = $("#default-appearance"), host = document.getElementById("theme-appearance-host");
+  sec.classList.toggle("hidden", (!def || def.classList.contains("hidden")) && !(host && host.children.length));
+}
 function applyDefaultAppearance() {
   const theme = activeTheme();
   if (window.QB?.hasAppearancePanel?.()) {
     $("#default-appearance")?.classList.add("hidden");
-    const h = $("#appearance-empty"); if (h) h.style.display = "none";
+    syncAppearanceSection();
     return;
   }
   let mode;
@@ -4382,8 +4383,7 @@ function applyDefaultAppearance() {
   $("#app-preset-controls")?.classList.toggle("hidden", mode !== "preset");
   $("#app-custom-controls")?.classList.toggle("hidden", mode !== "custom");
 
-  const hint = $("#appearance-empty");
-  if (hint) hint.style.display = (theme && mode == null) ? "" : "none";
+  syncAppearanceSection();
 
   if (mode == null) return;
 
@@ -4561,7 +4561,7 @@ function openItemReviewViewer() {
           <button class="btn btn-sm btn-ghost" id="ir-close">Close</button>
         </span>
       </div>
-      <div class="review-viewer-list">${list.length ? cards : '<div class="text-muted" style="padding:12px">No saved items yet — use the + on a keyword, buzz word, or flashcard.</div>'}</div>
+      <div class="review-viewer-list">${list.length ? cards : '<div class="text-muted" style="padding:12px">No saved items yet</div>'}</div>
     </div>`;
   el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
   document.body.appendChild(el);
@@ -4908,13 +4908,9 @@ function renderTossupResult() {
 
   const celPct = ((1 - r.celerity) * 100).toFixed(1);
   answerDiv.innerHTML = `
-    Your answer: <strong>${escapeHtml(r.userAnswer || "(no answer)")}</strong>
+    Your answer<span class="qb-info" data-tip="${escapeHtml(keyDisplay("mark-correct") + " marks it correct, " + keyDisplay("mark-incorrect") + " marks it incorrect")}">i</span>: <strong>${escapeHtml(r.userAnswer || "(no answer)")}</strong>${state.resultOverridden ? ' <span style="color:var(--yellow)">(overridden)</span>' : ''}
     ${r.correct ? "" : `<br>Correct: <span class="actual">${answerLineHtml(state.currentQuestion?.answer, r.answer || "")}</span>`}
     <br>Celerity: ${celPct}% remaining
-    <div class="override-hints" style="margin-top:6px;font-size:11px;color:var(--text-muted)">
-      <kbd>${escapeHtml(keyDisplay("mark-correct"))}</kbd> mark correct &nbsp; <kbd>${escapeHtml(keyDisplay("mark-incorrect"))}</kbd> mark incorrect
-      ${state.resultOverridden ? ' <span style="color:var(--yellow)">(overridden)</span>' : ''}
-    </div>
   `;
 
   setTimeout(() => {
@@ -5077,7 +5073,7 @@ function displayBonusResult(result, userAnswers) {
   banner.textContent = `BONUS: ${result.totalPoints}/30 pts (${result.partsCorrect}/3)`;
 
   const actualAnswers = result.answers || [];
-  answerDiv.innerHTML = `<div class="text-muted" style="font-size:11px;margin-top:4px">Click a part's ✓/✗ to overrule it · <kbd>${escapeHtml(keyDisplay("mark-correct"))}</kbd>/<kbd>${escapeHtml(keyDisplay("mark-incorrect"))}</kbd> adjust the last part</div>`;
+  answerDiv.innerHTML = "";
 
   state.sessionHistory.push({
     id: state.currentQuestion?.id,
@@ -5152,7 +5148,6 @@ function updateLiveStats() {
 
 function startPromptHtml() {
   return '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>' +
-    "<p>Select categories and difficulty, then start a session.</p>" +
     '<p class="text-muted">Press <kbd id="placeholder-start-key">' + escapeHtml(keyDisplay("start-skip")) + "</kbd> to start.</p>";
 }
 function resetQuestionUI() {
@@ -5215,14 +5210,14 @@ function openHiddenManager() {
     const m = hiddenQs();
     const keys = Object.keys(m).sort((a, b) => (m[b].ts || 0) - (m[a].ts || 0));
     el.innerHTML = `<div class="confirm-box" style="width:min(560px,92vw);max-width:min(560px,92vw)">
-      <div class="confirm-msg">Hidden questions (${keys.length}) — these are never served in practice.</div>
+      <div class="confirm-msg">Hidden questions (${keys.length})</div>
       <div style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
         ${keys.length ? keys.map((k) => `
           <div style="display:flex;align-items:center;gap:8px;font-size:12px">
             <span class="pill">${k.startsWith("bonus") ? "BO" : "TU"}</span>
             <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m[k].label || k.split(":")[1])}</span>
             <button class="btn btn-sm btn-ghost hid-un" data-k="${escapeHtml(k)}">Unhide</button>
-          </div>`).join("") : '<div class="text-muted" style="padding:10px">Nothing hidden. Right-click a question → "Hide question".</div>'}
+          </div>`).join("") : '<div class="text-muted" style="padding:10px">Nothing hidden</div>'}
       </div>
       <div class="confirm-actions">
         ${keys.length ? '<button class="btn btn-ghost" id="hid-clear">Unhide all</button>' : ""}
@@ -5302,7 +5297,7 @@ document.addEventListener("contextmenu", (e) => {
   if (idEl && idEl.dataset.qid) {
     const qid = idEl.dataset.qid, qtype = idEl.dataset.type || "tossup";
     items.push({
-      label: isQuestionHidden(qid, qtype) ? "Unhide question" : "Hide question (never serve)",
+      label: isQuestionHidden(qid, qtype) ? "Unhide question" : "Hide question",
       danger: !isQuestionHidden(qid, qtype),
       onClick: () => toggleQuestionHidden(qid, qtype, ans || text || qid),
     });
@@ -5415,7 +5410,7 @@ $("#question-content")?.addEventListener("contextmenu", (e) => {
   items.push({ label: "Save to review / folders…", onClick: () => openSaveMenu(q, isBonus ? "bonus" : "tossup", e.target) });
   const qtype = isBonus ? "bonus" : "tossup";
   items.push({
-    label: isQuestionHidden(q.id, qtype) ? "Unhide question" : "Hide question (never serve)",
+    label: isQuestionHidden(q.id, qtype) ? "Unhide question" : "Hide question",
     danger: !isQuestionHidden(q.id, qtype),
     onClick: () => toggleQuestionHidden(q.id, qtype, q.answer_sanitized || q.id),
   });
@@ -5788,7 +5783,7 @@ function lineChart(canvas, points, opts = {}) {
 
 function drawStatsGraph(canvas, stats) {
   const entries = Object.entries(stats.questionsByDate || {}).sort((a, b) => a[0].localeCompare(b[0]));
-  if (entries.length < 2) return emptyChart(canvas, "Play on 2+ days to see your points trend");
+  if (entries.length < 2) return emptyChart(canvas, "Not enough data yet");
   let cum = 0;
   const points = entries.map(([date, d]) => { cum += d.points; const dt = new Date(date + "T00:00:00"); return { x: (dt.getMonth() + 1) + "/" + dt.getDate(), y: cum }; });
   lineChart(canvas, points, { title: "Cumulative Points Over Time", fmt: (v) => String(Math.round(v)) });
@@ -6071,7 +6066,7 @@ async function loadStats(preserveScroll = false) {
         ${sid ? '<button class="btn btn-sm btn-ghost" id="stats-back">\u2190 All sessions</button>' : ""}
         <div style="text-align:center;padding:40px;color:var(--text-muted)">
           <div style="font-size:48px;margin-bottom:16px"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>
-          <p>${sid ? "This session has no recorded questions." : (_statsPeriod !== "all" ? "No questions in " + escapeHtml(statsPeriodLabel().toLowerCase()) + " \u2014 try a wider period." : "No statistics yet. Start a practice session to see your performance data.")}</p>
+          <p>${sid ? "This session has no recorded questions." : (_statsPeriod !== "all" ? "No questions in " + escapeHtml(statsPeriodLabel().toLowerCase()) : "No statistics yet")}</p>
         </div>
       `;
       document.getElementById("stats-back")?.addEventListener("click", () => { state.statsSessionId = null; loadStats(); });
@@ -6876,7 +6871,7 @@ async function checkForUpdatesUI() {
     if (info.error) {
       status.textContent = isNetworkErr(info.error)
         ? friendlyUpdateErr(info.error)
-        : "Question updates aren't configured for this build. (The app + plugins update via your GitHub repo; the question database updates separately.)";
+        : "Question updates aren't configured for this build.";
     } else if (!info.configured) {
       status.textContent = "Online updates aren't set up in this build.";
     } else if (!info.available) {
@@ -7429,7 +7424,7 @@ function renderAchievementCard(ach, data) {
 
 function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
   if (!achData || Object.keys(achData).length === 0) {
-    return '<div class="text-muted">No achievements yet. Start playing!</div>';
+    return '<div class="text-muted">No achievements yet</div>';
   }
 
   const globalSections = [
@@ -7988,17 +7983,15 @@ function renderSearchTab() {
     // Collapsible (the "More filters" button); remembered per machine. Placeholders
     // avoid "search|find|answer|query" — the coss-ui theme decorates those inputs.
     '<div class="db-toolbar db-toolbar-adv db-toolbar-more" id="db-more" hidden>' +
-      '<input type="text" id="db-set-filter" class="db-input db-input-set" list="db-set-options" placeholder="Set or tournament (e.g. ACF Nationals)" autocomplete="off">' +
-      '<datalist id="db-set-options"></datalist>' +
-      '<select id="db-packet-filter" class="db-input db-input-xs" disabled><option value="">All packets</option></select>' +
-      '<span class="db-adv-label" id="db-set-hint"></span>' +
-      '<input type="text" id="db-exclude" class="db-input db-input-sm" placeholder="Exclude words" autocomplete="off" title="Hide results containing any of these words (needs search text)">' +
+      '<select id="db-set-filter" class="db-input db-input-set"><option value="">All sets</option></select>' +
+      '<select id="db-packet-filter" class="db-input db-input-pkt" disabled><option value="">All packets</option></select>' +
+      '<input type="text" id="db-exclude" class="db-input db-input-sm" placeholder="Exclude words" autocomplete="off" title="Hide results containing any of these words">' +
       '<select id="db-sort" class="db-input db-input-sm" title="Result order"><option value="relevance">Best match</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="easiest">Easiest first</option><option value="hardest">Hardest first</option></select>' +
       '<label class="db-opt"><input type="checkbox" id="db-standard"> Standard sets only</label>' +
       '<label class="db-opt" id="db-powermark-lbl" title="Tossups that have a power mark (*)"><input type="checkbox" id="db-powermark"> Powermarked (tossups)</label>' +
       '<label class="db-opt"><input type="checkbox" id="db-starred"> Starred only</label>' +
     "</div>" +
-    '<div class="search-results" id="db-results"><div class="text-muted" style="padding:24px;text-align:center">Type a search term above</div></div>';
+    '<div class="search-results" id="db-results"></div>';
   // _dbRestoring: Back restores many controls at once; their events must not
   // each fire a search (applySearchState runs exactly one at the end).
   const deb = () => { if (_dbRestoring) return; clearTimeout(_dbTimer); _dbTimer = setTimeout(performDbSearch, 300); };
@@ -8009,8 +8002,12 @@ function renderSearchTab() {
   c.querySelectorAll("#db-search-input, #db-qtype, #db-search-type, #db-match, #db-prefix, .db-diff-cb, #db-year-min, #db-year-max, #db-set-filter, #db-packet-filter, #db-exclude, #db-sort, #db-standard, #db-powermark, #db-starred")
     .forEach((el) => el.addEventListener(el.type === "text" || el.type === "number" || el.type === "range" ? "input" : "change", deb));
   getDbSets().then((s) => {
-    const dl = document.getElementById("db-set-options");
-    if (dl) dl.innerHTML = s.map((x) => '<option value="' + escapeHtml(x.name || "") + '">').join("");
+    const sel = document.getElementById("db-set-filter");
+    if (!sel || sel.options.length > 1) return;   // two quick renders must not append twice
+    const seen = new Set();
+    sel.insertAdjacentHTML("beforeend", s.filter((x) => x.name && !seen.has(x.name) && seen.add(x.name))
+      .map((x) => '<option value="' + escapeHtml(x.name) + '">' + escapeHtml(x.name) + "</option>").join(""));
+    _syncSel(sel);
   });
   // Powermark exists only on tossups: the backend ignores it for bonuses, so
   // "Bonuses only" disables it (and performDbSearch skips the bonus side).
@@ -8127,7 +8124,7 @@ async function performDbSearch(opts) {
   const std = !!g("db-standard")?.checked;
   const pm = !!g("db-powermark")?.checked && qtype !== "bonus";
   const starred = !!g("db-starred")?.checked;
-  const setRaw = (g("db-set-filter")?.value || "").trim();
+  const setRaw = g("db-set-filter")?.value || "";
   const yl = g("db-year-label");
   if (yl) yl.textContent = `${yearMin} – ${yearMax}`;
   const fill = g("db-year-fill");
@@ -8138,8 +8135,8 @@ async function performDbSearch(opts) {
 
   const tokens = query ? (query.match(/[\p{L}\p{N}]+/gu) || []) : [];   // phrase mode + highlighting
   const qWords = dbFtsWords(query);
-  // FTS cannot run a pure NOT, so exclusions only apply alongside search text.
-  const excl = tokens.length ? dbFtsWords(g("db-exclude")?.value) : [];
+  const exclRaw = (g("db-exclude")?.value || "").trim();
+  const excl = dbFtsWords(exclRaw);
 
   const sets = await dbResolveSets();
   if (seq !== _dbSearchSeq) return;
@@ -8155,9 +8152,7 @@ async function performDbSearch(opts) {
   else if (sig !== _dbLastSig) _dbPage = 0;
   _dbLastSig = sig;
 
-  const setsOn = !!setRaw && sets.n > 0 && sets.n <= DB_SET_CAP;
-  const hint = g("db-set-hint");
-  if (hint) hint.textContent = !setRaw ? "" : sets.n === 0 ? "No set matches" : sets.n > DB_SET_CAP ? `${sets.n} sets — type more` : sets.n === 1 ? "1 set" : `${sets.n} sets`;
+  const setsOn = !!setRaw && sets.n > 0;
   const active = [setsOn, !!pkt, excl.length > 0, sort !== "relevance", std, pm, starred].filter(Boolean).length;
   const badge = g("db-more-count");
   if (badge) badge.textContent = active ? String(active) : "";
@@ -8182,6 +8177,9 @@ async function performDbSearch(opts) {
     (pm ? "&powermarkOnly=true" : "") +
     (starred ? "&starredOnly=true" : "") +
     (sort !== "relevance" ? `&sort=${encodeURIComponent(sort)}` : "");
+  // With search text the exclusion rides inside the FTS query (NOT); without it
+  // FTS has nothing to NOT against, so the backend applies it as its own filter.
+  const exclQS = excl.length ? `&exclude=${encodeURIComponent(exclRaw)}&excludeIn=${encodeURIComponent(textType)}` : "";
 
   const wantT = qtype !== "bonus", wantB = qtype !== "tossup" && !pm;
   const none = Promise.resolve({ rows: [], total: 0 });
@@ -8190,8 +8188,8 @@ async function performDbSearch(opts) {
     let t, b;
     if (!tokens.length) {
       [t, b] = await Promise.all([
-        wantT ? API.get(`/api/tossups/query?${common}`) : none,
-        wantB ? API.get(`/api/bonuses/query?${common}`) : none,
+        wantT ? API.get(`/api/tossups/query?${common}${exclQS}`) : none,
+        wantB ? API.get(`/api/bonuses/query?${common}${exclQS}`) : none,
       ]);
     } else {
       const expr = dbFtsExpr(tokens, qWords, excl, match, prefix);
@@ -8259,16 +8257,12 @@ async function getDbSets() {
   if (!_dbSets) { try { _dbSets = (await API.get("/api/sets")).sets || []; } catch (e) { _dbSets = []; } }
   return _dbSets;
 }
-const DB_SET_CAP = 250;   // ~6KB of ids in the dev URL; Node's header limit is 16KB
-// Set filter text -> set ids. An exact name picks that set; otherwise every set
-// whose name contains the text ("ACF Nationals" = every year).
+// The picked set name -> its id(s) (a name can repeat across ids).
 async function dbResolveSets() {
-  const raw = (document.getElementById("db-set-filter")?.value || "").trim().toLowerCase();
-  if (!raw) return { ids: [], n: 0, single: null };
-  const sets = await getDbSets();
-  const exact = sets.filter((s) => (s.name || "").toLowerCase() === raw);
-  const list = exact.length ? exact : sets.filter((s) => (s.name || "").toLowerCase().includes(raw));
-  return { ids: list.map((s) => s.id), n: list.length, single: list.length === 1 ? list[0].name : null };
+  const name = document.getElementById("db-set-filter")?.value || "";
+  if (!name) return { ids: [], n: 0, single: null };
+  const list = (await getDbSets()).filter((s) => s.name === name);
+  return { ids: list.map((s) => s.id), n: list.length, single: list.length ? name : null };
 }
 // FTS expression from [\p{L}\p{N}]+ tokens only, so quoting can never produce a
 // syntax error (the backend fallback would turn NOT/OR into literal words).
@@ -8363,7 +8357,8 @@ async function applySearchState(s) {
     document.querySelectorAll(".db-diff-cb").forEach((cb) => { cb.checked = (s.diffs || []).includes(cb.value); });
     if (g("db-year-min")) g("db-year-min").value = s.yearMin || "2000";
     if (g("db-year-max")) g("db-year-max").value = s.yearMax || "2026";
-    if (g("db-set-filter")) g("db-set-filter").value = s.set || "";
+    if (s.set) { await getDbSets(); if (await waitForOption(g("db-set-filter"), s.set, 4000)) sel("db-set-filter", s.set); }
+    else sel("db-set-filter", "");
     const cS = g("db-cat-filter"), sS = g("db-sub-filter"), aS = g("db-alt-filter");
     if (cS && cS.value !== (s.cat || "") && (!s.cat || await waitForOption(cS, s.cat))) { cS.value = s.cat || ""; cS.dispatchEvent(new Event("change")); }
     // An EMPTY saved value must clear the control too: with the category / set
@@ -8925,6 +8920,7 @@ function init() {
       collapseFilterSections: () => collapseFilterSections(),
       initCollapsibles: (root) => initCollapsibles(root),
       limitList: (listEl, itemSel, key, first, step) => limitList(listEl, itemSel, key, first, step),
+      syncAppearanceSection: () => syncAppearanceSection(),
       searchDatabase: (opts) => searchDatabase(opts),
       playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),
       keyDisplay: (action) => keyDisplay(action),
@@ -9183,7 +9179,10 @@ const QBSelect = (() => {
       if (cur) { cur.classList.add("active"); cur.scrollIntoView({ block: "nearest" }); }
     };
 
-    const pick = (i) => {
+    // A MOUSE pick hands focus back to the page: a focused trigger turned the
+    // next hotkey (S to start, Space to buzz) into dropdown input. Keyboard
+    // picks keep focus on the trigger.
+    const pick = (i, byMouse) => {
       const o = sel.options[i];
       if (!o || o.disabled) return;
       if (sel.selectedIndex !== i) {
@@ -9193,7 +9192,7 @@ const QBSelect = (() => {
       }
       sync();
       close();
-      trigger.focus();
+      if (byMouse) trigger.blur(); else trigger.focus();
     };
 
     const move = (delta) => {
@@ -9206,6 +9205,42 @@ const QBSelect = (() => {
       items[idx].scrollIntoView({ block: "nearest" });
     };
 
+    const highlight = (i) => {
+      const it = popup.querySelector('.qb-select-item[data-i="' + i + '"]');
+      if (!it) return;
+      popup.querySelectorAll(".qb-select-item").forEach((x) => x.classList.remove("active"));
+      it.classList.add("active");
+      it.scrollIntoView({ block: "nearest" });
+    };
+    // Type-ahead while the list is OPEN, with a short buffer: "2025 ac" or
+    // "acf" (prefix first, then contains — set names all start with a year)
+    // moves the highlight; Enter picks it. Repeating one letter cycles.
+    let typed = "", typedAt = 0;
+    const typeAhead = (key) => {
+      const now = Date.now();
+      typed = (now - typedAt < 800 ? typed : "") + key.toLowerCase();
+      typedAt = now;
+      const opts = [...sel.options];
+      const txt = (o) => (o.textContent || "").trim().toLowerCase();
+      const ok = (o) => !o.disabled;
+      let i = -1;
+      if ([...typed].every((c) => c === typed[0])) {
+        const act = popup.hidden ? null : popup.querySelector(".qb-select-item.active");
+        const from = (act ? +act.dataset.i : sel.selectedIndex) + 1;
+        for (let n = 0; n < opts.length && i < 0; n++) {
+          const k = (from + n) % opts.length;
+          if (ok(opts[k]) && txt(opts[k]).startsWith(typed[0])) i = k;
+        }
+      }
+      if (typed.length > 1 && (i < 0 || ![...typed].every((c) => c === typed[0]))) {
+        i = opts.findIndex((o) => ok(o) && txt(o).startsWith(typed));
+        if (i < 0) i = opts.findIndex((o) => ok(o) && txt(o).includes(typed));
+      }
+      if (i < 0) return;
+      highlight(i);
+    };
+    const typing = () => Date.now() - typedAt < 800 && typed.length > 0;
+
     const api = { close, open, sync, wrap };
 
     trigger.addEventListener("click", (e) => { e.preventDefault(); popup.hidden ? open() : close(); });
@@ -9213,7 +9248,7 @@ const QBSelect = (() => {
       const it = e.target.closest(".qb-select-item");
       if (!it) return;
       e.preventDefault();
-      pick(+it.dataset.i);
+      pick(+it.dataset.i, true);
     });
     popup.addEventListener("mousemove", (e) => {
       const it = e.target.closest(".qb-select-item");
@@ -9221,12 +9256,16 @@ const QBSelect = (() => {
       popup.querySelectorAll(".qb-select-item").forEach((x) => x.classList.remove("active"));
       it.classList.add("active");
     });
+    // Every key the dropdown consumes stops here: page and plugin hotkeys
+    // (S start, Q end, T star, Space buzz, arrows mark correct/incorrect) all
+    // listen on document and treat a focused BUTTON as "not typing".
     trigger.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
+        e.preventDefault(); e.stopPropagation();
         if (popup.hidden) { open(); return; }
         move(e.key === "ArrowDown" ? 1 : -1);
-      } else if (e.key === "Enter" || e.key === " ") {
+      } else if (e.key === "Enter" || (e.key === " " && !typing())) {
+        e.stopPropagation();
         if (popup.hidden) { e.preventDefault(); open(); return; }
         e.preventDefault();
         const act = popup.querySelector(".qb-select-item.active");
@@ -9234,15 +9273,10 @@ const QBSelect = (() => {
       } else if (e.key === "Escape") {
         if (!popup.hidden) { e.preventDefault(); e.stopPropagation(); close(); }
       } else if (e.key === "Home" || e.key === "End") {
-        if (!popup.hidden) { e.preventDefault(); move(e.key === "Home" ? -999 : 999); }
-      } else if (e.key.length === 1) {
-        // Type-ahead, matching the native control.
-        const ch = e.key.toLowerCase();
-        const start = sel.selectedIndex + 1;
-        for (let n = 0; n < sel.options.length; n++) {
-          const i = (start + n) % sel.options.length;
-          if ((sel.options[i].textContent || "").trim().toLowerCase().startsWith(ch)) { pick(i); break; }
-        }
+        if (!popup.hidden) { e.preventDefault(); e.stopPropagation(); move(e.key === "Home" ? -999 : 999); }
+      } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && !popup.hidden) {
+        e.preventDefault(); e.stopPropagation();
+        typeAhead(e.key);
       }
     });
 

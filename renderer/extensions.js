@@ -1314,8 +1314,8 @@ QB.registerTheme({
     let html = "";
     const fullPanels = location === "appearance" ? (QB._settingsSections || []).filter((s) => s._fullAppearance) : [];
     fullPanels.forEach((s) => {
-      html += (s.title ? '<div class="ext-settings-group-title">' + esc(s.title) + "</div>" : "") +
-        '<div class="ext-appearance-panel" data-settings-section="' + esc(s.pluginId + ":" + s.id) + '"></div>';
+      // no "<Theme> — Appearance" heading: the section is already titled APPEARANCE
+      html += '<div class="ext-appearance-panel" data-settings-section="' + esc(s.pluginId + ":" + s.id) + '"></div>';
     });
     exts.forEach((ext) => {
       const inner = settingsHtml(ext, location);
@@ -1339,8 +1339,7 @@ QB.registerTheme({
   QB.renderPracticeSettings = (container) => renderSettingsInto(container, "practice");
   QB.renderAppearanceSettings = (container) => {
     renderSettingsInto(container, "appearance");
-    const hint = document.getElementById("appearance-empty");
-    if (hint) hint.style.display = container && container.children.length ? "none" : "";
+    try { if (QB._host && QB._host.syncAppearanceSection) QB._host.syncAppearanceSection(); } catch (e) {}
   };
 
   function card(ext, kind) {
@@ -1353,11 +1352,11 @@ QB.registerTheme({
         '<div class="ext-card-row">' +
           '<div class="ext-card-main">' +
             '<div class="ext-card-title">' + esc(ext.name) +
+              (ext.description ? ' <span class="qb-info" data-tip="' + esc(ext.description) + '">i</span>' : "") +
               ' <span class="ext-badge">' + badge + "</span>" +
               (kind === "plugin" ? ' <span class="ext-ver">v' + esc(ext.version) + "</span>" : "") +
               (ext.enabled ? ' <span class="ext-badge on">' + onLabel + "</span>" : "") +
             "</div>" +
-            '<div class="ext-card-desc">' + esc(ext.description || "No description") + "</div>" +
             '<div class="ext-card-meta">by ' + esc(ext.author) + (ext.filename ? " · " + esc(ext.filename) : "") + "</div>" +
           "</div>" +
           '<div class="ext-card-actions">' +
@@ -1366,7 +1365,6 @@ QB.registerTheme({
           "</div>" +
         "</div>" +
         (settingsHtml(ext, "card") ? '<div class="ext-settings">' + settingsHtml(ext, "card") + "</div>" : "") +
-        (ext.enabled && settingsHtml(ext, "settings") ? '<div class="ext-card-note">More options in Settings [5]</div>' : "") +
       "</div>"
     );
   }
