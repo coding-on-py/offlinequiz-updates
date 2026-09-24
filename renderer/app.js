@@ -433,7 +433,6 @@ function setUiScale(v) {
   state.settings.uiScale = v;
   lsSet("qb-ui-scale", String(v));
   _applyUiScale(v);
-  window.QB?.toast?.("Text size " + Math.round(v * 100) + "%");
 }
 
 function keyLabelHtml(action, label) {
@@ -712,11 +711,6 @@ function showScreen(name, opts) {
     const greeting = document.getElementById("title-greeting");
     if (greeting) greeting.textContent = state.username ? `HELLO, ${state.username.toUpperCase()}!` : "";
   }
-  // Coming back to a suspended session: the question is still on screen, and
-  // reading was frozen so nothing ran down while you were away.
-  if (mapped === "practice" && state.sessionActive && state.currentQuestion && state.isPaused) {
-    window.QB?.toast?.("Session resumed — press " + keyDisplay("pause") + " to continue reading");
-  }
   qbEmit("screen:change", { name, back });
   if (screen) restoreScreenScroll(screen);
 }
@@ -821,11 +815,13 @@ document.addEventListener("keydown", (e) => {
     const conflict = bindingConflict(action, newBinding);
     if (conflict) {
       state._hotkeyError = action;
-      window.QB?.toast?.(`"${bindingGlyphs(newBinding)}" is already used by "${conflict.label}"`, "error");
+      state._hotkeyErrorBy = conflict.label;   // the row shows "Used by …" for 1.6s
       renderHotkeySettings();
-      setTimeout(() => { state._hotkeyError = null; renderHotkeySettings(); }, 1600);
+      clearTimeout(state._hotkeyErrTimer);     // a second conflict must not be cut short by the first's timer
+      state._hotkeyErrTimer = setTimeout(() => { state._hotkeyError = null; renderHotkeySettings(); }, 1600);
       return;
     }
+    clearTimeout(state._hotkeyErrTimer); state._hotkeyError = null;   // an accepted key never shows a stale "Used by"
     state.settings.hotkeys[action] = newBinding;
     lsSet("qb-hotkeys", JSON.stringify(state.settings.hotkeys));
     renderHotkeySettings();
@@ -1197,6 +1193,9 @@ function openReviewMenu(items) {
     if (fill) { fill.style.left = (mn / 9) * 100 + "%"; fill.style.right = ((9 - mx) / 9) * 100 + "%"; }
     const m = matching();
     el.querySelector("#rv-matchcount").textContent = m.length + " of " + items.length + " match";
+    const playable = m.some((it) => (it.type || "tossup") === "tossup");
+    const pb = el.querySelector("#rv-play"); if (pb) pb.disabled = !playable;
+    const cb = el.querySelector("#rv-cards"); if (cb) cb.disabled = !playable;
   }
   clampDualRange(lo, hi);
   lo.addEventListener("input", paint); hi.addEventListener("input", paint);
@@ -1208,7 +1207,7 @@ function openReviewMenu(items) {
 
   el.querySelector("#rv-play").onclick = () => {
     const ids = matching().filter((it) => (it.type || "tossup") === "tossup").map((it) => it.id);
-    if (!ids.length) { window.QB?.toast?.("No tossups match (bonuses can't be played as tossups)", "error"); return; }
+    if (!ids.length) return;   // the button is disabled then
     el.remove(); startReviewSession(ids);
   };
   const rc = el.querySelector("#rv-cards");
@@ -1219,7 +1218,6 @@ function openReviewMenu(items) {
     confirmDialog(`Remove all ${items.length} questions from review? This can't be undone.`, async () => {
       try { await API.post("/api/review/clear", {}); } catch {}
       el.remove(); refreshReviewBadge();
-      window.QB?.toast?.("Cleared review");
     }, { yes: "Remove all" });
   };
 }
@@ -1227,7 +1225,7 @@ function openReviewMenu(items) {
 function reviewAsFlashcards(ids) {
   const pages = window.QB?.getActivePages?.() || [];
   const page = pages.find((p) => p.id.startsWith("flashcards::"));
-  if (!page) { window.QB?.toast?.("Enable the Flashcards plugin first (Plugins & Themes)", "error"); return; }
+  if (!page) return;
   try { localStorage.setItem("qb-flashcards-handoff", JSON.stringify({ ids })); } catch {}
   window.QB.showPage(page.id);
 }
@@ -2905,7 +2903,6 @@ function applyPendingPacketPlay() {
   if (sn) sn.value = p.setName;
   if (pk) pk.value = String(p.packetNumber);
   state._gameSig = null;
-  window.QB?.toast?.(`Set to ${p.setName}${p.packetNumber !== "" ? ` — packet ${p.packetNumber}` : " (all packets)"}. Press Start.`);
 }
 
 function setMode(mode) {
@@ -4093,7 +4090,6 @@ async function submitTossupAnswer(answer) {
       showPromptBanner(ask);
       const inp = $("#buzz-input");
       if (inp) { inp.value = ""; inp.disabled = false; inp.placeholder = "answer again…"; setTimeout(() => inp.focus(), 30); }
-      window.QB && window.QB.toast && window.QB.toast(ask ? "Prompt: " + ask : "Prompt", "info");
       startBuzzTimer();
       return;
     }
@@ -4111,7 +4107,6 @@ async function submitTossupAnswer(answer) {
       $("#buzz-area").classList.add("hidden");
       $("#buzz-input").value = "";
       const bm = document.querySelector(".buzz-marker"); if (bm) bm.remove();
-      window.QB && window.QB.toast && window.QB.toast(`NEG (${result.points}) — keep reading, buzz again`);
       resumeReveal();
       return;
     }
@@ -4496,7 +4491,6 @@ function openSaveMenu(question, type, anchor) {
     label: "Add to Review",
     fn: async () => {
       await API.post("/api/review/manual", { questionId: question.id, add: true, type });
-      window.QB?.toast?.("Added to review");
       refreshReviewBadge();
     },
   });
@@ -4514,10 +4508,9 @@ function itemReviewAdd(it) {
   if (!it || (!it.front && !it.back)) return false;
   const arr = itemReviewList();
   const k = itemReviewKey(it);
-  if (arr.some((x) => itemReviewKey(x) === k)) { window.QB?.toast?.("Already in review"); return false; }
+  if (arr.some((x) => itemReviewKey(x) === k)) return false;
   arr.push({ kind: it.kind || "item", front: it.front || "", back: it.back || "", meta: it.meta || "", ts: Date.now() });
   itemReviewSave(arr);
-  window.QB?.toast?.("Added to review");
   return true;
 }
 function itemReviewRemove(key) { itemReviewSave(itemReviewList().filter((x) => itemReviewKey(x) !== key)); }
@@ -4531,11 +4524,10 @@ function openItemSaveMenu(spec, anchor) {
 }
 function reviewItemsAsFlashcards() {
   const cards = itemReviewList().map((it) => ({ front: it.front, back: it.back, meta: it.meta || it.kind || "review" }));
-  if (!cards.length) { window.QB?.toast?.("Nothing saved to review"); return; }
+  if (!cards.length) return;
   try { localStorage.setItem("qb-flashcards-cards", JSON.stringify({ cards, ts: Date.now() })); } catch (e) {}
   if (!(window.QB && window.QB.showPage && window.QB.showPage("flashcards::cards"))) {
     try { localStorage.removeItem("qb-flashcards-cards"); } catch (e) {}
-    window.QB?.toast?.("Enable the Flashcards plugin first", "error");
   }
 }
 function openItemReviewViewer() {
@@ -4556,7 +4548,7 @@ function openItemReviewViewer() {
       <div class="review-viewer-head">
         <span class="hotkey-sheet-title" style="margin:0">SAVED FOR REVIEW (${list.length})</span>
         <span style="display:flex;gap:6px">
-          ${list.length ? '<button class="btn btn-sm btn-primary" id="ir-flash">Review as flashcards</button>' : ""}
+          ${list.length && (window.QB?.getActivePages?.() || []).some((p) => p.id === "flashcards::cards") ? '<button class="btn btn-sm btn-primary" id="ir-flash">Review as flashcards</button>' : ""}
           ${list.length ? '<button class="btn btn-sm btn-ghost" id="ir-clear">Clear all</button>' : ""}
           <button class="btn btn-sm btn-ghost" id="ir-close">Close</button>
         </span>
@@ -5185,7 +5177,7 @@ document.addEventListener("click", (e) => {
 });
 
 function copyToClipboard(t) {
-  try { navigator.clipboard.writeText(t); window.QB?.toast?.("Copied"); } catch (e) {}
+  try { navigator.clipboard.writeText(t); } catch (e) {}
 }
 
 // ── Hidden questions ("this question is bad — never serve it again") ──
@@ -5198,7 +5190,6 @@ function toggleQuestionHidden(id, type, label) {
   if (m[k]) { delete m[k]; } else { m[k] = { label: String(label || "").slice(0, 120), ts: Date.now() }; }
   hiddenQsSave(m);
   const on = !!m[k];
-  window.QB?.toast?.(on ? "Question hidden — it won't be served again" : "Question unhidden");
   return on;
 }
 function openHiddenManager() {
@@ -5433,7 +5424,7 @@ function exportSessionHistory() {
   // Export whatever the overlay is currently showing, so a plugin-supplied
   // list exports itself rather than the solo session sitting behind it.
   const src = _histEntries || state.sessionHistory;
-  if (!src.length) { window.QB?.toast?.("No questions this session yet", "error"); return; }
+  if (!src.length) return;
   const entries = src.map((e) => ({
     type: e.type,
     category: e.question?.category || "",
@@ -5478,7 +5469,7 @@ function openHistoryOverlay(opts) {
       <div class="review-viewer-head">
         <span class="hotkey-sheet-title" style="margin:0">${escapeHtml((o && o.title) || "SESSION HISTORY")} (${src.length})</span>
         <span style="display:flex;gap:6px">
-          <button class="btn btn-sm btn-ghost" id="btn-history-export">Export</button>
+          <button class="btn btn-sm btn-ghost" id="btn-history-export"${src.length ? "" : " disabled"}>Export</button>
           <button class="btn btn-sm btn-ghost" id="btn-history-compact">Compact all</button>
           <button class="btn btn-sm btn-ghost" id="btn-history-expand">Expand all</button>
           <button class="btn btn-sm btn-ghost" id="btn-history-close">Close</button>
@@ -5953,7 +5944,7 @@ async function exportStatsImage() {
     const sid = state.statsSessionId || null;
     stats = (await API.get("/api/stats" + (sid ? "?sessionId=" + encodeURIComponent(sid) : ""))).stats;
   } catch { return; }
-  if (!stats || !stats.totalQuestions) { window.QB?.toast?.("No stats to export yet", "error"); return; }
+  if (!stats || !stats.totalQuestions) return;
   const t = chartTheme();
   const W = 760, H = 540, dpr = 2;
   const canvas = document.createElement("canvas");
@@ -6061,6 +6052,8 @@ async function loadStats(preserveScroll = false) {
     const stats = data.stats;
 
     syncStatsControls(sid);
+    const exportBtn = $("#btn-stats-export");
+    if (exportBtn) exportBtn.disabled = (!stats || stats.totalQuestions === 0) && (!!sid || _statsPeriod === "all");
     if (!stats || stats.totalQuestions === 0) {
       container.innerHTML = `
         ${sid ? '<button class="btn btn-sm btn-ghost" id="stats-back">\u2190 All sessions</button>' : ""}
@@ -7007,7 +7000,7 @@ function renderHotkeySettings() {
         <td>${escapeHtml(label)}</td>
         <td><span class="hk-scope">${escapeHtml(hotkeyScopeLabel(action))}</span></td>
         <td class="hotkey-binding">
-          ${isRebinding ? '<span class="hotkey-listening">Press key…</span>' : escapeHtml(bindingGlyphs(binding))}
+          ${isRebinding ? '<span class="hotkey-listening">Press key…</span>' : state._hotkeyError === action && state._hotkeyErrorBy ? escapeHtml("Used by " + state._hotkeyErrorBy) : escapeHtml(bindingGlyphs(binding))}
         </td>
       </tr>`;
   }
@@ -7997,7 +7990,11 @@ function renderSearchTab() {
   const deb = () => { if (_dbRestoring) return; clearTimeout(_dbTimer); _dbTimer = setTimeout(performDbSearch, 300); };
   _dbPacketsFor = null;
   fillCategoryDropdown(document.getElementById("db-cat-filter")).then(() => {
-    wireCatCascade(document.getElementById("db-cat-filter"), document.getElementById("db-sub-filter"), document.getElementById("db-alt-filter"), deb);
+    // The tab may have been replaced (another Database tab clicked) before the
+    // category list arrived: nothing left to wire.
+    const cs = document.getElementById("db-cat-filter"), ss = document.getElementById("db-sub-filter"), as = document.getElementById("db-alt-filter");
+    if (!cs || !ss || !as) return;
+    wireCatCascade(cs, ss, as, deb);
   });
   c.querySelectorAll("#db-search-input, #db-qtype, #db-search-type, #db-match, #db-prefix, .db-diff-cb, #db-year-min, #db-year-max, #db-set-filter, #db-packet-filter, #db-exclude, #db-sort, #db-standard, #db-powermark, #db-starred")
     .forEach((el) => el.addEventListener(el.type === "text" || el.type === "number" || el.type === "range" ? "input" : "change", deb));
@@ -8723,7 +8720,9 @@ async function renderStarredTab() {
   let items = [];
   try { items = (await API.get("/api/starred")).starred || []; } catch {}
   const actions = (window.QB && window.QB.getStarredActions) ? window.QB.getStarredActions() : [];
-  const actionBtns = actions.map((a, i) => '<button class="btn btn-sm" data-star-action="' + i + '">' + escapeHtml(a.label) + "</button>").join("");
+  // The registered starred actions (Flashcards, Coach) play tossups only.
+  const hasTossups = items.some((it) => (it.type || "tossup") === "tossup");
+  const actionBtns = actions.map((a, i) => '<button class="btn btn-sm" data-star-action="' + i + '"' + (hasTossups ? "" : " disabled") + ">" + escapeHtml(a.label) + "</button>").join("");
   c.innerHTML =
     '<div class="db-toolbar">' +
       '<button class="btn btn-sm btn-primary" id="db-practice-starred">Practice starred (tossups)</button>' +
@@ -8745,7 +8744,10 @@ async function renderStarredTab() {
   c.querySelectorAll("[data-star-action]").forEach((b) => {
     b.addEventListener("click", () => {
       const a = actions[parseInt(b.dataset.starAction)];
-      if (a && typeof a.run === "function") { try { a.run(items); } catch (e) { console.error(e); window.QB?.toast?.("Action failed: " + (e.message || e), "error"); } }
+      if (a && typeof a.run === "function") {
+        try { a.run(items); b.classList.remove("is-failed"); b.removeAttribute("title"); }
+        catch (e) { console.error(e); b.classList.add("is-failed"); b.title = "Failed: " + (e.message || e); }
+      }
     });
   });
   const container = document.getElementById("db-results");
@@ -8946,7 +8948,6 @@ function init() {
         const ok = window.QB && window.QB.showPage && window.QB.showPage(t.page);
         if (!ok) {
           try { localStorage.removeItem(t.key); } catch (e) {}
-          window.QB && window.QB.toast && window.QB.toast("Enable the " + t.name + " plugin first (Plugins & Themes)", "error");
           return false;
         }
         return true;
@@ -9003,17 +9004,14 @@ async function applyStagedPluginUpdates() {
     if (!info || !info.plugins || !info.plugins.length) return;
     const applied = localStorage.getItem("qb-overlay-plugins-applied") || "0";
     if (cmpVer(info.version, applied) <= 0) return; // dotted-version aware
-    let updated = 0;
     for (const p of info.plugins) {
       if (!window.QB?._plugins?.some?.((x) => x.id === p.id)) continue;
       try {
         const bytes = Uint8Array.from(atob(p.base64), (c) => c.charCodeAt(0));
         await window.QB.installZipBytes(bytes);
-        updated++;
       } catch (e) { console.error("plugin update failed", p.id, e); }
     }
     if (info.complete !== false) localStorage.setItem("qb-overlay-plugins-applied", String(info.version));
-    if (updated) window.QB?.toast?.(updated + " plugin update" + (updated === 1 ? "" : "s") + " applied");
   } catch {}
 }
 

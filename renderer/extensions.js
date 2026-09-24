@@ -79,16 +79,14 @@
 
   QB.connect = (host) => { QB._host = host || {}; };
 
-  QB.toast = (msg, type) => {
-    let host = document.getElementById("qb-toast-host");
-    if (!host) { host = document.createElement("div"); host.id = "qb-toast-host"; document.body.appendChild(host); }
-    const el = document.createElement("div");
-    el.className = "qb-toast" + (type ? " qb-toast-" + type : "");
-    el.textContent = msg;
-    host.appendChild(el);
-    requestAnimationFrame(() => el.classList.add("show"));
-    setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 300); }, 2800);
-  };
+  // The app has NO popup notifications (the user removed them in 14.28). The
+  // toast API stays as a no-op so plugins calling ctx.toast / QB.toast keep
+  // working; anything that must be seen is shown inline where it happened.
+  QB.toast = () => {};
+  // Import failures show as one short red line under the dropzone that was used
+  // (renderScreen). installPackage & co. record here instead of toasting.
+  QB._importError = null; QB._importZone = null;
+  const importFail = (msg) => { QB._importError = msg; };
 
   // Shared indeterminate loading bar (CSS lives in the base app's style.css).
   QB.loadingBarHtml = (label) => {
@@ -533,7 +531,7 @@
   QB.setPluginSetting = QB.setSetting;
 
   function finalizePlugin(filename, code, manifest) {
-    if (!manifest || !manifest.id) { QB.toast("Plugin must call QB.registerPlugin({ id, ... })", "error"); return null; }
+    if (!manifest || !manifest.id) { importFail("Plugin must call QB.registerPlugin({ id, ... })"); return null; }
     const prev = QB._plugins.find((x) => x.id === manifest.id);
     const wasEnabled = !!(prev && prev.enabled);
     if (prev && prev._enabledRuntime) { try { QB.disablePlugin(prev.id); } catch (e) {} }
@@ -546,12 +544,11 @@
     QB._plugins.push(p);
     savePlugins();
     if (wasEnabled) { try { QB.enablePlugin(p.id); } catch (e) {} }
-    QB.toast("Installed plugin: " + p.name);
     return p;
   }
   QB.installPlugin = (filename, code) => {
     try { const r = runEntry(code); return finalizePlugin(filename, code, r.plugin); }
-    catch (e) { QB.toast("Invalid plugin: " + e.message, "error"); return null; }
+    catch (e) { importFail("Invalid plugin: " + e.message); return null; }
   };
   QB.enablePlugin = (id) => {
     const p = QB._plugins.find((x) => x.id === id);
@@ -560,10 +557,10 @@
       if (!p._manifest) p._manifest = runEntry(p.code).plugin;
       const ctx = makeCtx(p); p._ctx = ctx;
       if (typeof p._manifest.onEnable === "function") p._manifest.onEnable(ctx);
-      p._enabledRuntime = true; p.enabled = true; savePlugins();
+      p._enabledRuntime = true; p.enabled = true; p._error = null; savePlugins();
       QB._emit("plugins:changed");
     } catch (e) {
-      console.error(e); QB.toast("Plugin '" + (p.name || id) + "' failed: " + e.message, "error");
+      console.error(e); p._error = e.message || String(e);
       // Unwind whatever the failed onEnable managed to register, so a retry
       // can't stack duplicate hooks.
       if (p._ctx) { p._ctx._unsub?.forEach?.((u) => { try { u(); } catch {} }); p._ctx = null; }
@@ -708,7 +705,7 @@
   };
 
   function finalizeTheme(filename, code, manifest) {
-    if (!manifest || !manifest.id) { QB.toast("Theme must call QB.registerTheme({ id, ... })", "error"); return null; }
+    if (!manifest || !manifest.id) { importFail("Theme must call QB.registerTheme({ id, ... })"); return null; }
     QB._themes = QB._themes.filter((t) => t.id !== manifest.id);
     const t = {
       id: manifest.id, name: manifest.name || manifest.id, version: manifest.version || "1.0",
@@ -717,12 +714,11 @@
     };
     QB._themes.push(t);
     saveThemes();
-    QB.toast("Installed theme: " + t.name);
     return t;
   }
   QB.installTheme = (filename, code) => {
     try { const r = runEntry(code); return finalizeTheme(filename, code, r.theme); }
-    catch (e) { QB.toast("Invalid theme: " + e.message, "error"); return null; }
+    catch (e) { importFail("Invalid theme: " + e.message); return null; }
   };
   QB.enableTheme = (id) => {
     _themeSwitching = true;
@@ -738,11 +734,16 @@
         if (!t._manifest) t._manifest = runEntry(t.code).theme;
         const ctx = makeCtx(t); t._ctx = ctx;
         if (typeof t._manifest.onEnable === "function") t._manifest.onEnable(ctx);
-        t._enabledRuntime = true; t.enabled = true;
+        t._enabledRuntime = true; t.enabled = true; t._error = null;
         QB._themes.forEach((x) => { if (x.id !== id) x.enabled = false; });
         saveThemes();
         QB._emit("theme:change", t);
-      } catch (e) { console.error(e); QB.toast("Theme '" + (t.name || id) + "' failed: " + e.message, "error"); }
+      } catch (e) {
+        // Off, not "active": at boot the stored enabled=true used to survive a
+        // failed onEnable, so the card claimed a theme that was not running.
+        console.error(e); t._error = e.message || String(e); t.enabled = false; saveThemes();
+        if (t._ctx) { (t._ctx._unsub || []).forEach((u) => { try { u(); } catch (e2) {} }); t._ctx = null; }
+      }
     } finally {
       _themeSwitching = false;
       // A user theme takes over from the baseline — and if it failed to load,
@@ -793,7 +794,7 @@
     const paths = Object.keys(fileMap);
     let entry = null, manifest = null;
     const mfPath = paths.find((p) => /(^|\/)(theme|plugin|manifest)\.json$/i.test(p));
-    if (mfPath) { try { manifest = JSON.parse(fileMap[mfPath]); if (manifest.entry) entry = manifest.entry; } catch (e) { QB.toast("Bad manifest JSON: " + e.message, "error"); return null; } }
+    if (mfPath) { try { manifest = JSON.parse(fileMap[mfPath]); if (manifest.entry) entry = manifest.entry; } catch (e) { importFail("Bad manifest JSON: " + e.message); return null; } }
     const resolvePath = (name) => paths.find((p) => p.endsWith("/" + name) || p === name);
 
     // Multifile packages: manifest.files is an ordered list of .js files that
@@ -803,9 +804,9 @@
       const parts = [];
       for (const f of manifest.files) {
         const p = resolvePath(f);
-        if (!p) { QB.toast("Package is missing a file listed in its manifest: " + f, "error"); return null; }
+        if (!p) { importFail("Package is missing a file listed in its manifest: " + f); return null; }
         const body = fileMap[p];
-        if (typeof body !== "string" || body.slice(0, 5) === "data:") { QB.toast("manifest.files entry is not a script: " + f, "error"); return null; }
+        if (typeof body !== "string" || body.slice(0, 5) === "data:") { importFail("manifest.files entry is not a script: " + f); return null; }
         parts.push(body);
       }
       code = parts.join("\n;\n");
@@ -824,10 +825,10 @@
         const isTheme = manifest && manifest.id && (cssText || manifest.vars || manifest.type === "theme" || /(^|\/)theme\.json$/i.test(mfPath || ""));
         if (isTheme) {
           const dcode = assetPreamble(manifest.id, fileMap) + declarativeThemeCode(manifest, cssText);
-          let r; try { r = runEntry(dcode); } catch (e) { QB.toast("Invalid theme: " + e.message, "error"); return null; }
+          let r; try { r = runEntry(dcode); } catch (e) { importFail("Invalid theme: " + e.message); return null; }
           if (r.theme) return finalizeTheme(manifest.id + ".theme.js", dcode, r.theme);
         }
-        QB.toast("No .js entry or theme CSS found in the package", "error");
+        importFail("No .js entry or theme CSS found in the package");
         return null;
       }
       code = fileMap[codePath];
@@ -848,10 +849,10 @@
     }
     const finalCode = assetPreamble(manifest && manifest.id, fileMap) + (extraCss ? wrapWithCss(code, extraCss) : code);
     let r;
-    try { r = runEntry(finalCode); } catch (e) { QB.toast("Invalid package: " + e.message, "error"); return null; }
+    try { r = runEntry(finalCode); } catch (e) { importFail("Invalid package: " + e.message); return null; }
     if (r.theme) return finalizeTheme(filename, finalCode, r.theme);
     if (r.plugin) return finalizePlugin(filename, finalCode, r.plugin);
-    QB.toast("Package didn't call QB.registerPlugin or QB.registerTheme", "error");
+    importFail("Package didn't call QB.registerPlugin or QB.registerTheme");
     return null;
   };
 
@@ -979,16 +980,18 @@
     }
     return files;
   }
-  async function handleZips(fileList) {
+  async function handleZips(fileList, zoneId) {
+    QB._importError = null; QB._importZone = zoneId || null;
     for (const f of fileList) {
-      if (!/\.zip$/i.test(f.name)) { QB.toast("Import a .zip package", "error"); continue; }
+      if (!/\.zip$/i.test(f.name)) { importFail("Import a .zip package"); continue; }
       try {
         const files = await unzip(await readArrayBuffer(f));
         if (!Object.keys(files).length) throw new Error("empty archive");
         QB.installPackage(files);
-      } catch (e) { QB.toast("Could not read " + f.name + ": " + e.message, "error"); }
+      } catch (e) { importFail("Could not read " + f.name + ": " + e.message); }
     }
     QB.renderScreen();
+    QB._importError = null; QB._importZone = null;   // shown once, for this import only
   }
 
   QB.installZipBytes = async (bytes) => {
@@ -1342,6 +1345,9 @@ QB.registerTheme({
     try { if (QB._host && QB._host.syncAppearanceSection) QB._host.syncAppearanceSection(); } catch (e) {}
   };
 
+  function dropError(zoneId) {
+    return QB._importError && QB._importZone === zoneId ? '<div class="ext-drop-error">' + esc(QB._importError) + "</div>" : "";
+  }
   function card(ext, kind) {
     const idAttr = kind === "theme" ? "data-theme-id" : "data-plugin-id";
     const removeAttr = kind === "theme" ? "data-remove-theme" : "data-remove-plugin";
@@ -1356,6 +1362,7 @@ QB.registerTheme({
               ' <span class="ext-badge">' + badge + "</span>" +
               (kind === "plugin" ? ' <span class="ext-ver">v' + esc(ext.version) + "</span>" : "") +
               (ext.enabled ? ' <span class="ext-badge on">' + onLabel + "</span>" : "") +
+              (ext._error ? ' <span class="ext-badge err">failed</span><span class="qb-info" data-tip="' + esc(ext._error) + '">i</span>' : "") +
             "</div>" +
             '<div class="ext-card-meta">by ' + esc(ext.author) + (ext.filename ? " · " + esc(ext.filename) : "") + "</div>" +
           "</div>" +
@@ -1385,7 +1392,7 @@ QB.registerTheme({
         '<div class="ext-section-head"><span class="ext-section-title">Themes</span></div>' +
         '<div class="ext-dropzone" id="ext-drop-theme">' + UPLOAD_ICON +
           "<div>Drag a theme <strong>.zip</strong> here</div>" +
-          '<div class="ext-drop-sub"><button class="ext-link" id="ext-browse-theme">Browse</button></div>' +
+          '<div class="ext-drop-sub"><button class="ext-link" id="ext-browse-theme">Browse</button>' + dropError("ext-drop-theme") + "</div>" +
           '<input type="file" id="ext-file-theme" accept=".zip" multiple hidden></div>' +
         '<div class="ext-list">' + themesHtml + "</div>" +
       "</div>" +
@@ -1395,7 +1402,7 @@ QB.registerTheme({
         "</div>" +
         '<div class="ext-dropzone" id="ext-drop-plugin">' + UPLOAD_ICON +
           "<div>Drag a plugin <strong>.zip</strong> here</div>" +
-          '<div class="ext-drop-sub"><button class="ext-link" id="ext-browse-plugin">Browse</button></div>' +
+          '<div class="ext-drop-sub"><button class="ext-link" id="ext-browse-plugin">Browse</button>' + dropError("ext-drop-plugin") + "</div>" +
           '<input type="file" id="ext-file-plugin" accept=".zip" multiple hidden></div>' +
         '<div class="ext-list">' + pluginsHtml + "</div>" +
       "</div>";
@@ -1412,11 +1419,11 @@ QB.registerTheme({
     input.addEventListener("change", () => {
       const files = Array.from(input.files || []);
       input.value = "";
-      if (files.length) handleZips(files);
+      if (files.length) handleZips(files, zoneId);
     });
     ["dragenter", "dragover"].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add("dragging"); }));
     ["dragleave", "drop"].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove("dragging"); }));
-    zone.addEventListener("drop", (e) => { const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []); if (files.length) handleZips(files); });
+    zone.addEventListener("drop", (e) => { const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []); if (files.length) handleZips(files, zoneId); });
   }
 
   function wireScreen() {
