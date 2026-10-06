@@ -22,7 +22,7 @@ function parseQuery(qs) {
   const params = new URLSearchParams(qs);
   const out = {};
   for (const [k, v] of params) {
-    if (k === "categories" || k === "subcategories" || k === "alternateSubcategories" || k === "setIds" || k === "setNames")
+    if (k === "categories" || k === "subcategories" || k === "alternateSubcategories" || k === "categoryIds" || k === "setIds" || k === "setNames")
       out[k] = v.split(",").filter(Boolean);
     else if (k === "difficulties")
       out[k] = v.split(",").map(Number).filter((n) => !isNaN(n));
@@ -30,8 +30,8 @@ function parseQuery(qs) {
       out[k] = v === "1" || v === "true";
     else if (k === "limit" || k === "offset")
       out[k] = parseInt(v);
-    else if (k === "random")
-      out[k] = true;
+    else if (k === "random" || k === "includeUnplayable" || k === "cleanOnly")
+      out[k] = v === "1" || v === "true" || k === "random";
     else
       out[k] = v;
   }
@@ -71,13 +71,16 @@ const API = isElectron
         if (path === "/api/profiles") return window.qbreader.getProfiles();
         if (path === "/api/profiles/active") return window.qbreader.getActiveProfile();
         if (path === "/api/check-update") return window.qbreader.checkUpdate();
+        if (path === "/api/db-update-status") return window.qbreader.dbUpdateStatus ? window.qbreader.dbUpdateStatus() : { state: "idle" };
         if (path === "/api/app-update-info") return window.qbreader.appUpdateInfo ? window.qbreader.appUpdateInfo() : { configured: false, active: false, version: 0, dev: true };
         if (path === "/api/app-update-peek") return window.qbreader.appUpdatePeek ? window.qbreader.appUpdatePeek() : { unsupported: true };
         if (path === "/api/app-update-plugins") return window.qbreader.appUpdatePlugins ? window.qbreader.appUpdatePlugins() : { version: 0, plugins: [] };
         if (path === "/api/set-packets") return window.qbreader.getSetPackets(q.setName);
         if (path === "/api/packets-for-set") return window.qbreader.getPacketsForSet(q.setName);
         if (path === "/api/packet-content") return window.qbreader.getPacketContent(q.setName, parseInt(q.packetNumber) || 0);
-        if (path === "/api/frequent-answers") return window.qbreader.getFrequentAnswers(q.category, q.subcategory, q.alternateSubcategory, parseInt(q.limit) || 50, q.qtype || "tossup");
+        if (path === "/api/frequent-answers") return window.qbreader.getFrequentAnswers(q.category, q.subcategory, q.alternateSubcategory, parseInt(q.limit) || 50, q.qtype || "tossup", q.nodeId || null);
+        if (path === "/api/category-tree") return window.qbreader.getCategoryTree ? window.qbreader.getCategoryTree(q.type || "tossups") : { tree: [] };
+        if (path === "/api/db-info") return window.qbreader.getDbInfo ? window.qbreader.getDbInfo() : { schema: 1 };
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
@@ -85,9 +88,10 @@ const API = isElectron
       },
       post(url, data) {
         const path = url.split("?")[0];
-        if (path === "/api/check-tossup") return window.qbreader.checkTossup(data.questionId, data.answer, data.buzzPosition, data.sessionId, { fullyRead: data.fullyRead, strictness: data.strictness, overriding: data.overriding, allowPrompt: data.allowPrompt, record: data.record, correct: data.correct, isPower: data.isPower, points: data.points, celerity: data.celerity });
-        if (path === "/api/evaluate-tossup") return window.qbreader.evaluateTossup(data.questionId, data.answer, data.strictness, data.buzzPosition);
-        if (path === "/api/evaluate-answer") return window.qbreader.evaluateAnswerLine(data.answerline, data.sanitized, data.answer, data.strictness);
+        if (path === "/api/check-tossup") return window.qbreader.checkTossup(data.questionId, data.answer, data.buzzPosition, data.sessionId, { fullyRead: data.fullyRead, strictness: data.strictness, overriding: data.overriding, allowPrompt: data.allowPrompt, record: data.record, previous: data.previous, correct: data.correct, isPower: data.isPower, points: data.points, celerity: data.celerity });
+        if (path === "/api/evaluate-tossup") return window.qbreader.evaluateTossup(data.questionId, data.answer, data.strictness, data.buzzPosition, data.previous);
+        if (path === "/api/evaluate-bonus-part") return window.qbreader.evaluateBonusPart(data.questionId, data.part, data.answer, data.strictness, data.previous);
+        if (path === "/api/evaluate-answer") return window.qbreader.evaluateAnswerLine(data.answerline, data.sanitized, data.answer, data.strictness, data.previous);
         if (path === "/api/parse-answerline") return window.qbreader.parseAnswerline(data.answerline, data.sanitized);
         if (path === "/api/profile-settings") return window.qbreader.saveProfileSettings(data.settings);
         if (path === "/api/review/dismiss") return window.qbreader.dismissReview(data.questionId);
@@ -96,7 +100,9 @@ const API = isElectron
         if (path === "/api/sessions/prune") return window.qbreader.pruneSessions(data.days);
         if (path === "/api/plugin-data") return window.qbreader.setPluginData(data.plugin, data.key, data.value);
         if (path === "/api/plugin-sql") return window.qbreader.pluginSql(data.plugin, data.sql, data.params);
-        if (path === "/api/check-bonus") return window.qbreader.checkBonus(data.questionId, data.answers, data.sessionId, data.strictness, data.overrides);
+        if (path === "/api/db-update-start") return window.qbreader.dbUpdateStart ? window.qbreader.dbUpdateStart() : { state: "idle" };
+        if (path === "/api/db-update-commit") return window.qbreader.dbUpdateCommit ? window.qbreader.dbUpdateCommit() : { ok: false };
+        if (path === "/api/check-bonus") return window.qbreader.checkBonus(data.questionId, data.answers, data.sessionId, data.strictness, data.overrides, data.previous);
         if (path === "/api/starred/toggle") return window.qbreader.toggleStar(data.questionId, data.type);
         if (path === "/api/profiles") return window.qbreader.createProfile(data.name);
         if (path === "/api/profiles/activate") return window.qbreader.setActiveProfile(data.id);
@@ -1286,7 +1292,7 @@ async function openReviewViewer(items) {
       try { answers = JSON.parse(q.answers_sanitized || "[]"); } catch {}
       try { raws = JSON.parse(q.answers || "[]"); } catch {}
       const body = `<div class="qcard-text">${escapeHtml(q.leadin_sanitized || "")}</div>` +
-        parts.map((pt, k) => `<div class="qcard-part">[10] ${escapeHtml(pt)}<br><span class="ans">ANSWER: ${answerLineHtml(raws[k], answers[k] || "")}</span></div>`).join("");
+        parts.map((pt, k) => `<div class="qcard-part">[${bonusPartValues(q).values[k] || 10}] ${escapeHtml(pt)}<br><span class="ans">ANSWER: ${answerLineHtml(raws[k], answers[k] || "")}</span></div>`).join("");
       return qcardHtml({
         compact: false, category: q.category, subcategory: q.subcategory, year: q.set_year, difficulty: q.difficulty,
         attrs: dataAttrs,
@@ -1434,10 +1440,8 @@ function getModeFilters() { const b = loadFilterBlob(); return b[filtersMode()] 
 function saveModeFilters(fs) { const b = loadFilterBlob(); b[filtersMode()] = fs; lsSet("qb-filters", JSON.stringify(b)); }
 
 function saveFilterState() {
-  // Never persist a half-rendered panel: during loadCategories the container
-  // is a "Loading…" placeholder, and freshly-rendered checked categories have
-  // EMPTY sub lists until their async fetch lands — an unguarded save wiped
-  // curated subcategories and weights.
+  // Never persist a panel that has no tree yet (the "Loading…" placeholder):
+  // that would save an empty selection over the real one.
   if (_applyingSnapshot) return;
   if (!document.querySelector("#category-filters .category-group")) return;
   // Custom list showing: save into the LIST's bucket (state.mode may already be
@@ -1446,51 +1450,8 @@ function saveFilterState() {
   const cv = _customView;
   const bucket = cv ? cv.type : filtersMode();
   const prev = loadFilterBlob()[bucket] || null;
-  const cats = getSelectedCategories();
-  const subs = {};
-  const carried = new Set();
-  $$("#category-filters .category-group").forEach(group => {
-    const catCheck = group.querySelector(".cat-checkbox");
-    if (!catCheck?.checked) return;
-    const catName = catCheck.value;
-    const subList = group.querySelector(".subcategory-list");
-    if (subList && !subList.dataset.loaded) {
-      // sub fetch still pending — carry the previous save forward untouched
-      if (prev?.subcategories?.[catName]) { subs[catName] = prev.subcategories[catName]; carried.add(catName); }
-      return;
-    }
-    const checkedSubs = [
-      ...[...group.querySelectorAll(".subcat-checkbox:checked")].map(cb => cb.value),
-      ...[...group.querySelectorAll(".altsub-checkbox:checked")].map(cb => cb.value),
-    ];
-    subs[catName] = checkedSubs;
-  });
-  const weights = {};
-  const grabWeight = (label, key) => {
-    const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
-    const v = w ? parseFloat(w.value) : NaN;
-    // 10 is the implicit default; a deliberate 0 on a CHECKED item must save
-    // ("keep it in filters, never weighted-draw it").
-    if (Number.isFinite(v) && v !== 10) weights[key] = v;
-  };
-  $$("#category-filters .category-group").forEach(group => {
-    const catCheck = group.querySelector(".cat-checkbox");
-    if (!catCheck?.checked) return;
-    if (carried.has(catCheck.value)) {
-      // sub list not rendered — carry this category's previous weights too
-      if (prev?.weights) for (const [k, v] of Object.entries(prev.weights)) {
-        if (k === "c:" + catCheck.value || (prev.subcategories?.[catCheck.value] || []).some((s2) => k === "s:" + s2 || k === "a:" + s2)) weights[k] = v;
-      }
-      return;
-    }
-    grabWeight(catCheck.closest(".filter-item"), "c:" + catCheck.value);
-    group.querySelectorAll(".subcat-checkbox:checked").forEach(cb => grabWeight(cb.closest(".filter-item"), "s:" + cb.value));
-    group.querySelectorAll(".altsub-checkbox:checked").forEach(cb => grabWeight(cb.closest(".filter-item"), "a:" + cb.value));
-  });
   const filterState = {
-    categories: cats,
-    subcategories: subs,
-    weights,
+    catTree: catStateFromDom(),
     standard: $("#filter-standard")?.checked,
     difficulties: cv ? cv.prevDiffs.slice() : getSelectedDifficulties(),
     mode: cv ? cv.prevMode : ($("#mode-select")?.value || "random"),
@@ -1498,6 +1459,7 @@ function saveFilterState() {
     packet: $("#mode-packet")?.value || "",
     starredOnly: $("#filter-starred")?.checked,
     powermarkOnly: $("#filter-powermark")?.checked,
+    cleanOnly: !!$("#filter-clean")?.checked,
     yearMin: $("#year-min")?.value,
     yearMax: $("#year-max")?.value,
     settings: Object.fromEntries(PER_MODE_SETTING_KEYS.map((k) => [k, state.settings[k]])),
@@ -1525,6 +1487,7 @@ function restoreFilterState() {
       $("#filter-starred").checked = saved.starredOnly;
     if (saved.powermarkOnly !== undefined && $("#filter-powermark"))
       $("#filter-powermark").checked = saved.powermarkOnly;
+    if ($("#filter-clean")) $("#filter-clean").checked = !!saved.cleanOnly;
     if (Array.isArray(saved.difficulties)) {
       $$("#difficulty-filters .diff-checkbox").forEach((cb) => {
         cb.checked = saved.difficulties.includes(parseInt(cb.value));
@@ -1532,7 +1495,7 @@ function restoreFilterState() {
     }
     if (saved.yearMin !== undefined) $("#year-min").value = saved.yearMin;
     if (saved.yearMax !== undefined) $("#year-max").value = saved.yearMax;
-    if (saved.setName !== undefined && $("#mode-set-name")) $("#mode-set-name").value = saved.setName;
+    if (saved.setName !== undefined && $("#mode-set-name")) $("#mode-set-name").value = currentSetName(saved.setName);
     if (saved.packet !== undefined && $("#mode-packet")) $("#mode-packet").value = saved.packet;
     applyModeSettings(saved);
     updateModeFields();
@@ -1542,255 +1505,303 @@ function restoreFilterState() {
 }
 
 function restoreCategorySelections(saved) {
-  if (!saved?.categories) return;
-  const catChecks = $$("#category-filters .cat-checkbox");
-  catChecks.forEach(cb => {
-    cb.checked = saved.categories.includes(cb.value);
-    const group = cb.closest(".category-group");
-    const subList = group?.querySelector(".subcategory-list");
-    const expand = group?.querySelector(".cat-expand");
-    if (!cb.checked) {
-      if (subList) {
-        subList.querySelectorAll(".subcat-checkbox").forEach(sc => sc.checked = false);
-        subList.classList.add("hidden");
-      }
-      if (expand) expand.textContent = "▸";
-    }
-  });
-  if (saved.subcategories) {
-    for (const [cat, subs] of Object.entries(saved.subcategories)) {
-      const group = [...$$("#category-filters .category-group")].find(g => g.querySelector(".cat-checkbox")?.value === cat);
-      if (!group) continue;
-      const catCheck = group.querySelector(".cat-checkbox");
-      if (!catCheck?.checked) continue;
-      group.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach(sc => { sc.checked = subs.includes(sc.value); });
-    }
+  applyCatState(savedCatState(saved), { initial: true });
+}
+
+// ── CATEGORY TREE ────────────────────────────────────────────────────────────
+// The question database files every question under ONE node of a category
+// tree (up to 6 levels; 12 roots). The panel renders the whole tree at once
+// from /api/category-tree, so there is no per-category async loading.
+//   • Ticking a node ticks its whole subtree and its ancestors (auto-marked,
+//     undone symmetrically when the last ticked child goes).
+//   • The SELECTION is the smallest set of whole subtrees: a ticked node with no
+//     ticked children means "all of it"; unticking some children narrows it to
+//     the ticked children, at any depth (catSelectedUnits).
+//   • Filters carry node ids in `categories` (the server reads an id as its
+//     subtree), so plugins that forward that key keep working unchanged.
+const _catTreeCache = {};   // type -> Promise<{ roots, byId, byPath }>
+let _catIndex = null;       // the tree the panel currently shows
+let _catLoadGen = 0;
+function fetchCatTree(type) {
+  const t = type === "bonuses" ? "bonuses" : "tossups";
+  if (!_catTreeCache[t]) {
+    _catTreeCache[t] = API.get("/api/category-tree?type=" + t).then((d) => {
+      const roots = (d && d.tree) || [];
+      const byId = new Map(), byPath = new Map();
+      const walk = (n, parent) => {
+        n.parentId = parent ? parent.id : null;
+        byId.set(n.id, n); byPath.set(n.path, n);
+        (n.children || []).forEach((c) => walk(c, n));
+      };
+      roots.forEach((r) => walk(r, null));
+      // v1 = the old QBReader-format database (tree synthesized from its labels)
+      return { roots, byId, byPath, v1: roots.some((r) => String(r.id).startsWith("v1:")) };
+    }).catch((e) => { delete _catTreeCache[t]; throw e; });
   }
-  catChecks.forEach(cb => {
-    if (!cb.checked) {
-      const subList = cb.closest(".category-group")?.querySelector(".subcategory-list");
-      if (subList) {
-        subList.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach(sc => sc.checked = false);
-      }
-    }
-  });
+  return _catTreeCache[t];
+}
+function catNodeHtml(n) {
+  const kids = n.children || [];
+  return `<div class="cat-node${n.depth === 1 ? " category-group" : ""}${n.count ? "" : " cat-empty"}" data-id="${escapeHtml(n.id)}" data-depth="${n.depth}">` +
+    `<div class="filter-item cat-row${n.depth > 1 ? " sub-item" : ""}">` +
+      `<span class="cat-expand"${kids.length ? "" : ' style="visibility:hidden"'}>▸</span>` +
+      `<label class="cat-hit"><input type="checkbox" class="cat-checkbox" value="${escapeHtml(n.id)}"><span class="cat-name">${escapeHtml(n.name)}</span></label>` +
+      (n.definition ? `<span class="qb-info cat-def" data-tip="${escapeHtml(n.definition)}">i</span>` : "") +
+      `<span class="cat-count text-muted">${n.count}</span>` +
+      `<input type="number" class="cat-weight" value="0" min="0" step="10" title="weight (ratio)">` +
+    `</div>` +
+    (kids.length ? `<div class="subcategory-list cat-children hidden">${kids.map(catNodeHtml).join("")}</div>` : "") +
+  `</div>`;
+}
+function _catNodes(root) { return [...(root || document.getElementById("category-filters") || document).querySelectorAll(".cat-node")]; }
+function _catRoots() { const c = document.getElementById("category-filters"); return c ? [...c.children].filter((x) => x.classList.contains("cat-node")) : []; }
+function _catRowBox(el) { return el && el.querySelector(":scope > .cat-row .cat-checkbox"); }
+function _catW(el) { return el && el.querySelector(":scope > .cat-row .cat-weight"); }
+function _catKids(el) { const c = el && el.querySelector(":scope > .cat-children"); return c ? [...c.children].filter((x) => x.classList.contains("cat-node")) : []; }
+function _catParent(el) { return (el && el.parentElement && el.parentElement.closest(".cat-node")) || null; }
+function _catSet(el, on) {
+  const cb = _catRowBox(el); if (!cb) return;
+  cb.checked = on; delete cb.dataset.autoChecked;
+  const w = _catW(el); if (w) w.value = on ? "10" : "0";
+}
+function _catEachDesc(el, fn) { _catKids(el).forEach((k) => { fn(k); _catEachDesc(k, fn); }); }
+function _catExpand(el, open) {
+  const list = el && el.querySelector(":scope > .cat-children"); if (!list) return;
+  list.classList.toggle("hidden", !open);
+  const a = el.querySelector(":scope > .cat-row .cat-expand"); if (a) a.textContent = open ? "▾" : "▸";
+}
+function catWeightOf(el) { return parseFloat(_catW(el)?.value) || 0; }
+// { whole, units }: units = the node elements whose WHOLE subtree is selected.
+function _catUnits(el) {
+  const cb = _catRowBox(el);
+  if (!cb || !cb.checked) return { whole: false, units: [] };
+  const kids = _catKids(el);
+  const ticked = kids.filter((k) => _catRowBox(k)?.checked);
+  if (!ticked.length) return { whole: true, units: [el] };
+  const res = ticked.map(_catUnits);
+  if (ticked.length === kids.length && res.every((r) => r.whole)) return { whole: true, units: [el] };
+  return { whole: false, units: res.flatMap((r) => r.units) };
+}
+function catSelectedUnits() { return _catRoots().flatMap((r) => _catUnits(r).units); }
+function catNodeLabel(el) {
+  const id = el && el.dataset.id;
+  const n = id && _catIndex && _catIndex.byId.get(id);
+  return n ? n.name : (el?.querySelector(":scope > .cat-row .cat-name")?.textContent || "");
+}
+function catNodePath(el) {
+  const id = el && el.dataset.id;
+  const n = id && _catIndex && _catIndex.byId.get(id);
+  return n ? n.path : catNodeLabel(el);
 }
 
-const ALT_SUBCATS = {
-  "Other Science": ["Astronomy", "Computer Science", "Earth Science", "Engineering", "Math", "Misc Science"],
-  "Other Literature": ["Drama", "Long Fiction", "Poetry", "Short Fiction", "Misc Literature"],
-  "Other Fine Arts": ["Architecture", "Dance", "Film", "Jazz", "Musicals", "Opera", "Photography", "Misc Arts"],
-  "Social Science": ["Anthropology", "Economics", "Linguistics", "Psychology", "Sociology", "Other Social Science"],
-};
-function sortSubcats(subs) {
-  return subs.slice().sort((a, b) => {
-    const ao = /^Other /.test(a.subcategory) ? 1 : 0;
-    const bo = /^Other /.test(b.subcategory) ? 1 : 0;
-    return ao - bo;
-  });
-}
-
-async function loadCategories(type) {
-  const container = $("#category-filters");
-  container.innerHTML = '<div class="text-muted" style="padding:8px">Loading categories...</div>';
-  try {
-    const data = await API.get(`/api/categories?type=${type}`);
-    allCategories = data.categories || [];
-
-    if (allCategories.length === 0) {
-      container.innerHTML = '<div class="text-muted" style="padding:8px">No categories found</div>';
-      return;
-    }
-
-    const typeKey = state.mode === "tossups" ? "tossups" : "bonuses";
-    container.innerHTML = "";
-
-    const saved = restoreFilterState();
-
-    for (const c of allCategories) {
-      const catDiv = document.createElement("div");
-      catDiv.className = "category-group";
-      const isChecked = saved?.categories ? saved.categories.includes(c.category) : false;
-      const savedCatW = isChecked && saved?.weights?.["c:" + c.category] != null ? saved.weights["c:" + c.category] : null;
-      catDiv.innerHTML = `
-        <label class="filter-item">
-          <input type="checkbox" value="${escapeHtml(c.category)}" class="cat-checkbox" ${isChecked ? "checked" : ""}>
-          <span class="cat-expand">${isChecked ? "▾" : "▸"}</span>
-          <span>${escapeHtml(c.category)}</span>
-          <span class="text-muted" style="margin-left:auto;font-size:11px">${c.count}</span>
-          <input type="number" class="cat-weight" value="${isChecked ? (savedCatW != null ? savedCatW : 10) : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
-        </label>
-        <div class="subcategory-list hidden" id="subcats-${escapeHtml(c.category)}"></div>
-      `;
-
-      const checkbox = catDiv.querySelector(".cat-checkbox");
-      const expand = catDiv.querySelector(".cat-expand");
-      const subList = catDiv.querySelector(".subcategory-list");
-
-      checkbox.addEventListener("change", () => {
-        if (checkbox.checked) {
-          expand.textContent = "\u25BE";
-          const b = filtersMode();   // the tab may change before the fetch lands
-          loadSubcategories(c.category, typeKey, subList, false, true).then(() => { if (filtersMode() === b) saveFilterState(); });
-        } else {
-          expand.textContent = "\u25B8";
-          subList.classList.add("hidden");
-          subList.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach(sc => sc.checked = false);
-          saveFilterState();
-        }
-      });
-
-      expand.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (subList.classList.contains("hidden")) {
-          expand.textContent = "\u25BE";
-          // Already rendered: just show it. Re-rendering rebuilt it from the SAVED
-          // blob, silently undoing a mirrored multiplayer selection on screen.
-          if (subList.dataset.loaded && subList.querySelector(".filter-item")) subList.classList.remove("hidden");
-          else loadSubcategories(c.category, typeKey, subList);
-        } else {
-          expand.textContent = "\u25B8";
-          subList.classList.add("hidden");
-        }
-      });
-
-      container.appendChild(catDiv);
-
-      if (checkbox.checked) {
-        const epoch = _panelEpoch;
-        setTimeout(() => { if (epoch === _panelEpoch) loadSubcategories(c.category, typeKey, subList, true); }, 50);
-      }
-    }
-    refreshCategorySummary();
-  } catch (e) {
-    container.innerHTML = '<div class="text-muted" style="padding:8px">Failed to load categories. Is the server running?</div>';
-    console.error("Failed to load categories:", e);
+// Weighted draw: descend the ticked tree by the rows' weights (0 = never drawn
+// while any sibling is positive). A whole subtree whose ticked rows all keep
+// the default 10 is drawn at its natural mix instead of uniformly per leaf.
+function weightedPickCategoryNode() {
+  const rootsOn = _catRoots().filter((r) => _catRowBox(r)?.checked);
+  if (!rootsOn.length) return null;
+  let pick = weightedPick(rootsOn.map((el) => ({ el, weight: catWeightOf(el) })))?.el;
+  while (pick) {
+    const ticked = _catKids(pick).filter((k) => _catRowBox(k)?.checked);
+    if (!ticked.length) return pick;
+    // :scope > — a bare ".cat-children …" also matches pick's OWN row through
+    // its parent's list, so a weighted non-root pick never drew as itself.
+    const untouched = [...pick.querySelectorAll(":scope > .cat-children .cat-checkbox:checked")]
+      .every((cb) => (parseFloat(cb.closest(".cat-row")?.querySelector(".cat-weight")?.value) || 0) === 10);
+    if (_catUnits(pick).whole && untouched) return pick;
+    pick = weightedPick(ticked.map((el) => ({ el, weight: catWeightOf(el) })))?.el;
   }
+  return null;
 }
 
-async function loadSubcategories(category, type, container, silent = false, checkAll = false) {
-  const cacheKey = `${type}:${category}`;
-  const applyCheckAll = () => {
-    if (!checkAll) return;
-    // The user may have UNchecked the category while this fetch was in
-    // flight — a stale cascade would re-check every sub under an unchecked box.
-    const catCb = container.parentElement?.querySelector?.(".cat-checkbox");
-    if (catCb && !catCb.checked) return;
-    container.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach((cb) => {
-      cb.checked = true;
-      const w = cb.closest(".filter-item")?.querySelector(".subcat-weight, .altsub-weight");
-      if (w) w.value = "10";
-    });
-    // Ticking a category selects its alternate subcategories too — so open
-    // those lists as well. Without this they stay collapsed with their boxes
-    // silently ticked inside, and the row still shows the closed arrow.
-    container.querySelectorAll(".altsub-list").forEach((l) => l.classList.remove("hidden"));
-    container.querySelectorAll(".altsub-expand").forEach((x) => { x.textContent = "▾"; });
-    // Tell panel listeners (multiplayer sync, prefetch invalidation) that the
-    // cascade FINISHED: these boxes are checked programmatically after an async
-    // fetch, so without an event a multiplayer host whose debounce fired first
-    // would broadcast a half-loaded selection and never correct it.
-    container.dispatchEvent(new Event("change", { bubbles: true }));
+// ── selection state (saved per mode, snapshots, migration) ──
+function catStateFromDom() {
+  const ids = [], auto = [], weights = {};
+  document.querySelectorAll("#category-filters .cat-checkbox:checked").forEach((cb) => {
+    ids.push(cb.value);
+    if (cb.dataset.autoChecked) auto.push(cb.value);
+    const v = parseFloat(cb.closest(".cat-row")?.querySelector(".cat-weight")?.value);
+    // 10 is implied; a deliberate 0 on a ticked row is kept ("never draw it")
+    if (Number.isFinite(v) && v !== 10) weights[cb.value] = v;
+  });
+  // On the old database the selected units are recorded too: once the new
+  // database is installed they are what carries the selection over (the old
+  // tree is gone then, so the units could not be worked out from the ids).
+  if (_catIndex && _catIndex.v1) return { v: 1, ids, auto, weights, units: catSelectedUnits().map(catNodePath) };
+  return { v: 1, ids, auto, weights };
+}
+// Event-free write of a selection into the rendered tree. initial: collapse
+// everything except branches whose selection is NARROWED (so it is visible).
+// While the window is open, a live (multiplayer) apply only ever opens lists —
+// never closes one the user is browsing.
+function applyCatState(st, opts = {}) {
+  if (!st) return;
+  const want = new Set(st.ids || []), auto = new Set(st.auto || []), wmap = st.weights || {};
+  for (const el of _catNodes()) {
+    const cb = _catRowBox(el); if (!cb) continue;
+    const id = cb.value;
+    cb.checked = want.has(id);
+    if (cb.checked && auto.has(id)) cb.dataset.autoChecked = "1"; else delete cb.dataset.autoChecked;
+    const w = _catW(el);
+    if (w) w.value = cb.checked ? String(wmap[id] != null ? wmap[id] : 10) : "0";
+  }
+  const guiOpen = isCatOverlayOpen() && !opts.initial;
+  const visit = (el) => {
+    const r = _catUnits(el);
+    const partial = _catRowBox(el)?.checked && !r.whole;
+    if (partial) _catExpand(el, true);
+    else if (!guiOpen) _catExpand(el, false);
+    _catKids(el).forEach(visit);
   };
-
-  if (state.subcategoryCache[cacheKey]) {
-    renderSubcategoryList(container, category, state.subcategoryCache[cacheKey]);
-    applyCheckAll();
-    refreshCategorySummary();   // silent sub loads change the partial "*" marker
-    return;
-  }
-
-  if (!silent) {
-    container.classList.remove("hidden");
-    container.innerHTML = '<div class="text-muted" style="padding:4px 8px;font-size:11px">Loading...</div>';
-  }
-
-  try {
-    const data = await API.get(`/api/subcategories?type=${type}&category=${encodeURIComponent(category)}`);
-    const subs = data.subcategories || [];
-    state.subcategoryCache[cacheKey] = subs;
-    renderSubcategoryList(container, category, subs);
-    applyCheckAll();
-    refreshCategorySummary();   // silent sub loads change the partial "*" marker
-  } catch (e) {
-    if (!silent) {
-      container.innerHTML = '<div class="text-muted" style="padding:4px 8px;font-size:11px">Failed to load</div>';
+  _catRoots().forEach(visit);
+}
+// Old (QBReader) category labels -> new tree paths. Used once to carry saved
+// selections and old multiplayer snapshots over; unmapped names are dropped.
+const OLD_CAT_MAP = {
+  "Literature": ["Literature"], "History": ["History"], "Science": ["Science and Math"], "Fine Arts": ["Fine Arts"],
+  "Mythology": ["Mythology"], "Religion": ["Theology"], "Philosophy": ["Philosophy"], "Social Science": ["Social Science"],
+  "Geography": ["Geography"], "Current Events": ["Current Events"], "Pop Culture": ["Pop Culture Sports"], "Trash": ["Pop Culture Sports"],
+  "Other Academic": ["Miscellaneous"],
+  "Literature|American Literature": ["Literature > English Literature > American Literature"],
+  "Literature|British Literature": ["Literature > English Literature > British Literature"],
+  "Literature|Classical Literature": ["Literature > Non English Literature > European Literature > Classical Greek & Latin"],
+  "Literature|European Literature": ["Literature > Non English Literature > European Literature"],
+  "Literature|World Literature": ["Literature > Non English Literature > World Literature"],
+  "Literature|Other Literature": ["Literature > Any Literature", "Literature > Young Reader Literature"],
+  "History|American History": ["History > American History"], "History|Ancient History": ["History > Ancient History"],
+  "History|European History": ["History > European History"], "History|World History": ["History > World History"],
+  "History|Other History": ["History > Cross History"],
+  "Science|Biology": ["Science and Math > Science > Biology"], "Science|Chemistry": ["Science and Math > Science > Chemistry"],
+  "Science|Physics": ["Science and Math > Science > Physics"],
+  "Science|Other Science": ["Science and Math > Math", "Science and Math > Science > Astronomy", "Science and Math > Science > Computer Science", "Science and Math > Science > Earth Science", "Science and Math > Science > Other Science", "Science and Math > Science > Any Science"],
+  "Science|Math": ["Science and Math > Math"], "Science|Astronomy": ["Science and Math > Science > Astronomy"],
+  "Science|Computer Science": ["Science and Math > Science > Computer Science"], "Science|Earth Science": ["Science and Math > Science > Earth Science"],
+  "Science|Engineering": ["Science and Math > Science > Other Science > Engineering"], "Science|Misc Science": ["Science and Math > Science > Other Science"],
+  "Fine Arts|Visual Fine Arts": ["Fine Arts > Visual"], "Fine Arts|Auditory Fine Arts": ["Fine Arts > Music"],
+  "Fine Arts|Other Fine Arts": ["Fine Arts > Performance", "Fine Arts > Any Fine Arts"],
+  "Fine Arts|Architecture": ["Fine Arts > Visual > Architecture"], "Fine Arts|Dance": ["Fine Arts > Performance > Dance"],
+  "Fine Arts|Opera": ["Fine Arts > Performance > Opera"], "Fine Arts|Jazz": ["Fine Arts > Music > Jazz"],
+  "Fine Arts|Musicals": ["Fine Arts > Performance > Theater"], "Fine Arts|Photography": ["Fine Arts > Visual > Other > Photography"],
+  "Fine Arts|Film": ["Fine Arts > Any Fine Arts"], "Fine Arts|Misc Arts": ["Fine Arts > Any Fine Arts"],
+  "Pop Culture|Movies": ["Pop Culture Sports > Pop Culture > Film"], "Pop Culture|Music": ["Pop Culture Sports > Pop Culture > Music"],
+  "Pop Culture|Sports": ["Pop Culture Sports > Sports"], "Pop Culture|Television": ["Pop Culture Sports > Pop Culture > TV"],
+  "Pop Culture|Video Games": ["Pop Culture Sports > Pop Culture > Video Games"],
+  "Pop Culture|Other Pop Culture": ["Pop Culture Sports > Pop Culture > Other", "Pop Culture Sports > Pop Culture > Any"],
+  "Social Science|Anthropology": ["Social Science > Anthropology Sociology"], "Social Science|Sociology": ["Social Science > Anthropology Sociology"],
+  "Social Science|Economics": ["Social Science > Economics"], "Social Science|Psychology": ["Social Science > Psychology"],
+  "Social Science|Linguistics": ["Social Science > Any Social Science > Linguistics"],
+  "Social Science|Other Social Science": ["Social Science > Government", "Social Science > Jurisprudence", "Social Science > Political Phil", "Social Science > Archaeology", "Social Science > Any Social Science"],
+};
+// [{name, subs, alts}] (old snapshot) + old weights {"c:X","s:Y","a:Z"} -> tree state
+function catStateFromLegacy(cats, weights) {
+  const idx = _catIndex;
+  if (!idx || !Array.isArray(cats)) return { v: 1, ids: [], auto: [], weights: {} };
+  const ids = new Set(), auto = new Set(), w = {};
+  const tickWhole = (n) => { ids.add(n.id); (n.children || []).forEach(tickWhole); };
+  const markAncestors = (n) => { for (let p = n.parentId && idx.byId.get(n.parentId); p; p = p.parentId && idx.byId.get(p.parentId)) if (!ids.has(p.id)) { ids.add(p.id); auto.add(p.id); } };
+  const nodesFor = (key) => {
+    if (!idx.v1) return (OLD_CAT_MAP[key] || []).map((p) => idx.byPath.get(p)).filter(Boolean);
+    // Still on the old database: its tree IS the old labels ("Science", "Science >
+    // Biology"); an alternate subcategory sits one level further down.
+    const [cat, sub] = key.split("|");
+    const root = idx.byPath.get(cat);
+    if (!root || !sub) return root ? [root] : [];
+    const direct = idx.byPath.get(cat + " > " + sub);
+    if (direct) return [direct];
+    let hit = null;
+    const walk = (n) => { if (!hit && n.name === sub) hit = n; (n.children || []).forEach(walk); };
+    (root.children || []).forEach(walk);
+    return hit ? [hit] : [];
+  };
+  const ow = weights || {};
+  for (const c of cats) {
+    if (!c || !c.name) continue;
+    const picks = [...(c.subs || []), ...(c.alts || [])].filter((x) => x && x !== c.name);
+    const roots = nodesFor(c.name);
+    if (!picks.length) {
+      roots.forEach((n) => { tickWhole(n); if (ow["c:" + c.name] != null) w[n.id] = ow["c:" + c.name]; });
+      continue;
     }
+    for (const p of picks) {
+      const nodes = nodesFor(c.name + "|" + p);
+      nodes.forEach((n) => {
+        tickWhole(n); markAncestors(n);
+        const ww = ow["s:" + p] != null ? ow["s:" + p] : ow["a:" + p];
+        if (ww != null) w[n.id] = ww;
+      });
+    }
+    roots.forEach((n) => { if (ids.has(n.id) && ow["c:" + c.name] != null) { w[n.id] = ow["c:" + c.name]; auto.delete(n.id); } });
   }
+  return { v: 1, ids: [...ids], auto: [...auto], weights: w };
+}
+// A selection made on the OLD database's tree ("v1:A > B > C" ids) -> the old
+// labels + weights catStateFromLegacy maps onto the new tree. The units come
+// from `units` (recorded on the old tree); without it, the topmost ticks that
+// are not auto-ticked ancestors.
+function legacyFromV1State(st) {
+  const ids = (st.ids || []).filter((id) => String(id).startsWith("v1:"));
+  const on = new Set(ids), auto = new Set(st.auto || []);
+  const parentOf = (id) => { const i = id.lastIndexOf(" > "); return i > 0 ? id.slice(0, i) : null; };
+  const units = Array.isArray(st.units) ? st.units.map((p) => "v1:" + p)
+    : ids.filter((id) => !auto.has(id) && !(on.has(parentOf(id)) && !auto.has(parentOf(id))));
+  const cats = new Map(), weights = {};
+  for (const id of units) {
+    const parts = id.slice(3).split(" > ");
+    const c = cats.get(parts[0]) || { name: parts[0], subs: [], alts: [] };
+    cats.set(parts[0], c);
+    if (parts.length === 2) c.subs.push(parts[1]);
+    else if (parts.length >= 3) c.alts.push(parts[parts.length - 1]);
+  }
+  for (const [id, w] of Object.entries(st.weights || {})) {
+    if (!on.has(id)) continue;
+    const parts = id.slice(3).split(" > ");
+    weights[(parts.length === 1 ? "c:" : parts.length === 2 ? "s:" : "a:") + parts[parts.length - 1]] = w;
+  }
+  return { cats: [...cats.values()], weights };
+}
+// A saved/snapshot tree state, made usable on the tree that is loaded now.
+function catStateForTree(st) {
+  if (_catIndex && !_catIndex.v1 && (st.ids || []).some((id) => String(id).startsWith("v1:"))) {
+    const l = legacyFromV1State(st);
+    return catStateFromLegacy(l.cats, l.weights);
+  }
+  // drop ids the current tree no longer has (a tree version change)
+  const ok = (id) => !_catIndex || _catIndex.byId.has(id);
+  return { v: 1, ids: (st.ids || []).filter(ok), auto: (st.auto || []).filter(ok), weights: st.weights || {} };
+}
+// The saved per-mode blob -> tree state (migrating a pre-tree save once).
+function savedCatState(saved) {
+  if (!saved) return { v: 1, ids: [], auto: [], weights: {} };
+  if (saved.catTree && Array.isArray(saved.catTree.ids)) return catStateForTree(saved.catTree);
+  if (Array.isArray(saved.categories) && saved.categories.length) {
+    const subsOf = saved.subcategories || {};
+    return catStateFromLegacy(saved.categories.map((name) => ({ name, subs: subsOf[name] || [], alts: [] })), saved.weights);
+  }
+  return { v: 1, ids: [], auto: [], weights: {} };
 }
 
-function renderSubcategoryList(container, category, subs) {
-  container.dataset.loaded = "1";
-  container.classList.remove("hidden");
-  if (!subs || subs.length === 0) {
-    const group = container.parentElement;
-    const expand = group?.querySelector(".cat-expand");
-    if (expand) expand.style.visibility = "hidden";
-    container.innerHTML = "";
-    container.classList.add("hidden");
+async function loadCategories(type, opts = {}) {
+  const container = $("#category-filters");
+  if (!container) return;
+  const gen = ++_catLoadGen;
+  const epoch = _panelEpoch;
+  if (!container.querySelector(".cat-node")) container.innerHTML = '<div class="text-muted" style="padding:8px">Loading categories...</div>';
+  let tree;
+  try { tree = await fetchCatTree(type); }
+  catch (e) {
+    if (gen === _catLoadGen) container.innerHTML = '<div class="text-muted" style="padding:8px">Failed to load categories</div>';
+    console.error("Failed to load categories:", e);
     return;
   }
-  const group = container.parentElement;
-  const expand = group?.querySelector(".cat-expand");
-  if (expand) expand.style.visibility = "visible";
-
-  let savedSubs = null;
-  try {
-    const saved = getModeFilters();
-    if (saved?.subcategories?.[category]) {
-      savedSubs = saved.subcategories[category];
-    }
-  } catch {}
-
-  const catCheck = group?.querySelector(".cat-checkbox");
-  const parentChecked = catCheck?.checked;
-
-  const isSubChecked = (name) => (!parentChecked || !savedSubs) ? false : savedSubs.includes(name);
-  let savedWeights = null;
-  try { savedWeights = getModeFilters()?.weights || null; } catch {}
-  const wOf = (key) => (savedWeights && savedWeights[key] != null ? savedWeights[key] : null);
-
-  if (category === "Social Science" && ALT_SUBCATS["Social Science"]) {
-    container.innerHTML = ALT_SUBCATS["Social Science"]
-      .map((alt) => altItemHtml(alt, "Social Science", category, isSubChecked(alt) || isSubChecked("Social Science"), wOf("a:" + alt)))
-      .join("");
-    return;
-  }
-
-  container.innerHTML = sortSubcats(subs)
-    .map((s) => {
-      const isChecked = isSubChecked(s.subcategory);
-      const hasAlts = !!ALT_SUBCATS[s.subcategory];
-      let html = `
-    <label class="filter-item sub-item">
-      <input type="checkbox" value="${escapeHtml(s.subcategory)}" data-category="${escapeHtml(category)}" class="subcat-checkbox" ${isChecked ? "checked" : ""}>
-      ${hasAlts ? `<span class="altsub-expand" title="alternate subcategories">${isChecked ? "▾" : "▸"}</span>` : ""}
-      <span>${escapeHtml(s.subcategory)}</span>
-      <span class="text-muted" style="margin-left:auto;font-size:10px">${s.count}</span>
-      <input type="number" class="subcat-weight" value="${isChecked ? (wOf("s:" + s.subcategory) != null ? wOf("s:" + s.subcategory) : 10) : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
-    </label>`;
-      if (hasAlts) {
-        // Each alternate restores from ITS OWN saved entry (the save list mixes
-        // subs and alts) — restoring from the parent sub resurrected alts the
-        // user had deselected. A checked sub whose save predates alt entries
-        // falls back to all-checked.
-        const savedHasAlts = !!savedSubs && ALT_SUBCATS[s.subcategory].some((a) => savedSubs.includes(a));
-        html += `<div class="altsub-list ${isChecked ? "" : "hidden"}" data-parent="${escapeHtml(s.subcategory)}">` +
-          ALT_SUBCATS[s.subcategory].map((alt) => altItemHtml(alt, s.subcategory, category, isChecked && (savedHasAlts ? isSubChecked(alt) : true), wOf("a:" + alt))).join("") +
-          "</div>";
-      }
-      return html;
-    })
-    .join("");
-}
-
-function altItemHtml(alt, parentSub, category, checked, weight) {
-  return `
-    <label class="filter-item altsub-item">
-      <input type="checkbox" value="${escapeHtml(alt)}" data-parent-sub="${escapeHtml(parentSub)}" data-category="${escapeHtml(category)}" class="altsub-checkbox" ${checked ? "checked" : ""}>
-      <span>${escapeHtml(alt)}</span>
-      <input type="number" class="altsub-weight" value="${checked ? (weight != null ? weight : 10) : 0}" min="0" step="10" title="weight (ratio)" onclick="event.preventDefault()">
-    </label>`;
+  if (gen !== _catLoadGen) return;   // a newer load (the other tab) owns the panel
+  _catIndex = tree;
+  if (!tree.roots.length) { container.innerHTML = '<div class="text-muted" style="padding:8px">No categories found</div>'; return; }
+  container.innerHTML = tree.roots.map(catNodeHtml).join("");
+  const saved = restoreFilterState();
+  // A multiplayer mirror that landed while the tree was loading owns the panel:
+  // never paint the solo save over it.
+  if (!opts.skipSaved && epoch === _panelEpoch) applyCatState(savedCatState(saved), { initial: true });
+  refreshCategorySummary();
 }
 
 function resetPracticeFiltersToDefaults() {
@@ -1798,10 +1809,7 @@ function resetPracticeFiltersToDefaults() {
   removeCustomView();
   const ms = $("#mode-select"); if (ms) { ms.value = "random"; _syncSel(ms); }
   updateModeFields();
-  $$("#category-filters .cat-checkbox:checked").forEach((cb) => {
-    cb.checked = false;
-    cb.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  applyCatState({ ids: [], auto: [], weights: {} }, { initial: true });
   const ew = $("#enable-cat-weights");
   if (ew && ew.checked) { ew.checked = false; ew.dispatchEvent(new Event("change", { bubbles: true })); }
   state.settings.useWeights = false; lsSet("qb-use-weights", "false");
@@ -1822,13 +1830,12 @@ function resetPracticeFiltersToDefaults() {
   if (hadCustom) applyCustomView();
 }
 
+// The selection as node ids (whole subtrees) and as readable names.
 function getSelectedCategories() {
-  const checked = [...$$("#category-filters .cat-checkbox:checked")];
-  return checked.map((cb) => cb.value);
+  return catSelectedUnits().map((el) => el.dataset.id);
 }
-
-function getSelectedSubcategories() {
-  return collectSubcatFilters().subcategories;
+function getSelectedCategoryNames() {
+  return catSelectedUnits().map(catNodeLabel);
 }
 
 // ── Filter-selection snapshot ──────────────────────────────────────────────
@@ -1838,31 +1845,15 @@ function getSelectedSubcategories() {
 // carries no parent info for subcategories, so the cascade can't be rebuilt
 // from it. Multiplayer uses this pair to keep every player's panel in sync.
 function getFilterSelectionSnapshot() {
-  const cats = [];
-  const weights = {};
-  const grabW = (label, key) => {
-    const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
-    const v = w ? parseFloat(w.value) : NaN;
-    if (Number.isFinite(v) && v !== 10) weights[key] = v;   // 10 is implied; deliberate 0s travel
-  };
-  $$("#category-filters .category-group").forEach((g) => {
-    const cb = g.querySelector(".cat-checkbox");
-    if (!cb) return;
-    const subs = [...g.querySelectorAll(".subcat-checkbox:checked")].map((x) => x.value);
-    const alts = [...g.querySelectorAll(".altsub-checkbox:checked")].map((x) => x.value);
-    if (cb.checked || subs.length || alts.length) {
-      cats.push({ name: cb.value, subs, alts });
-      grabW(cb.closest(".filter-item"), "c:" + cb.value);
-      g.querySelectorAll(".subcat-checkbox:checked").forEach((x) => grabW(x.closest(".filter-item"), "s:" + x.value));
-      g.querySelectorAll(".altsub-checkbox:checked").forEach((x) => grabW(x.closest(".filter-item"), "a:" + x.value));
-    }
-  });
+  // catTree carries the selection; `cats` stays (empty) because older app
+  // versions reject a snapshot without it.
+  const catTree = document.querySelector("#category-filters .cat-node") ? catStateFromDom() : savedCatState(getModeFilters());
   const _ya = parseInt($("#year-min")?.value || 2000), _yb = parseInt($("#year-max")?.value || 2026);
   const modeSel = $("#mode-select");
   return {
-    v: 2,
-    cats,
-    weights,
+    v: 3,
+    cats: [],
+    catTree,
     useWeights: !!$("#enable-cat-weights")?.checked,
     // panel-level knobs: these are part of "the room's settings" too
     revealSpeed: state.settings.revealSpeed,
@@ -1876,6 +1867,7 @@ function getFilterSelectionSnapshot() {
     yearMin: Math.min(_ya, _yb),
     yearMax: Math.max(_ya, _yb),
     powermarkOnly: !!$("#filter-powermark")?.checked,
+    cleanOnly: !!$("#filter-clean")?.checked,
     standard: !!$("#filter-standard")?.checked,
     starredOnly: !!$("#filter-starred")?.checked,
   };
@@ -1887,7 +1879,7 @@ let _customView = null;          // { type, prevMode, prevDiffs } while the pane
 let _panelEpoch = 0;             // bumping this kills deferred saved-blob restore timers
 let _snapCustomPending = false;  // a Custom display an apply took down; owed back by whichever apply finishes LAST
 async function applyFilterSelectionSnapshot(snap) {
-  if (!snap || !Array.isArray(snap.cats)) return false;
+  if (!snap || (!Array.isArray(snap.cats) && !snap.catTree)) return false;
   const gen = ++_applySnapGen;   // a newer snapshot arriving mid-apply wins
   _panelEpoch++;                 // pending loadCategories restore timers must not clobber this apply
   _applyingSnapshot = true;
@@ -1921,80 +1913,14 @@ async function applyFilterSelectionSnapshot(snap) {
 }
 async function _applySnapshotInner(snap, gen) {
   const typeKey = state.mode === "bonuses" ? "bonuses" : "tossups";
-  if (!document.querySelector("#category-filters .category-group")) {
-    try { await loadCategories(typeKey); } catch { return false; }
+  if (!document.querySelector("#category-filters .cat-node")) {
+    try { await loadCategories(typeKey, { skipSaved: true }); } catch { return false; }
     if (gen !== _applySnapGen) return false;
   }
-  const want = {};
-  snap.cats.forEach((c) => { if (c && c.name) want[c.name] = c; });
-  const wmap = snap.weights || {};
-  const setWeight = (label, on, key) => {
-    const w = label?.querySelector?.(".cat-weight, .subcat-weight, .altsub-weight");
-    if (!w) return;
-    if (!on) { w.value = "0"; return; }
-    // snapshots omit the default weight — absence MEANS 10, so a leftover
-    // room weight can never survive a restore
-    w.value = key != null && wmap[key] != null ? String(wmap[key]) : "10";
-  };
-  for (const g of $$("#category-filters .category-group")) {
-    const cb = g.querySelector(".cat-checkbox");
-    const expand = g.querySelector(".cat-expand");
-    const subList = g.querySelector(".subcategory-list");
-    if (!cb) continue;
-    const w = want[cb.value];
-    // No events are dispatched anywhere here: the change handlers run the
-    // check-all cascade and saveFilterState, both wrong for a mirrored apply.
-    if (!w) {
-      cb.checked = false;
-      setWeight(cb.closest(".filter-item"), false);
-      if (subList) {
-        // GUI open: never close a list the user is browsing (every remote edit,
-        // even difficulty-only, re-applies the whole tree)
-        if (!isCatOverlayOpen()) subList.classList.add("hidden");
-        subList.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach((x) => {
-          x.checked = false;
-          setWeight(x.closest(".filter-item"), false);
-        });
-      }
-      if (expand) expand.textContent = subList && !subList.classList.contains("hidden") ? "▾" : "▸";
-      continue;
-    }
-    const wasChecked = cb.checked;
-    cb.checked = true;
-    setWeight(cb.closest(".filter-item"), true, "c:" + cb.value);
-    if (subList) {
-      // An already-rendered list is written in place instead of re-rendered:
-      // re-rendering on every remote apply re-expanded lists and destroyed a
-      // focused weight input while the category GUI was open (live MP edits).
-      // The re-render used to clear sub/alt autoChecked marks implicitly.
-      if (subList.dataset.loaded) {
-        subList.querySelectorAll(".subcat-checkbox, .altsub-checkbox").forEach((x) => { delete x.dataset.autoChecked; });
-      } else {
-        try { await loadSubcategories(cb.value, typeKey, subList, true, false); } catch {}
-        if (gen !== _applySnapGen) return false;
-      }
-      // Open the list for a newly ticked category; never close one the user is
-      // browsing in the open GUI.
-      if (subList.querySelector(".filter-item") && (!wasChecked || !isCatOverlayOpen())) subList.classList.remove("hidden");
-      if (expand) expand.textContent = subList.classList.contains("hidden") ? "▸" : "▾";
-      const subs = (w.subs || []), alts = (w.alts || []);
-      subList.querySelectorAll(".subcat-checkbox").forEach((x) => {
-        x.checked = subs.includes(x.value);
-        setWeight(x.closest(".filter-item"), x.checked, "s:" + x.value);
-      });
-      subList.querySelectorAll(".altsub-checkbox").forEach((x) => {
-        x.checked = alts.includes(x.value);
-        setWeight(x.closest(".filter-item"), x.checked, "a:" + x.value);
-      });
-      const guiOpen = isCatOverlayOpen();
-      subList.querySelectorAll(".altsub-list").forEach((l) => {
-        const open = [...l.querySelectorAll(".altsub-checkbox")].some((x) => x.checked);
-        if (open || !guiOpen) l.classList.toggle("hidden", !open);   // GUI open: only ever opens
-        const arrow = l.previousElementSibling?.querySelector?.(".altsub-expand");
-        if (arrow) arrow.textContent = l.classList.contains("hidden") ? "▸" : "▾";
-      });
-    }
-  }
+  // No events are dispatched: the change handlers cascade and save, both wrong
+  // for a mirrored apply. A snapshot from an older app version (names) is
+  // mapped onto the tree.
+  applyCatState(snap.catTree && Array.isArray(snap.catTree.ids) ? catStateForTree(snap.catTree) : catStateFromLegacy(snap.cats || [], snap.weights));
   if (Array.isArray(snap.difficulties)) {
     const wd = snap.difficulties.map(String);
     $$("#difficulty-filters .diff-checkbox").forEach((x) => { x.checked = wd.includes(String(x.value)); });
@@ -2003,6 +1929,7 @@ async function _applySnapshotInner(snap, gen) {
   if (snap.yearMax != null) { const e = $("#year-max"); if (e) e.value = snap.yearMax; }
   updateYearLabel();
   if (snap.powermarkOnly != null) { const e = $("#filter-powermark"); if (e) e.checked = !!snap.powermarkOnly; }
+  if (snap.cleanOnly != null) { const e = $("#filter-clean"); if (e) e.checked = !!snap.cleanOnly; }
   if (snap.standard != null) { const e = $("#filter-standard"); if (e) e.checked = !!snap.standard; }
   if (snap.starredOnly != null) { const e = $("#filter-starred"); if (e) e.checked = !!snap.starredOnly; }
   // Panel knobs apply EVENT-FREE: real change events broke multiplayer's
@@ -2058,33 +1985,15 @@ async function _applySnapshotInner(snap, gen) {
   return true;
 }
 
-function collectSubcatFilters() {
-  const subs = new Set();
-  const alts = new Set();
-  $$("#category-filters .category-group").forEach((group) => {
-    const catCheck = group.querySelector(".cat-checkbox");
-    if (!catCheck?.checked) return;
-    group.querySelectorAll(".subcat-checkbox").forEach((cb) => {
-      if (cb.checked && !ALT_SUBCATS[cb.value]) subs.add(cb.value);
-    });
-    const byParent = {};
-    group.querySelectorAll(".altsub-checkbox").forEach((a) => {
-      const p = a.dataset.parentSub;
-      (byParent[p] = byParent[p] || []).push(a);
-    });
-    Object.keys(byParent).forEach((parent) => {
-      const boxes = byParent[parent];
-      const checked = boxes.filter((b) => b.checked);
-      if (checked.length === 0) return;
-      if (checked.length === boxes.length) subs.add(parent);
-      else checked.forEach((b) => alts.add(b.value));
-    });
-  });
-  return { subcategories: [...subs], alternateSubcategories: [...alts] };
-}
-
 let _allSets = null;
 
+// A set name saved before the rename -> the set's current name.
+function currentSetName(name) {
+  if (!name || !_allSets) return name;
+  if (_allSets.some((s) => s.name === name)) return name;
+  const hit = _allSets.find((s) => (s.old_names || []).includes(name));
+  return hit ? hit.name : name;
+}
 async function loadSets() {
   const sel = $("#mode-set-name");
   if (!sel) return;
@@ -2263,21 +2172,15 @@ function getActiveFilters(opts) {
   if (modeVal === "set") {
     const setName = $("#mode-set-name")?.value || "";
     const f = { random: true };
-    if (setName) f.setNames = [setName];
+    if (setName) {
+      f.setNames = [setName];   // plugins read the name; the server filters by id when present
+      const set = (_allSets || []).find((x) => x.name === setName);
+      if (set && set.id) f.setIds = [set.id];
+    }
     const packets = parsePacketNumbers($("#mode-packet")?.value);
     if (packets.length) f.packetNumbers = packets;
     return f;
   }
-
-  const selectedCats = getSelectedCategories();
-  const { subcategories: selectedSubs, alternateSubcategories: selectedAlts } = collectSubcatFilters();
-
-  const fullyChecked = [...$$("#category-filters .category-group")]
-    .filter(g => g.querySelector(".cat-checkbox")?.checked)
-    .every(g =>
-      ![...g.querySelectorAll(".subcat-checkbox")].some(cb => !cb.checked) &&
-      ![...g.querySelectorAll(".altsub-checkbox")].some(cb => !cb.checked)
-    );
 
   const difficulties = cv ? cv.prevDiffs.slice() : getSelectedDifficulties();
 
@@ -2291,41 +2194,19 @@ function getActiveFilters(opts) {
     random: true,
     starredOnly: $("#filter-starred")?.checked || false,
     powermarkOnly: $("#filter-powermark")?.checked || false,
+    cleanOnly: $("#filter-clean")?.checked || false,
     yearMin,
     yearMax,
   };
 
+  // Tree node ids travel in `categories` (the server reads an id as its whole
+  // subtree); categoryPaths is for client-side matching and display only.
   if (state.settings.useWeights) {
-    const picked = weightedPickCategoryFilter();
-    if (picked) {
-      // The category is ALWAYS sent. A subcategory/alternate name is not unique
-      // to its category — "Poetry", "Long Fiction" and "Short Fiction" each
-      // appear under 9 categories, "Auditory Fine Arts" under 2 — and
-      // _buildWhere ANDs the category clause with the sub/alt clause, so
-      // omitting it drew from every category that reuses the name.
-      filters.categories = [picked.category];
-      if (picked.alternateSubcategory) filters.alternateSubcategories = [picked.alternateSubcategory];
-      else if (picked.subcategory) filters.subcategories = [picked.subcategory];
-      return filters;
-    }
+    const el = weightedPickCategoryNode();   // ONE weighted pick per call
+    if (el) { filters.categories = [el.dataset.id]; filters.categoryPaths = [catNodePath(el)]; return filters; }
   }
-
-  if (fullyChecked && selectedCats.length > 0 && selectedAlts.length === 0) {
-    filters.categories = selectedCats;
-  } else if (selectedSubs.length > 0 || selectedAlts.length > 0) {
-    // AND the category constraint in. fullyChecked above is GLOBAL, so ONE
-    // partially-selected group demotes EVERY other fully-checked category from
-    // `categories` to an enumerated sub list — and subcategory names are not
-    // unique to a category, so "Literature (all) + Biology" leaked 9,106 Fine
-    // Arts tossups into the pool through the shared label "Auditory Fine Arts".
-    // _buildWhere keeps the two clauses separate and ANDs them, so this is a
-    // pure narrowing.
-    if (selectedCats.length > 0) filters.categories = selectedCats;
-    if (selectedSubs.length > 0) filters.subcategories = selectedSubs;
-    if (selectedAlts.length > 0) filters.alternateSubcategories = selectedAlts;
-  } else if (selectedCats.length > 0) {
-    filters.categories = selectedCats;
-  }
+  const units = catSelectedUnits();
+  if (units.length) { filters.categories = units.map((el) => el.dataset.id); filters.categoryPaths = units.map(catNodePath); }
   // No selection = no category constraint: questions are drawn uniformly from
   // the whole pool, so each category appears at its natural database frequency.
 
@@ -2337,14 +2218,10 @@ function describeActiveFilters(opts) {
   const f = getActiveFilters(opts);
   const parts = [];
   if (f.setNames) parts.push("Set: " + f.setNames.join(", ") + (f.packetNumbers ? " (packets " + f.packetNumbers.join(",") + ")" : ""));
-  if (f.categories) parts.push("Categories: " + f.categories.join(", "));
-  // alternateSubcategories were never listed: an alt-only selection (every
-  // click in Social Science is one — its list has no .subcat-checkbox at all)
-  // rendered as "All categories (natural mix)", and multiplayer broadcasts this
-  // string to the lobby as the filter summary.
-  const subBits = [...(f.subcategories || []), ...(f.alternateSubcategories || [])];
-  if (subBits.length) parts.push("Subcats: " + subBits.join(", "));
-  if (!f.categories && !subBits.length && !f.setNames) parts.push("All categories");
+  // From the SELECTION, not f: in weighted mode f holds one random pick.
+  const names = f.setNames ? [] : getSelectedCategoryNames();
+  if (names.length) parts.push("Categories: " + names.join(", "));
+  if (!names.length && !f.setNames) parts.push("All categories");
   if (f.difficulties && f.difficulties.length) parts.push("Difficulty: " + f.difficulties.join(", "));
   if (f.yearMin || f.yearMax) parts.push("Years: " + (f.yearMin || 2000) + "–" + (f.yearMax || 2026));
   if (state.settings.useWeights) parts.push("weighted");
@@ -2363,46 +2240,6 @@ function weightedPick(items) {
   return pool[pool.length - 1];
 }
 
-function weightedPickCategoryFilter() {
-  const groups = [...$$("#category-filters .category-group")].filter(
-    (g) => g.querySelector(".cat-checkbox")?.checked
-  );
-  if (!groups.length) return null;
-  const catItems = groups.map((g) => ({
-    value: g.querySelector(".cat-checkbox").value,
-    weight: parseFloat(g.querySelector(".cat-weight")?.value) || 0,
-    el: g,
-  }));
-  const pickedCat = weightedPick(catItems);
-  if (!pickedCat) return null;
-  const g = pickedCat.el;
-  const wOf = (cb) => parseFloat(cb.closest(".filter-item")?.querySelector(".subcat-weight, .altsub-weight")?.value) || 0;
-
-  const units = [];
-  g.querySelectorAll(".subcat-checkbox:checked").forEach((cb) => {
-    if (!ALT_SUBCATS[cb.value]) units.push({ kind: "sub", value: cb.value, weight: wOf(cb) });
-  });
-  const byParent = {};
-  g.querySelectorAll(".altsub-checkbox").forEach((a) => { (byParent[a.dataset.parentSub] = byParent[a.dataset.parentSub] || []).push(a); });
-  Object.keys(byParent).forEach((parent) => {
-    const boxes = byParent[parent];
-    const checked = boxes.filter((b) => b.checked);
-    if (!checked.length) return;
-    if (checked.length === boxes.length) {
-      const pcb = [...g.querySelectorAll(".subcat-checkbox")].find((c) => c.value === parent);
-      units.push({ kind: "sub", value: parent, weight: pcb ? wOf(pcb) : 10 });
-    } else {
-      checked.forEach((b) => units.push({ kind: "alt", value: b.value, weight: wOf(b) }));
-    }
-  });
-
-  if (!units.length) return { category: pickedCat.value };
-  const picked = weightedPick(units);
-  if (!picked) return { category: pickedCat.value };
-  if (picked.kind === "alt") return { category: pickedCat.value, alternateSubcategory: picked.value };
-  return { category: pickedCat.value, subcategory: picked.value };
-}
-
 function getSelectedDifficulties() {
   return [...$$("#difficulty-filters .diff-checkbox:checked")].map((cb) => parseInt(cb.value));
 }
@@ -2419,7 +2256,7 @@ $("#category-filters")?.addEventListener("change", (e) => {
 });
 $("#year-min")?.addEventListener("input", () => { clampYearDual("min"); debounceSaveFilters(); });
 $("#year-max")?.addEventListener("input", () => { clampYearDual("max"); debounceSaveFilters(); });
-["#filter-starred", "#filter-powermark", "#filter-standard"].forEach((sel) => {
+["#filter-starred", "#filter-powermark", "#filter-standard", "#filter-clean"].forEach((sel) => {
   $(sel)?.addEventListener("change", debounceSaveFilters);
 });
 
@@ -2467,100 +2304,42 @@ function updateYearLabel() {
 }
 
 document.addEventListener("change", (e) => {
-  const cb = e.target.closest(".cat-checkbox, .subcat-checkbox, .altsub-checkbox");
+  const cb = e.target.closest("#category-filters .cat-checkbox");
   if (cb) {
-    const w = cb.closest(".filter-item")?.querySelector(".cat-weight, .subcat-weight, .altsub-weight");
-    if (w) w.value = cb.checked ? "10" : "0";
-    if (cb.classList.contains("subcat-checkbox") && ALT_SUBCATS[cb.value]) {
-      const list = cb.closest(".filter-item")?.nextElementSibling;
-      if (list && list.classList.contains("altsub-list")) {
-        list.classList.toggle("hidden", !cb.checked);
-        list.querySelectorAll(".altsub-checkbox").forEach((a) => {
-          a.checked = cb.checked;
-          const aw = a.closest(".filter-item")?.querySelector(".altsub-weight");
-          if (aw) aw.value = cb.checked ? "10" : "0";
-        });
-        const exp = cb.closest(".filter-item")?.querySelector(".altsub-expand");
-        if (exp) exp.textContent = cb.checked ? "▾" : "▸";
-      }
-    }
-    if (cb.classList.contains("altsub-checkbox") && cb.checked) {
-      const list = cb.closest(".altsub-list");
-      const parentItem = list?.previousElementSibling;
-      const parentCb = parentItem?.querySelector(".subcat-checkbox");
-      if (parentCb && !parentCb.checked) {
-        parentCb.checked = true;
-        // Marked so the teardown below undoes exactly what WE ticked, never a
-        // subcategory the user ticked themselves.
-        parentCb.dataset.autoChecked = "1";
-        const pw = parentItem.querySelector(".subcat-weight"); if (pw) pw.value = "10";
-      }
-    }
-    // SUBCAT IMPLIES CATEGORY. collectSubcatFilters, saveFilterState (1417) and
-    // weightedPickCategoryFilter all skip groups whose .cat-checkbox is off, so
-    // ticking "Biology" under an unticked "Science" meant NO category filter at
-    // all (the whole database) and was never saved — while
-    // getFilterSelectionSnapshot DID carry it, so the panel, the save blob and
-    // the multiplayer snapshot disagreed about the same DOM.
-    // SILENT on purpose (never dispatchEvent on a .cat-checkbox): that fires the
-    // listener at 1590, whose loadSubcategories(checkAll=true) cascade ticks
-    // EVERY sub and alt in the group — the opposite of the one sub the user
-    // picked. Runs after the altsub->subcat block so the alt -> sub -> category
-    // chain completes in one pass, and before this handler's saveFilterState()
-    // so the new state persists in the same tick. The weight-input path below
-    // re-dispatches change on the checkbox, so typing a weight lands here too.
+    const node = cb.closest(".cat-node");
     delete cb.dataset.autoChecked;   // a direct change on a box = the user owns it
-    if (!cb.classList.contains("cat-checkbox")) {
-      // .category-group, never sibling traversal: Social Science renders its
-      // alternates straight into the container with no .subcat-checkbox and no
-      // .altsub-list wrapper at all (1706).
-      const group = cb.closest(".category-group");
-      const catCb = group?.querySelector(".cat-checkbox");
-      const catW = catCb?.closest(".filter-item")?.querySelector(".cat-weight");
-      if (cb.checked) {
-        if (catCb && !catCb.checked) {
-          catCb.checked = true;
-          catCb.dataset.autoChecked = "1";
-          // An unchecked category renders at weight 0, which
-          // weightedPickCategoryFilter reads as "never draw this" — the user's
-          // pick would be silently un-drawable in weighted mode. Guarded by
-          // !catCb.checked so a deliberate 0 or 30 on an ALREADY-checked
-          // category is never clobbered.
-          if (catW) catW.value = "10";
-          const catExp = group.querySelector(".cat-expand");
-          if (catExp) catExp.textContent = "▾";
-          group.querySelector(".subcategory-list")?.classList.remove("hidden");
+    const w = _catW(node); if (w) w.value = cb.checked ? "10" : "0";
+    if (cb.checked) {
+      _catEachDesc(node, (k) => _catSet(k, true));   // the whole subtree
+      if (_catKids(node).length) _catExpand(node, true);   // one level, never the whole subtree
+      // A ticked node implies its ancestors. Silent and marked, so the teardown
+      // below undoes exactly what THIS ticked, never a box the user ticked.
+      for (let p = _catParent(node); p; p = _catParent(p)) {
+        const pcb = _catRowBox(p);
+        if (pcb && !pcb.checked) {
+          pcb.checked = true; pcb.dataset.autoChecked = "1";
+          const pw = _catW(p); if (pw) pw.value = "10";   // an unticked row sits at 0 = never drawn
         }
-      } else {
-        // Symmetric teardown: tick-then-untick must be a true no-op. Only boxes
-        // THIS handler ticked are undone, so the "tick the category, untick
-        // every sub" workflow still means the whole category.
-        const altList = cb.classList.contains("altsub-checkbox") ? cb.closest(".altsub-list") : null;
-        const pItem = altList?.previousElementSibling;
-        const pCb = pItem?.querySelector(".subcat-checkbox");
-        if (pCb?.dataset.autoChecked && !altList.querySelector(".altsub-checkbox:checked")) {
-          pCb.checked = false;
-          delete pCb.dataset.autoChecked;
-          const pw2 = pItem.querySelector(".subcat-weight"); if (pw2) pw2.value = "0";
-        }
-        if (catCb?.dataset.autoChecked && !group.querySelector(".subcat-checkbox:checked, .altsub-checkbox:checked")) {
-          catCb.checked = false;
-          delete catCb.dataset.autoChecked;
-          if (catW) catW.value = "0";
-        }
+        _catExpand(p, true);
+      }
+    } else {
+      _catEachDesc(node, (k) => _catSet(k, false));
+      // Tick-then-untick is a true no-op; "tick a node, untick every child"
+      // still means the whole node (its box was ticked by the user).
+      for (let p = _catParent(node); p; p = _catParent(p)) {
+        const pcb = _catRowBox(p);
+        if (!pcb || !pcb.dataset.autoChecked) break;
+        if (_catKids(p).some((k) => _catRowBox(k)?.checked)) break;
+        pcb.checked = false; delete pcb.dataset.autoChecked;
+        const pw = _catW(p); if (pw) pw.value = "0";
       }
     }
   }
-  const wInput = e.target.closest(".cat-weight, .subcat-weight, .altsub-weight");
+  const wInput = e.target.closest("#category-filters .cat-weight");
   if (wInput) {
-    const item = wInput.closest(".filter-item");
-    const box = item?.querySelector(".cat-checkbox, .subcat-checkbox, .altsub-checkbox");
+    const box = _catRowBox(wInput.closest(".cat-node"));
     const val = parseFloat(wInput.value) || 0;
-    // Typing a weight into a row is a deliberate act on THAT row: the user now
-    // owns it, so the auto-select teardown above must leave it alone. Without
-    // this, "tick Biology, give Science weight 30, untick Biology" silently
-    // wiped the 30 — the box was still marked autoChecked because a weight edit
-    // on an already-checked box never dispatches change on the box itself.
+    // Typing a weight is a deliberate act on THAT row: the user owns it now.
     if (box && val > 0) delete box.dataset.autoChecked;
     if (box && val <= 0 && box.checked) { box.checked = false; box.dispatchEvent(new Event("change", { bubbles: true })); }
     else if (box && val > 0 && !box.checked) { box.checked = true; box.dispatchEvent(new Event("change", { bubbles: true })); }
@@ -2572,16 +2351,13 @@ document.addEventListener("change", (e) => {
 });
 
 document.addEventListener("click", (e) => {
-  const exp = e.target.closest(".altsub-expand");
+  const exp = e.target.closest("#category-filters .cat-expand");
   if (!exp) return;
   e.preventDefault();
   e.stopPropagation();
-  const item = exp.closest(".filter-item");
-  const list = item?.nextElementSibling;
-  if (list && list.classList.contains("altsub-list")) {
-    const hidden = list.classList.toggle("hidden");
-    exp.textContent = hidden ? "▸" : "▾";
-  }
+  const node = exp.closest(".cat-node");
+  const list = node?.querySelector(":scope > .cat-children");
+  if (list) _catExpand(node, list.classList.contains("hidden"));
 });
 
 // ── CATEGORY GUI ─────────────────────────────────────────────────────────────
@@ -2639,9 +2415,9 @@ function refreshCategorySummary() {
 function clearAllCategories() {
   const tree = document.getElementById("category-filters");
   if (!tree) return;
-  tree.querySelectorAll(".cat-checkbox, .subcat-checkbox, .altsub-checkbox").forEach((cb) => { cb.checked = false; delete cb.dataset.autoChecked; });
-  tree.querySelectorAll(".cat-weight, .subcat-weight, .altsub-weight").forEach((w) => { w.value = "0"; });
-  tree.querySelectorAll(".subcategory-list").forEach((l) => l.classList.add("hidden"));
+  tree.querySelectorAll(".cat-checkbox").forEach((cb) => { cb.checked = false; delete cb.dataset.autoChecked; });
+  tree.querySelectorAll(".cat-weight").forEach((w) => { w.value = "0"; });
+  tree.querySelectorAll(".cat-children").forEach((l) => l.classList.add("hidden"));
   tree.querySelectorAll(".cat-expand").forEach((x) => { x.textContent = "\u25B8"; });
   tree.dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -3058,7 +2834,7 @@ async function nextQuestion() {
   state.revealIndex = 0;
   state.prePowerEnd = 0;
   state.bonusPartsAnswered = 0;
-  state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = [null, null, null]; state._bonusJudged = []; state._bonusLastIdx = null;
+  state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = []; state._bonusJudged = []; state._bonusLastIdx = null;
   state.bonusUserAnswers = [];
   state.resultAreaVisible = false;
 
@@ -3210,11 +2986,13 @@ function _randomQuestionParams(filters) {
   if (filters.categories?.length) params.set("categories", filters.categories.join(","));
   if (filters.subcategories?.length) params.set("subcategories", filters.subcategories.join(","));
   if (filters.alternateSubcategories?.length) params.set("alternateSubcategories", filters.alternateSubcategories.join(","));
-  if (filters.setNames?.length) params.set("setNames", filters.setNames.join(","));
+  if (filters.setIds?.length) params.set("setIds", filters.setIds.join(","));
+  else if (filters.setNames?.length) params.set("setNames", filters.setNames.join(","));
   if (filters.packetNumbers?.length) params.set("packetNumbers", filters.packetNumbers.join(","));
   if (filters.difficulties?.length) params.set("difficulties", filters.difficulties.join(","));
   if (filters.standard) params.set("standard", "1");
   if (filters.powermarkOnly) params.set("powermarkOnly", "true");
+  if (filters.cleanOnly) params.set("cleanOnly", "1");
   if (filters.starredOnly) params.set("starredOnly", "true");
   if (filters.yearMin) params.set("yearMin", filters.yearMin);
   if (filters.yearMax) params.set("yearMax", filters.yearMax);
@@ -3281,7 +3059,7 @@ async function skipQuestion() {
       if (!state._negRecorded) API.post("/api/check-tossup", {
         questionId: question.id,
         answer: "",
-        buzzPosition: state.buzzPosition || 0,
+        buzzPosition: displayPosToOriginal(state.buzzPosition || 0),
         sessionId: state.sessionId,
         overriding: true,
         correct: false,
@@ -3389,7 +3167,12 @@ async function serveOrdered() {
 }
 
 function _starredPasses(q, f) {
-  if (f.categories && f.categories.length && q.category && f.categories.indexOf(q.category) < 0) return false;
+  // Tree selection: categoryPaths (node ids travel in categories). A question
+  // matches when its category path is one of them or lies beneath one.
+  if (f.categoryPaths && f.categoryPaths.length) {
+    const p = q.category_path || [q.category, q.subcategory, q.alternate_subcategory].filter(Boolean).join(" > ");
+    if (!f.categoryPaths.some((x) => p === x || p.startsWith(x + " > "))) return false;
+  } else if (f.categories && f.categories.length && q.category && f.categories.indexOf(q.category) < 0) return false;
   if (f.subcategories && f.subcategories.length && q.subcategory && f.subcategories.indexOf(q.subcategory) < 0) return false;
   if (f.alternateSubcategories && f.alternateSubcategories.length && q.alternate_subcategory && f.alternateSubcategories.indexOf(q.alternate_subcategory) < 0) return false;
   if (f.difficulties && f.difficulties.length && q.difficulty != null && f.difficulties.map(String).indexOf(String(q.difficulty)) < 0) return false;
@@ -3436,7 +3219,11 @@ async function fetchMatchingBonus(q) {
   params.set("random", "1");
   if (q.category) params.set("categories", q.category);
   if (q.difficulty != null) params.set("difficulties", String(q.difficulty));
-  if ($("#mode-select")?.value === "set") { const sn = $("#mode-set-name")?.value; if (sn) params.set("setNames", sn); }
+  if ($("#mode-select")?.value === "set") {
+    const sn = $("#mode-set-name")?.value;
+    const set = sn && (_allSets || []).find((x) => x.name === sn);
+    if (set && set.id) params.set("setIds", set.id); else if (sn) params.set("setNames", sn);
+  }
   try { const d = await API.get("/api/bonuses/random?" + params.toString()); return d.bonus || null; } catch { return null; }
 }
 
@@ -3474,6 +3261,24 @@ function switchPracticeType(type, label) {
 }
 
 
+// Info bar: "Root / Leaf" of the question's category path, the full path in an ⓘ.
+function questionCategoryHtml(q) {
+  const parts = String(q.category_path || [q.category, q.subcategory, q.alternate_subcategory].filter(Boolean).join(" > ")).split(" > ").filter(Boolean);
+  if (!parts.length) return "<span>?</span>";
+  const short = parts.length > 1 ? parts[0] + " / " + parts[parts.length - 1] : parts[0];
+  return `<span>${escapeHtml(short)}</span>` + (parts.length > 2 ? `<span class="qb-info" data-tip="${escapeHtml(parts.join(" \u203a "))}">i</span>` : "");
+}
+// Warning-group flags (brief §6) as one "!" hover; review markers stay hidden.
+const QUESTION_WARN_CODES = new Set(["DATA_DEFECT", "MERGED_QUESTION_SUSPECTED", "LEADIN_EMPTY", "BONUS_ONE_PART", "BONUS_VALUES_EXCEED_PARTS", "VALUE_LIKELY_PACKET_TYPO", "SOURCE_FIX_NEEDS_REVIEW", "SOURCE_FIX_NOT_APPLIED"]);
+function questionWarnings(q) {
+  let flags = [];
+  try { flags = Array.isArray(q.flags) ? q.flags : JSON.parse(q.flags || "[]"); } catch { flags = []; }
+  return flags.filter((f) => f && QUESTION_WARN_CODES.has(f.code)).map((f) => f.detail || f.code);
+}
+function questionWarnHtml(q) {
+  const w = questionWarnings(q);
+  return w.length ? `<span class="qb-info qmeta-warn" data-tip="${escapeHtml(w.join(" \u2022 "))}">!</span>` : "";
+}
 function renderQuestion(question) {
   state._loadingQuestion = false;
   state._negRecorded = false;
@@ -3492,7 +3297,7 @@ function renderQuestion(question) {
   const diffName = DIFFICULTY_NAMES[parseInt(diffLabel)] || "";
   $("#question-meta").classList.toggle("hidden", !state.settings.showQuestionMeta);
   $("#question-meta").innerHTML = `
-    <span>${escapeHtml(question.category || "?")} / ${escapeHtml(question.subcategory || "?")}${question.alternate_subcategory ? " \u00b7 " + escapeHtml(question.alternate_subcategory) : ""}</span>
+    ${questionCategoryHtml(question)}${questionWarnHtml(question)}
     <span>Diff ${diffLabel}${diffName ? " \u00b7 " + escapeHtml(diffName) : ""}</span>
     <span>${escapeHtml(setInfo)}</span>
     <span class="star-btn save-plus" id="save-indicator" title="Save to review / folders">+</span>
@@ -3520,8 +3325,8 @@ function renderQuestion(question) {
 
 function renderTossup(q) {
   let text = q.question_sanitized || q.question || "";
+  text = applyNoteFilter(text, q.question);   // notes first: the HTML locates them in the unstripped text
   if (state.settings.hidePronunciations) text = stripPronunciations(text);
-  text = applyNoteFilter(text);
   text = window.QB?.applyTextTransforms?.(text, { type: "tossup", question: q }) ?? text;
   const powerIdx = text.indexOf("(*)");
   const displayText = text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "");
@@ -3567,8 +3372,8 @@ function renderTossup(q) {
 
 async function renderBonus(q) {
   let leadin = q.leadin_sanitized || q.leadin || "";
+  leadin = applyNoteFilter(leadin, q.leadin);
   if (state.settings.hidePronunciations) leadin = stripPronunciations(leadin);
-  leadin = applyNoteFilter(leadin);
   leadin = window.QB?.applyTextTransforms?.(leadin, { type: "bonus-leadin", question: q }) ?? leadin;
   let parts;
   try {
@@ -3576,6 +3381,8 @@ async function renderBonus(q) {
   } catch {
     parts = ["Error parsing bonus parts"];
   }
+  let partsHtml = [];
+  try { partsHtml = JSON.parse(q.parts || "[]"); } catch { partsHtml = []; }
   try {
     state.bonusAnswers = JSON.parse(q.answers_sanitized || q.answers || "[]");
   } catch {
@@ -3593,13 +3400,24 @@ async function renderBonus(q) {
   bonusArea.classList.remove("hidden");
 
   state.bonusPartsAnswered = 0;
-  state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = [null, null, null]; state._bonusJudged = []; state._bonusLastIdx = null;
+  state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = []; state._bonusJudged = []; state._bonusLastIdx = null;
   state.bonusUserAnswers = [];
+  state._bonusPrompted = []; state._bonusPromptFrom = []; state._bonusEval = []; state._bonusDone = [];
+  bonusArea.querySelectorAll(".bonus-prompt-banner").forEach((el) => el.remove());
 
-  for (let i = 0; i < 3; i++) {
+  // A bonus has 1-9 parts (brief §2.3). The page ships three part blocks;
+  // more are generated on demand and unused ones stay hidden.
+  const nParts = Math.max(1, parts.length);
+  state.bonusPartCount = nParts;
+  state._bonusOverrides = new Array(nParts).fill(null);
+  ensureBonusPartBlocks(nParts);
+  const bv = bonusPartValues(q);
+  for (let i = 0; i < nParts; i++) {
+    const head = $(`#bonus-part-${i} .bonus-part-header`);
+    if (head) head.textContent = "PART " + bonusPartLetter(i) + (bv.stated && bv.values[i] !== 10 ? ` [${bv.values[i]}]` : "");
     let partText = parts[i] || `Part ${i + 1}`;
+    partText = applyNoteFilter(partText, partsHtml[i]);
     if (state.settings.hidePronunciations) partText = stripPronunciations(partText);
-    partText = applyNoteFilter(partText);
     partText = window.QB?.applyTextTransforms?.(partText, { type: "bonus-part", question: q, part: i }) ?? partText;
     $(`#bonus-text-${i}`).textContent = partText;
     $(`#bonus-input-${i}`).value = "";
@@ -3617,10 +3435,30 @@ async function renderBonus(q) {
   showBonusNextHint(0);
 }
 
+function bonusPartLetter(i) { return "ABCDEFGHI"[i] || String(i + 1); }
+// Part blocks 3..n-1 cloned from the static third block; blocks past n hidden.
+function ensureBonusPartBlocks(n) {
+  const area = $("#bonus-parts-area"), tmpl = $("#bonus-part-2"), submit = $("#btn-submit-bonus");
+  if (!area || !tmpl) return;
+  for (let i = 3; i < n; i++) {
+    if ($(`#bonus-part-${i}`)) continue;
+    const el = tmpl.cloneNode(true);
+    el.id = `bonus-part-${i}`;
+    el.querySelector(".bonus-part-text").id = `bonus-text-${i}`;
+    const inp = el.querySelector(".bonus-answer-input");
+    inp.id = `bonus-input-${i}`; inp.placeholder = `answer for part ${bonusPartLetter(i)}...`; inp.value = "";
+    el.querySelector(".bonus-part-answer").id = `bonus-answer-${i}`;
+    area.insertBefore(el, submit || null);
+  }
+  for (const el of area.querySelectorAll(".bonus-part")) {
+    const i = parseInt(el.id.replace("bonus-part-", ""), 10);
+    el.classList.toggle("bonus-part-unused", i >= n);
+  }
+}
 function showBonusNextHint(idx) {
   const el = $("#bonus-next-hint");
   if (!el) return;
-  el.innerHTML = keyLabelHtml("next-question", `Reveal Part ${"ABC"[idx] || idx + 1}`);
+  el.innerHTML = keyLabelHtml("next-question", `Reveal Part ${bonusPartLetter(idx)}`);
   el.classList.remove("hidden");
 }
 
@@ -3649,24 +3487,80 @@ function bonusPartTimeUp(idx) {
 }
 
 function finalizeBonusPart(idx) {
+  if ((state._bonusDone ||= [])[idx]) return;   // Enter and the part timer can both land
+  state._bonusDone[idx] = true;
   stopEventTimer();
   state._bonusLastIdx = idx;
   revealBonusPartAnswer(idx);
-  if (idx < 2) { state.bonusAwait = idx + 1; showBonusNextHint(idx + 1); }
+  if (idx < (state.bonusPartCount || 3) - 1) { state.bonusAwait = idx + 1; showBonusNextHint(idx + 1); }
   else { $("#btn-submit-bonus").classList.add("hidden"); submitBonusAnswers(); }
 }
 
-document.addEventListener("keydown", (e) => {
+document.addEventListener("keydown", async (e) => {
   if (!e.target?.classList?.contains("bonus-answer-input")) return;
   if (e.key !== "Enter") return;
   e.preventDefault();
-  const idx = parseInt(e.target.id.replace("bonus-input-", ""));
-  const answer = e.target.value.trim();
+  const inp = e.target;
+  if (inp.disabled) return;
+  const idx = parseInt(inp.id.replace("bonus-input-", ""));
+  const answer = inp.value.trim();
   state.bonusUserAnswers[idx] = answer;
   state.bonusPartsAnswered = Math.max(state.bonusPartsAnswered, idx + 1);
-  e.target.disabled = true;
+  inp.disabled = true;
+  // One prompt per part, as on tossups: judge first, and a prompt reopens the
+  // input for a more specific answer instead of revealing.
+  if (answer && !(state._bonusPrompted || [])[idx]) {
+    const q = state.currentQuestion;
+    const r = await judgeBonusPart(idx, answer);
+    if (state.currentQuestion !== q || state.mode !== "bonuses" || (state._bonusDone || [])[idx]) return;
+    if (r && r.status === "prompt") { promptBonusPart(idx, answer, r); return; }
+  }
   finalizeBonusPart(idx);
 });
+
+// One part judged with the same options check-bonus uses (hidden answers,
+// joint pieces); cached per part + answer so reveal and submit reuse it.
+async function judgeBonusPart(idx, answer) {
+  const q = state.currentQuestion;
+  if (!q || !answer) return { status: "reject" };
+  const previous = (state._bonusPromptFrom || [])[idx] || null;
+  const key = answer + "\u0000" + (previous || "");
+  const c = (state._bonusEval || [])[idx];
+  if (c && c.key === key) return c.r;
+  let r = null;
+  try {
+    r = await API.post("/api/evaluate-bonus-part", { questionId: q.id, part: idx, answer, strictness: state.settings.strictness, previous });
+    if (!r || r.error) r = null;
+  } catch { r = null; }
+  if (!r) {
+    try {
+      r = await API.post("/api/evaluate-answer", { answerline: state.bonusAnswersRaw?.[idx] || state.bonusAnswers?.[idx] || "", sanitized: state.bonusAnswers?.[idx] || "", answer, strictness: state.settings.strictness });
+    } catch { r = { status: "reject" }; }
+  }
+  if (state.currentQuestion === q) (state._bonusEval ||= [])[idx] = { key, r };
+  return r;
+}
+
+function promptBonusPart(idx, firstAnswer, r) {
+  const block = $(`#bonus-part-${idx}`), row = block?.querySelector(".bonus-input"), inp = $(`#bonus-input-${idx}`);
+  if (!block || !row || !inp) { finalizeBonusPart(idx); return; }
+  (state._bonusPrompted ||= [])[idx] = true;
+  (state._bonusPromptFrom ||= [])[idx] = firstAnswer;
+  let banner = block.querySelector(".bonus-prompt-banner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.className = "buzz-prompt-banner bonus-prompt-banner";
+    row.parentNode.insertBefore(banner, row);
+  }
+  const ask = (r && r.prompt && r.prompt.ask) || (r && r.antiprompt ? "less specific?" : "");
+  banner.innerHTML = `<span class="prompt-tag">PROMPT</span>` + (ask ? " " + escapeHtml(ask) : "");
+  inp.value = "";
+  inp.disabled = false;
+  setTimeout(() => inp.focus(), 30);
+  stopEventTimer();
+  const t = state.settings.bonusTimer;
+  if (t > 0) startEventTimer(t, "Part " + (idx + 1), () => bonusPartTimeUp(idx));
+}
 
 async function revealBonusPartAnswer(idx) {
   const el = $(`#bonus-answer-${idx}`);
@@ -3677,15 +3571,18 @@ async function revealBonusPartAnswer(idx) {
   const rawAns = (state.bonusAnswersRaw && state.bonusAnswersRaw[idx]) || "";
   const inputRow = $(`#bonus-part-${idx}`)?.querySelector(".bonus-input");
   if (inputRow) inputRow.classList.add("hidden");
-  const yourLine = `<div class="bonus-your-answer">Your Answer: <strong>${userAns ? escapeHtml(userAns) : '<span class="text-muted">(no answer)</span>'}</strong></div>`;
+  $(`#bonus-part-${idx}`)?.querySelector(".bonus-prompt-banner")?.remove();
+  const from = (state._bonusPromptFrom || [])[idx];
+  const given = userAns ? escapeHtml(userAns) : '<span class="text-muted">(no answer)</span>';
+  const yourLine = `<div class="bonus-your-answer">Your Answer: <strong>${from ? escapeHtml(from) + " → " + given : given}</strong></div>`;
   const show = (verdict) => { el.innerHTML = `${yourLine}<div>${verdict}ANSWER: <span class="bonus-answer-text">${answerLineHtml(rawAns, ans)}</span></div>`; el.classList.remove("hidden"); };
   show("");
   let verdict = '<span class="bonus-verdict incorrect">✗ </span>';
   if (userAns) {
-    try {
-      const r = await API.post("/api/evaluate-answer", { answerline: state.bonusAnswersRaw?.[idx] || ans, sanitized: ans, answer: userAns, strictness: state.settings.strictness });
-      verdict = (r.status === "accept" || r.status === "prompt") ? '<span class="bonus-verdict correct">✓ </span>' : '<span class="bonus-verdict incorrect">✗ </span>';
-    } catch {}
+    // A prompt left standing after the prompt round is not an accept.
+    const r = await judgeBonusPart(idx, userAns);
+    if (r && r.status === "accept") verdict = '<span class="bonus-verdict correct">✓ </span>';
+    else if (r && r.unsure) verdict = '<span class="bonus-verdict unsure">? </span><span class="qb-info bonus-unsure-tip" data-tip="This answer line accepts equivalents and your answer matched none of the listed ones. Click ? to mark it correct.">i</span> ';
   }
   show(verdict);
 }
@@ -3693,13 +3590,10 @@ async function revealBonusPartAnswer(idx) {
 async function submitBonusAnswers() {
   if (!state.currentQuestion || state.mode !== "bonuses") return;
   stopEventTimer();
-  for (let i = 0; i < 3; i++) revealBonusPartAnswer(i);
+  const n = state.bonusPartCount || 3;
+  for (let i = 0; i < n; i++) revealBonusPartAnswer(i);
 
-  const answers = [
-    state.bonusUserAnswers[0] || "",
-    state.bonusUserAnswers[1] || "",
-    state.bonusUserAnswers[2] || "",
-  ];
+  const answers = Array.from({ length: n }, (_, i) => state.bonusUserAnswers[i] || "");
 
   try {
     const result = await API.post("/api/check-bonus", {
@@ -3707,10 +3601,11 @@ async function submitBonusAnswers() {
       answers,
       sessionId: state.sessionId,
       strictness: state.settings.strictness, // same strictness as the per-part ✓/✗ verdicts
+      previous: Array.from({ length: n }, (_, i) => (state._bonusPromptFrom || [])[i] || null),
     });
     state._bonusResult = result;
     state._bonusJudged = (result.parts || []).map((pt) => !!pt.correct);
-    state._bonusOverrides = [null, null, null];
+    state._bonusOverrides = new Array(n).fill(null);
     state._bonusRecorded = true;
     displayBonusResult(result, answers);
     updateSessionStats({ points: result.totalPoints, correct: result.totalPoints > 0 });
@@ -3815,7 +3710,7 @@ function markDeadQuestion(text) {
   answerDiv.innerHTML = `Correct: <span class="actual">${answerLineHtml(state.currentQuestion?.answer, state.currentQuestion?.answer_sanitized || "")}</span>`;
   $("#buzz-area").classList.add("hidden");
   state.resultAreaVisible = true;
-  state.lastResult = { correct: false, isPower: false, points: 0, celerity: 1, answer: state.currentQuestion?.answer_sanitized, userAnswer: "", questionId: state.currentQuestion?.id, buzzPosition: state.buzzPosition, category: state.currentQuestion?.category };
+  state.lastResult = { correct: false, isPower: false, points: 0, celerity: 1, answer: state.currentQuestion?.answer_sanitized, userAnswer: "", questionId: state.currentQuestion?.id, buzzPosition: state.buzzPosition, origBuzzPosition: displayPosToOriginal(state.buzzPosition || 0), category: state.currentQuestion?.category };
 
   state.sessionHistory.push({
     id: state.currentQuestion?.id, type: "tossup",
@@ -3832,7 +3727,7 @@ function markDeadQuestion(text) {
     API.post("/api/check-tossup", {
       questionId: state.currentQuestion.id,
       answer: "",
-      buzzPosition: state.buzzPosition || 0,
+      buzzPosition: displayPosToOriginal(state.buzzPosition || 0),
       sessionId: state.sessionId,
       overriding: true,
       correct: false,
@@ -3873,6 +3768,16 @@ function togglePause() {
 // text is a subsequence of the original for our own transforms, so greedy
 // character alignment recovers the original index; unknown plugin insertions
 // degrade gracefully.
+function mapDisplayPosToOriginal(disp, orig, displayPos) {
+  disp = String(disp || ""); orig = String(orig || "");
+  if (!disp || !orig || disp === orig) return displayPos;
+  let oi = 0, di = 0;
+  while (di < displayPos && oi < orig.length) {
+    if (orig[oi] === disp[di]) { oi++; di++; }
+    else oi++;
+  }
+  return oi;
+}
 function displayPosToOriginal(displayPos) {
   const orig = state.currentQuestion?.question_sanitized || "";
   const disp = state.currentDisplayText || "";
@@ -3933,6 +3838,7 @@ function buzz() {
   state.isBuzzed = true;
   state.isPaused = false;
   state.promptActive = false;
+  state._promptFrom = null;
 
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
 
@@ -4080,13 +3986,15 @@ async function submitTossupAnswer(answer) {
         fullyRead: !!state.questionFullyRead,
         strictness: state.settings.strictness,
         allowPrompt: !state.promptActive,
+        previous: state.promptActive ? state._promptFrom : null,
       });
     if (!result) return;
 
     if (result.prompted) {
       state.promptActive = true;
+      state._promptFrom = answer;
       state.resultAreaVisible = false;
-      const ask = result.prompt && result.prompt.ask;
+      const ask = (result.prompt && result.prompt.ask) || (result.antiprompt ? "less specific?" : "");
       showPromptBanner(ask);
       const inp = $("#buzz-input");
       if (inp) { inp.value = ""; inp.disabled = false; inp.placeholder = "answer again…"; setTimeout(() => inp.focus(), 30); }
@@ -4137,8 +4045,9 @@ async function judgeWithPluginRules(answer) {
       answer,
       strictness: state.settings.strictness,
       buzzPosition: fullyRead ? null : origPos,
+      previous: state.promptActive ? state._promptFrom : null,
     });
-    verdict = { status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt };
+    verdict = { status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt, unsure: !!ev.unsure };
   } catch (e) {
     showError("Failed to check answer");
     return null;
@@ -4155,7 +4064,7 @@ async function judgeWithPluginRules(answer) {
 
   if (verdict.status === "prompt" && state.promptActive) verdict.status = "reject";
   if (verdict.status === "prompt") {
-    return { prompted: true, prompt: verdict.prompt || { ask: "be more specific" }, answer: q.answer_sanitized };
+    return { prompted: true, prompt: verdict.prompt || { ask: "be more specific" }, antiprompt: !!verdict.antiprompt, answer: q.answer_sanitized };
   }
 
   const correct = verdict.status === "accept";
@@ -4177,7 +4086,7 @@ async function judgeWithPluginRules(answer) {
       overriding: true,
       correct, isPower, points, celerity,
     });
-    return { correct, points, isPower, celerity, answer: rec.answer || q.answer_sanitized };
+    return { correct, points, isPower, celerity, answer: rec.answer || q.answer_sanitized, unsure: !correct && !!verdict.unsure };
   } catch (e) {
     showError("Failed to record answer");
     return null;
@@ -4207,7 +4116,7 @@ function displayTossupResult(result, userAnswer) {
     points: result.points,
     celerity: result.celerity,
     answer: result.answer,
-    buzzPosition: state.buzzPosition || 0,
+    buzzPosition: displayPosToOriginal(state.buzzPosition || 0),
     starred: state.currentQuestion ? isStarredLocal(state.currentQuestion.id, "tossup") : false,
   });
   renderHistoryPanel();
@@ -4230,7 +4139,9 @@ function displayTossupResult(result, userAnswer) {
     userAnswer,
     questionId: state.currentQuestion?.id,
     buzzPosition: state.buzzPosition,
+    origBuzzPosition: displayPosToOriginal(state.buzzPosition || 0),
     category: state.currentQuestion?.category,
+    unsure: !result.correct && !!result.unsure,
   };
   state.resultOverridden = false;
 
@@ -4611,16 +4522,69 @@ function stripModeratorNotes(text) {
   // states an answer requirement (those speak to the players).
   const keepGeneric = (m) => noteMentionsPlayers(m) || /\b(requir(?:ed|es)?|accept(?:ed|able|s)?|needed|prompt(?:able|ed)?)\b/i.test(m);
   t = t.replace(/\s*[\[(]\s*(?:ed\.?\s+|mod\.?\s+)?notes?\s*:[^\])]*[\])]/gi, (m) => (keepGeneric(m) ? m : ""));
-  // BARE form — the largest group (628). Runs from "Note to moderator" to the
-  // end of that sentence. The dump sometimes omits the space after the period
-  // ("…required.A paramagnetic gas"), so a following capital also terminates it.
-  t = t.replace(new RegExp(`(?:^|\\s)notes?\\s+to\\s+(?:the\\s+)?${NOTE_AUDIENCE}(?=[\\s:,])[^.!?]*[.!?]+\\s*`, "gi"), (m) => (noteMentionsPlayers(m) ? m : " "));
-  t = t.replace(new RegExp(`(?:^|\\s)${NOTE_AUDIENCE}(?:'s|s')?\\s+notes?\\s*:[^.!?]*[.!?]+\\s*`, "gi"), (m) => (noteMentionsPlayers(m) ? m : " "));
+  // No BARE-form rule: a bare "Note to moderator: …" has no provable end in
+  // plain text (no final period, or several sentences), and cutting to the
+  // first full stop deleted real question text. New-format notes are found
+  // from the HTML (applyNoteFilter); an unformatted one is left visible.
   return t.replace(/\s{2,}/g, " ").trim();
 }
+
+// ── Question text from the new database (brief §3) ──────────────────────────
+// HTML fields carry only <b> <u> <i> <sup>. A moderator / reader note is ONE
+// italic run that starts with its label; the plain *_sanitized copy keeps the
+// note text but cannot show where it ends, so the run is read from the HTML
+// and its folded text is cut from the plain copy. "Note to players:" and
+// unlabelled requirement notes are read aloud and never hidden.
+const _ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
+function decodeEntities(s) {
+  return String(s || "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => e[0] === "#"
+    ? String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10))
+    : (_ENT[e.toLowerCase()] ?? m));
+}
+function htmlStyleRuns(html) {
+  const out = [];
+  let it = 0, last = 0, m;
+  const re = /<\/?([a-z]+)[^>]*>/gi;
+  const push = (t) => {
+    if (!t) return;
+    const prev = out[out.length - 1], ital = it > 0;
+    if (prev && prev.italic === ital) prev.text += t; else out.push({ text: t, italic: ital });
+  };
+  while ((m = re.exec(html))) {
+    push(decodeEntities(html.slice(last, m.index)));
+    const tag = m[1].toLowerCase();
+    if (tag === "i" || tag === "em") it = Math.max(0, it + (m[0][1] === "/" ? -1 : 1));
+    last = re.lastIndex;
+  }
+  push(decodeEntities(html.slice(last)));
+  return out;
+}
+const NOTE_RUN_LABEL = /^\s*(?:note to (?:the )?(?:moderators?|readers?)\b|reader(?:'s)? note\b|moderator(?:'s)? note\b)/i;
+function noteRunsFromHtml(html) {
+  if (!html || html.indexOf("<") < 0) return [];
+  return htmlStyleRuns(String(html)).filter((r) => r.italic && NOTE_RUN_LABEL.test(r.text)).map((r) => r.text.trim());
+}
+// What QBReader's plain copy does to text: accents folded, curly quotes
+// straightened, dashes and ellipses spelled out.
+function foldLikeSanitized(s) {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, "-").replace(/…/g, "...").replace(/\u00a0/g, " ");
+}
+function cutNotesUsingHtml(text, html) {
+  let t = String(text || "");
+  for (const note of noteRunsFromHtml(html)) {
+    for (const cand of [foldLikeSanitized(note), note]) {
+      const i = t.indexOf(cand);
+      if (i >= 0) { t = t.slice(0, i).replace(/\s+$/, "") + (i > 0 ? " " : "") + t.slice(i + cand.length).replace(/^\s+/, ""); break; }
+    }
+  }
+  return t;
+}
 // Applied wherever question or answer text is shown, gated on the setting.
-function applyNoteFilter(text) {
-  return state.settings.hideNotes ? stripModeratorNotes(text) : text;
+// html = the record's HTML field for this text (question / leadin / part).
+function applyNoteFilter(text, html) {
+  if (!state.settings.hideNotes) return text;
+  return stripModeratorNotes(html ? cutNotesUsingHtml(text, html) : text);
 }
 
 const PRON_KEEP_WORDS = new Set(("a an the and or but nor so yet of in on at to for with by from as is are was were be been being am " +
@@ -4671,9 +4635,19 @@ function stripPronunciations(text) {
     const capsSyllable = dequoted.some((w) => /^[A-Z]{2,}$/.test(w) && !PRON_ACRONYMS.has(w)) && dequoted.some((w) => /^[a-z]{2,}$/.test(w));
     return hyphenated || capsSyllable ? "" : m;
   });
-  // Parentheticals except the power mark; twice for one level of nesting
-  t = t.replace(/\s*\((?!\*\))[^()]*\)/g, "");
-  t = t.replace(/\s*\((?!\*\))[^()]*\)/g, "");
+  // Unquoted phonetic parentheticals in old-format sets ("(KAH-fka)"), by the
+  // same test as the brackets above. (+), (**), (*) and real content such as
+  // "(born 1920)" stay: deleting every parenthetical removed power tiers.
+  t = t.replace(/\s*\(([^()]{1,80})\)/g, (m, inner) => {
+    const tokens = inner.trim().replace(/\s*-\s+|\s+-\s*/g, "-").split(/\s+/);
+    if (!tokens.length || tokens.length > 7) return m;
+    if (!tokens.every((w) => /^[A-Za-z][A-Za-z'’-]*[.,;:]?$/.test(w))) return m;
+    const bare = tokens.map((w) => w.replace(/[.,;:]+$/, ""));
+    if (/^(this|these|that|those|his|her|their|its|the|a|an)$/i.test(bare[0])) return m;
+    const hyphenated = bare.some((w) => /[A-Za-z]-[A-Za-z]/.test(w));
+    const capsSyllable = bare.some((w) => /^[A-Z]{2,}$/.test(w) && !PRON_ACRONYMS.has(w)) && bare.some((w) => /^[a-z]{2,}$/.test(w));
+    return hyphenated || capsSyllable ? "" : m;
+  });
   // Residue: empty brackets (present in source data or left by inner strips)
   t = t.replace(/\s*\[\s*\]/g, "");
   return t.replace(/  +/g, " ");
@@ -4690,13 +4664,20 @@ function colorizePowerMarks(escapedHtml) {
     escapedHtml.slice(i + 3).replace(/\(\*\)/g, mark);
 }
 
+// Recorded buzz positions index question_sanitized AS STORED, "(*)" included
+// (what the server judges and records); cards draw the text without the mark.
+function strippedBuzzPos(raw, p) {
+  let n = p || 0;
+  for (let at = raw.indexOf("(*)"); at >= 0 && at < p; at = raw.indexOf("(*)", at + 3)) n -= Math.min(3, p - at);
+  return Math.max(0, n);
+}
 function historyQuestionHtml(e) {
   const raw = e.question?.question_sanitized || e.question?.leadin_sanitized || "";
   const isTossup = e.type === "tossup";
   const powerIdx = isTossup ? raw.indexOf("(*)") : -1;
   const text = isTossup ? raw.replace(/\(\*\)/g, "") : raw;
   const marks = [];
-  const pos = isTossup ? (e.buzzPosition || 0) : 0;
+  const pos = isTossup ? strippedBuzzPos(raw, e.buzzPosition || 0) : 0;
   if (powerIdx >= 0 && powerIdx <= text.length) marks.push({ i: powerIdx, rank: 2, html: '<span class="power-mark-inline">(*)</span>' });
   if (pos > 0 && pos <= text.length) marks.push({ i: pos, rank: 1, html: '<span class="buzz-mark">(#)</span>' });
   // A finished question shows its pre-power text in bold here too (history and
@@ -4725,7 +4706,7 @@ function histTrackHtml(e) {
   if (!raw) return "";
   const len = raw.replace(/\(\*\)/g, "").length || 1;
   const pi = raw.indexOf("(*)");
-  const buzz = Math.max(0, Math.min(1, (e.buzzPosition || 0) / len));
+  const buzz = Math.max(0, Math.min(1, strippedBuzzPos(raw, e.buzzPosition || 0) / len));
   const power = pi >= 0 ? Math.max(0, Math.min(1, pi / len)) : -1;
   return '<span class="hist-track" title="(#) buzz at ' + Math.round(buzz * 100) + "%" + (power >= 0 ? " · (*) power ends at " + Math.round(power * 100) + "%" : "") + '">' +
     (power >= 0 ? '<span class="hist-track-power" style="left:' + (power * 100).toFixed(1) + '%"></span>' : "") +
@@ -4899,8 +4880,10 @@ function renderTossupResult() {
   }
 
   const celPct = ((1 - r.celerity) * 100).toFixed(1);
+  const unsure = r.unsure && !state.resultOverridden;
+  const markTip = keyDisplay("mark-correct") + " marks it correct, " + keyDisplay("mark-incorrect") + " marks it incorrect";
   answerDiv.innerHTML = `
-    Your answer<span class="qb-info" data-tip="${escapeHtml(keyDisplay("mark-correct") + " marks it correct, " + keyDisplay("mark-incorrect") + " marks it incorrect")}">i</span>: <strong>${escapeHtml(r.userAnswer || "(no answer)")}</strong>${state.resultOverridden ? ' <span style="color:var(--yellow)">(overridden)</span>' : ''}
+    Your answer<span class="qb-info" data-tip="${escapeHtml(unsure ? "This answer line accepts equivalents and your answer matched none of the listed ones, so judge it yourself: " + markTip : markTip)}">i</span>: <strong>${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">UNSURE</span>' : ''}${state.resultOverridden ? ' <span style="color:var(--yellow)">(overridden)</span>' : ''}
     ${r.correct ? "" : `<br>Correct: <span class="actual">${answerLineHtml(state.currentQuestion?.answer, r.answer || "")}</span>`}
     <br>Celerity: ${celPct}% remaining
   `;
@@ -4976,7 +4959,7 @@ function toggleResultOverride(markCorrect) {
     API.post("/api/check-tossup", {
       questionId: r.questionId,
       answer: r.userAnswer,
-      buzzPosition: r.buzzPosition || 0,
+      buzzPosition: r.origBuzzPosition ?? (r.buzzPosition || 0),
       sessionId: state.sessionId,
       overriding: true,
       correct: r.correct,
@@ -4997,7 +4980,7 @@ function toggleResultOverride(markCorrect) {
 // upserts the same session row with the recomputed score.
 async function applyBonusOverride(idx, force) {
   if (!state._bonusRecorded || !state.currentQuestion || state.mode !== "bonuses") return;
-  if (idx == null || idx < 0 || idx > 2) return;
+  if (idx == null || idx < 0 || idx >= (state.bonusPartCount || 3)) return;
   if (state._bonusBusy) return;
   const judged = state._bonusJudged || [];
   const shown = state._bonusOverrides[idx] != null ? state._bonusOverrides[idx] : judged[idx];
@@ -5010,10 +4993,11 @@ async function applyBonusOverride(idx, force) {
   try {
     result = await API.post("/api/check-bonus", {
       questionId: state.currentQuestion.id,
-      answers: [state.bonusUserAnswers[0] || "", state.bonusUserAnswers[1] || "", state.bonusUserAnswers[2] || ""],
+      answers: Array.from({ length: state.bonusPartCount || 3 }, (_, i) => state.bonusUserAnswers[i] || ""),
       sessionId: state.sessionId,
       strictness: state.settings.strictness,
       overrides: state._bonusOverrides.slice(),
+      previous: Array.from({ length: state.bonusPartCount || 3 }, (_, i) => (state._bonusPromptFrom || [])[i] || null),
     });
   } catch (e) {
     state._bonusBusy = false;
@@ -5027,19 +5011,20 @@ async function applyBonusOverride(idx, force) {
   const holder = $("#bonus-answer-" + idx);
   const vs = holder && holder.querySelector(".bonus-verdict");
   if (vs) { vs.className = "bonus-verdict " + (next ? "correct" : "incorrect"); vs.textContent = next ? "✓ " : "✗ "; }
+  holder?.querySelector(".bonus-unsure-tip")?.remove();
 
   // banner
   const overridden = state._bonusOverrides.some((o) => o != null);
   const banner = $("#result-banner");
   if (banner) {
-    banner.className = "result-banner " + (result.totalPoints > 20 ? "power" : result.totalPoints > 0 ? "correct" : "incorrect");
-    banner.textContent = `BONUS: ${result.totalPoints}/30 pts (${result.partsCorrect}/3)` + (overridden ? " (overridden)" : "");
+    banner.className = "result-banner " + bonusBannerClass(result);
+    banner.textContent = bonusBannerText(result) + (overridden ? " (overridden)" : "");
   }
 
   // running score + history entry
   state.totalPoints += result.totalPoints - prevPts;
   const hist = [...state.sessionHistory].reverse().find((e) => e.type === "bonus" && e.id === state.currentQuestion.id);
-  if (hist) { hist.points = result.totalPoints; hist.partsCorrect = result.partsCorrect; hist.correct = result.totalPoints > 20; }
+  if (hist) { hist.points = result.totalPoints; hist.partsCorrect = result.partsCorrect; hist.correct = bonusAllCorrect(result); }
   renderHistoryPanel();
   updateSessionStats();
   Sound.toggle();
@@ -5053,6 +5038,16 @@ document.addEventListener("click", (e) => {
   applyBonusOverride(parseInt(holder.id.replace("bonus-answer-", ""), 10));
 });
 
+// Totals are out of the bonus's own maximum (its per-part values; 10 each
+// when unstated) and its own part count — not 30 and 3.
+function bonusResultMax(result) {
+  const n = state.bonusPartCount || (result && result.parts && result.parts.length) || 3;
+  const bv = state.currentQuestion ? bonusPartValues(state.currentQuestion) : null;
+  return { n, max: bv && bv.parts === n ? bv.max : n * 10 };
+}
+function bonusAllCorrect(result) { const { n } = bonusResultMax(result); return (result.partsCorrect || 0) >= n && n > 0; }
+function bonusBannerClass(result) { return bonusAllCorrect(result) ? "power" : result.totalPoints > 0 ? "correct" : "incorrect"; }
+function bonusBannerText(result) { const { n, max } = bonusResultMax(result); return `BONUS: ${result.totalPoints}/${max} pts (${result.partsCorrect}/${n})`; }
 function displayBonusResult(result, userAnswers) {
   const banner = $("#result-banner");
   const answerDiv = $("#result-answer");
@@ -5061,8 +5056,8 @@ function displayBonusResult(result, userAnswers) {
   state.resultAreaVisible = true;
 
   banner.className = "result-banner";
-  banner.classList.add(result.totalPoints > 20 ? "power" : result.totalPoints > 0 ? "correct" : "incorrect");
-  banner.textContent = `BONUS: ${result.totalPoints}/30 pts (${result.partsCorrect}/3)`;
+  banner.classList.add(bonusBannerClass(result));
+  banner.textContent = bonusBannerText(result);
 
   const actualAnswers = result.answers || [];
   answerDiv.innerHTML = "";
@@ -5072,7 +5067,7 @@ function displayBonusResult(result, userAnswers) {
     type: "bonus",
     question: state.currentQuestion,
     userAnswers,
-    correct: result.totalPoints > 20,
+    correct: bonusAllCorrect(result),
     points: result.totalPoints,
     partsCorrect: result.partsCorrect,
     answers: actualAnswers,
@@ -6032,7 +6027,7 @@ function qhDetailHtml(q, type) {
     try { raws = JSON.parse(q.answers || "[]"); } catch (e) {}
     try { parts = JSON.parse(q.parts_sanitized || "[]"); } catch (e) {}
     return '<div class="qh-qtext">' + escapeHtml(q.leadin_sanitized || "") + "</div>" +
-      parts.map((p, k) => '<div class="qh-part">[10] ' + escapeHtml(p) + '<br><span class="qh-ans">ANSWER: ' + answerLineHtml(raws[k], answers[k] || "") + "</span></div>").join("");
+      parts.map((p, k) => '<div class="qh-part">[' + (bonusPartValues(q).values[k] || 10) + '] ' + escapeHtml(p) + '<br><span class="qh-ans">ANSWER: ' + answerLineHtml(raws[k], answers[k] || "") + "</span></div>").join("");
   }
   return '<div class="qh-qtext">' + escapeHtml(q.question_sanitized || "") + "</div>" +
     '<div class="qh-ans">Answer: ' + answerLineHtml(q.answer, q.answer_sanitized || "") + "</div>";
@@ -6091,7 +6086,7 @@ async function loadStats(preserveScroll = false) {
       tossupAvgCelerity: catData.celerityCount ? catData.celeritySum / catData.celerityCount : 0,
       bonusesAttempted: catData.bonusesAttempted,
       bonusPartsCorrect: catData.bonusPartsCorrect || 0,
-      bonusPartsTotal: (catData.bonusesAttempted || 0) * 3,
+      bonusPartsTotal: catData.bonusPartsTotal != null ? catData.bonusPartsTotal : (catData.bonusesAttempted || 0) * 3,
     } : stats;
 
     let html = "";
@@ -6219,7 +6214,7 @@ async function loadStats(preserveScroll = false) {
       const rowsHtml = sessionEntries.map((en, i) => {
         const isBonus = en.type === "bonus";
         let cls = "qh-miss", label = "MISS";
-        if (isBonus) { cls = en.points >= 20 ? "qh-correct" : en.points > 0 ? "qh-partial" : "qh-miss"; label = (en.bonus_parts_correct != null ? en.bonus_parts_correct : 0) + "/3"; }
+        if (isBonus) { const pc = en.bonus_parts_correct != null ? en.bonus_parts_correct : 0, pn = en.part_count || 3; cls = pc >= pn ? "qh-correct" : en.points > 0 ? "qh-partial" : "qh-miss"; label = pc + "/" + pn; }
         else if (en.points >= 15) { cls = "qh-power"; label = "POWER"; }
         else if (en.correct) { cls = "qh-correct"; label = "CORRECT"; }
         else if (en.points < 0) { cls = "qh-neg"; label = "NEG"; }
@@ -6228,7 +6223,7 @@ async function loadStats(preserveScroll = false) {
           '<div class="qh-buzzbar" title="Buzzed ' + Math.round(cel * 100) + '% into the question">' +
             '<div class="qh-buzzmark" style="left:' + (cel * 100).toFixed(1) + '%"></div></div>';
         const ans = en.given_answer ? escapeHtml(en.given_answer) : '<span class="text-muted">(no answer)</span>';
-        const res = isBonus ? (en.points >= 20 ? "correct" : en.points > 0 ? "partial" : "miss") : (en.points >= 15 ? "power" : en.correct ? "correct" : en.points < 0 ? "neg" : "miss");
+        const res = isBonus ? ((en.bonus_parts_correct || 0) >= (en.part_count || 3) ? "correct" : en.points > 0 ? "partial" : "miss") : (en.points >= 15 ? "power" : en.correct ? "correct" : en.points < 0 ? "neg" : "miss");
         return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" data-res="' + res + '" data-cat="' + escapeHtml(en.category || "") + '" data-ans="' + escapeHtml((en.given_answer || "").toLowerCase()) + '" style="cursor:pointer" title="Show the question & answer">' +
           '<td><span class="qh-chev">▸</span> <span class="qh-badge ' + cls + '">' + label + "</span></td>" +
           "<td>" + escapeHtml(en.category || "") + (en.difficulty != null ? ' <span class="text-muted">d' + en.difficulty + "</span>" : "") + "</td>" +
@@ -6860,6 +6855,12 @@ async function checkForUpdatesUI() {
   status.innerHTML = "";
 
   try {
+    const bg = await API.get("/api/db-update-status").catch(() => null);
+    if (bg && ["checking", "downloading", "ready"].includes(bg.state)) {
+      renderDbUpdateStatus(bg); watchDbUpdate();
+      btn.disabled = false; btn.textContent = "Check for Updates";
+      return;
+    }
     const info = await API.get("/api/check-update");
     if (info.error) {
       status.textContent = isNetworkErr(info.error)
@@ -6867,10 +6868,13 @@ async function checkForUpdatesUI() {
         : "Question updates aren't configured for this build.";
     } else if (!info.configured) {
       status.textContent = "Online updates aren't set up in this build.";
+    } else if (info.needsAppUpdate) {
+      status.textContent = "A newer question database needs an app update first.";
     } else if (!info.available) {
       status.textContent = "Your question database is up to date.";
     } else {
-      status.innerHTML = `<div style="margin-bottom:8px">Update available: <strong>${escapeHtml(info.latest.name)}</strong></div>`;
+      const mb = info.latest.size ? ` · ${Math.round(info.latest.size / 1048576)} MB` : "";
+      status.innerHTML = `<div style="margin-bottom:8px">Update available: <strong>${escapeHtml(info.latest.name)}</strong>${escapeHtml(mb)}</div>`;
       const install = document.createElement("button");
       install.className = "btn btn-sm btn-primary";
       install.textContent = "Download & install";
@@ -6900,32 +6904,13 @@ async function installUpdateUI(latest) {
   const status = $("#update-status");
   if (!status) return;
   status.innerHTML = progressBarHtml("db-upd", "Starting…");
-  const pt = () => document.getElementById("db-upd-label");
-
-  let unsub = null;
-  if (window.qbreader?.onUpdateProgress) {
-    unsub = window.qbreader.onUpdateProgress((p) => {
-      if (p && typeof p === "object") setProgress("db-upd", p.pct, p.label);
-      else setProgress("db-upd", null, String(p));
-    });
-  }
-
+  _dbManual = true;
   try {
-    const res = await API.post("/api/apply-update", { folderId: latest.id }, 600000);
-    if (res.error) throw new Error(res.error);
-    const r = res.result || {};
-    setProgress("db-upd", 100, `Updated to ${latest.name} — ${(r.tossups || 0).toLocaleString()} tossups, ${(r.bonuses || 0).toLocaleString()} bonuses.`);
-    const el = pt();
-    if (el) {
-    }
-    _allCategoryNames = null;
-    state.subcategoryCache = {};
-    initTitle();
+    const r = await API.post("/api/db-update-start", {});
+    if (r && r.state === "error") throw new Error(r.error);
+    watchDbUpdate();
   } catch (e) {
-    const el = pt();
-    if (el) el.textContent = "Update failed: " + e.message;
-  } finally {
-    if (unsub) unsub();
+    status.textContent = "Update failed: " + friendlyUpdateErr(e.message || e);
   }
 }
 
@@ -7043,10 +7028,41 @@ function formatSessionTitle(sid) {
   return sid.slice(0, 20);
 }
 
+// Allow-listed inline HTML: <b> <u> <i> <em> <strong> <sup> survive, every
+// other "<…>" is text (questions quote pseudo-tags like "<this author>"), and
+// entities are decoded once so "&lt;" shows as "<", never as "&lt;".
+function safeInlineHtml(src) {
+  return String(src || "").split(/(<\/?(?:b|u|i|em|strong|sup)>)/i)
+    .map((part, i) => (i % 2 ? part.toLowerCase() : escapeHtml(decodeEntities(part)))).join("");
+}
+// A record's readable text for plugins and history: notes / guides handled
+// exactly like the practice screen (applyNoteFilter, stripPronunciations).
+function questionPlainText(q, kind, part) {
+  if (!q) return "";
+  const arr = (v) => { if (Array.isArray(v)) return v; try { return JSON.parse(v || "[]"); } catch { return []; } };
+  let plain, html;
+  if (kind === "leadin") { plain = q.leadin_sanitized || q.leadin || ""; html = q.leadin; }
+  else if (kind === "part") { plain = arr(q.parts_sanitized)[part] || arr(q.parts)[part] || ""; html = arr(q.parts)[part]; }
+  else { plain = q.question_sanitized || q.question || ""; html = q.question; }
+  let t = applyNoteFilter(plain, html);
+  if (state.settings.hidePronunciations) t = stripPronunciations(t);
+  return t;
+}
+// Per-part point values. point_values always has one entry per part (10s when
+// the record states none: values_stated = 0, brief §2.3).
+function bonusPartValues(b) {
+  let parts = [];
+  try { parts = Array.isArray(b?.parts) ? b.parts : JSON.parse(b?.parts || "[]"); } catch { parts = []; }
+  let vals = [];
+  try { vals = Array.isArray(b?.point_values) ? b.point_values : JSON.parse(b?.point_values || "[]"); } catch { vals = []; }
+  const n = parts.length;
+  const values = Array.from({ length: n }, (_, i) => (Number.isFinite(+vals[i]) && +vals[i] > 0 ? +vals[i] : 10));
+  return { values, max: values.reduce((a, v) => a + v, 0), stated: b?.values_stated == null ? vals.length === n : !!b.values_stated, parts: n };
+}
 function answerLineHtml(raw, sanitizedFallback) {
   raw = applyNoteFilter(raw); sanitizedFallback = applyNoteFilter(sanitizedFallback);
   const src = (raw && String(raw).trim()) ? String(raw) : String(sanitizedFallback || "");
-  const html = escapeHtml(src).replace(/&lt;(\/?)(b|u|i|em|strong)&gt;/gi, "<$1$2>");
+  const html = safeInlineHtml(src);
   const d = document.createElement("div");
   d.innerHTML = html;
   return d.innerHTML;
@@ -7235,18 +7251,18 @@ function apAchCategory(id) {
 // Count powers of one answer whose class (category|subcategory|altSub) matches
 // the achievement domain. Empty domain dimensions are wildcards; questions that
 // lack a subcategory/altSub simply won't match an achievement that requires one.
-function apDimOk(val, want) {
-  if (!want) return true;
-  return Array.isArray(want) ? want.includes(val) : val === want;
+// Class keys are category PATHS ("Mythology > Scandinavian Myth > …"); a main
+// process not restarted yet still sends "cat|sub|alt", read as the same path.
+function apKeyPath(key) { return key.indexOf("|") >= 0 ? key.split("|").filter(Boolean).join(" > ") : key; }
+function apPathOk(key, lock) {
+  if (!lock) return true;
+  const p = apKeyPath(key);
+  return (Array.isArray(lock) ? lock : [lock]).some((l) => p === l || p.startsWith(l + " > "));
 }
-function apClassCount(classMap, cat, sub, alt) {
-  if (!classMap) return 0;
-  if (!cat && !sub && !alt) return 0;
+function apClassCount(classMap, lock) {
+  if (!classMap || !lock) return 0;
   let n = 0;
-  for (const key in classMap) {
-    const parts = key.split("|");
-    if (apDimOk(parts[0], cat) && apDimOk(parts[1], sub) && apDimOk(parts[2], alt)) n += classMap[key];
-  }
+  for (const key in classMap) if (apPathOk(key, lock)) n += classMap[key];
   return n;
 }
 function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
@@ -7267,9 +7283,8 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
       const cats = stats.byCategory || {};
       progress = Math.max(...Object.values(cats).map(c => c.totalQuestions || 0), 0);
     } else if (ach.type === "cat_specific") {
-      // ach.alt reads the per-alternate-subcategory tally (Math / Computer
-      // Science are alternates under Science > Other Science, not categories).
-      const catData = ach.alt ? (stats.byAltSubcategory || {})[ach.alt] : (stats.byCategory || {})[ach.category];
+      // ach.path = a category-tree node (any depth), counted over its subtree.
+      const catData = ach.path ? (stats.byPath || {})[ach.path] : (stats.byCategory || {})[ach.category];
       progress = catData ? catData.totalQuestions || 0 : 0;
     } else if (ach.type === "daily") {
       const days = stats.questionsByDate || {};
@@ -7284,9 +7299,9 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
       // 4/10 on a profile with 20 powered Norse questions). A group counts ONCE.
       const groups = (Array.isArray(ach.target) ? ach.target : [ach.target])
         .map((t) => (Array.isArray(t) ? t : [t]).map(apNorm).filter(Boolean)).filter((g) => g.length);
-      const cat = ach.cat || apAchCategory(ach.id), sub = ach.sub || null, alt = ach.alt || null;
-      const locked = !!(cat || sub || alt);
-      const cnt = (ans) => (locked ? apClassCount(apClasses[ans], cat, sub, alt) : (apCounts[ans] || 0));
+      const lock = ach.path || ach.cat || apAchCategory(ach.id) || null;
+      const locked = !!lock;
+      const cnt = (ans) => (locked ? apClassCount(apClasses[ans], lock) : (apCounts[ans] || 0));
       const matchesAny = (ans, g) => g.some((norm) => apMatch(ans, norm));
       const answers = Object.keys(apCounts);
       if (ach.distinct === "questions") {
@@ -7300,8 +7315,7 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
             if (!groups.some((g) => matchesAny(ans, g))) continue;
             const byClass = apQuestions[ans] || {};
             for (const ck in byClass) {
-              const p = ck.split("|");
-              if (locked && !(apDimOk(p[0], cat) && apDimOk(p[1], sub) && apDimOk(p[2], alt))) continue;
+              if (locked && !apPathOk(ck, lock)) continue;
               for (const qid of byClass[ck]) seen.add(qid);
             }
           }
@@ -7388,9 +7402,9 @@ const AP_CATEGORY_PREFIXES = [
   ["ap-lit-", "Literature"],
   ["ap-hist-", "History"],
   ["ap-geo-", "Geography"],
-  ["ap-sci-", "Science"],
+  ["ap-sci-", "Science and Math"],
   ["ap-myth-", "Mythology"],
-  ["ap-pop-", "Pop Culture"],
+  ["ap-pop-", "Pop Culture Sports"],
   ["ap-fa-", "Fine Arts"],
   ["ap-phil-", "Philosophy"],
 ];
@@ -7603,18 +7617,18 @@ const ACHIEVEMENT_LIST = [
   { id:"streak7", name:"Consistency", desc:"7 day streak", type:"streak", threshold:7, icon:"週" },
   { id:"streak14", name:"Two Week Streak", desc:"14 day streak", type:"streak", threshold:14, icon:"月" },
   { id:"streak30", name:"Locked In", desc:"30 day streak", type:"streak", threshold:30, icon:"年" },
-  { id:"cat3333_History", name:"Keskil Khan", desc:"3333 in History", type:"cat_specific", threshold:3333, icon:"汗", category:"History" },
-  { id:"cat3333_Literature", name:"Keskil Collector", desc:"3333 in Literature", type:"cat_specific", threshold:3333, icon:"文", category:"Literature" },
-  { id:"cat3333_Science", name:"Keskil Chemist", desc:"3333 in Science", type:"cat_specific", threshold:3333, icon:"科", category:"Science" },
-  { id:"cat3333_Fine Arts", name:"Keskil Craftsmen", desc:"3333 in Fine Arts", type:"cat_specific", threshold:3333, icon:"芸", category:"Fine Arts" },
-  { id:"cat3333_Religion", name:"Keskil Kultist", desc:"3333 in Religion", type:"cat_specific", threshold:3333, icon:"宗", category:"Religion" },
-  { id:"cat3333_Mythology", name:"Keskil Legend", desc:"3333 in Mythology", type:"cat_specific", threshold:3333, icon:"神", category:"Mythology" },
-  { id:"cat3333_Philosophy", name:"Keskil Questioner", desc:"3333 in Philosophy", type:"cat_specific", threshold:3333, icon:"哲", category:"Philosophy" },
-  { id:"cat3333_Current Events", name:"Keskil King", desc:"3333 in Current Events", type:"cat_specific", threshold:3333, icon:"王", category:"Current Events" },
-  { id:"cat3333_Geography", name:"Keskil Cartographer", desc:"3333 in Geography", type:"cat_specific", threshold:3333, icon:"地", category:"Geography" },
-  { id:"cat3333_Math", name:"Keskil Calculator", desc:"3333 in Math", type:"cat_specific", threshold:3333, icon:"数", category:"Math", alt:"Math" },
-  { id:"cat3333_Computer Science", name:"Keskil claude user", desc:"3333 in Computer Science", type:"cat_specific", threshold:3333, icon:"算", category:"Computer Science", alt:"Computer Science" },
-  { id:"cat3333_Trash", name:"Keskil's Opps", desc:"3333 in Pop Culture (Trash)", type:"cat_specific", threshold:3333, icon:"屑", category:"Pop Culture" },
+  { id:"cat3333_History", name:"Keskil Khan", desc:"3333 in History", type:"cat_specific", threshold:3333, icon:"汗", category:"History", path:"History" },
+  { id:"cat3333_Literature", name:"Keskil Collector", desc:"3333 in Literature", type:"cat_specific", threshold:3333, icon:"文", category:"Literature", path:"Literature" },
+  { id:"cat3333_Science", name:"Keskil Chemist", desc:"3333 in Science and Math", type:"cat_specific", threshold:3333, icon:"科", category:"Science and Math", path:"Science and Math" },
+  { id:"cat3333_Fine Arts", name:"Keskil Craftsmen", desc:"3333 in Fine Arts", type:"cat_specific", threshold:3333, icon:"芸", category:"Fine Arts", path:"Fine Arts" },
+  { id:"cat3333_Religion", name:"Keskil Kultist", desc:"3333 in Theology", type:"cat_specific", threshold:3333, icon:"宗", category:"Theology", path:"Theology" },
+  { id:"cat3333_Mythology", name:"Keskil Legend", desc:"3333 in Mythology", type:"cat_specific", threshold:3333, icon:"神", category:"Mythology", path:"Mythology" },
+  { id:"cat3333_Philosophy", name:"Keskil Questioner", desc:"3333 in Philosophy", type:"cat_specific", threshold:3333, icon:"哲", category:"Philosophy", path:"Philosophy" },
+  { id:"cat3333_Current Events", name:"Keskil King", desc:"3333 in Current Events", type:"cat_specific", threshold:3333, icon:"王", category:"Current Events", path:"Current Events" },
+  { id:"cat3333_Geography", name:"Keskil Cartographer", desc:"3333 in Geography", type:"cat_specific", threshold:3333, icon:"地", category:"Geography", path:"Geography" },
+  { id:"cat3333_Math", name:"Keskil Calculator", desc:"3333 in Math", type:"cat_specific", threshold:3333, icon:"数", category:"Science and Math", path:"Science and Math > Math" },
+  { id:"cat3333_Computer Science", name:"Keskil claude user", desc:"3333 in Computer Science", type:"cat_specific", threshold:3333, icon:"算", category:"Science and Math", path:"Science and Math > Science > Computer Science" },
+  { id:"cat3333_Trash", name:"Keskil's Opps", desc:"3333 in Pop Culture & Sports (Trash)", type:"cat_specific", threshold:3333, icon:"屑", category:"Pop Culture Sports", path:"Pop Culture Sports" },
   { id:"day25", name:"Full Round", desc:"Answer 25 questions in a day", type:"daily", threshold:25, icon:"準" },
   { id:"day50", name:"Prelims", desc:"Answer 50 questions in a day", type:"daily", threshold:50, icon:"予" },
   { id:"day100", name:"Playoffs", desc:"Answer 100 questions in a day", type:"daily", threshold:100, icon:"決" },
@@ -7941,7 +7955,7 @@ async function renderProviderTab(id) {
 }
 
 let _dbTimer = null;
-const DIFFICULTY_NAMES = ["Pop Culture", "Middle School", "Easy HS", "Regular HS", "Hard HS", "National HS", "Easy College", "Medium College", "Regionals College", "Nationals College", "Open"];
+const DIFFICULTY_NAMES = ["Unrated", "Middle School", "Easy HS", "Regular HS", "Hard HS", "National HS", "Easy College", "Medium College", "Regionals College", "Nationals College", "Open"];
 function renderSearchTab() {
   const c = document.getElementById("db-content"); if (!c) return;
   const diffChecks = DIFFICULTY_NAMES.map((name, i) =>
@@ -7963,7 +7977,8 @@ function renderSearchTab() {
     '<div class="db-toolbar db-toolbar-cats">' +
       '<select id="db-cat-filter" class="db-input db-input-cat"><option value="">All categories</option></select>' +
       '<select id="db-sub-filter" class="db-input db-input-cat"><option value="">All subcategories</option></select>' +
-      '<select id="db-alt-filter" class="db-input db-input-cat"><option value="">All alternate subcategories</option></select>' +
+      '<select id="db-alt-filter" class="db-input db-input-cat"><option value="">All topics</option></select>' +
+      '<select id="db-deep-filter" class="db-input db-input-cat"><option value="">All subtopics</option></select>' +
     "</div>" +
     '<div class="db-toolbar db-toolbar-adv">' +
       '<span class="db-adv-label">Difficulty:</span>' + diffChecks +
@@ -7989,12 +8004,12 @@ function renderSearchTab() {
   // each fire a search (applySearchState runs exactly one at the end).
   const deb = () => { if (_dbRestoring) return; clearTimeout(_dbTimer); _dbTimer = setTimeout(performDbSearch, 300); };
   _dbPacketsFor = null;
-  fillCategoryDropdown(document.getElementById("db-cat-filter")).then(() => {
+  fillCatTreeSelect(document.getElementById("db-cat-filter")).then(() => {
     // The tab may have been replaced (another Database tab clicked) before the
     // category list arrived: nothing left to wire.
-    const cs = document.getElementById("db-cat-filter"), ss = document.getElementById("db-sub-filter"), as = document.getElementById("db-alt-filter");
+    const cs = document.getElementById("db-cat-filter"), ss = document.getElementById("db-sub-filter"), as = document.getElementById("db-alt-filter"), ds = document.getElementById("db-deep-filter");
     if (!cs || !ss || !as) return;
-    wireCatCascade(cs, ss, as, deb);
+    wireCatCascade(cs, ss, as, deb, ds);
   });
   c.querySelectorAll("#db-search-input, #db-qtype, #db-search-type, #db-match, #db-prefix, .db-diff-cb, #db-year-min, #db-year-max, #db-set-filter, #db-packet-filter, #db-exclude, #db-sort, #db-standard, #db-powermark, #db-starred")
     .forEach((el) => el.addEventListener(el.type === "text" || el.type === "number" || el.type === "range" ? "input" : "change", deb));
@@ -8108,8 +8123,8 @@ async function performDbSearch(opts) {
   const query = g("db-search-input")?.value?.trim();
   const qtype = g("db-qtype")?.value || "all";
   const textType = g("db-search-type")?.value || "all";
-  const catSel = g("db-cat-filter"), subSel = g("db-sub-filter"), altSel = g("db-alt-filter");
-  const { category: cat, subcategory: sub, alternateSubcategory: alt } = catSel ? getCatCascadeFilter(catSel, subSel, altSel) : { category: "", subcategory: "", alternateSubcategory: "" };
+  const catSel = g("db-cat-filter"), subSel = g("db-sub-filter"), altSel = g("db-alt-filter"), deepSel = g("db-deep-filter");
+  const { nodeId: catNode } = catSel ? getCatCascadeFilter(catSel, subSel, altSel, deepSel) : { nodeId: "" };
   const match = g("db-match")?.value || "phrase";
   const prefix = !!g("db-prefix")?.checked;
   const hideAns = g("db-hide-ans")?.checked;
@@ -8144,7 +8159,7 @@ async function performDbSearch(opts) {
   // Page rule: an explicit page wins; otherwise only a CHANGED search resets to
   // page 1. Late cascade / debounced calls after a Back restore used to reset
   // the restored page to 0.
-  const sig = JSON.stringify([query, qtype, textType, match, prefix, excl, cat, sub, alt, diffs, yearMin, yearMax, setRaw, pkt, sort, std, pm, starred]);
+  const sig = JSON.stringify([query, qtype, textType, match, prefix, excl, catNode, diffs, yearMin, yearMax, setRaw, pkt, sort, std, pm, starred]);
   if (opts && opts.page != null) _dbPage = Math.max(0, opts.page);
   else if (sig !== _dbLastSig) _dbPage = 0;
   _dbLastSig = sig;
@@ -8158,11 +8173,10 @@ async function performDbSearch(opts) {
     return;
   }
 
+  // Search shows every record, the unplayable ones too (marked on the card).
   const common =
-    `limit=${DB_PAGE_SIZE}&offset=${_dbPage * DB_PAGE_SIZE}` +
-    (cat ? `&categories=${encodeURIComponent(cat)}` : "") +
-    (sub ? `&subcategories=${encodeURIComponent(sub)}` : "") +
-    (alt ? `&alternateSubcategories=${encodeURIComponent(alt)}` : "") +
+    `limit=${DB_PAGE_SIZE}&offset=${_dbPage * DB_PAGE_SIZE}&includeUnplayable=1` +
+    (catNode ? `&categoryIds=${encodeURIComponent(catNode)}` : "") +
     (diffs.length ? `&difficulties=${diffs.join(",")}` : "") +
     (yearMin > 2000 ? `&yearMin=${yearMin}` : "") +
     (yearMax < 2026 ? `&yearMax=${yearMax}` : "") +
@@ -8215,6 +8229,17 @@ async function performDbSearch(opts) {
   } catch (e) { if (seq === _dbSearchSeq) container.innerHTML = '<div class="text-muted" style="padding:16px">Search failed: ' + escapeHtml(e.message || "") + "</div>"; }
 }
 
+// Unplayable records (never served in practice) get "✕", warning-group ones "!".
+const QUESTION_EXCLUDE_CODES = new Set(["QUESTION_EMPTY", "QUESTION_TRUNCATED", "ANSWER_EMPTY", "NO_PARTS", "LEADIN_AND_PARTS_EMPTY", "PARTS_ANSWERS_MISMATCH", "BONUS_PARTS_MERGED", "BONUS_STORED_AS_TOSSUP"]);
+function questionFlagMark(q) {
+  if (q && q.playable === 0) {
+    let flags = [];
+    try { flags = Array.isArray(q.flags) ? q.flags : JSON.parse(q.flags || "[]"); } catch { flags = []; }
+    const why = flags.filter((f) => f && QUESTION_EXCLUDE_CODES.has(f.code)).map((f) => f.detail || f.code);
+    return `<span class="qb-info qcard-unplayable" data-tip="${escapeHtml("Not served in practice: " + (why.join(" \u2022 ") || "flagged"))}">\u2715</span>`;
+  }
+  return questionWarnHtml(q || {});
+}
 function renderSearchResult(q) {
   const isTossup = q.question_sanitized != null;
   const type = isTossup ? "tossup" : "bonus";
@@ -8233,7 +8258,7 @@ function renderSearchResult(q) {
     answerHtmlStr = answers.map((a, i) => answerLineHtml(rawAnswers[i], a)).join(" / ") || "?";
     body = `<div class="qcard-text">${escapeHtml(q.leadin_sanitized || "")}</div>` +
       parts.map((p, i) =>
-        `<div class="qcard-part">[10] ${escapeHtml(p)}<br><span class="ans-toggle"><span class="ans">ANSWER: ${answerLineHtml(rawAnswers[i], answers[i] || "")}</span></span></div>`).join("");
+        `<div class="qcard-part">[${bonusPartValues(q).values[i] || 10}] ${escapeHtml(p)}<br><span class="ans-toggle"><span class="ans">ANSWER: ${answerLineHtml(rawAnswers[i], answers[i] || "")}</span></span></div>`).join("");
   }
   if (q.set_name) body += `<div class="qcard-foot"><span class="qcard-note">${escapeHtml(q.set_name)}${q.set_year ? " (" + q.set_year + ")" : ""}</span></div>`;
   return qcardHtml({
@@ -8243,7 +8268,7 @@ function renderSearchResult(q) {
     altSub: q.alternate_subcategory,
     year: q.set_year,
     difficulty: q.difficulty,
-    sideHtml: `<span class="star-btn save-plus db-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders">+</span><span class="pill">${isTossup ? "TU" : "BO"}</span>${star}`,
+    sideHtml: `${questionFlagMark(q)}<span class="star-btn save-plus db-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders">+</span><span class="pill">${isTossup ? "TU" : "BO"}</span>${star}`,
     answerHtml: `Answer: <span class="ans-toggle"><span class="ans">${answerHtmlStr}</span></span>`,
     bodyHtml: body,
   });
@@ -8328,7 +8353,7 @@ function currentSearchState() {
   return {
     query: val("db-search-input"), field: val("db-search-type", "all"), qtype: val("db-qtype", "all"),
     match: val("db-match", "phrase"), prefix: on("db-prefix"), exclude: val("db-exclude"), hideAns: on("db-hide-ans"),
-    cat: val("db-cat-filter"), sub: live("db-sub-filter"), alt: live("db-alt-filter"),
+    cat: val("db-cat-filter"), sub: live("db-sub-filter"), alt: live("db-alt-filter"), deep: live("db-deep-filter"),
     diffs: [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value),
     yearMin: val("db-year-min", "2000"), yearMax: val("db-year-max", "2026"),
     set: val("db-set-filter"), packet: live("db-packet-filter"), sort: val("db-sort", "relevance"),
@@ -8367,6 +8392,11 @@ async function applySearchState(s) {
     if (aS) {
       if (s.alt && await waitForOption(aS, s.alt)) { aS.value = s.alt; aS.dispatchEvent(new Event("change")); }
       else if (aS.value) { aS.value = ""; aS.dispatchEvent(new Event("change")); }
+    }
+    const dS = g("db-deep-filter");
+    if (dS) {
+      if (s.deep && await waitForOption(dS, s.deep)) { dS.value = s.deep; dS.dispatchEvent(new Event("change")); }
+      else if (dS.value) { dS.value = ""; dS.dispatchEvent(new Event("change")); }
     }
     if (s.packet) { await dbSyncPackets((await dbResolveSets()).single); if (await waitForOption(g("db-packet-filter"), s.packet)) sel("db-packet-filter", s.packet); }
     else sel("db-packet-filter", "");
@@ -8504,66 +8534,58 @@ async function openPacket(setName, packetNumber) {
   render();
 }
 
-function _catAddOpt(sel, v) { const o = document.createElement("option"); o.value = v; o.textContent = v; sel.appendChild(o); }
-function _catSetDisabled(sel, dis) { sel.disabled = dis; sel.style.opacity = dis ? "0.5" : "1"; sel.title = dis ? "Not applicable for this selection" : ""; }
-function wireCatCascade(catSel, subSel, altSel, onChange) {
-  // Every fetch below is async and the user can keep clicking. A generation
-  // token means only the LATEST request may write options — without it a
-  // pending "Other Literature" lookup lands after you have moved to Mythology
-  // and appends Literature alternates under it.
-  let gen = 0;
-  _catSetDisabled(subSel, true); _catSetDisabled(altSel, true);
+function _catAddOpt(sel, v, label) { const o = document.createElement("option"); o.value = v; o.textContent = label != null ? label : v; sel.appendChild(o); }
+function _catSetDisabled(sel, dis) { if (!sel) return; sel.disabled = dis; sel.style.opacity = dis ? "0.5" : "1"; sel.title = dis ? "Not applicable for this selection" : ""; }
+// Category pickers over the tree: level 1, 2 and 3 selects, plus an optional
+// fourth listing every deeper node under the level-3 pick ("A > B" relative
+// paths). Values are node ids; the deepest pick is the filter (one subtree).
+async function fillCatTreeSelect(sel) {
+  if (!sel) return;
+  let tree; try { tree = await fetchCatTree("tossups"); } catch { return; }
+  const cur = sel.value, first = sel.options[0] ? sel.options[0].textContent : "All categories";
+  sel.innerHTML = `<option value="">${escapeHtml(first)}</option>`;
+  tree.roots.forEach((n) => _catAddOpt(sel, n.id, n.name));
+  if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  _syncSel(sel);
+}
+function wireCatCascade(catSel, subSel, altSel, onChange, deepSel) {
+  const LABELS = { sub: "All subcategories", alt: "All topics", deep: "All subtopics" };
+  const reset = (sel, key) => { if (!sel) return; sel.innerHTML = `<option value="">${LABELS[key]}</option>`; _catSetDisabled(sel, true); _syncSel(sel); };
+  const fill = (sel, key, nodes, labelOf) => {
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${LABELS[key]}</option>`;
+    nodes.forEach((n) => _catAddOpt(sel, n.id, labelOf ? labelOf(n) : n.name));
+    _catSetDisabled(sel, !nodes.length); _syncSel(sel);
+  };
+  const node = async (id) => (id ? (await fetchCatTree("tossups")).byId.get(id) : null);
+  reset(subSel, "sub"); reset(altSel, "alt"); reset(deepSel, "deep");
   catSel.addEventListener("change", async () => {
-    const mine = ++gen;
-    subSel.innerHTML = '<option value="">All subcategories</option>';
-    altSel.innerHTML = '<option value="">All alternate subcategories</option>';
-    _catSetDisabled(altSel, true);
-    const cat = catSel.value;
-    if (!cat) { _catSetDisabled(subSel, true); onChange(); return; }
-    if (cat === "Social Science") {
-      (ALT_SUBCATS["Social Science"] || []).forEach((a) => _catAddOpt(subSel, a));
-      _catSetDisabled(subSel, false);
-    } else {
-      let subs = [];
-      try { subs = (await API.get(`/api/subcategories?type=tossups&category=${encodeURIComponent(cat)}`)).subcategories || []; } catch {}
-      if (mine !== gen || cat !== catSel.value) return; // superseded — drop it
-      if (subs.length) { subs.forEach((s) => _catAddOpt(subSel, s.subcategory)); _catSetDisabled(subSel, false); }
-      else _catSetDisabled(subSel, true);   // no subcategories: only "All", disabled
-    }
+    reset(altSel, "alt"); reset(deepSel, "deep");
+    const n = await node(catSel.value);
+    fill(subSel, "sub", n ? n.children || [] : []);
     onChange();
   });
   subSel.addEventListener("change", async () => {
-    const mine = ++gen;
-    altSel.innerHTML = '<option value="">All alternate subcategories</option>';
-    const cat = catSel.value, sub = subSel.value;
-    let alts = [];
-    if (cat && cat !== "Social Science" && sub) {
-      // Real alternate subcategories for this (category, subcategory) pair —
-      // the static ALT_SUBCATS table only covers "Other …" groups.
-      try {
-        alts = (await API.get(`/api/alternate-subcategories?type=tossups&category=${encodeURIComponent(cat)}&subcategory=${encodeURIComponent(sub)}`)).alternateSubcategories || [];
-      } catch {}
-      if (!alts.length && /^Other /.test(sub) && ALT_SUBCATS[sub]) alts = ALT_SUBCATS[sub];
-    }
-    // Guard on the CATEGORY too: switching category resets this list, and a
-    // late reply from the previous category would otherwise refill it.
-    if (mine !== gen || sub !== subSel.value || cat !== catSel.value) return;
-    if (alts.length) { alts.forEach((a) => _catAddOpt(altSel, a)); _catSetDisabled(altSel, false); }
-    else _catSetDisabled(altSel, true);   // none for this pair: only "All", disabled
+    reset(deepSel, "deep");
+    const n = await node(subSel.value);
+    fill(altSel, "alt", n ? n.children || [] : []);
     onChange();
   });
-  altSel.addEventListener("change", onChange);
+  altSel.addEventListener("change", async () => {
+    if (deepSel) {
+      const n = await node(altSel.value);
+      const out = [];
+      const walk = (x, prefix) => (x.children || []).forEach((c) => { const lab = prefix ? prefix + " > " + c.name : c.name; out.push({ id: c.id, label: lab }); walk(c, lab); });
+      if (n) walk(n, "");
+      fill(deepSel, "deep", out, (o) => o.label);
+    }
+    onChange();
+  });
+  if (deepSel) deepSel.addEventListener("change", onChange);
 }
-function getCatCascadeFilter(catSel, subSel, altSel) {
-  const cat = catSel.value || "";
-  if (!cat) return { category: "", subcategory: "", alternateSubcategory: "" };
-  if (cat === "Social Science") {
-    return { category: "Social Science", subcategory: "", alternateSubcategory: subSel.value || "" };
-  }
-  // When an alternate subcategory is picked, filter on category+alt ONLY — the
-  // backend ORs subcategory/alternate filters, so sending both WIDENS results.
-  if (!altSel.disabled && altSel.value) return { category: cat, subcategory: "", alternateSubcategory: altSel.value };
-  return { category: cat, subcategory: subSel.value || "", alternateSubcategory: "" };
+function getCatCascadeFilter(catSel, subSel, altSel, deepSel) {
+  const pick = [deepSel, altSel, subSel, catSel].find((x) => x && !x.disabled && x.value);
+  return { nodeId: pick ? pick.value : "" };
 }
 
 // Snapshot of the Frequency tab's dropdowns, so returning to it via Back shows
@@ -8575,6 +8597,7 @@ function currentFrequencySelection() {
     cat: g("freq-cat").value || "",
     sub: g("freq-sub") && !g("freq-sub").disabled ? g("freq-sub").value || "" : "",
     alt: g("freq-alt") && !g("freq-alt").disabled ? g("freq-alt").value || "" : "",
+    deep: g("freq-deep") && !g("freq-deep").disabled ? g("freq-deep").value || "" : "",
     type: g("freq-type") ? g("freq-type").value : "tossup",
     limit: g("freq-limit") ? g("freq-limit").value : "50",
   };
@@ -8618,7 +8641,12 @@ async function applyFrequencySelection(sel) {
         subSel.dispatchEvent(new Event("change"));
       }
       const altSel = document.getElementById("freq-alt");
-      if (sel.alt && await waitForOption(altSel, sel.alt)) altSel.value = sel.alt;
+      if (sel.alt && await waitForOption(altSel, sel.alt)) {
+        altSel.value = sel.alt;
+        altSel.dispatchEvent(new Event("change"));
+        const deepSel = document.getElementById("freq-deep");
+        if (sel.deep && await waitForOption(deepSel, sel.deep)) deepSel.value = sel.deep;
+      }
     }
   } finally {
     _freqRestoring = false;
@@ -8632,14 +8660,15 @@ async function renderFrequencyTab(restore) {
     '<div class="db-toolbar">' +
       '<select id="freq-cat" class="db-input db-input-sm"><option value="">All categories</option></select>' +
       '<select id="freq-sub" class="db-input db-input-sm"><option value="">All subcategories</option></select>' +
-      '<select id="freq-alt" class="db-input db-input-sm"><option value="">All alternate subcategories</option></select>' +
+      '<select id="freq-alt" class="db-input db-input-sm"><option value="">All topics</option></select>' +
+      '<select id="freq-deep" class="db-input db-input-sm"><option value="">All subtopics</option></select>' +
       '<select id="freq-type" class="db-input db-input-sm"><option value="tossup">Tossups only</option><option value="bonus">Bonuses only</option><option value="both">Tossups + Bonuses</option></select>' +
       '<select id="freq-limit" class="db-input db-input-sm"><option>25</option><option selected>50</option><option>100</option><option>200</option><option>500</option><option>1000</option></select>' +
     "</div>" +
     '<div id="freq-results" class="search-results"><div class="text-muted" style="padding:16px">Loading…</div></div>';
-  await fillCategoryDropdown(document.getElementById("freq-cat"));
+  await fillCatTreeSelect(document.getElementById("freq-cat"));
   const catSel = document.getElementById("freq-cat"), subSel = document.getElementById("freq-sub"), altSel = document.getElementById("freq-alt"), limSel = document.getElementById("freq-limit");
-  wireCatCascade(catSel, subSel, altSel, runFrequency);
+  wireCatCascade(catSel, subSel, altSel, runFrequency, document.getElementById("freq-deep"));
   limSel.addEventListener("change", runFrequency);
   document.getElementById("freq-type")?.addEventListener("change", runFrequency);
   if (restore) { applyFrequencySelection(restore); return; }
@@ -8650,13 +8679,13 @@ async function runFrequency() {
   if (_freqRestoring) return;
   const catSel = document.getElementById("freq-cat"), subSel = document.getElementById("freq-sub"), altSel = document.getElementById("freq-alt");
   if (!catSel) return;
-  const { category: cat, subcategory: sub, alternateSubcategory: alt } = getCatCascadeFilter(catSel, subSel, altSel);
+  const { nodeId } = getCatCascadeFilter(catSel, subSel, altSel, document.getElementById("freq-deep"));
   const limit = document.getElementById("freq-limit")?.value || 50;
   const qtype = document.getElementById("freq-type")?.value || "tossup";
   const el = document.getElementById("freq-results"); if (!el) return;
   el.innerHTML = loadingBarHtml("Building frequency list…");
   try {
-    const data = await API.get(`/api/frequent-answers?limit=${limit}&qtype=${qtype}` + (cat ? `&category=${encodeURIComponent(cat)}` : "") + (sub ? `&subcategory=${encodeURIComponent(sub)}` : "") + (alt ? `&alternateSubcategory=${encodeURIComponent(alt)}` : ""));
+    const data = await API.get(`/api/frequent-answers?limit=${limit}&qtype=${qtype}` + (nodeId ? `&nodeId=${encodeURIComponent(nodeId)}` : ""));
     const rows = data.answers || [];
     if (rows.length === 0) { el.innerHTML = '<div class="text-muted" style="padding:16px">No answers found for this selection.</div>'; return; }
     el.innerHTML = `<table class="stats-table"><thead><tr><th>#</th><th>Answer</th><th>Frequency</th></tr></thead><tbody>` +
@@ -8895,6 +8924,9 @@ function init() {
       showScreen,
       goHome,
       setReadingHold: (v) => { ttsHold = !!v; },
+      // A plugin that must not be interrupted by a page reload (multiplayer in a
+      // room) marks itself busy; the question-database switch waits for it.
+      setBusy: (key, on) => { if (on) _busyFlags.add(String(key)); else { _busyFlags.delete(String(key)); maybeSwitchDb(); } },
       getActiveFilters: () => getActiveFilters({ real: true }),
       ensureFiltersLoaded: () => { if (!document.querySelector("#category-filters .category-group")) setMode(state.mode || "tossups"); },
       resetPracticeFilters: () => resetPracticeFiltersToDefaults(),
@@ -8916,6 +8948,18 @@ function init() {
         filterSummary: describeActiveFilters({ real: true }),
       }),
       stripPronunciations: (t) => stripPronunciations(t),
+      // ── new question database helpers (category tree, text, N-part bonuses) ──
+      // Nested category tree [{id,name,path,label,depth,leaf,count,definition,children}].
+      getCategoryTree: (type) => fetchCatTree(type === "bonuses" ? "bonuses" : "tossups").then((t) => t.roots),
+      // A record's text as the practice screen reads it: moderator notes hidden
+      // (from the HTML) and pronunciation guides stripped per the user's
+      // settings. kind: "question" (tossup), "leadin", or "part" with part index.
+      questionText: (q, kind, part) => questionPlainText(q, kind, part),
+      // Per-part point values (10 each when the record states none), and the max.
+      bonusValues: (b) => bonusPartValues(b),
+      // A buzz index in a DISPLAYED (notes/guides-stripped, (*)-free) text ->
+      // the index in the record's plain text, which the server judges against.
+      mapDisplayPos: (displayText, originalText, pos) => mapDisplayPosToOriginal(displayText, originalText, pos),
       recordNav: (name) => recordNav(name),
       saveScreenScroll: () => saveScreenScroll(),
       restoreScreenScroll: (el) => restoreScreenScroll(el),
@@ -8960,7 +9004,8 @@ function init() {
             mode: state.settings.bonusAfter && (state._importedPacket.bonuses || []).length ? "both" : "tu",
           }
         : null,
-      getAchievementList: () => ACHIEVEMENT_LIST.map((a) => ({ ...a, cat: a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined) })),
+      // path = the category-tree prefix an achievement counts within (cat kept for older plugins)
+      getAchievementList: () => ACHIEVEMENT_LIST.map((a) => { const cat = a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined); return { ...a, cat, path: a.path || cat || undefined }; }),
       // Open the app's own session-history overlay over a supplied list, so a
       // plugin gets the real GUI — filters, compact/expand, buzz track, star
       // and save actions — instead of a hand-rolled imitation.
@@ -8994,7 +9039,7 @@ function init() {
       extractPrimaryAnswer: (raw, sani) => { try { return apPrimary(raw, sani); } catch (e) { return ""; } },
     });
   }
-  applyStagedPluginUpdates().then(maybeAutoCheckAppUpdate);
+  applyStagedPluginUpdates().then(maybeAutoCheckAppUpdate).then(maybeAutoDbUpdate);
   startSplash();
 }
 
@@ -9014,6 +9059,66 @@ async function applyStagedPluginUpdates() {
     if (info.complete !== false) localStorage.setItem("qb-overlay-plugins-applied", String(info.version));
   } catch {}
 }
+
+// ── question-database updates ──
+// On launch (desktop app, "Check on launch" on) a newer published database
+// downloads in the background while this one keeps serving. The app switches to
+// it the next time it sits on the title screen with nothing running (a practice
+// session, a dialog, or a plugin that marked itself busy — multiplayer while in a
+// room), or at the next launch. Settings shows the progress and "Switch now".
+const _busyFlags = new Set();
+let _dbPoll = null, _dbReady = false, _dbSwitching = false, _dbManual = false;
+function appIdleForDbSwitch() {
+  // overlays stay in the DOM while closed (Categories window, settings panels)
+  const dialogOpen = [...document.querySelectorAll(".qb-overlay")].some((o) => !o.classList.contains("hidden") && getComputedStyle(o).display !== "none");
+  return !!document.querySelector("#title-screen.active") && !state.sessionActive && !_busyFlags.size && !dialogOpen;
+}
+async function maybeSwitchDb(force) {
+  if (!_dbReady || _dbSwitching || (!force && !appIdleForDbSwitch())) return;
+  _dbSwitching = true;
+  try {
+    const r = await API.post("/api/db-update-commit", {});
+    if (r && r.ok) {
+      setProgress("db-upd", 100, `Updated — ${(r.result?.tossups || 0).toLocaleString()} tossups, ${(r.result?.bonuses || 0).toLocaleString()} bonuses. Reloading…`);
+      // category tree, sets, counts and every cache come from the database
+      setTimeout(() => location.reload(), force ? 1200 : 0);
+      return;
+    }
+  } catch {}
+  _dbSwitching = false;
+}
+function renderDbUpdateStatus(s) {
+  const status = $("#update-status");
+  if (!status || !s) return;
+  if (s.state === "checking" || s.state === "downloading") {
+    if (!document.getElementById("db-upd-fill")) status.innerHTML = progressBarHtml("db-upd", s.label || "Starting…");
+    setProgress("db-upd", s.pct || 0, s.label || "");
+  } else if (s.state === "ready") {
+    if (document.getElementById("db-upd-now")) return;
+    status.innerHTML = `<div style="margin-bottom:8px"><strong>${escapeHtml(s.name || "New question database")}</strong> · Ready</div>`;
+    const b = document.createElement("button");
+    b.className = "btn btn-sm btn-primary"; b.id = "db-upd-now"; b.textContent = "Switch now";
+    b.addEventListener("click", () => { b.disabled = true; status.insertAdjacentHTML("beforeend", progressBarHtml("db-upd", "Switching…")); maybeSwitchDb(true); });
+    status.appendChild(b);
+  } else if (s.state === "error" && _dbManual) {
+    status.textContent = "Update failed: " + friendlyUpdateErr(s.error || "");
+  }
+}
+async function pollDbUpdate() {
+  let s = null;
+  try { s = await API.get("/api/db-update-status"); } catch {}
+  renderDbUpdateStatus(s);
+  if (s && (s.state === "checking" || s.state === "downloading")) { _dbPoll = setTimeout(pollDbUpdate, 1500); return; }
+  _dbPoll = null;
+  if (s && s.state === "ready") { _dbReady = true; maybeSwitchDb(_dbManual); }
+}
+function watchDbUpdate() { if (!_dbPoll) pollDbUpdate(); }
+async function maybeAutoDbUpdate() {
+  if (!isElectron || localStorage.getItem("qb-app-autoupdate") === "false") return;
+  try { await API.post("/api/db-update-start", {}); } catch { return; }
+  watchDbUpdate();
+}
+window.QB?.on?.("screen:change", (e) => { if (e && e.name === "title" && _dbReady) setTimeout(() => maybeSwitchDb(), 500); });
 
 // Startup policy: normal updates are only ever OFFERED (Update / Ignore) —
 // never installed on their own. Critical releases (manifest.critical) install
@@ -9136,6 +9241,10 @@ const QBSelect = (() => {
       valueEl.textContent = labelOf(sel);
       trigger.disabled = sel.disabled;
       wrap.classList.toggle("disabled", !!sel.disabled);
+      // Hiding the select (class, attribute or inline style) hides the wrapper.
+      const hide = sel.hidden || sel.classList.contains("hidden") || sel.style.display === "none";
+      wrap.style.display = hide ? "none" : "";
+      if (hide) close();
     };
     // A plain `sel.value = …` changes no attribute, so the MutationObserver never
     // sees it and the label goes stale. Programmatic writers call _syncSel(sel).
@@ -9285,7 +9394,7 @@ const QBSelect = (() => {
     // <option> list in place. Watch the element itself so the trigger cannot
     // be left showing a stale label, or stuck disabled after being re-enabled.
     const mo = new MutationObserver(() => { sync(); if (!popup.hidden) renderItems(); });
-    mo.observe(sel, { attributes: true, attributeFilter: ["disabled", "style", "class"], childList: true, subtree: true });
+    mo.observe(sel, { attributes: true, attributeFilter: ["disabled", "style", "class", "hidden"], childList: true, subtree: true });
     sync();
   }
 

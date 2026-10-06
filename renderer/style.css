@@ -2548,3 +2548,20 @@ mark.db-hl { background: var(--accent-dim, rgba(88, 166, 255, 0.22)); color: var
 .ext-drop-error { margin-top: 6px; font-size: 11px; color: var(--red); }
 .ext-badge.err { background: var(--red); color: #fff; }
 .btn.is-failed { border-color: var(--red); color: var(--red); }
+/* ── Category tree (up to 6 levels) ── */
+.cat-row .cat-hit { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.cat-row .cat-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-row .cat-count { margin-left: auto; font-size: 11px; flex: 0 0 auto; }
+.cat-row > .qb-info.cat-def { flex: 0 0 auto; overflow: visible; min-width: auto; opacity: 0; transition: opacity var(--transition); }
+.cat-row:hover > .qb-info.cat-def, .cat-row > .qb-info.cat-def:focus { opacity: 1; }
+.cat-node.cat-empty { display: none; }
+.cat-children .cat-children { margin-left: 12px; }
+#category-filters.weights-on .cat-row:has(.cat-checkbox:checked) > .cat-weight { display: inline-block; }
+.bonus-part.bonus-part-unused { display: none !important; }
+.qb-info.qmeta-warn { color: var(--yellow, #d29922); border-color: var(--yellow, #d29922); font-weight: 700; }
+.checkbox-row-wrap { display: flex; align-items: center; gap: 4px; }
+.qb-info.qcard-unplayable { color: var(--red); border-color: var(--red); font-weight: 700; }
+
+/* answer judged "unsure": open-class line (accept equivalents) and no listed match */
+.bonus-verdict.unsure { color: var(--yellow); font-weight: 700; cursor: pointer; }
+.result-unsure { color: var(--yellow); font-weight: 700; font-size: 11px; letter-spacing: 0.5px; margin-left: 4px; }

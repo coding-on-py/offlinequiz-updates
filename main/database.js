@@ -34,6 +34,10 @@ function isFtsSyntaxError(e) {
   return e && /fts5|syntax error|malformed|\bMATCH\b|no such column|unterminated|unknown special|expected/i.test(String(e.message || e));
 }
 
+// A category-tree node id: "n" + 10 hex (tree v3.x), or "v1:<path>" for the
+// tree synthesized from an older QBReader-format file.
+export const isNodeId = (v) => typeof v === "string" && (/^n[0-9a-f]{10}$/.test(v) || v.startsWith("v1:"));
+
 export class QuestionDatabase {
   
 
@@ -42,6 +46,144 @@ export class QuestionDatabase {
     this.db = new DatabaseSync(dbPath, { open: true, readOnly: true });
     this.db.exec("PRAGMA journal_mode=OFF");
     this.db.exec("PRAGMA cache_size=-32000");
+    // Schema 2 = the new question database (category tree, flags, playable). An
+    // older QBReader-format file still works: the tree is synthesized from the
+    // category / subcategory / alternate_subcategory names (ids "v1:…").
+    this.v2 = this._hasColumn("tossups", "category_ord");
+    this._tree = null;
+    this._treeCounts = {};
+  }
+
+  _hasColumn(table, column) {
+    try { return this.db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column); }
+    catch { return false; }
+  }
+
+  // ── Category tree ───────────────────────────────────────────────────────
+  // Nodes in preorder: { id, name, path, label, parent_id, depth, ord, ord_end,
+  // leaf, naqt, definition }. A node's subtree is the ord range [ord, ord_end],
+  // and every record stores its home node's ord (category_ord), so a subtree
+  // filter is one indexed BETWEEN.
+  _loadTree() {
+    if (this._tree) return this._tree;
+    let nodes;
+    if (this.v2) {
+      nodes = this.db.prepare("SELECT * FROM category_tree ORDER BY ord").all();
+    } else {
+      nodes = this._synthesizeV1Tree();
+    }
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    this._tree = { nodes, byId };
+    return this._tree;
+  }
+
+  _synthesizeV1Tree() {
+    const rows = [];
+    for (const t of ["tossups", "bonuses"]) {
+      try {
+        rows.push(...this.db.prepare(`SELECT DISTINCT category, subcategory, alternate_subcategory FROM ${t}`).all());
+      } catch { /* empty fixture */ }
+    }
+    const root = new Map();
+    for (const r of rows) {
+      const names = [r.category, r.subcategory, r.alternate_subcategory].filter((x) => x);
+      let level = root;
+      for (const nm of names) {
+        if (!level.has(nm)) level.set(nm, new Map());
+        level = level.get(nm);
+      }
+    }
+    const nodes = [];
+    let ord = 0;
+    const walk = (map, parentPath, parentId, depth) => {
+      for (const name of [...map.keys()].sort()) {
+        const path = parentPath ? parentPath + " > " + name : name;
+        const node = { id: "v1:" + path, name, path, label: name, parent_id: parentId, depth, ord: ord++, leaf: map.get(name).size ? 0 : 1, naqt: 0, definition: "" };
+        nodes.push(node);
+        walk(map.get(name), path, node.id, depth + 1);
+        node.ord_end = ord - 1;
+      }
+    };
+    walk(root, "", null, 1);
+    return nodes;
+  }
+
+  // Nested tree with question counts (playable questions; subtree totals) for
+  // the category GUI. Counts are cached per type: the file is read-only.
+  getCategoryTree(type = "tossups") {
+    const table = type === "bonuses" ? "bonuses" : "tossups";
+    const { nodes } = this._loadTree();
+    if (!this._treeCounts[table]) {
+      if (this.v2 && nodes.length && nodes[0].n_tossups !== undefined) {
+        // precomputed at build time (subtree totals of playable questions)
+        this._treeCounts[table] = nodes.map((n) => (table === "bonuses" ? n.n_bonuses : n.n_tossups) || 0);
+      } else {
+        // older file: one grouped count, summed up the synthesized/real tree by path
+        const byPath = new Map();
+        const grp = this.v2
+          ? `SELECT category_path AS p, COUNT(*) AS n FROM ${table} WHERE playable = 1 AND category_path IS NOT NULL GROUP BY category_path`
+          : `SELECT category || COALESCE(' > ' || NULLIF(subcategory, ''), '') || COALESCE(' > ' || NULLIF(alternate_subcategory, ''), '') AS p, COUNT(*) AS n FROM ${table} GROUP BY p`;
+        try { for (const r of this.db.prepare(grp).all()) byPath.set(r.p, r.n); } catch { /* empty fixture */ }
+        this._treeCounts[table] = nodes.map((n) => {
+          let total = 0;
+          for (const [p, c] of byPath) if (p === n.path || p.startsWith(n.path + " > ")) total += c;
+          return total;
+        });
+      }
+    }
+    const totals = this._treeCounts[table];
+    const out = [];
+    const stack = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      const item = { id: n.id, name: n.name, path: n.path, label: n.label, depth: n.depth, leaf: !!n.leaf, count: totals[i] || 0, definition: n.definition || "", children: [] };
+      while (stack.length && stack[stack.length - 1].depth >= n.depth) stack.pop();
+      if (stack.length) stack[stack.length - 1].item.children.push(item); else out.push(item);
+      stack.push({ depth: n.depth, item });
+    }
+    return out;
+  }
+
+  // Current category labels for many question ids at once (stats, review,
+  // achievements resolve recorded answers through this, so history always
+  // reads in the CURRENT tree without rewriting user data).
+  getCategoryInfo(table, ids) {
+    const out = new Map();
+    const t = table === "bonuses" ? "bonuses" : "tossups";
+    const cols = (this.v2 ? "id, category, subcategory, alternate_subcategory, category_path, category_id" : "id, category, subcategory, alternate_subcategory")
+      + (t === "bonuses" ? (this.v2 ? ", part_count" : ", parts") : "");
+    const list = [...new Set(ids)].filter(Boolean);
+    for (let i = 0; i < list.length; i += 500) {
+      const chunk = list.slice(i, i + 500);
+      try {
+        for (const r of this.db.prepare(`SELECT ${cols} FROM ${t} WHERE id IN (${chunk.map(() => "?").join(",")})`).all(...chunk)) out.set(r.id, r);
+      } catch { /* empty fixture */ }
+    }
+    return out;
+  }
+
+  getCategoryNode(id) {
+    return this._loadTree().byId.get(id) || null;
+  }
+
+  // Judge-only: never route this to display code, IPC payloads for display,
+  // multiplayer state or exports (brief §7).
+  getHiddenAnswers(id) {
+    if (!this.v2) return null;
+    try {
+      const r = this.db.prepare("SELECT data FROM hidden_answers WHERE id = ?").get(id);
+      return r ? JSON.parse(r.data) : null;
+    } catch { return null; }
+  }
+
+  // A set name as the user may have saved it before 151 sets were renamed.
+  resolveSetName(name) {
+    if (!name || !this.v2) return name;
+    try {
+      if (this.db.prepare("SELECT 1 FROM sets WHERE name = ? LIMIT 1").get(name)) return name;
+      const r = this.db.prepare("SELECT s.name FROM set_aliases a JOIN sets s ON s.id = a.set_id WHERE a.old_name = ? LIMIT 1").get(name);
+      return r ? r.name : name;
+    } catch { return name; }
   }
 
   close() {
@@ -62,6 +204,46 @@ export class QuestionDatabase {
     const clauses = [];
     const params = {};
     const col = (name) => prefix + name;
+
+    // `categories` may carry tree node ids ("n" + 10 hex, or "v1:Path" on an
+    // older file) as well as plain level-1 names: plugins forward that key
+    // verbatim, so practice filters put node ids there and old plugin code keeps
+    // working. Ids join categoryIds; names stay a level-1 name match.
+    if (filters.categories && filters.categories.length > 0) {
+      const ids = filters.categories.filter(isNodeId);
+      if (ids.length) {
+        // mixed with plain names: a name that is a top-level node becomes that
+        // node, so the whole list stays one union
+        const roots = new Map(this._loadTree().nodes.filter((n) => n.depth === 1).map((n) => [n.name, n.id]));
+        const names = filters.categories.filter((c) => !isNodeId(c));
+        const asIds = names.filter((n) => roots.has(n)).map((n) => roots.get(n));
+        filters = { ...filters, categories: names.filter((n) => !roots.has(n)), categoryIds: [...(filters.categoryIds || []), ...ids, ...asIds] };
+      }
+    }
+
+    // Tree nodes (any depth): each id = its whole subtree. Unknown ids (a tree
+    // version change) are ignored rather than matching nothing.
+    if (filters.categoryIds && filters.categoryIds.length > 0) {
+      const ors = [];
+      const names = ["category", "subcategory", "alternate_subcategory"];
+      filters.categoryIds.forEach((id, i) => {
+        const n = this.getCategoryNode(id);
+        if (!n) return;
+        if (this.v2) {
+          ors.push(`${col("category_ord")} BETWEEN :cord${i} AND :cend${i}`);
+          params[`cord${i}`] = n.ord; params[`cend${i}`] = n.ord_end;
+        } else {
+          const parts = n.path.split(" > ");
+          ors.push("(" + parts.map((p, k) => { params[`cv${i}_${k}`] = p; return `${col(names[k])} = :cv${i}_${k}`; }).join(" AND ") + ")");
+        }
+      });
+      if (ors.length) clauses.push(ors.length > 1 ? `(${ors.join(" OR ")})` : ors[0]);
+    }
+
+    // Unplayable records (empty / truncated / merged …, brief §6) never reach
+    // practice. Database search opts in to show them.
+    if (this.v2 && !filters.includeUnplayable) clauses.push(`${col("playable")} = 1`);
+    if (this.v2 && filters.cleanOnly) clauses.push(`${col("warn")} = 0`);
 
     if (filters.categories && filters.categories.length > 0) {
       const placeholders = filters.categories.map((_, i) => `:cat${i}`);
@@ -96,9 +278,14 @@ export class QuestionDatabase {
       });
     }
 
-    if (filters.setNames && filters.setNames.length > 0) {
+    // setIds win: names are comma-split on both transports, so a set name with
+    // commas ("2023 Planes, Trains, and Automobiles") cannot travel as setNames.
+    if (filters.setNames && filters.setNames.length > 0 && !(filters.setIds && filters.setIds.length > 0)) {
       const placeholders = filters.setNames.map((_, i) => `:set${i}`);
-      clauses.push(`${col("set_name")} IN (${placeholders.join(",")})`);
+      // old (pre-rename) names still select their set
+      clauses.push(this.v2
+        ? `(${col("set_name")} IN (${placeholders.join(",")}) OR ${col("set_id")} IN (SELECT set_id FROM set_aliases WHERE old_name IN (${placeholders.join(",")})))`
+        : `${col("set_name")} IN (${placeholders.join(",")})`);
       filters.setNames.forEach((s, i) => {
         params[`set${i}`] = s;
       });
@@ -193,11 +380,14 @@ export class QuestionDatabase {
 
   getRandomTossup(filters = {}) {
     const { where, params } = this._buildWhere(filters);
-    if (!where) {
+    // No filters (or only the always-on playable one): jump to a random rowid.
+    const bare = !where || where === "WHERE playable = 1";
+    if (bare) {
       const maxRow = this.db.prepare("SELECT MAX(rowid) as max FROM tossups").get();
       if (!maxRow || !maxRow.max) return undefined;
       const randomId = Math.floor(Math.random() * maxRow.max) + 1;
-      return this.db.prepare("SELECT * FROM tossups WHERE rowid >= ? LIMIT 1").get(randomId);
+      return this.db.prepare(`SELECT * FROM tossups WHERE rowid >= ? ${where ? "AND playable = 1" : ""} LIMIT 1`).get(randomId)
+        || this.db.prepare(`SELECT * FROM tossups ${where} LIMIT 1`).get();
     }
     const countSql = `SELECT COUNT(*) as count FROM tossups ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -210,11 +400,14 @@ export class QuestionDatabase {
 
   getRandomBonus(filters = {}) {
     const { where, params } = this._buildWhere(filters, "", { isBonus: true });
-    if (!where) {
+    // No filters (or only the always-on playable one): jump to a random rowid.
+    const bare = !where || where === "WHERE playable = 1";
+    if (bare) {
       const maxRow = this.db.prepare("SELECT MAX(rowid) as max FROM bonuses").get();
       if (!maxRow || !maxRow.max) return undefined;
       const randomId = Math.floor(Math.random() * maxRow.max) + 1;
-      return this.db.prepare("SELECT * FROM bonuses WHERE rowid >= ? LIMIT 1").get(randomId);
+      return this.db.prepare(`SELECT * FROM bonuses WHERE rowid >= ? ${where ? "AND playable = 1" : ""} LIMIT 1`).get(randomId)
+        || this.db.prepare(`SELECT * FROM bonuses ${where} LIMIT 1`).get();
     }
     const countSql = `SELECT COUNT(*) as count FROM bonuses ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -306,7 +499,10 @@ export class QuestionDatabase {
   }
 
   getSets() {
-    return this.db.prepare("SELECT * FROM sets ORDER BY year DESC, name").all();
+    if (!this.v2) return this.db.prepare("SELECT * FROM sets ORDER BY year DESC, name").all();
+    // old_names: the set's names before the rename (saved set-mode picks)
+    return this.db.prepare("SELECT s.*, (SELECT group_concat(a.old_name, char(31)) FROM set_aliases a WHERE a.set_id = s.id) AS old_names FROM sets s ORDER BY s.year DESC, s.name").all()
+      .map((r) => ({ ...r, old_names: r.old_names ? r.old_names.split("\u001f") : [] }));
   }
 
   getSetById(id) {
@@ -316,31 +512,47 @@ export class QuestionDatabase {
   getPacketsForSet(setName) {
     return this.db
       .prepare("SELECT DISTINCT packet_number, packet_name FROM tossups WHERE set_name = :s AND packet_number > 0 ORDER BY packet_number")
-      .all({ s: setName });
+      .all({ s: this.resolveSetName(setName) });
   }
 
   getPacketContent(setName, packetNumber) {
+    const play = this.v2 ? " AND playable = 1" : "";
+    const s = this.resolveSetName(setName);
     const tossups = this.db
-      .prepare("SELECT * FROM tossups WHERE set_name = :s AND packet_number = :p ORDER BY question_number")
-      .all({ s: setName, p: packetNumber });
+      .prepare(`SELECT * FROM tossups WHERE set_name = :s AND packet_number = :p${play} ORDER BY question_number`)
+      .all({ s, p: packetNumber });
     const bonuses = this.db
-      .prepare("SELECT * FROM bonuses WHERE set_name = :s AND packet_number = :p ORDER BY question_number")
-      .all({ s: setName, p: packetNumber });
+      .prepare(`SELECT * FROM bonuses WHERE set_name = :s AND packet_number = :p${play} ORDER BY question_number`)
+      .all({ s, p: packetNumber });
     return { tossups, bonuses };
   }
 
-  getAnswerLinesForFreq(category, subcategory, alternateSubcategory) {
+  // nodeId (any tree depth) wins over the three level names.
+  _freqNode(where, params, nodeId) {
+    const n = nodeId ? this.getCategoryNode(nodeId) : null;
+    if (!n) return where;
+    if (this.v2) { params.co = n.ord; params.ce = n.ord_end; return where + " AND category_ord BETWEEN :co AND :ce"; }
+    const cols = ["category", "subcategory", "alternate_subcategory"];
+    n.path.split(" > ").forEach((p, k) => { params["v" + k] = p; where += ` AND ${cols[k]} = :v${k}`; });
+    return where;
+  }
+
+  getAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId) {
     const params = {};
     let where = "WHERE answer_sanitized != ''";
+    if (this.v2) where += " AND playable = 1";
+    where = this._freqNode(where, params, nodeId);
     if (category) { where += " AND category = :cat"; params.cat = category; }
     if (subcategory) { where += " AND subcategory = :sub"; params.sub = subcategory; }
     if (alternateSubcategory) { where += " AND alternate_subcategory = :alt"; params.alt = alternateSubcategory; }
     return this.db.prepare(`SELECT answer, answer_sanitized FROM tossups ${where}`).all(params);
   }
 
-  getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory) {
+  getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId) {
     const params = {};
     let where = "WHERE answers_sanitized != '' AND answers_sanitized != '[]'";
+    if (this.v2) where += " AND playable = 1";
+    where = this._freqNode(where, params, nodeId);
     if (category) { where += " AND category = :cat"; params.cat = category; }
     if (subcategory) { where += " AND subcategory = :sub"; params.sub = subcategory; }
     if (alternateSubcategory) { where += " AND alternate_subcategory = :alt"; params.alt = alternateSubcategory; }
@@ -350,7 +562,7 @@ export class QuestionDatabase {
   getSetPacketNumbers(setName) {
     const rows = this.db
       .prepare("SELECT DISTINCT packet_number FROM tossups WHERE set_name = :s AND packet_number > 0 ORDER BY packet_number")
-      .all({ s: setName });
+      .all({ s: this.resolveSetName(setName) });
     return rows.map((r) => r.packet_number);
   }
 

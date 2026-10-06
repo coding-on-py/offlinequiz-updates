@@ -1,265 +1,286 @@
 /**
- * Question-database updater.
+ * Question-database updater (GitHub).
  *
- * Checks a public Google Drive folder for the newest snapshot (a MongoDB dump:
- * sets/packets/tossups/bonuses .bson), and rebuilds the local questions.db from
- * it. Listing a Drive folder requires an API key — paste a Google Drive API key
- * into GOOGLE_API_KEY below (Google Cloud Console → APIs & Services → Enable
- * "Google Drive API" → Credentials → Create API key; restrict it to the Drive
- * API). Without a key, the updater reports "not configured" and the app still
- * works with its bundled database.
+ * A built questions.db is published as a GitHub Release on the updates repo,
+ * brotli-compressed and split into parts (scripts/publish-db.mjs). A small
+ * signed manifest sits next to the code-update manifest:
+ *     <UPDATE_BASE_URL>/db/db-manifest.json
+ *     { format: 1, version: "<meta built_at>", name, schema, mode, tree,
+ *       size, sha256,                       // the decompressed database
+ *       compression: "br", parts: [{ name, url, size, sha256 }],
+ *       signature }                         // Ed25519 over dbCanonical()
+ * The app downloads the parts (each verified, kept between attempts so an
+ * interrupted download resumes), decompresses them into a temp file, checks the
+ * whole database's size + sha256 and that it opens, then swaps it into place.
+ *
+ * This file runs from the signed OTA overlay too, so it may import only Node
+ * built-ins (and nothing else from src/main except through the caller).
  */
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, renameSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { createRequire } from "node:module";
-
-// Load the bson module no matter where THIS file runs from. A bare
-// import("bson") resolves relative to the importing file — fine inside the app
-// bundle (node_modules/bson ships in the asar), but this file also runs from
-// the OTA overlay dir under userData, where that walk finds nothing. Fall back
-// to resolving through the packaged app's own package.json.
-async function loadBson() {
-  try { return await import("bson"); } catch (e) {}
-  const candidates = [];
-  if (process.resourcesPath) {
-    candidates.push(join(process.resourcesPath, "app.asar", "package.json"));
-    candidates.push(join(process.resourcesPath, "app", "package.json"));
-  }
-  candidates.push(join(process.cwd(), "package.json"));
-  for (const c of candidates) {
-    try { return createRequire(c)("bson"); } catch (e) {}
-  }
-  throw new Error("bson module not found — reinstall the app");
-}
+import { createHash, verify as edVerify, createPublicKey } from "node:crypto";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createBrotliDecompress } from "node:zlib";
 
 // ── Configuration ──────────────────────────────────────────
-export const GOOGLE_API_KEY = "AIzaSyCSyvh5_21xzogdKlLhM27b9OGODQssyww"; // Drive API key — restrict to Drive API only
-const ROOT_FOLDER_ID = "1ECdCeXNAFAEur71C5-k5iLNqSI-OM8sK";
-const DRIVE = "https://www.googleapis.com/drive/v3";
-
-const FOLDER_MIME = "application/vnd.google-apps.folder";
+const UPDATE_BASE_URL = "https://raw.githubusercontent.com/coding-on-py/offlinequiz-updates/main";
+const MANIFEST_URL = process.env.QB_DB_MANIFEST_URL || UPDATE_BASE_URL + "/db/db-manifest.json";
+// Newest questions.db schema this build can read. A manifest for a newer schema
+// is ignored (the app update that understands it has to land first).
+export const DB_SCHEMA_MAX = 2;
+// Same key as the signed main-process updates (keys/main-update-private.pem).
+const PUBLIC_KEY_PEM =
+  "-----BEGIN PUBLIC KEY-----\n" +
+  "MCowBQYDK2VwAyEAqIHAYtG9qxfWDacA6zfGqPfPTKfmF5zFYBniVkl6QLY=\n" +
+  "-----END PUBLIC KEY-----\n";
 
 export function isConfigured() {
-  return !!GOOGLE_API_KEY;
+  return !!MANIFEST_URL;
 }
 
-async function driveJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Drive API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.json();
+// What gets signed: everything that decides WHAT is installed (not the URLs,
+// which may move hosts, nor the display name).
+export function dbCanonical(m) {
+  return ["qbdb", m.format, m.version, m.schema, m.size, m.sha256, m.compression]
+    .concat((m.parts || []).map((p) => p.name + ":" + p.size + ":" + p.sha256))
+    .join("\n");
 }
 
-/** Newest sub-folder (snapshot) inside the root folder, by creation time. */
-async function latestSnapshot() {
-  const q = encodeURIComponent(`'${ROOT_FOLDER_ID}' in parents and mimeType='${FOLDER_MIME}' and trashed=false`);
-  const url = `${DRIVE}/files?q=${q}&orderBy=createdTime desc&pageSize=20&fields=files(id,name,createdTime)&key=${GOOGLE_API_KEY}`;
-  const data = await driveJson(url);
-  const folders = data.files || [];
-  return folders[0] || null;
+export function verifyDbManifest(m, publicKeyPem = PUBLIC_KEY_PEM) {
+  try {
+    if (!m || m.format !== 1 || !m.signature || !Array.isArray(m.parts) || !m.parts.length) return false;
+    if (m.compression !== "br" || !/^[0-9a-f]{64}$/.test(m.sha256 || "") || !(m.size > 0)) return false;
+    if (!m.parts.every((p) => p && p.name && p.url && p.size > 0 && /^[0-9a-f]{64}$/.test(p.sha256 || ""))) return false;
+    return edVerify(null, Buffer.from(dbCanonical(m), "utf8"), createPublicKey(publicKeyPem), Buffer.from(m.signature, "base64"));
+  } catch { return false; }
+}
+
+const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
+/** Build stamp + schema of a questions.db file ({ok:false} when unreadable). */
+export function dbStamp(path) {
+  if (!path || !existsSync(path)) return { ok: false };
+  let db;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+    const hasMeta = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").get();
+    const meta = (k) => (hasMeta ? (db.prepare("SELECT value FROM meta WHERE key = ?").get(k) || {}).value : null);
+    db.prepare("SELECT 1 FROM tossups LIMIT 1").get();   // a question database at all
+    return { ok: true, stamp: num(meta("built_at")), schema: num(meta("schema_version")) || 1, mode: meta("source_mode") || "" };
+  } catch { return { ok: false }; }
+  finally { try { db && db.close(); } catch {} }
 }
 
 /**
- * @param {string|null} currentVersion - the folder id of the currently-installed snapshot
- * @returns {{configured:boolean, available:boolean, latest:object|null, current:string|null}}
+ * Which database to open: a downloaded one (in userData) wins over the copy
+ * bundled with the app when it is readable, of a supported schema, and built
+ * later. A downloaded copy older than a newer app's bundled one is deleted.
  */
-export async function checkForUpdate(currentVersion) {
-  if (!isConfigured()) return { configured: false, available: false, latest: null, current: currentVersion || null };
-  const latest = await latestSnapshot();
+export function pickDbPath(bundledPath, downloadedPath) {
+  // a download verified last session but not yet switched to: nothing has the file open now
+  try { if (downloadedPath && downloadedPath !== bundledPath) commitUpdate(downloadedPath); } catch {}
+  if (!downloadedPath || downloadedPath === bundledPath || !existsSync(downloadedPath)) return bundledPath;
+  const d = dbStamp(downloadedPath);
+  if (!d.ok || d.schema > DB_SCHEMA_MAX) return bundledPath;
+  const b = dbStamp(bundledPath);
+  if (!b.ok || d.stamp > b.stamp) return downloadedPath;
+  try { rmSync(downloadedPath, { force: true }); } catch {}
+  return bundledPath;
+}
+
+// null = nothing published yet (404)
+async function fetchManifest(url = MANIFEST_URL) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`update manifest → ${r.status}`);
+  return r.json();
+}
+
+function latestOf(m) {
+  const dl = m.parts.reduce((a, p) => a + p.size, 0);
+  return { id: String(m.version), name: String(m.name || "Question database").slice(0, 120), mode: String(m.mode || ""), size: dl, dbSize: m.size };
+}
+
+/**
+ * @param {{currentVersion?: string|number, manifestUrl?: string, publicKeyPem?: string}} opts
+ * @returns {{configured, available, latest: {id, name, mode, size, dbSize}|null, current}}
+ */
+export async function checkForUpdate(opts = {}) {
+  const current = String(opts.currentVersion || "0");
+  if (!isConfigured() && !opts.manifestUrl) return { configured: false, available: false, latest: null, current };
+  const m = await fetchManifest(opts.manifestUrl);
+  if (!m) return { configured: true, available: false, latest: null, current };
+  if (!verifyDbManifest(m, opts.publicKeyPem)) throw new Error("the update manifest failed verification");
+  const supported = num(m.schema) <= DB_SCHEMA_MAX;
   return {
     configured: true,
-    available: !!latest && latest.id !== currentVersion,
-    latest,
-    current: currentVersion || null,
+    available: supported && num(m.version) > num(current),
+    needsAppUpdate: !supported,
+    latest: latestOf(m),
+    current,
   };
 }
 
-async function listFilesInFolder(folderId) {
-  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
-  const url = `${DRIVE}/files?q=${q}&pageSize=100&fields=files(id,name,size)&key=${GOOGLE_API_KEY}`;
-  const data = await driveJson(url);
-  const map = {};
-  for (const f of data.files || []) map[f.name] = f;
-  return map;
+const MB = 1024 * 1024;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function sha256File(path) {
+  const h = createHash("sha256");
+  await pipeline(createReadStream(path), new Transform({ transform(c, _e, cb) { h.update(c); cb(null); } }));
+  return h.digest("hex");
 }
 
-async function downloadBson(fileId) {
-  const res = await fetch(`${DRIVE}/files/${fileId}?alt=media&key=${GOOGLE_API_KEY}`);
-  if (!res.ok) throw new Error(`download ${res.status}`);
-  return new Uint8Array(await res.arrayBuffer());
-}
-
-/** Split a mongodump .bson buffer (concatenated documents) into objects. */
-function parseBsonDocs(buf, deserialize) {
-  const docs = [];
-  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  let o = 0;
-  while (o + 4 <= buf.length) {
-    const size = dv.getInt32(o, true);
-    if (size <= 0 || o + size > buf.length) break;
-    docs.push(deserialize(buf.subarray(o, o + size), { promoteValues: true, promoteLongs: true }));
-    o += size;
+// One part → disk, verified. An existing file with the right size + hash is
+// kept (resume). Retries with back-off; a stalled transfer is aborted.
+async function downloadPart(part, file, onBytes) {
+  if (existsSync(file) && statSync(file).size === part.size && (await sha256File(file)) === part.sha256) {
+    onBytes(part.size);
+    return;
   }
-  return docs;
+  let lastErr = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt) await sleep(1500 * attempt);
+    const ac = new AbortController();
+    let idle = setTimeout(() => ac.abort(), 60000);
+    let got = 0;
+    try {
+      const r = await fetch(part.url, { signal: ac.signal, redirect: "follow" });
+      if (!r.ok || !r.body) throw new Error(`download → ${r.status}`);
+      const h = createHash("sha256");
+      const meter = new Transform({
+        transform(chunk, _e, cb) {
+          clearTimeout(idle); idle = setTimeout(() => ac.abort(), 60000);
+          got += chunk.length; h.update(chunk); onBytes(chunk.length);
+          cb(null, chunk);
+        },
+      });
+      await pipeline(Readable.fromWeb(r.body), meter, createWriteStream(file + ".tmp"));
+      clearTimeout(idle);
+      if (got !== part.size || h.digest("hex") !== part.sha256) throw new Error("a downloaded piece was corrupted");
+      renameSync(file + ".tmp", file);
+      return;
+    } catch (e) {
+      clearTimeout(idle);
+      onBytes(-got);
+      try { rmSync(file + ".tmp", { force: true }); } catch {}
+      lastErr = e.name === "AbortError" ? new Error("the download stalled") : e;
+    }
+  }
+  throw lastErr || new Error("download failed");
 }
 
-const idStr = (v) => (v == null ? "" : typeof v === "object" && v.toString ? v.toString() : String(v));
-const num = (v) => (typeof v === "number" ? v : v == null ? 0 : Number(v) || 0);
-const bool01 = (v) => (v ? 1 : 0);
-
-const SCHEMA = `
-  CREATE TABLE tossups (
-    id TEXT PRIMARY KEY, question TEXT, question_sanitized TEXT, answer TEXT, answer_sanitized TEXT,
-    category TEXT, subcategory TEXT, alternate_subcategory TEXT, difficulty INTEGER, set_id TEXT, set_name TEXT, set_year INTEGER,
-    packet_id TEXT, packet_name TEXT, packet_number INTEGER, question_number INTEGER, standard INTEGER
-  );
-  CREATE TABLE bonuses (
-    id TEXT PRIMARY KEY, leadin TEXT, leadin_sanitized TEXT, parts TEXT, parts_sanitized TEXT,
-    answers TEXT, answers_sanitized TEXT, category TEXT, subcategory TEXT, alternate_subcategory TEXT, difficulty INTEGER,
-    set_id TEXT, set_name TEXT, set_year INTEGER, packet_id TEXT, packet_name TEXT,
-    packet_number INTEGER, question_number INTEGER, point_values TEXT, standard INTEGER
-  );
-  CREATE TABLE sets ( id TEXT PRIMARY KEY, name TEXT, year INTEGER, difficulty INTEGER, standard INTEGER );
-  CREATE TABLE packets ( id TEXT PRIMARY KEY, name TEXT, set_id TEXT, number INTEGER );
-  CREATE INDEX idx_tossups_altsub ON tossups(alternate_subcategory);
-  CREATE INDEX idx_bonuses_altsub ON bonuses(alternate_subcategory);
-  CREATE INDEX idx_tossups_category ON tossups(category);
-  CREATE INDEX idx_tossups_difficulty ON tossups(difficulty);
-  CREATE INDEX idx_tossups_set_id ON tossups(set_id);
-  CREATE INDEX idx_tossups_set_name ON tossups(set_name);
-  CREATE INDEX idx_tossups_standard ON tossups(standard);
-  CREATE INDEX idx_bonuses_category ON bonuses(category);
-  CREATE INDEX idx_bonuses_difficulty ON bonuses(difficulty);
-  CREATE INDEX idx_bonuses_set_id ON bonuses(set_id);
-  CREATE INDEX idx_bonuses_set_name ON bonuses(set_name);
-  CREATE INDEX idx_bonuses_standard ON bonuses(standard);
-`;
-
-const FTS = `
-  CREATE VIRTUAL TABLE tossups_fts USING fts5(
-    question_sanitized, answer_sanitized, category, subcategory, set_name,
-    content='tossups', content_rowid='rowid');
-  INSERT INTO tossups_fts(rowid, question_sanitized, answer_sanitized, category, subcategory, set_name)
-    SELECT rowid, question_sanitized, answer_sanitized, category, subcategory, set_name FROM tossups;
-  CREATE VIRTUAL TABLE bonuses_fts USING fts5(
-    leadin_sanitized, parts_sanitized, answers_sanitized, category, subcategory, set_name,
-    content='bonuses', content_rowid='rowid');
-  INSERT INTO bonuses_fts(rowid, leadin_sanitized, parts_sanitized, answers_sanitized, category, subcategory, set_name)
-    SELECT rowid, leadin_sanitized, parts_sanitized, answers_sanitized, category, subcategory, set_name FROM bonuses;
-`;
+function freeBytes(dir) {
+  try { const s = statfsSync(dir); return Number(s.bavail) * Number(s.bsize); } catch { return Infinity; }
+}
+const gb = (n) => (n / 1024 / MB).toFixed(1) + " GB";
 
 /**
- * Download the given snapshot folder and rebuild the questions DB at `dbPath`.
- * Writes to a temp file then atomically replaces. The caller must close any open
- * handle to `dbPath` first (and reopen after).
- * @param {string} folderId
- * @param {string} dbPath
- * @param {(msg:string)=>void} [onProgress]
+ * Download the database `version` and leave it VERIFIED next to the target,
+ * ready to swap in: <targetPath>.new plus a <targetPath>.ready marker. Nothing
+ * the app has open is touched, so this runs in the background while the app
+ * keeps using its current database; commitUpdate() does the instant swap.
+ * The downloaded pieces live in <targetPath>.download/ (kept for a resume).
+ * @param {string} version
+ * @param {string} targetPath
+ * @param {(p:{label:string,pct:number})=>void} [onProgress]
+ * @param {{manifestUrl?: string, publicKeyPem?: string}} [opts]
  */
-export async function applyUpdate(folderId, dbPath, onProgress = () => {}) {
-  if (!isConfigured()) throw new Error("updater not configured (missing GOOGLE_API_KEY)");
-  const { deserialize } = await loadBson();
+export async function prepareUpdate(version, targetPath, onProgress = () => {}, opts = {}) {
+  onProgress({ label: "Checking…", pct: 1 });
+  const m = await fetchManifest(opts.manifestUrl);
+  if (!m) throw new Error("no database update is published");
+  if (!verifyDbManifest(m, opts.publicKeyPem)) throw new Error("the update manifest failed verification");
+  if (num(m.schema) > DB_SCHEMA_MAX) throw new Error("this database needs a newer version of the app");
+  if (version && String(m.version) !== String(version)) throw new Error("a newer database was published meanwhile; check again");
 
-  onProgress({ label: "Locating files…", pct: 4 });
-  const files = await listFilesInFolder(folderId);
-  const need = ["sets.bson", "packets.bson", "tossups.bson", "bonuses.bson"];
-  for (const n of need) if (!files[n]) throw new Error(`missing ${n} in the update folder`);
+  const dir = dirname(targetPath);
+  mkdirSync(dir, { recursive: true });
+  const work = targetPath + ".download";
+  mkdirSync(work, { recursive: true });
+  // pieces of an older release are useless now
+  const keep = new Set(m.parts.map((p) => p.name));
+  for (const f of readdirSync(work)) if (!keep.has(f)) { try { rmSync(join(work, f), { force: true }); } catch {} }
 
-  onProgress({ label: "Downloading sets…", pct: 12 });
-  const setDocs = parseBsonDocs(await downloadBson(files["sets.bson"].id), deserialize);
-  onProgress({ label: "Downloading packets…", pct: 22 });
-  const packetDocs = parseBsonDocs(await downloadBson(files["packets.bson"].id), deserialize);
-  onProgress({ label: "Downloading tossups…", pct: 40 });
-  const tossupDocs = parseBsonDocs(await downloadBson(files["tossups.bson"].id), deserialize);
-  onProgress({ label: "Downloading bonuses…", pct: 62 });
-  const bonusDocs = parseBsonDocs(await downloadBson(files["bonuses.bson"].id), deserialize);
+  const total = m.parts.reduce((a, p) => a + p.size, 0);
+  const have = m.parts.reduce((a, p) => { const f = join(work, p.name); return a + (existsSync(f) && statSync(f).size === p.size ? p.size : 0); }, 0);
+  const need = (total - have) + m.size + 200 * MB;
+  if (freeBytes(dir) < need) throw new Error(`not enough disk space: ${gb(need)} free is needed`);
 
-  onProgress({ label: "Building database…", pct: 80 });
-  const tmpPath = dbPath + ".new";
-  if (existsSync(tmpPath)) rmSync(tmpPath);
-  const db = new DatabaseSync(tmpPath);
+  let done = 0, lastPct = -1;
+  const onBytes = (n) => {
+    done += n;
+    const pct = Math.round(2 + (78 * done) / total);
+    if (pct !== lastPct) { lastPct = pct; onProgress({ label: `Downloading… ${Math.round(done / MB)} / ${Math.round(total / MB)} MB`, pct }); }
+  };
+  for (const p of m.parts) await downloadPart(p, join(work, p.name), onBytes);
+
+  // Decompress the pieces in order into a temp file next to the target.
+  onProgress({ label: "Unpacking…", pct: 82 });
+  const tmp = targetPath + ".new";
+  try { rmSync(targetPath + ".ready", { force: true }); rmSync(tmp, { force: true }); } catch {}
+  const h = createHash("sha256");
+  let out = 0, lastU = -1;
+  async function* pieces() { for (const p of m.parts) yield* createReadStream(join(work, p.name)); }
+  const meter = new Transform({
+    transform(chunk, _e, cb) {
+      out += chunk.length; h.update(chunk);
+      const pct = Math.round(82 + (14 * out) / m.size);
+      if (pct !== lastU) { lastU = pct; onProgress({ label: "Unpacking…", pct: Math.min(96, pct) }); }
+      cb(null, chunk);
+    },
+  });
   try {
-    db.exec("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;");
-    db.exec(SCHEMA);
-
-    const setInfo = {};
-    db.exec("BEGIN");
-    const insSet = db.prepare("INSERT OR IGNORE INTO sets (id,name,year,difficulty,standard) VALUES (?,?,?,?,?)");
-    for (const s of setDocs) {
-      const id = idStr(s._id);
-      const info = { name: s.name || "", year: num(s.year), standard: s.standard ? 1 : 0 };
-      setInfo[id] = info;
-      insSet.run(id, info.name, info.year, num(s.difficulty), info.standard);
-    }
-    const insPkt = db.prepare("INSERT OR IGNORE INTO packets (id,name,set_id,number) VALUES (?,?,?,?)");
-    for (const p of packetDocs) {
-      insPkt.run(idStr(p._id), p.name || "", idStr(p.set && p.set._id), num(p.number));
-    }
-
-    const insT = db.prepare(`INSERT OR IGNORE INTO tossups
-      (id,question,question_sanitized,answer,answer_sanitized,category,subcategory,alternate_subcategory,difficulty,
-       set_id,set_name,set_year,packet_id,packet_name,packet_number,question_number,standard)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-    let tCount = 0;
-    for (const q of tossupDocs) {
-      const category = q.category || "";
-      const subcategory = q.subcategory || "";
-      if (subcategory === "Ancient History" && category !== "History") continue; // strays only valid under History
-      const setRef = q.set || {};
-      const setId = idStr(setRef._id);
-      const meta = setInfo[setId] || {};
-      const pkt = q.packet || {};
-      insT.run(
-        idStr(q._id), q.question || "", q.question_sanitized || "", q.answer || "", q.answer_sanitized || "",
-        category, subcategory, q.alternate_subcategory || "", num(q.difficulty), setId, meta.name || setRef.name || "",
-        num(setRef.year) || meta.year || 0, idStr(pkt._id), pkt.name || "", num(pkt.number),
-        num(q.number), meta.standard != null ? meta.standard : 1,
-      );
-      tCount++;
-    }
-
-    const insB = db.prepare(`INSERT OR IGNORE INTO bonuses
-      (id,leadin,leadin_sanitized,parts,parts_sanitized,answers,answers_sanitized,category,subcategory,alternate_subcategory,
-       difficulty,set_id,set_name,set_year,packet_id,packet_name,packet_number,question_number,point_values,standard)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-    let bCount = 0;
-    for (const q of bonusDocs) {
-      const category = q.category || "";
-      const subcategory = q.subcategory || "";
-      if (subcategory === "Ancient History" && category !== "History") continue;
-      const setRef = q.set || {};
-      const setId = idStr(setRef._id);
-      const meta = setInfo[setId] || {};
-      const pkt = q.packet || {};
-      const values = JSON.stringify((q.values || [10, 10, 10]).map(num));
-      insB.run(
-        idStr(q._id), q.leadin || "", q.leadin_sanitized || "", JSON.stringify(q.parts || []),
-        JSON.stringify(q.parts_sanitized || []), JSON.stringify(q.answers || []), JSON.stringify(q.answers_sanitized || []),
-        category, subcategory, q.alternate_subcategory || "", num(q.difficulty), setId, meta.name || setRef.name || "",
-        num(setRef.year) || meta.year || 0, idStr(pkt._id), pkt.name || "", num(pkt.number),
-        num(q.number), values, meta.standard != null ? meta.standard : 1,
-      );
-      bCount++;
-    }
-    db.exec("COMMIT");
-
-    onProgress({ label: "Indexing for search…", pct: 92 });
-    db.exec(FTS);
-    // Stamp the snapshot id INSIDE the database so "up to date" is detected no
-    // matter which profile/transport/user-data dir later asks.
-    db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
-    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('snapshot_id', ?)").run(folderId);
-    db.exec("ANALYZE");
-    db.close();
-
-    // Atomically swap the new DB into place.
-    if (existsSync(dbPath)) rmSync(dbPath);
-    renameSync(tmpPath, dbPath);
-
-    return { version: folderId, tossups: tCount, bonuses: bCount, sets: setDocs.length };
+    await pipeline(Readable.from(pieces()), createBrotliDecompress(), meter, createWriteStream(tmp));
+    if (out !== m.size || h.digest("hex") !== m.sha256) throw new Error("the unpacked database did not match the published one");
+    onProgress({ label: "Checking the database…", pct: 97 });
+    const st = dbStamp(tmp);
+    if (!st.ok || String(st.stamp) !== String(m.version)) throw new Error("the downloaded database could not be opened");
+    writeFileSync(targetPath + ".ready", JSON.stringify({ version: String(m.version), size: m.size, sha256: m.sha256, name: latestOf(m).name }));
   } catch (e) {
-    try { db.close(); } catch {}
-    if (existsSync(tmpPath)) { try { rmSync(tmpPath); } catch {} }
+    try { rmSync(tmp, { force: true }); } catch {}
     throw e;
   }
+  try { rmSync(work, { recursive: true, force: true }); } catch {}
+  onProgress({ label: "Ready", pct: 100 });
+  return { version: String(m.version), name: latestOf(m).name };
+}
+
+/** A verified download waiting at <targetPath>.new, or null. */
+export function pendingUpdate(targetPath) {
+  try {
+    const r = JSON.parse(readFileSync(targetPath + ".ready", "utf8"));
+    const st = statSync(targetPath + ".new");
+    if (st.size !== r.size) return null;
+    const s = dbStamp(targetPath + ".new");
+    return s.ok && String(s.stamp) === String(r.version) ? r : null;
+  } catch { return null; }
+}
+
+/**
+ * Swap a prepared download into place (the caller has closed any handle on
+ * targetPath). Returns {version, name, tossups, bonuses}, or null if nothing
+ * verified is waiting.
+ */
+export function commitUpdate(targetPath) {
+  const r = pendingUpdate(targetPath);
+  if (!r) return null;
+  renameSync(targetPath + ".new", targetPath);
+  try { rmSync(targetPath + ".ready", { force: true }); } catch {}
+  let tossups = 0, bonuses = 0, db;
+  try {
+    db = new DatabaseSync(targetPath, { readOnly: true });
+    tossups = db.prepare("SELECT COUNT(*) AS n FROM tossups WHERE playable = 1").get().n;
+    bonuses = db.prepare("SELECT COUNT(*) AS n FROM bonuses WHERE playable = 1").get().n;
+  } catch {} finally { try { db && db.close(); } catch {} }
+  return { version: r.version, name: r.name, tossups, bonuses };
+}
+
+/** prepareUpdate + commitUpdate (caller closes its handle first). */
+export async function applyUpdate(version, targetPath, onProgress = () => {}, opts = {}) {
+  await prepareUpdate(version, targetPath, onProgress, opts);
+  const r = commitUpdate(targetPath);
+  if (!r) throw new Error("the downloaded database could not be installed");
+  return r;
 }

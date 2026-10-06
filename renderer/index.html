@@ -127,7 +127,7 @@
             <button type="button" class="collapse-header"><span class="collapse-chevron"></span>DIFFICULTY</button>
             <div class="filter-body">
               <div class="diff-checks" id="difficulty-filters">
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="0"><span>0 · Pop Culture</span></label>
+                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="0"><span>0 · Unrated</span></label>
                 <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="1"><span>1 · Middle School</span></label>
                 <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="2" checked><span>2 · Easy High School</span></label>
                 <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="3" checked><span>3 · Regular High School</span></label>
@@ -188,6 +188,9 @@
             <label class="checkbox-row packet-disable">
               <input type="checkbox" id="filter-powermark" checked> Powermarked questions only
             </label>
+            <span class="checkbox-row-wrap packet-disable"><label class="checkbox-row">
+              <input type="checkbox" id="filter-clean"> Clean questions only
+            </label><span class="qb-info" data-tip="Skips questions the database flags as possibly garbled, merged with another question, or missing a part.">i</span></span>
             <label class="checkbox-row">
               <input type="checkbox" id="opt-allow-rebuzzes"> Allow rebuzzes
             </label>

@@ -42,14 +42,16 @@ contextBridge.exposeInMainWorld("qbreader", {
   checkTossup: (questionId, answer, buzzPosition, sessionId, extra = {}) =>
     ipcRenderer.invoke("check-tossup", { questionId, answer, buzzPosition, sessionId, ...extra }),
 
-  checkBonus: (questionId, answers, sessionId, strictness, overrides) =>
-    ipcRenderer.invoke("check-bonus", { questionId, answers, sessionId, strictness, overrides }),
+  checkBonus: (questionId, answers, sessionId, strictness, overrides, previous) =>
+    ipcRenderer.invoke("check-bonus", { questionId, answers, sessionId, strictness, overrides, previous }),
 
-  evaluateTossup: (questionId, answer, strictness, buzzPosition) =>
-    ipcRenderer.invoke("evaluate-tossup", { questionId, answer, strictness, buzzPosition }),
+  evaluateBonusPart: (questionId, part, answer, strictness, previous) =>
+    ipcRenderer.invoke("evaluate-bonus-part", { questionId, part, answer, strictness, previous }),
+  evaluateTossup: (questionId, answer, strictness, buzzPosition, previous) =>
+    ipcRenderer.invoke("evaluate-tossup", { questionId, answer, strictness, buzzPosition, previous }),
 
-  evaluateAnswerLine: (answerline, sanitized, answer, strictness) =>
-    ipcRenderer.invoke("evaluate-answer", { answerline, sanitized, answer, strictness }),
+  evaluateAnswerLine: (answerline, sanitized, answer, strictness, previous) =>
+    ipcRenderer.invoke("evaluate-answer", { answerline, sanitized, answer, strictness, previous }),
   parseAnswerline: (answerline, sanitized) =>
     ipcRenderer.invoke("parse-answerline", { answerline, sanitized }),
   getProfileSettings: () => ipcRenderer.invoke("get-profile-settings"),
@@ -107,9 +109,16 @@ contextBridge.exposeInMainWorld("qbreader", {
 
   getPacketContent: (setName, packetNumber) => ipcRenderer.invoke("get-packet-content", { setName, packetNumber }),
 
-  getFrequentAnswers: (category, subcategory, alternateSubcategory, limit, qtype) => ipcRenderer.invoke("get-frequent-answers", { category, subcategory, alternateSubcategory, limit, qtype }),
+  getFrequentAnswers: (category, subcategory, alternateSubcategory, limit, qtype, nodeId) => ipcRenderer.invoke("get-frequent-answers", { category, subcategory, alternateSubcategory, limit, qtype, nodeId }),
+
+  getCategoryTree: (type) => ipcRenderer.invoke("get-category-tree", { type }),
+
+  getDbInfo: () => ipcRenderer.invoke("get-db-info"),
 
   checkUpdate: () => ipcRenderer.invoke("check-update"),
+  dbUpdateStatus: () => ipcRenderer.invoke("db-update-status"),
+  dbUpdateStart: () => ipcRenderer.invoke("db-update-start"),
+  dbUpdateCommit: () => ipcRenderer.invoke("db-update-commit"),
 
   applyUpdate: (folderId) => ipcRenderer.invoke("apply-update", { folderId }),
 

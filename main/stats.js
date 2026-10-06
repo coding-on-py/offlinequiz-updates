@@ -18,7 +18,8 @@ export function computeStats(entries) {
     totalTossupPoints: 0,
     bonusTotalPoints: 0,
     bonusPartsCorrect: 0,
-    bonusPartsTotal: bonuses.length * 3,
+    // bonuses have 1-9 parts (entries carry part_count when resolved; 3 before)
+    bonusPartsTotal: bonuses.reduce((a, b) => a + (b.part_count != null ? b.part_count : 3), 0),
     bonusConversion: 0,
     bonusDist: { 0: 0, 10: 0, 20: 0, 30: 0 },
     totalBonusPoints: 0,
@@ -26,6 +27,9 @@ export function computeStats(entries) {
     averagePointsPerQuestion: 0,
     byCategory: {},
     byAltSubcategory: {},
+    // every prefix of each entry's category_path ("Science and Math",
+    // "Science and Math > Math", …) -> { totalQuestions, tossups, bonuses }
+    byPath: {},
     byDifficulty: {},
     celerityDistribution: { power: [], early: [], mid: [], late: [], end: [] },
     questionsByDate: {},
@@ -65,6 +69,7 @@ export function computeStats(entries) {
     // them tally here. Entries carry alternate_subcategory only when the
     // caller resolved it (index.js getOverallStats); session rows do not.
     if (t.alternate_subcategory) addToCategoryStats(stats.byAltSubcategory, { ...t, category: t.alternate_subcategory }, "tossup");
+    addToPathStats(stats.byPath, t, "tossup");
     addToDifficultyStats(stats.byDifficulty, t, "tossup");
     addToDateStats(stats.questionsByDate, t);
   }
@@ -80,6 +85,7 @@ export function computeStats(entries) {
 
     addToCategoryStats(stats.byCategory, b, "bonus");
     if (b.alternate_subcategory) addToCategoryStats(stats.byAltSubcategory, { ...b, category: b.alternate_subcategory }, "bonus");
+    addToPathStats(stats.byPath, b, "bonus");
     addToDifficultyStats(stats.byDifficulty, b, "bonus");
     addToDateStats(stats.questionsByDate, b);
   }
@@ -103,6 +109,18 @@ export function computeStats(entries) {
   }
 
   return stats;
+}
+
+function addToPathStats(byPath, entry, type) {
+  const path = entry.category_path || "";
+  if (!path) return;
+  const parts = path.split(" > ");
+  for (let i = 1; i <= parts.length; i++) {
+    const key = parts.slice(0, i).join(" > ");
+    const s = byPath[key] || (byPath[key] = { totalQuestions: 0, tossups: 0, bonuses: 0 });
+    s.totalQuestions++;
+    if (type === "tossup") s.tossups++; else s.bonuses++;
+  }
 }
 
 function addToCategoryStats(byCategory, entry, type) {
@@ -140,6 +158,7 @@ function addToCategoryStats(byCategory, entry, type) {
     c.totalQuestions++;
     c.bonusPoints += entry.points;
     c.bonusPartsCorrect += (entry.bonus_parts_correct ?? entry.bonusPartsCorrect) || 0;
+    c.bonusPartsTotal = (c.bonusPartsTotal || 0) + (entry.part_count != null ? entry.part_count : 3);
     c.totalPoints += entry.points;
   }
 }
@@ -206,6 +225,9 @@ export function emptyStats() {
     averagePointsPerQuestion: 0,
     byCategory: {},
     byAltSubcategory: {},
+    // every prefix of each entry's category_path ("Science and Math",
+    // "Science and Math > Math", …) -> { totalQuestions, tossups, bonuses }
+    byPath: {},
     byDifficulty: {},
     celerityDistribution: { power: [], early: [], mid: [], late: [], end: [] },
     questionsByDate: {},

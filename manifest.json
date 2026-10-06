@@ -1,5 +1,5 @@
 {
-  "version": "14.28",
+  "version": "14.29",
   "renderer": [
     "index.html",
     "style.css",
@@ -114,5 +114,7 @@
       "file": "power-facts.zip"
     }
   ],
-  "main": true
+  "main": true,
+  "critical": true,
+  "notes": "New question database: cleaned questions, a detailed category tree and stricter answer checking with prompts on bonuses. It downloads in the background (about 264 MB) and switches in when you are on the title screen."
 }

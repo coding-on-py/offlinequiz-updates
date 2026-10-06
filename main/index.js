@@ -43,6 +43,11 @@ export class App {
   constructor(opts = {}) {
     this.dbPath = opts.dbPath || DEFAULT_DB_PATH;
     this.userDbPath = opts.userDbPath || DEFAULT_USER_DB_PATH;
+    // Where a downloaded question database is installed (packaged app: userData;
+    // dev: the repo's data/questions.db itself).
+    this.dbInstallPath = opts.dbInstallPath || this.dbPath;
+    this._dbUpd = { state: "idle" };   // background question-database update
+    this._dbJob = null;
 
     this.questionDb = null;
     this.userData = null;
@@ -65,6 +70,27 @@ export class App {
 
   getBonus(id) {
     return this.questionDb.getBonus(id);
+  }
+
+  // A saved (type, id) whose question may have changed type: 28 former tossup
+  // ids now live in bonuses (brief §0.6). Returns { type, question } or null.
+  getQuestionAny(id, type) {
+    const first = type === "bonus" ? "bonus" : "tossup";
+    const look = (t) => (t === "bonus" ? this.questionDb.getBonus(id) : this.questionDb.getTossup(id));
+    let q = look(first);
+    if (q) return { type: first, question: q };
+    const other = first === "bonus" ? "tossup" : "bonus";
+    q = look(other);
+    return q ? { type: other, question: q } : null;
+  }
+
+  getStarredItems(type) {
+    const items = [];
+    for (const s of this.userData.getStarredQuestions(type || null)) {
+      const hit = this.getQuestionAny(s.question_id, s.type);
+      if (hit) items.push({ ...s, type: hit.type, question: hit.question });
+    }
+    return items;
   }
 
   queryTossups(filters) {
@@ -117,6 +143,8 @@ export class App {
       categories: filters.categories,
       subcategories: filters.subcategories,
       alternateSubcategories: filters.alternateSubcategories,
+      categoryIds: filters.categoryIds,
+      cleanOnly: filters.cleanOnly,
     };
   }
 
@@ -150,13 +178,22 @@ export class App {
     return this.questionDb.getPacketContent(setName, packetNumber);
   }
 
-  getFrequentAnswers(category, subcategory, alternateSubcategory, limit = 50, qtype = "tossup") {
+  getCategoryTree(type) {
+    return this.questionDb.getCategoryTree(type === "bonuses" ? "bonuses" : "tossups");
+  }
+
+  getDbInfo() {
+    const m = (k) => (this.questionDb.getMeta ? this.questionDb.getMeta(k) : null);
+    return { schema: this.questionDb.v2 ? 2 : 1, mode: m("source_mode") || null, tree: m("tree_spec_version") || null, built: m("built_at") || null };
+  }
+
+  getFrequentAnswers(category, subcategory, alternateSubcategory, limit = 50, qtype = "tossup", nodeId = null) {
     let rows = [];
     if (qtype !== "bonus") {
-      rows = this.questionDb.getAnswerLinesForFreq(category, subcategory, alternateSubcategory);
+      rows = this.questionDb.getAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId);
     }
     if (qtype === "bonus" || qtype === "both") {
-      for (const r of this.questionDb.getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory)) {
+      for (const r of this.questionDb.getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId)) {
         let raw, sani;
         try { raw = JSON.parse(r.answers || "[]"); } catch { raw = []; }
         try { sani = JSON.parse(r.answers_sanitized || "[]"); } catch { sani = []; }
@@ -230,20 +267,75 @@ export class App {
     return checkBonus(userAnswers, bonus);
   }
 
-  evaluateTossup(userAnswer, tossup, strictness = 10, buzzPosition = null) {
+  // Extra judging inputs from the new database (brief §6, §7): pieces that
+  // together form ONE required answer, and the hidden answer key. The key is
+  // read here, in the main process, and never leaves it.
+  _judgeOpts(q, part = null) {
+    const out = {};
+    try {
+      const flags = typeof q.flags === "string" ? JSON.parse(q.flags || "[]") : (q.flags || []);
+      const joint = [];
+      for (const f of flags) {
+        if (!f || f.code !== "JOINTLY_REQUIRED_PIECES") continue;
+        const m = /pieces '(.+?)' \+ '(.+?)' in the (?:part (\d+) )?answer line/.exec(f.detail || "");
+        if (m && (m[3] ? Number(m[3]) : null) === (part == null ? null : part + 1)) joint.push([m[1], m[2]]);
+      }
+      if (joint.length) out.jointPieces = joint;
+    } catch { /* no flags */ }
+    try {
+      const h = this.questionDb.getHiddenAnswers ? this.questionDb.getHiddenAnswers(q.id) : null;
+      let slot = h;
+      if (part != null) {
+        // aligned with the bonus's answers; a length mismatch means skip (brief §7)
+        const n = Array.isArray(q.answers) ? q.answers.length : JSON.parse(q.answers || "[]").length;
+        slot = Array.isArray(h) && h.length === n ? h[part] : null;
+      }
+      if (slot && typeof slot === "object" && !Array.isArray(slot)) out.hidden = slot;
+    } catch { /* none */ }
+    return out;
+  }
+
+  // One bonus part, judged exactly as check-bonus judges it (the part's hidden
+  // answers / joint pieces included) — the per-part reveal and prompt round.
+  // `previous` = the answer that drew a prompt, for the follow-up judgement.
+  evaluateBonusPart(userAnswer, bonus, part, strictness = 10, previous = null) {
+    let answers = [], san = [];
+    try { answers = JSON.parse(bonus.answers || "[]"); } catch {}
+    try { san = JSON.parse(bonus.answers_sanitized || "[]"); } catch {}
+    if (!(part >= 0 && part < answers.length)) return null;
+    return evaluateAnswer(userAnswer, answers[part], san[part] || "", strictness,
+      { ...this._bonusPartPos(bonus, part), ...this._judgeOpts(bonus, part), ...(previous ? { previous } : {}) });
+  }
+
+  // A bonus part is judged as read to its end: the leadin plus that part.
+  _bonusPartPos(bonus, part) {
+    let parts = [];
+    try { parts = JSON.parse(bonus.parts_sanitized || "[]"); } catch {}
+    const fullText = [bonus.leadin_sanitized || "", parts[part] || ""].filter(Boolean).join(" ");
+    return { readText: fullText, fullText, readLen: fullText.length };
+  }
+
+  evaluateTossup(userAnswer, tossup, strictness = 10, buzzPosition = null, previous = null) {
     const pos = this._readPos(tossup, buzzPosition);
-    return evaluateAnswer(userAnswer, tossup.answer, tossup.answer_sanitized, strictness, pos);
+    return evaluateAnswer(userAnswer, tossup.answer, tossup.answer_sanitized, strictness,
+      { ...pos, ...this._judgeOpts(tossup), ...(previous ? { previous } : {}) });
   }
 
+  // buzzPosition indexes question_sanitized AS STORED, "(*)" included (the
+  // renderer, power scoring and recorded buzz_position all count that way);
+  // the judge reads the text with the mark removed. No position = read to the
+  // end; fullText is always given so timing markers ("until X is read") resolve.
   _readPos(tossup, buzzPosition) {
-    if (buzzPosition == null) return {};
-    const text = (tossup.question_sanitized || tossup.question || "").replace(/\(\*\)/g, "");
-    const n = Math.max(0, Math.min(text.length, buzzPosition));
-    return { readText: text.slice(0, n), fullText: text, readLen: n };
+    const raw = tossup.question_sanitized || tossup.question || "";
+    let n = buzzPosition == null ? raw.length : Math.max(0, Math.min(raw.length, buzzPosition));
+    const mark = n > 0 ? raw.lastIndexOf("(*)", n - 1) : -1;
+    if (mark >= 0 && n < mark + 3) n = mark;   // a buzz inside the mark is at it
+    const readText = raw.slice(0, n).replace(/\(\*\)/g, "");
+    return { readText, fullText: raw.replace(/\(\*\)/g, ""), readLen: readText.length };
   }
 
-  evaluateAnswerLine(userAnswer, answerline, sanitized, strictness = 10) {
-    return evaluateAnswer(userAnswer, answerline, sanitized, strictness);
+  evaluateAnswerLine(userAnswer, answerline, sanitized, strictness = 10, previous = null) {
+    return evaluateAnswer(userAnswer, answerline, sanitized, strictness, previous ? { previous } : undefined);
   }
 
   _normManual(list) {
@@ -304,7 +396,7 @@ export class App {
     const wantNegs = opts.negs !== false;
     const wantUnanswered = opts.unanswered !== false;
     const wantWrongEnd = opts.wrongEnd !== false;
-    const entries = this.userData.getAllSessionEntries();
+    const entries = this._relabel(this.userData.getAllSessionEntries());
     const byQ = new Map();
     for (const e of entries) {
       if (e.type !== "tossup" || !e.question_id) continue;
@@ -331,8 +423,9 @@ export class App {
     const manualSet = new Set(manual.map((m) => m.id));
     for (const m of manual) {
       let cat = "", diff = null;
-      try { const q = m.type === "bonus" ? this.getBonus(m.id) : this.getTossup(m.id); cat = (q && q.category) || ""; diff = q && q.difficulty != null ? q.difficulty : null; } catch {}
-      items.push({ id: m.id, type: m.type || "tossup", category: cat, difficulty: diff, given: "", buzzPosition: null, manual: true, ageMs: Math.max(0, now - (m.at || 0)) });
+      let typ = m.type || "tossup";
+      try { const hit = this.getQuestionAny(m.id, typ); if (!hit) continue; typ = hit.type; cat = hit.question.category || ""; diff = hit.question.difficulty != null ? hit.question.difficulty : null; } catch {}
+      items.push({ id: m.id, type: typ, category: cat, difficulty: diff, given: "", buzzPosition: null, manual: true, ageMs: Math.max(0, now - (m.at || 0)) });
     }
     for (const [qid, st] of byQ) {
       if (manualSet.has(qid) || !st.lastWrong) continue;
@@ -347,6 +440,13 @@ export class App {
       if (kind === "unanswered" && !wantUnanswered) continue;
       items.push({ id: qid, type: "tossup", category: st.category || "", difficulty: st.difficulty, given: st.given || "", buzzPosition: st.buzz, ageMs: Math.max(0, now - st.last) });
     }
+    // A missed tossup whose id is no longer a tossup (moved to bonuses, or gone)
+    // cannot be replayed from the tossup queue.
+    {
+      const tIds = items.filter((it) => it.type === "tossup" && !it.manual).map((it) => it.id);
+      const live = tIds.length ? this.questionDb.getCategoryInfo("tossups", tIds) : new Map();
+      for (let i = items.length - 1; i >= 0; i--) if (items[i].type === "tossup" && !items[i].manual && !live.has(items[i].id)) items.splice(i, 1);
+    }
     items.sort((a, b) => a.ageMs - b.ageMs);
     const limit = opts.limit || 400;
     const top = items.slice(0, limit);
@@ -357,9 +457,10 @@ export class App {
     return parseDirectives(answerline || "", sanitized || "");
   }
 
-  scoreTossupResult(userAnswer, tossup, buzzCharIndex, fullyRead, strictness) {
-    const pos = fullyRead ? {} : this._readPos(tossup, buzzCharIndex);
-    return scoreTossup(
+  scoreTossupResult(userAnswer, tossup, buzzCharIndex, fullyRead, strictness, previous = null) {
+    const pos = this._readPos(tossup, fullyRead ? null : buzzCharIndex);
+    let unsure = false;   // open-class line ("accept equivalents") and nothing matched
+    const res = scoreTossup(
       {
         userAnswer,
         answerline: tossup.answer,
@@ -368,17 +469,38 @@ export class App {
         questionText: tossup.question_sanitized || tossup.question,
         fullyRead,
       },
-      (ua, al, sa) => ({ correct: evaluateAnswer(ua, al, sa, strictness, pos).status === "accept" })
+      (ua, al, sa) => {
+        const ev = evaluateAnswer(ua, al, sa, strictness, { ...pos, ...this._judgeOpts(tossup), ...(previous ? { previous } : {}) });
+        unsure = ev.status !== "accept" && !!ev.unsure;
+        return { correct: ev.status === "accept" };
+      }
     );
+    if (unsure) res.unsure = true;
+    return res;
   }
 
-  scoreBonusResult(userAnswers, bonus, strictness = 10, overrides = null) {
-    const result = checkBonus(userAnswers, bonus, strictness);
+  // previous[i] = the answer that drew part i's prompt (the follow-up round).
+  scoreBonusResult(userAnswers, bonus, strictness = 10, overrides = null, previous = null) {
+    let partOpts = null, values = [];
+    try {
+      const n = JSON.parse(bonus.answers || "[]").length;
+      partOpts = Array.from({ length: n }, (_, i) => ({
+        ...this._bonusPartPos(bonus, i), ...this._judgeOpts(bonus, i),
+        ...(Array.isArray(previous) && previous[i] ? { previous: previous[i] } : {}),
+      }));
+    } catch { partOpts = null; }
+    try { values = JSON.parse(bonus.point_values || "[]"); } catch { values = []; }
+    const result = checkBonus(userAnswers, bonus, strictness, partOpts);
     // Manual per-part overrides (mark up / mark down): null keeps the judged
-    // verdict, true/false replaces it; the score is recomputed from the mix.
+    // verdict, true/false replaces it; the score is recomputed from the mix at
+    // each part's own value.
     let parts = result.parts;
     if (Array.isArray(overrides)) {
-      parts = parts.map((pt, i) => (overrides[i] == null ? pt : { ...pt, correct: !!overrides[i] }));
+      parts = parts.map((pt, i) => {
+        if (overrides[i] == null) return pt;
+        const v = Number.isFinite(+values[i]) && +values[i] > 0 ? +values[i] : 10;
+        return { ...pt, correct: !!overrides[i], points: overrides[i] ? v : 0 };
+      });
     }
     return {
       ...scoreBonus(parts),
@@ -437,7 +559,7 @@ export class App {
   }
 
   getSessionEntries(sessionId) {
-    return this.userData.getSessionEntries(sessionId);
+    return this._relabel(this.userData.getSessionEntries(sessionId));
   }
 
   // Every recorded attempt for the active profile (question_id, given_answer,
@@ -449,7 +571,7 @@ export class App {
   // getAnswerPowers uses, so callers can compare against it directly.
   // answer_norms is a list because a bonus carries one answer per part.
   getAllSessionEntries(opts = {}) {
-    const entries = this.userData.getAllSessionEntries();
+    const entries = this._relabel(this.userData.getAllSessionEntries());
     if (!opts || !opts.answers) return entries;
 
     const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -492,8 +614,19 @@ export class App {
     });
   }
 
+  // categories per session in the CURRENT tree (rows store the old labels)
   getSessionList() {
-    return this.userData.getSessionList();
+    const list = this.userData.getSessionList();
+    try {
+      const bySession = new Map();
+      for (const e of this._relabel(this.userData.getAllSessionEntries())) {
+        if (!e.session_id) continue;
+        const set = bySession.get(e.session_id) || new Set();
+        if (e.category) set.add(e.category);
+        bySession.set(e.session_id, set);
+      }
+      return list.map((s) => (bySession.has(s.session_id) ? { ...s, categories: [...bySession.get(s.session_id)].join(",") } : s));
+    } catch { return list; }
   }
 
   deleteSession(sessionId) {
@@ -507,36 +640,47 @@ export class App {
   getOverallStats(since) {
     let entries = this.userData.getAllSessionEntries();
     if (since) entries = entries.filter((e) => (e.timestamp || 0) >= since);
-    return computeStats(this._withAltSubcategory(entries));
+    return computeStats(this._relabel(entries));
   }
 
-  // Session rows store category + subcategory but NOT the alternate
-  // subcategory, and "Math" / "Computer Science" only exist as alternates
-  // (Science > Other Science > Math) — so the cat_specific achievements for
-  // them could never progress. Resolve the alternate from the question row:
-  // one indexed primary-key lookup per DISTINCT question, cached. Both
-  // transports reach stats through this method, so this is the only place.
-  _withAltSubcategory(entries) {
-    const cache = new Map();
+  // Recorded answers store the category the question had WHEN it was played.
+  // Every reader (stats, achievements, breakdowns, review, plugins) goes
+  // through this instead, so history always shows the CURRENT category tree:
+  // switching question databases relabels nothing on disk. A question that is
+  // no longer in the database keeps its stored labels. Ids are looked up in
+  // both tables (28 old tossup ids now live in bonuses).
+  _relabel(entries) {
+    if (!Array.isArray(entries) || !entries.length || !this.questionDb) return entries;
+    const ids = entries.map((e) => e && e.question_id).filter(Boolean);
+    if (!ids.length) return entries;
+    let t, b;
+    try {
+      t = this.questionDb.getCategoryInfo("tossups", ids);
+      b = this.questionDb.getCategoryInfo("bonuses", ids);
+    } catch { return entries; }
     return entries.map((e) => {
-      if (!e.question_id) return e;
-      const key = (e.type === "bonus" ? "b:" : "t:") + e.question_id;
-      if (!cache.has(key)) {
-        let alt = "";
-        try {
-          const q = e.type === "bonus" ? this.questionDb.getBonus(e.question_id) : this.questionDb.getTossup(e.question_id);
-          alt = (q && q.alternate_subcategory) || "";
-        } catch { alt = ""; }
-        cache.set(key, alt);
-      }
-      const alt = cache.get(key);
-      return alt ? { ...e, alternate_subcategory: alt } : e;
+      if (!e || !e.question_id) return e;
+      const q = (e.type === "bonus" ? (b.get(e.question_id) || t.get(e.question_id)) : (t.get(e.question_id) || b.get(e.question_id)));
+      if (!q) return e;
+      let partCount;
+      if (q.part_count != null) partCount = q.part_count;
+      else if (q.parts != null) { try { partCount = JSON.parse(q.parts).length; } catch { partCount = undefined; } }
+      return {
+        ...e,
+        category: q.category || e.category,
+        subcategory: q.subcategory || "",
+        alternate_subcategory: q.alternate_subcategory || "",
+        // v1 file: the three level names joined, so path matching works on both
+        category_path: q.category_path !== undefined ? (q.category_path || "") : [q.category, q.subcategory, q.alternate_subcategory].filter(Boolean).join(" > "),
+        ...(q.category_id !== undefined ? { category_id: q.category_id || "" } : {}),
+        ...(partCount != null && e.type === "bonus" ? { part_count: partCount } : {}),
+      };
     });
   }
 
   getSessionStats(sessionId) {
     const entries = this.userData.getSessionEntries(sessionId);
-    return computeStats(entries);
+    return computeStats(this._relabel(entries));
   }
 
   getAnswerPowers() {
@@ -557,7 +701,8 @@ export class App {
       const norm = apFold(head || t.answer_sanitized || t.answer || "");
       if (!norm) continue;
       counts[norm] = (counts[norm] || 0) + 1;
-      const ck = (t.category || "") + "|" + (t.subcategory || "") + "|" + (t.alternate_subcategory || "");
+      // class = the question's category PATH (achievements match by prefix)
+      const ck = t.category_path || [t.category, t.subcategory, t.alternate_subcategory].filter(Boolean).join(" > ");
       const cm = classes[norm] || (classes[norm] = {});
       cm[ck] = (cm[ck] || 0) + 1;
       const qm = questions[norm] || (questions[norm] = {});
@@ -569,42 +714,80 @@ export class App {
 
   getSessionBreakdown(category, difficulty) {
     const sessions = this.userData.getSessionList();
-    const allEntries = this.userData.getAllSessionEntries();
+    const allEntries = this._relabel(this.userData.getAllSessionEntries());
     return computeSessionBreakdown(sessions, allEntries, { category, difficulty });
   }
 
 
+  // Question-database updates come from GitHub (src/main/updater.js): the
+  // version is the open database's build stamp (meta built_at; 0 on an old
+  // QBReader-format database, so any published release is newer).
   async checkForUpdate() {
-    // Prefer the marker stamped inside questions.db (travels with the file);
-    // fall back to the per-machine config for DBs updated before the marker existed.
-    const inDb = this.questionDb && this.questionDb.getMeta ? this.questionDb.getMeta("snapshot_id") : null;
-    const current = inDb || this.userData.getConfig("questions_version");
-    return updater.checkForUpdate(current);
+    const current = (this.questionDb && this.questionDb.getMeta && this.questionDb.getMeta("built_at")) || "0";
+    return updater.checkForUpdate({ currentVersion: current });
   }
 
-  
+  // Background job: download + verify the newest database NEXT TO the install
+  // path while the open one keeps serving; commitDbUpdate() then swaps it in.
+  // state: idle | checking | downloading | ready | error.
+  dbUpdateStatus() {
+    return { ...this._dbUpd };
+  }
 
+  startDbUpdate() {
+    if (this._dbJob || this._dbUpd.state === "ready") return this.dbUpdateStatus();
+    this._dbUpd = { state: "checking", pct: 0, label: "Checking…" };
+    this._dbJob = (async () => {
+      try {
+        const info = await this.checkForUpdate();
+        if (!info.available || !info.latest) { this._dbUpd = { state: "idle", needsAppUpdate: !!info.needsAppUpdate }; return; }
+        const { id: version, name, size } = info.latest;
+        const pending = updater.pendingUpdate(this.dbInstallPath);
+        if (!pending || String(pending.version) !== version) {
+          this._dbUpd = { state: "downloading", pct: 0, label: "Starting…", version, name, size };
+          await updater.prepareUpdate(version, this.dbInstallPath, (p) => { this._dbUpd.pct = p.pct; this._dbUpd.label = p.label; });
+        }
+        this._dbUpd = { state: "ready", version, name };
+      } catch (e) {
+        this._dbUpd = { state: "error", error: e.message || String(e) };
+      } finally {
+        this._dbJob = null;
+      }
+    })();
+    return this.dbUpdateStatus();
+  }
 
-
-
-  async applyUpdate(folderId, onProgress) {
-    let target = folderId;
-    if (!target) {
-      const info = await updater.checkForUpdate(this.userData.getConfig("questions_version"));
-      if (!info.latest) throw new Error("no snapshot found");
-      target = info.latest.id;
-    }
+  // Instant swap of a ready download (the renderer reloads afterwards).
+  commitDbUpdate() {
+    if (this._dbUpd.state !== "ready") return { ok: false, error: "no downloaded database is waiting" };
     if (this.questionDb) { this.questionDb.close(); this.questionDb = null; }
+    let r = null;
     try {
-      const result = await updater.applyUpdate(target, this.dbPath, onProgress);
-      this.userData.setConfig("questions_version", result.version);
-      return result;
+      r = updater.commitUpdate(this.dbInstallPath);
+      if (r) this.dbPath = this.dbInstallPath;
     } finally {
       this.questionDb = new QuestionDatabase(this.dbPath);
     }
+    this._dbUpd = { state: "idle" };
+    return r ? { ok: true, result: r } : { ok: false, error: "the downloaded database could not be installed" };
+  }
+
+  // "Download & install" in Settings: the same job, waited on, then the swap.
+  async applyUpdate(_version, onProgress) {
+    this.startDbUpdate();
+    const tick = setInterval(() => { const s = this._dbUpd; if (onProgress && s.state === "downloading") onProgress({ pct: s.pct, label: s.label }); }, 250);
+    try { if (this._dbJob) await this._dbJob; } finally { clearInterval(tick); }
+    if (this._dbUpd.state === "error") throw new Error(this._dbUpd.error);
+    if (this._dbUpd.state !== "ready") throw new Error("no newer question database is published");
+    const c = this.commitDbUpdate();
+    if (!c.ok) throw new Error(c.error);
+    return c.result;
   }
 
   async importQuestions(setsData, tossupsData, bonusesData) {
+    // Writes QBReader-format rows; on the new database they would lack the tree,
+    // flags and playable columns (and be hidden from practice).
+    if (this.questionDb && this.questionDb.v2) throw new Error("Importing QBReader dumps is not supported on this question database");
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(this.dbPath);
     try {

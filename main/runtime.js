@@ -12,6 +12,7 @@
  * it is loaded from inside the asar or from the overlay directory.
  */
 import { join } from "node:path";
+import { pickDbPath } from "./updater.js";
 import { readFileSync } from "node:fs";
 
 export async function start(env) {
@@ -22,8 +23,14 @@ export async function start(env) {
   let mainWindow = null;
   let qbApp = null;
 
+  // A question database downloaded by the in-app updater lives in userData
+  // (writable, survives reinstalling the app) and is used over the copy
+  // bundled with the app when it is newer. Dev keeps the repo's data/ copy.
   async function initApp() {
-    qbApp = new App({ dbPath, userDbPath }).init();
+    const dbInstallPath = isDev ? dbPath : join(app.getPath("userData"), "questions.db");
+    let openPath = dbPath;
+    try { openPath = pickDbPath(dbPath, dbInstallPath); } catch { openPath = dbPath; }
+    qbApp = new App({ dbPath: openPath, userDbPath, dbInstallPath }).init();
   }
 
   // Load the signature-verified overlay preload when present — it ships with
@@ -70,6 +77,9 @@ export async function start(env) {
     if (data.categories?.length) f.categories = data.categories;
     if (data.subcategories?.length) f.subcategories = data.subcategories;
     if (data.alternateSubcategories?.length) f.alternateSubcategories = data.alternateSubcategories;
+    if (data.categoryIds?.length) f.categoryIds = Array.isArray(data.categoryIds) ? data.categoryIds : String(data.categoryIds).split(",").filter(Boolean);
+    if (data.includeUnplayable === true || data.includeUnplayable === "true" || data.includeUnplayable === "1") f.includeUnplayable = true;
+    if (data.cleanOnly === true || data.cleanOnly === "true" || data.cleanOnly === "1") f.cleanOnly = true;
     if (data.difficulties?.length) f.difficulties = data.difficulties;
     if (data.setIds?.length) f.setIds = data.setIds;
     if (data.setNames?.length) f.setNames = data.setNames;
@@ -154,12 +164,12 @@ export async function start(env) {
       return { bonus: qbApp.getBonus(id) };
     });
 
-    ipcMain.handle("check-tossup", (_e, { questionId, answer, buzzPosition, sessionId, fullyRead, strictness, overriding, allowPrompt, record, correct: ovrCorrect, isPower: ovrPower, points: ovrPoints, celerity: ovrCelerity }) => {
+    ipcMain.handle("check-tossup", (_e, { questionId, answer, buzzPosition, sessionId, fullyRead, strictness, overriding, allowPrompt, record, previous, correct: ovrCorrect, isPower: ovrPower, points: ovrPoints, celerity: ovrCelerity }) => {
       const tossup = qbApp.getTossup(questionId);
       if (!tossup) return { error: "Question not found" };
 
       if (!overriding && allowPrompt !== false) {
-        const ev = qbApp.evaluateTossup(answer, tossup, strictness, fullyRead ? null : buzzPosition);
+        const ev = qbApp.evaluateTossup(answer, tossup, strictness, fullyRead ? null : buzzPosition, previous || null);
         if (ev.status === "prompt") {
           return { prompted: true, prompt: ev.prompt, antiprompt: !!ev.antiprompt, answer: tossup.answer_sanitized };
         }
@@ -175,7 +185,7 @@ export async function start(env) {
           buzzPosition: buzzPosition || 0,
         };
       } else {
-        result = qbApp.scoreTossupResult(answer, tossup, buzzPosition || 0, fullyRead, strictness);
+        result = qbApp.scoreTossupResult(answer, tossup, buzzPosition || 0, fullyRead, strictness, previous || null);
       }
 
       if (record !== false) {
@@ -201,19 +211,27 @@ export async function start(env) {
         isPower: result.isPower,
         celerity: result.celerity,
         answer: tossup.answer_sanitized,
+        unsure: !!result.unsure,
       };
     });
 
-    ipcMain.handle("evaluate-tossup", (_e, { questionId, answer, strictness, buzzPosition }) => {
+    ipcMain.handle("evaluate-bonus-part", (_e, { questionId, part, answer, strictness, previous }) => {
+      const bonus = qbApp.getBonus(questionId);
+      if (!bonus) return { error: "Question not found" };
+      const ev = qbApp.evaluateBonusPart(answer, bonus, Number(part), strictness, previous || null);
+      if (!ev) return { error: "No such part" };
+      return { status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt, unsure: !!ev.unsure };
+    });
+    ipcMain.handle("evaluate-tossup", (_e, { questionId, answer, strictness, buzzPosition, previous }) => {
       const tossup = qbApp.getTossup(questionId);
       if (!tossup) return { error: "Question not found" };
-      const ev = qbApp.evaluateTossup(answer, tossup, strictness, buzzPosition ?? null);
-      return { status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt, answer: tossup.answer_sanitized, answerRaw: tossup.answer };
+      const ev = qbApp.evaluateTossup(answer, tossup, strictness, buzzPosition ?? null, previous || null);
+      return { status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt, unsure: !!ev.unsure, answer: tossup.answer_sanitized, answerRaw: tossup.answer };
     });
 
-    ipcMain.handle("evaluate-answer", (_e, { answerline, sanitized, answer, strictness }) => {
-      const ev = qbApp.evaluateAnswerLine(answer, answerline || "", sanitized || "", strictness);
-      return { status: ev.status, prompt: ev.prompt };
+    ipcMain.handle("evaluate-answer", (_e, { answerline, sanitized, answer, strictness, previous }) => {
+      const ev = qbApp.evaluateAnswerLine(answer, answerline || "", sanitized || "", strictness, previous || null);
+      return { status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt, unsure: !!ev.unsure };
     });
 
     ipcMain.handle("parse-answerline", (_e, { answerline, sanitized }) => {
@@ -233,11 +251,11 @@ export async function start(env) {
     ipcMain.handle("clear-review", () => qbApp.clearReview());
     ipcMain.handle("review-manual", (_e, { questionId, add, type }) => (add === false ? qbApp.removeReviewManual(questionId) : qbApp.addReviewManual(questionId, type)));
 
-    ipcMain.handle("check-bonus", (_e, { questionId, answers, sessionId, strictness, overrides }) => {
+    ipcMain.handle("check-bonus", (_e, { questionId, answers, sessionId, strictness, overrides, previous }) => {
       const bonus = qbApp.getBonus(questionId);
       if (!bonus) return { error: "Question not found" };
 
-      const result = qbApp.scoreBonusResult(answers || [], bonus, parseInt(strictness) || 10, overrides);
+      const result = qbApp.scoreBonusResult(answers || [], bonus, parseInt(strictness) || 10, overrides, previous);
 
       qbApp.addSessionEntry({
         session_id: sessionId || "default",
@@ -270,13 +288,7 @@ export async function start(env) {
     });
 
     ipcMain.handle("get-starred", (_e, { type }) => {
-      const starred = qbApp.getStarredQuestions(type || null);
-      const items = [];
-      for (const s of starred) {
-        const qData = s.type === "tossup" ? qbApp.getTossup(s.question_id) : qbApp.getBonus(s.question_id);
-        if (qData) items.push({ ...s, question: qData });
-      }
-      return { starred: items };
+      return { starred: qbApp.getStarredItems(type || null) };
     });
 
     ipcMain.handle("check-starred", (_e, { questionId, type }) => {
@@ -365,8 +377,21 @@ export async function start(env) {
       return qbApp.getPacketContent(setName || "", packetNumber);
     });
 
-    ipcMain.handle("get-frequent-answers", (_e, { category, subcategory, alternateSubcategory, limit, qtype }) => {
-      return { answers: qbApp.getFrequentAnswers(category || null, subcategory || null, alternateSubcategory || null, limit || 50, qtype || "tossup") };
+    ipcMain.handle("get-frequent-answers", (_e, { category, subcategory, alternateSubcategory, limit, qtype, nodeId }) => {
+      return { answers: qbApp.getFrequentAnswers(category || null, subcategory || null, alternateSubcategory || null, limit || 50, qtype || "tossup", nodeId || null) };
+    });
+
+    ipcMain.handle("get-category-tree", (_e, { type } = {}) => {
+      return { tree: qbApp.getCategoryTree(type || "tossups") };
+    });
+
+    ipcMain.handle("get-db-info", () => qbApp.getDbInfo());
+
+    ipcMain.handle("db-update-status", () => qbApp.dbUpdateStatus());
+    ipcMain.handle("db-update-start", () => qbApp.startDbUpdate());
+    ipcMain.handle("db-update-commit", () => {
+      try { return qbApp.commitDbUpdate(); }
+      catch (e) { return { ok: false, error: e.message }; }
     });
 
     ipcMain.handle("check-update", async () => {
