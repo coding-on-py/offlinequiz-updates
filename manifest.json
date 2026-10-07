@@ -1,5 +1,5 @@
 {
-  "version": "14.30",
+  "version": "14.31",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,5 +100,5 @@
     }
   ],
   "main": true,
-  "notes": "New look: labeled top bar, a Setup panel that opens beside the page, one category picker everywhere (Stats, Review, Frequency lists, plugins), a bigger Review menu, paged Frequency lists, new sliders and checkboxes, open/close animations, Join/Create Room. This version needs the new question database: it downloads on first launch and the app stays on Settings → Updates until it is ready."
+  "notes": "Fixes the Default theme turning white, and unreadable headings on light themes. Stats → Session Breakdown filters by difficulty with the square 0–10 selector. Includes the 14.30 redesign. This version needs the new question database: it downloads on first launch and the app stays on Settings → Updates until it is ready."
 }

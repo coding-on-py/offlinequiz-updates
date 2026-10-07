@@ -245,11 +245,14 @@ export function computeSessionBreakdown(sessionList, allEntries, filters = {}) {
   if (!sessionList || !allEntries) return [];
 
   const catFilter = filters.category || "";
-  const diffFilter = filters.difficulty != null && filters.difficulty !== "" ? String(filters.difficulty) : "";
+  // difficulty: one value or a comma list ("3,4,5" — the Stats square toggles)
+  const diffs = filters.difficulty != null && filters.difficulty !== ""
+    ? new Set(String(filters.difficulty).split(",").map((d) => d.trim()).filter(Boolean)) : null;
+  const diffFilter = diffs && diffs.size ? diffs : null;
   const filtering = !!(catFilter || diffFilter);
   const matches = (e) =>
     (!catFilter || e.category === catFilter) &&
-    (!diffFilter || String(e.difficulty) === diffFilter);
+    (!diffFilter || diffFilter.has(String(e.difficulty)));
 
   const entryMap = {};
   for (const e of allEntries) {

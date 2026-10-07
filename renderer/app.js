@@ -590,21 +590,24 @@ document.addEventListener("click", (e) => {
 })();
 
 // ── light / dark detection: html[data-scheme] drives the derived tokens ──
+// Runs on every appearance change (applyDefaultAppearance). It reads the FINAL
+// background: body's background transitions, and mid-transition
+// getComputedStyle still returns the previous theme's color, so the scheme
+// lagged one theme behind (a light theme kept near-white headings). Colors
+// resolve through a 1px canvas, so rgb(), color(srgb …) and oklch() all work.
 function syncScheme() {
   try {
-    const bg = getComputedStyle(document.body || document.documentElement).backgroundColor || "";
-    const m = bg.match(/\d+(\.\d+)?/g);
-    if (!m || m.length < 3) return;
-    const [r, g, b] = m.slice(0, 3).map(Number);
-    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    document.documentElement.dataset.scheme = lum > 140 ? "light" : "dark";
-    const acc = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
-    const am = acc.match(/^#([0-9a-f]{6})$/i);
-    if (am) {
-      const n = parseInt(am[1], 16);
-      const al = 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
-      document.documentElement.style.setProperty("--on-accent", al > 170 ? "#0d1117" : "#fff");
-    }
+    const root = document.documentElement, body = document.body;
+    if (!body) return;
+    const cv = syncScheme._cv || (syncScheme._cv = document.createElement("canvas").getContext("2d", { willReadFrequently: true }));
+    const rgba = (css) => { cv.clearRect(0, 0, 1, 1); cv.fillStyle = "#000"; cv.fillStyle = css; cv.fillRect(0, 0, 1, 1); return cv.getImageData(0, 0, 1, 1).data; };
+    const lum = (d) => 0.2126 * d[0] + 0.7152 * d[1] + 0.0722 * d[2];
+    const finalBg = (el) => { const t = el.style.transition; el.style.transition = "none"; const c = getComputedStyle(el).backgroundColor; el.style.transition = t; return rgba(c); };
+    let bg = finalBg(body);
+    if (bg[3] < 128) bg = finalBg(root);   // a theme that paints <html> instead
+    if (bg[3] >= 128) root.dataset.scheme = lum(bg) > 140 ? "light" : "dark";
+    const acc = getComputedStyle(root).getPropertyValue("--accent").trim();
+    if (acc) root.style.setProperty("--on-accent", lum(rgba(acc)) > 170 ? "#0d1117" : "#fff");
   } catch (e) {}
 }
 
@@ -1634,8 +1637,12 @@ document.addEventListener("keydown", (e) => {
 });
 
 
+// The app's own look is dark; light looks are themes (Plugins → Themes). A
+// "light" saved by the old light/dark switch (no control sets it any more)
+// turned only the base colors light — white page, unreadable headings — so the
+// saved value is ignored.
 function applyTheme() {
-  document.documentElement.setAttribute("data-theme", state.settings.theme);
+  document.documentElement.setAttribute("data-theme", "dark");
   document.documentElement.setAttribute("data-accent", state.settings.accent);
 }
 
@@ -5370,7 +5377,10 @@ function syncAppearanceSection() {
   const def = $("#default-appearance"), host = document.getElementById("theme-appearance-host");
   sec.classList.toggle("hidden", (!def || def.classList.contains("hidden")) && !(host && host.children.length));
 }
-function applyDefaultAppearance() {
+// Every appearance change (theme on/off, accent, boot) re-derives
+// html[data-scheme] and --on-accent from what is now on screen.
+function applyDefaultAppearance() { applyDefaultAppearanceVars(); syncScheme(); }
+function applyDefaultAppearanceVars() {
   const theme = activeTheme();
   if (window.QB?.hasAppearancePanel?.()) {
     $("#default-appearance")?.classList.add("hidden");
@@ -6929,21 +6939,22 @@ function drawDiffBonus(canvas, stats) {
   barChart(canvas, bars, { title: "Bonus Conversion by Difficulty", fmt: (v) => v.toFixed(1), yMax: 30, empty: "No bonus data yet" });
 }
 
+// Session Breakdown difficulty: square toggles, none ticked = every difficulty.
+// Kept across Stats re-renders (period / category changes) for the session.
+let _bdDiffs = [];
 function populateGraphFilters(stats) {
-  const diffSel = document.getElementById("graph-filter-diff");
-
-  if (diffSel && diffSel.options.length <= 1) {
-    for (let d = 1; d <= 10; d++) { const o = document.createElement("option"); o.value = String(d); o.textContent = "Diff " + d; diffSel.appendChild(o); }
-  }
-
-  if (diffSel) diffSel.onchange = () => redrawFilteredGraphs();
+  const box = document.getElementById("graph-filter-diff");
+  if (box) box.onchange = () => {
+    _bdDiffs = [...box.querySelectorAll("input:checked")].map((i) => +i.value);
+    redrawFilteredGraphs();
+  };
 }
 
 let _breakdownCache = null;
 async function redrawFilteredGraphs(breakdown) {
   const cat = "";   // categories: the page's picker (categoryIds)
   const cids = statsCatIds();
-  const diff = document.getElementById("graph-filter-diff")?.value || "";
+  const diff = _bdDiffs.join(",");
 
   let bd;
   if (breakdown) { _breakdownCache = breakdown; bd = breakdown; }
@@ -7377,9 +7388,7 @@ async function loadStats(preserveScroll = false) {
 
     if (!sid) html += `<div class="stats-section" data-coll="stats:breakdown">
       <div class="stats-section-title">SESSION BREAKDOWN
-        <select id="graph-filter-diff" style="margin-left:4px;font-family:var(--font);font-size:10px;padding:1px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:3px;color:var(--text)">
-          <option value="">All Difficulties</option>
-        </select>
+        <div class="diff-toggles" id="graph-filter-diff" role="group" aria-label="Difficulty">${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((d) => `<label title="${escapeHtml(DIFF_FULL[d] || "")}"><input type="checkbox" value="${d}"${_bdDiffs.includes(d) ? " checked" : ""}><span>${d}</span></label>`).join("")}</div>
       </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <canvas id="graph-session-outcomes" class="chart-canvas" width="800" height="400" style="flex:1;min-width:480px;max-width:880px"></canvas>
@@ -7552,8 +7561,9 @@ async function loadStats(preserveScroll = false) {
       if (c1) drawDiffAccuracy(c1, stats);
       if (c2) drawDiffCelerity(c2, stats);
       if (c3) drawDiffBonus(c3, stats);
-      // initial: the breakdown fetched above; later: re-read with the graph filters.
-      if (document.getElementById("graph-session-outcomes")) redrawFilteredGraphs(initial ? breakdown : undefined);
+      // initial: the breakdown fetched above (unless difficulty squares are
+      // still ticked from before); later: re-read with the graph filters.
+      if (document.getElementById("graph-session-outcomes")) redrawFilteredGraphs(initial && !_bdDiffs.length ? breakdown : undefined);
     };
     _statsRedraw = () => drawCharts(false);
     if (!container.__collWired) {
