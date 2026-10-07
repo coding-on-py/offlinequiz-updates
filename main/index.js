@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { QuestionDatabase } from "./database.js";
 import { UserData } from "./userData.js";
-import { checkAnswer, checkBonus, evaluateAnswer, parseDirectives, frequencyKey, answersSimilar, primaryAnswer } from "./answerChecker.js";
+import { checkAnswer, checkBonus, evaluateAnswer, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer } from "./answerChecker.js";
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
 import * as updater from "./updater.js";
@@ -10,6 +10,8 @@ import * as updater from "./updater.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_DB_PATH = join(__dirname, "..", "..", "data", "questions.db");
+// Frequency lists keep at most this many merged answers (~90 pages of 50).
+const FREQ_MAX = 5000;
 const DEFAULT_USER_DB_PATH = join(
   __dirname,
   "..",
@@ -145,7 +147,24 @@ export class App {
       alternateSubcategories: filters.alternateSubcategories,
       categoryIds: filters.categoryIds,
       cleanOnly: filters.cleanOnly,
+      tags: filters.tags,
     };
+  }
+
+  // Tag vocabulary (every value per family, with counts) — cached next to the
+  // user database so it is computed once per question-database build.
+  getTagVocab() {
+    let cacheFile = null;
+    try { cacheFile = join(dirname(this.userDbPath), "tag-vocab.json"); } catch { cacheFile = null; }
+    return this.questionDb.getTagVocab ? this.questionDb.getTagVocab(cacheFile) : { tags: {} };
+  }
+
+  // "Narrow by" tags for a search / filter set; type tossups | bonuses.
+  getTagFacets(type, query, filters) {
+    const t = type === "bonuses" || type === "bonus" ? "bonus" : "tossup";
+    const f = this._scopeToStarred(filters, t);
+    if (!f) return { facets: [], exact: true, sampled: 0 };
+    return this.questionDb.getTagFacets ? this.questionDb.getTagFacets(t === "bonus" ? "bonuses" : "tossups", query || "", f) : { facets: [], exact: true, sampled: 0 };
   }
 
   searchTossups(query, filters) {
@@ -187,7 +206,42 @@ export class App {
     return { schema: this.questionDb.v2 ? 2 : 1, mode: m("source_mode") || null, tree: m("tree_spec_version") || null, built: m("built_at") || null };
   }
 
+  // /api/frequent-answers for both transports. Category/subcategory NAMES are
+  // the old contract (plugins); otherwise nodeIds (or one nodeId) pick subtrees
+  // and the list is paged: { answers, total, max }.
+  frequentAnswersApi({ category, subcategory, alternateSubcategory, limit, qtype, nodeId, nodeIds, offset } = {}) {
+    const lim = Math.max(1, Math.min(2000, parseInt(limit) || 50));
+    const type = qtype === "bonus" || qtype === "both" ? qtype : "tossup";
+    if (category || subcategory || alternateSubcategory) {
+      return { answers: this.getFrequentAnswers(category || null, subcategory || null, alternateSubcategory || null, lim, type, nodeId || null) };
+    }
+    const ids = (Array.isArray(nodeIds) ? nodeIds : String(nodeIds || nodeId || "").split(",")).map(String).filter(Boolean);
+    return this.getFrequentAnswersPage({ qtype: type, nodeIds: ids, offset: parseInt(offset) || 0, limit: lim });
+  }
+
+  // The whole merged list for (qtype, subtrees) is built once (~2 s over every
+  // tossup) and kept on the open database, so every later page is instant.
+  getFrequentAnswersPage({ qtype = "tossup", nodeIds = [], offset = 0, limit = 50 } = {}) {
+    const db = this.questionDb;
+    const ids = [...new Set(nodeIds.map(String).filter(Boolean))].sort();
+    const key = qtype + "|" + ids.join(",");
+    const cache = db._freqCache || (db._freqCache = new Map());
+    let list = cache.get(key);
+    if (list) { cache.delete(key); cache.set(key, list); }
+    else {
+      list = this._frequencyRows(null, null, null, qtype, ids.length ? ids : null, FREQ_MAX);
+      cache.set(key, list);
+      while (cache.size > 12) cache.delete(cache.keys().next().value);
+    }
+    const off = Math.max(0, offset | 0);
+    return { answers: list.slice(off, off + limit), total: list.length, max: list.length ? list[0].count : 0 };
+  }
+
   getFrequentAnswers(category, subcategory, alternateSubcategory, limit = 50, qtype = "tossup", nodeId = null) {
+    return this._frequencyRows(category, subcategory, alternateSubcategory, qtype, nodeId, limit);
+  }
+
+  _frequencyRows(category, subcategory, alternateSubcategory, qtype, nodeId, limit) {
     let rows = [];
     if (qtype !== "bonus") {
       rows = this.questionDb.getAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId);
@@ -226,12 +280,14 @@ export class App {
     const buckets = new Map();
     const merged = [];
     for (const e of cand) {
-      const bk = frequencyKey(e.display).replace(/\s+/g, "").slice(0, 2);
+      const keys = similarityKeys(e.display);
+      const bk = keys.k.slice(0, 2);
       let reps = buckets.get(bk);
       if (!reps) { reps = []; buckets.set(bk, reps); }
-      const rep = reps.find((r) => answersSimilar(r.display, e.display));
+      // compared against each group's FIRST answer, as before (keys fixed at creation)
+      const rep = reps.find((r) => similarKeysMatch(r.keys, keys));
       if (rep) { if (e.count > rep.count) rep.display = e.display; rep.count += e.count; }
-      else { const ne = { display: e.display, count: e.count }; reps.push(ne); merged.push(ne); }
+      else { const ne = { display: e.display, count: e.count, keys }; reps.push(ne); merged.push(ne); }
     }
     return merged.sort((a, b) => b.count - a.count).slice(0, limit).map((e) => ({ answer: e.display, count: e.count }));
   }
@@ -400,13 +456,14 @@ export class App {
     const byQ = new Map();
     for (const e of entries) {
       if (e.type !== "tossup" || !e.question_id) continue;
-      const cur = byQ.get(e.question_id) || { last: 0, lastWrong: false, category: "", given: "", buzz: null, lastPoints: 0, lastGiven: "", difficulty: null };
+      const cur = byQ.get(e.question_id) || { last: 0, lastWrong: false, category: "", path: "", given: "", buzz: null, lastPoints: 0, lastGiven: "", difficulty: null };
       const t = new Date(e.timestamp).getTime() || 0;
       if (t >= cur.last) {
         cur.last = t; cur.lastWrong = !e.correct;
         cur.lastPoints = e.points != null ? e.points : 0;
         cur.lastGiven = e.given_answer || "";
         cur.category = e.category || cur.category;
+        cur.path = e.category_path || cur.path;
         cur.given = e.given_answer || "";
         cur.buzz = e.buzz_position != null ? e.buzz_position : null;
         if (e.difficulty != null) cur.difficulty = e.difficulty;
@@ -422,10 +479,10 @@ export class App {
     });
     const manualSet = new Set(manual.map((m) => m.id));
     for (const m of manual) {
-      let cat = "", diff = null;
+      let cat = "", path = "", diff = null;
       let typ = m.type || "tossup";
-      try { const hit = this.getQuestionAny(m.id, typ); if (!hit) continue; typ = hit.type; cat = hit.question.category || ""; diff = hit.question.difficulty != null ? hit.question.difficulty : null; } catch {}
-      items.push({ id: m.id, type: typ, category: cat, difficulty: diff, given: "", buzzPosition: null, manual: true, ageMs: Math.max(0, now - (m.at || 0)) });
+      try { const hit = this.getQuestionAny(m.id, typ); if (!hit) continue; typ = hit.type; cat = hit.question.category || ""; path = hit.question.category_path || [hit.question.category, hit.question.subcategory, hit.question.alternate_subcategory].filter(Boolean).join(" > "); diff = hit.question.difficulty != null ? hit.question.difficulty : null; } catch {}
+      items.push({ id: m.id, type: typ, category: cat, path, difficulty: diff, given: "", buzzPosition: null, manual: true, ageMs: Math.max(0, now - (m.at || 0)) });
     }
     for (const [qid, st] of byQ) {
       if (manualSet.has(qid) || !st.lastWrong) continue;
@@ -438,7 +495,7 @@ export class App {
       if (kind === "neg" && !wantNegs) continue;
       if (kind === "wrongEnd" && !wantWrongEnd) continue;
       if (kind === "unanswered" && !wantUnanswered) continue;
-      items.push({ id: qid, type: "tossup", category: st.category || "", difficulty: st.difficulty, given: st.given || "", buzzPosition: st.buzz, ageMs: Math.max(0, now - st.last) });
+      items.push({ id: qid, type: "tossup", category: st.category || "", path: st.path || st.category || "", difficulty: st.difficulty, given: st.given || "", buzzPosition: st.buzz, ageMs: Math.max(0, now - st.last) });
     }
     // A missed tossup whose id is no longer a tossup (moved to bonuses, or gone)
     // cannot be replayed from the tossup queue.
@@ -637,10 +694,20 @@ export class App {
     return this.userData.deleteSessionsOlderThan(days);
   }
 
-  getOverallStats(since) {
+  getOverallStats(since, categoryIds) {
     let entries = this.userData.getAllSessionEntries();
     if (since) entries = entries.filter((e) => (e.timestamp || 0) >= since);
-    return computeStats(this._relabel(entries));
+    return computeStats(this._inCategories(this._relabel(entries), categoryIds));
+  }
+
+  // Relabeled entries inside the picked category subtrees (node ids, array or
+  // "a,b"); none picked = all of them.
+  _inCategories(entries, categoryIds) {
+    const ids = (Array.isArray(categoryIds) ? categoryIds : String(categoryIds || "").split(",")).map(String).filter(Boolean);
+    if (!ids.length) return entries;
+    const paths = ids.map((id) => this.questionDb.getCategoryNode(id)).filter(Boolean).map((n) => n.path);
+    if (!paths.length) return entries;
+    return entries.filter((e) => { const p = e.category_path || e.category || ""; return paths.some((u) => p === u || p.startsWith(u + " > ")); });
   }
 
   // Recorded answers store the category the question had WHEN it was played.
@@ -712,9 +779,9 @@ export class App {
     return { answer_counts: counts, answer_classes: classes, answer_questions: questions };
   }
 
-  getSessionBreakdown(category, difficulty) {
+  getSessionBreakdown(category, difficulty, categoryIds) {
     const sessions = this.userData.getSessionList();
-    const allEntries = this._relabel(this.userData.getAllSessionEntries());
+    const allEntries = this._inCategories(this._relabel(this.userData.getAllSessionEntries()), categoryIds);
     return computeSessionBreakdown(sessions, allEntries, { category, difficulty });
   }
 

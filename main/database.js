@@ -1,4 +1,28 @@
 import { DatabaseSync } from "node:sqlite";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
+// Question tags (schema 2, the `tags` JSON column). Families a filter may name;
+// "subject" is matched as a category-tree node (its id), never as text.
+export const TAG_FAMILIES = ["era", "place", "theme", "form", "answer_type", "format"];
+const TAG_FAMILY_SET = new Set(TAG_FAMILIES);
+const TAG_FAMILY_SQL = "(" + TAG_FAMILIES.map((f) => `'${f}'`).join(",") + ")";
+// Normalize a tag filter list (from the query string or IPC): at most 12
+// entries of { f, v, x, id }.
+export function normalizeTagFilters(raw) {
+  let list = raw;
+  if (typeof list === "string") { try { list = JSON.parse(list); } catch { return []; } }
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const t of list.slice(0, 12)) {
+    if (!t || typeof t !== "object") continue;
+    const f = String(t.f ?? t.fam ?? "");
+    const v = String(t.v ?? t.val ?? "").slice(0, 200);
+    const x = !!(t.x ?? t.ex);
+    if (f === "subject" && typeof t.id === "string" && t.id) out.push({ f, v, x, id: t.id.slice(0, 200) });
+    else if (TAG_FAMILY_SET.has(f) && v) out.push({ f, v, x });
+  }
+  return out;
+}
 
 // Whitelisted ORDER BY for Database browse/search. `sort` is user input: never
 // interpolate it, and Object.hasOwn keeps "constructor"/"__proto__" from
@@ -11,6 +35,8 @@ const SORT_SQL = {
   easiest: (p) => `(${p}difficulty = 0), ${p}difficulty ASC, ${p}set_year DESC, ${p}set_name, ${p}packet_number, ${p}question_number, ${p}id`,
   hardest: (p) => `${p}difficulty DESC, ${p}set_year DESC, ${p}set_name, ${p}packet_number, ${p}question_number, ${p}id`,
 };
+// Browse pages from this offset on come from the cached rowid order (_orderedPage).
+const DEEP_PAGE_OFFSET = 1000;
 const sortSql = (s, p) => (typeof s === "string" && Object.hasOwn(SORT_SQL, s) ? SORT_SQL[s](p) : null);
 
 function sanitizeFtsFallback(query) {
@@ -50,6 +76,8 @@ export class QuestionDatabase {
     // older QBReader-format file still works: the tree is synthesized from the
     // category / subcategory / alternate_subcategory names (ids "v1:…").
     this.v2 = this._hasColumn("tossups", "category_ord");
+    this.hasTags = this._hasColumn("tossups", "tags") && this._hasColumn("bonuses", "tags");
+    this._vocab = null;
     this._tree = null;
     this._treeCounts = {};
   }
@@ -341,6 +369,30 @@ export class QuestionDatabase {
       params["yearMax"] = filters.yearMax;
     }
 
+    // Tags: every listed tag is required ("x" = must NOT have it). A subject
+    // tag is a category-tree node (its whole subtree); the other families are
+    // matched in the record's tags JSON. instr() on the JSON-quoted value is a
+    // cheap prefilter (ASCII values only — the stored JSON escapes the rest),
+    // json_each confirms the family. NULL tags never match, so an excluded tag
+    // keeps untagged records.
+    if (this.hasTags && filters.tags && filters.tags.length) {
+      normalizeTagFilters(filters.tags).forEach((t, i) => {
+        if (t.f === "subject") {
+          const n = this.v2 ? this.getCategoryNode(t.id) : null;
+          if (!n) return;
+          clauses.push(`${t.x ? "NOT " : ""}(${col("category_ord")} BETWEEN :tso${i} AND :tse${i})`);
+          params[`tso${i}`] = n.ord; params[`tse${i}`] = n.ord_end;
+          return;
+        }
+        const exists = `EXISTS (SELECT 1 FROM json_each(${col("tags")}, '$.${t.f}') WHERE value = :tagv${i})`;
+        const ascii = /^[\x20-\x7e]+$/.test(t.v) && !/["\\]/.test(t.v);
+        const cond = ascii ? `(instr(COALESCE(${col("tags")}, ''), :tagq${i}) > 0 AND ${exists})` : exists;
+        clauses.push(t.x ? `NOT ${cond}` : cond);
+        params[`tagv${i}`] = t.v;
+        if (ascii) params[`tagq${i}`] = JSON.stringify(t.v);
+      });
+    }
+
     return { where: clauses.length > 0 ? "WHERE " + clauses.join(" AND ") : "", params };
   }
 
@@ -349,7 +401,11 @@ export class QuestionDatabase {
     const offset = filters.offset || 0;
     const { where, params } = this._buildWhere(filters);
 
-    const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number");
+    const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number, rowid");
+
+    if (!filters.random && (offset >= DEEP_PAGE_OFFSET || this._hasOrderedIds("tossups", where, params, orderBy))) {
+      return this._orderedPage("tossups", where, params, orderBy, offset, limit);
+    }
 
     const countSql = `SELECT COUNT(*) as count FROM tossups ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -366,7 +422,11 @@ export class QuestionDatabase {
     const offset = filters.offset || 0;
     const { where, params } = this._buildWhere(filters, "", { isBonus: true });
 
-    const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number");
+    const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number, rowid");
+
+    if (!filters.random && (offset >= DEEP_PAGE_OFFSET || this._hasOrderedIds("bonuses", where, params, orderBy))) {
+      return this._orderedPage("bonuses", where, params, orderBy, offset, limit);
+    }
 
     const countSql = `SELECT COUNT(*) as count FROM bonuses ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -376,6 +436,33 @@ export class QuestionDatabase {
     const rows = this.db.prepare(sql).all({ ...params, limit, offset });
 
     return { rows, total };
+  }
+
+  // Deep pages of a browse (no search text) re-sorted the whole table on every
+  // request (~2.7 s at page 3000 without an index on the browse order). Past
+  // the first pages the ordered rowids are computed once per filter and kept
+  // (the file is read-only, so they never go stale); each page is then a
+  // rowid lookup. Built databases also carry idx_*_browse, which makes the
+  // first build cheap too.
+  _orderedKey(table, where, params, orderBy) { return table + "|" + where + "|" + orderBy + "|" + JSON.stringify(params); }
+  _hasOrderedIds(table, where, params, orderBy) { return !!(this._idCache && this._idCache.has(this._orderedKey(table, where, params, orderBy))); }
+  _orderedPage(table, where, params, orderBy, offset, limit) {
+    const key = this._orderedKey(table, where, params, orderBy);
+    const cache = this._idCache || (this._idCache = new Map());
+    let ids = cache.get(key);
+    if (ids) { cache.delete(key); cache.set(key, ids); }
+    else {
+      ids = Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${where} ${orderBy}`).all(params), (x) => x.r);
+      cache.set(key, ids);
+      while (cache.size > 6) cache.delete(cache.keys().next().value);
+    }
+    const slice = Array.from(ids.subarray(offset, offset + limit));
+    if (!slice.length) return { rows: [], total: ids.length };
+    const got = this.db.prepare(`SELECT rowid AS __rid, * FROM ${table} WHERE rowid IN (${slice.join(",")})`).all();
+    const byId = new Map(got.map((r) => [r.__rid, r]));
+    const rows = [];
+    for (const id of slice) { const r = byId.get(id); if (r) { delete r.__rid; rows.push(r); } }
+    return { rows, total: ids.length };
   }
 
   getRandomTossup(filters = {}) {
@@ -528,13 +615,18 @@ export class QuestionDatabase {
   }
 
   // nodeId (any tree depth) wins over the three level names.
-  _freqNode(where, params, nodeId) {
-    const n = nodeId ? this.getCategoryNode(nodeId) : null;
-    if (!n) return where;
-    if (this.v2) { params.co = n.ord; params.ce = n.ord_end; return where + " AND category_ord BETWEEN :co AND :ce"; }
+  // One node id or several (comma list / array): the union of their subtrees.
+  _freqNode(where, params, nodeIds) {
+    const ids = Array.isArray(nodeIds) ? nodeIds : String(nodeIds || "").split(",");
+    const nodes = ids.filter(Boolean).map((id) => this.getCategoryNode(id)).filter(Boolean);
+    if (!nodes.length) return where;
+    if (this.v2) {
+      const parts = nodes.map((n, i) => { params["co" + i] = n.ord; params["ce" + i] = n.ord_end; return `category_ord BETWEEN :co${i} AND :ce${i}`; });
+      return where + " AND (" + parts.join(" OR ") + ")";
+    }
     const cols = ["category", "subcategory", "alternate_subcategory"];
-    n.path.split(" > ").forEach((p, k) => { params["v" + k] = p; where += ` AND ${cols[k]} = :v${k}`; });
-    return where;
+    const parts = nodes.map((n, i) => "(" + n.path.split(" > ").slice(0, 3).map((p, k) => { params[`v${i}_${k}`] = p; return `${cols[k]} = :v${i}_${k}`; }).join(" AND ") + ")");
+    return where + " AND (" + parts.join(" OR ") + ")";
   }
 
   getAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId) {
@@ -644,6 +736,73 @@ export class QuestionDatabase {
         `SELECT * FROM ${table} WHERE packet_id = :pid ORDER BY question_number`
       )
       .all({ pid: packetId });
+  }
+
+  // Every tag value per family with its count of playable questions:
+  // { built, tags: { era: [[value, tossups, bonuses], …], … } }, most common
+  // first. One full JSON pass over both tables (a few seconds), so it is kept
+  // in memory and on disk next to the user database, keyed by the build stamp.
+  getTagVocab(cacheFile) {
+    if (this._vocab) return this._vocab;
+    const built = String(this.getMeta("built_at") || "0");
+    if (!this.hasTags) return (this._vocab = { built, tags: {} });
+    if (cacheFile) {
+      try {
+        if (existsSync(cacheFile)) {
+          const c = JSON.parse(readFileSync(cacheFile, "utf8"));
+          if (c && c.built === built && c.tags) return (this._vocab = c);
+        }
+      } catch { /* rebuild */ }
+    }
+    const acc = {};
+    [["tossups", 1], ["bonuses", 2]].forEach(([table, slot]) => {
+      let rows = [];
+      try {
+        rows = this.db.prepare(`SELECT f.key AS fam, v.value AS val, COUNT(*) AS n FROM ${table} t, json_each(t.tags) f, json_each(f.value) v WHERE ${this.v2 ? "t.playable = 1 AND " : ""}f.key IN ${TAG_FAMILY_SQL} AND v.type = 'text' GROUP BY 1, 2`).all();
+      } catch { rows = []; }
+      for (const r of rows) {
+        const m = acc[r.fam] || (acc[r.fam] = new Map());
+        const e = m.get(r.val) || [r.val, 0, 0];
+        e[slot] += r.n;
+        m.set(r.val, e);
+      }
+    });
+    const tags = {};
+    for (const f of TAG_FAMILIES) tags[f] = [...(acc[f] || new Map()).values()].sort((a, b) => (b[1] + b[2]) - (a[1] + a[2]));
+    this._vocab = { built, tags };
+    if (cacheFile) { try { writeFileSync(cacheFile, JSON.stringify(this._vocab)); } catch { /* read-only location */ } }
+    return this._vocab;
+  }
+
+  // The most common tags among the records a search/filter matches ("Narrow
+  // by"). Counted over at most FACET_SAMPLE matching records: `exact` says
+  // whether that covered all of them (otherwise the counts are a ranking only).
+  getTagFacets(type, query, filters = {}) {
+    const isBonus = type === "bonuses" || type === "bonus";
+    if (!this.hasTags) return { facets: [], exact: true, sampled: 0 };
+    const table = isBonus ? "bonuses" : "tossups";
+    const fts = isBonus ? "bonuses_fts" : "tossups_fts";
+    const a = isBonus ? "b" : "t";
+    const { where, params } = this._buildWhere(filters, a + ".", { isBonus });
+    const FACET_SAMPLE = 25000;
+    const base = query
+      ? `SELECT ${a}.rowid AS rid FROM ${table} ${a} JOIN ${fts} ON ${a}.rowid = ${fts}.rowid WHERE ${fts} MATCH :query${where ? " AND " + where.substring(6) : ""}`
+      : `SELECT ${a}.rowid AS rid FROM ${table} ${a} ${where}`;
+    const run = (q) => {
+      const p = q ? { ...params, query: q } : params;
+      const n = this.db.prepare(`SELECT COUNT(*) AS n FROM (${base} LIMIT ${FACET_SAMPLE + 1})`).get(p).n;
+      const rows = n ? this.db.prepare(
+        `SELECT f.key AS fam, v.value AS val, COUNT(*) AS n FROM (${base} LIMIT ${FACET_SAMPLE}) s ` +
+        `JOIN ${table} q ON q.rowid = s.rid, json_each(q.tags) f, json_each(f.value) v ` +
+        `WHERE f.key IN ${TAG_FAMILY_SQL} AND v.type = 'text' GROUP BY 1, 2 ORDER BY n DESC LIMIT 30`).all(p) : [];
+      return { facets: rows.map((r) => ({ fam: r.fam, val: r.val, n: r.n })), exact: n <= FACET_SAMPLE, sampled: Math.min(n, FACET_SAMPLE) };
+    };
+    try { return run(query || ""); }
+    catch (e) {
+      if (!query || !isFtsSyntaxError(e)) return { facets: [], exact: true, sampled: 0 };
+      const safe = sanitizeFtsFallback(query);
+      try { return safe ? run(safe) : { facets: [], exact: true, sampled: 0 }; } catch { return { facets: [], exact: true, sampled: 0 }; }
+    }
   }
 
   getSetStats(setId) {

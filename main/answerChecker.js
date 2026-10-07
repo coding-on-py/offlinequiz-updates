@@ -314,15 +314,26 @@ function stemKey(answer) {
 }
 
 export function answersSimilar(a, b) {
-  const ka = frequencyKey(a).replace(/\s+/g, "");
-  const kb = frequencyKey(b).replace(/\s+/g, "");
+  return similarKeysMatch(similarityKeys(a), similarityKeys(b));
+}
+// The two normalized forms answersSimilar compares, computed once per answer
+// so a frequency merge over thousands of answers doesn't redo them per pair.
+export function similarityKeys(answer) {
+  return { k: frequencyKey(answer).replace(/\s+/g, ""), stem: stemKey(answer) };
+}
+export function similarKeysMatch(x, y) {
+  const ka = x.k, kb = y.k;
   if (!ka || !kb) return false;
   if (ka === kb) return true;
-  if (stemKey(a) === stemKey(b)) return true;
+  if (x.stem === y.stem) return true;
   const min = Math.min(ka.length, kb.length);
   if (min < 5) return false;
-  if (ka.slice(0, min - 2) === kb.slice(0, min - 2) && Math.abs(ka.length - kb.length) <= 3) return true;
-  return levenshtein(ka, kb) <= Math.max(1, Math.floor(min / 5));
+  // A shared stem only counts on longer words: at five letters it was three
+  // characters, which folded Chile, Chicago and Chinook into "China".
+  if (min >= 8 && ka.slice(0, min - 2) === kb.slice(0, min - 2) && Math.abs(ka.length - kb.length) <= 3) return true;
+  const max = Math.max(1, Math.floor(min / 5));
+  if (Math.abs(ka.length - kb.length) > max) return false;   // the distance is at least the length gap
+  return levenshtein(ka, kb) <= max;
 }
 // ======================================================================
 // Parser: JS port of answerline/scripts/{lexicon,segment,spec_parse}.py (parse half of answerline_spec.md).

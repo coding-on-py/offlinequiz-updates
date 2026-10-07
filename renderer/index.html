@@ -27,81 +27,83 @@
   </div>
   <div id="crt-overlay"></div>
   <div id="app">
-    <!-- ── TITLE SCREEN ── -->
-    <div id="title-screen" class="screen active">
-      <div class="title-left">
-        <div class="title-logo">
-          <pre>
-  ██████╗ ███████╗███████╗██╗     ██╗███╗   ██╗███████╗
- ██╔═══██╗██╔════╝██╔════╝██║     ██║████╗  ██║██╔════╝
- ██║   ██║█████╗  █████╗  ██║     ██║██╔██╗ ██║█████╗  
- ██║   ██║██╔══╝  ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  
- ╚██████╔╝██║     ██║     ███████╗██║██║ ╚████║███████╗
-  ╚═════╝ ╚═╝     ╚═╝     ╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝
-          </pre>
-          <pre>
- ██████╗ ██╗   ██╗██╗███████╗
-██╔═══██╗██║   ██║██║╚══███╔╝
-██║   ██║██║   ██║██║  ███╔╝ 
-██║▄▄ ██║██║   ██║██║ ███╔╝  
-╚██████╔╝╚██████╔╝██║███████╗
- ╚══▀▀═╝  ╚═════╝ ╚═╝╚══════╝
-          </pre>
-        </div>
-        <div class="title-greeting" id="title-greeting"></div>
-        <div class="title-streak" id="title-streak"></div>
-        <div class="title-art-stacked-spot"></div>
-        <div class="title-menu">
-          <div class="menu-item hidden" id="menu-review">
-            <span class="key">[&#8635;]</span> Review (<span id="review-count">0</span> due)
+    <!-- ── APP TOP BAR (every screen) ── -->
+    <header class="app-topbar" id="app-topbar">
+      <button type="button" class="brand" id="tb-brand" aria-label="Home" title="Home">offline<span>quiz</span></button>
+      <div class="tb-crumb" id="tb-crumb" hidden><span aria-hidden="true">/</span><b id="tb-crumb-text"></b></div>
+      <div class="tb-right">
+        <button type="button" class="tb-pill tb-streak" id="tb-streak" hidden><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg><span class="num" id="tb-streak-n">0</span><span class="lbl">days</span></button>
+        <button type="button" class="btn btn-ghost tb-link" id="tb-plugins" title="Plugins"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="14" y="3" width="7" height="7" rx="1.5"/><path d="M10 21V9a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/></svg><span>Plugins</span></button>
+        <button type="button" class="btn btn-ghost tb-link" id="tb-settings" aria-haspopup="dialog" aria-controls="settings-modal" title="Settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span>Settings</span></button>
+        <div class="pop-wrap tb-profile-wrap">
+          <button type="button" class="tb-profile" id="tb-profile" aria-haspopup="menu" aria-expanded="false" aria-controls="tb-profile-menu" aria-label="Profile menu"><span class="avatar" id="tb-avatar">?</span></button>
+          <div class="pop right tb-menu" id="tb-profile-menu" role="menu" aria-label="Profile" hidden>
+            <div class="tbm-head"><span class="avatar" id="tbm-avatar">?</span><span class="tbm-who"><b id="tbm-name">Player</b></span></div>
+            <button type="button" class="pop-item" role="menuitem" id="tbm-profile" data-go="player"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 6h3v1a3 3 0 0 1-3 3M7 6H4v1a3 3 0 0 0 3 3"/></svg>Profile</button>
+            <button type="button" class="pop-item" role="menuitem" id="tbm-account" disabled aria-disabled="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-4 4.2-6 8-6s6.8 2 8 6"/></svg>Account<span class="soon">Soon</span></button>
           </div>
-          <div class="menu-item" data-screen="practice-tossups">
-            <span class="key">[1]</span> Practice Tossups
-          </div>
-          <div class="menu-item" data-screen="practice-bonuses">
-            <span class="key">[2]</span> Practice Bonuses
-          </div>
-          <div class="menu-item" data-screen="stats">
-            <span class="key">[3]</span> View Statistics
-          </div>
-          <div class="menu-item" data-screen="database">
-            <span class="key">[4]</span> Database
-          </div>
-          <div class="menu-item" data-screen="settings">
-            <span class="key">[5]</span> Settings
-          </div>
-          <div class="menu-item" data-screen="player">
-            <span class="key">[6]</span> Player
-          </div>
-          <div class="menu-item" data-screen="extensions">
-            <span class="key">[7]</span> Plugins &amp; Themes
-          </div>
-        </div>
-        <div class="title-status" id="title-status">
-          DB: loading...
         </div>
       </div>
-      <div class="title-art" id="title-art"></div>
+    </header>
+
+    <!-- ── HOME ── -->
+    <div id="title-screen" class="screen active home">
+      <div class="home-bg" id="home-bg" aria-hidden="true"></div>
+      <div class="home-veil" aria-hidden="true"></div>
+      <div class="home-inner">
+        <div class="hero">
+          <h1 class="wordmark">offline<span>quiz</span><i class="caret" aria-hidden="true"></i></h1>
+          <p class="greet" id="title-greeting"></p>
+        </div>
+        <div class="home-cards">
+          <section class="hcard" aria-labelledby="h-play">
+            <h2 id="h-play"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>Play</h2>
+            <div class="row2">
+              <button type="button" class="btn btn-lg" data-go="practice-tossups">Tossups</button>
+              <button type="button" class="btn btn-lg" data-go="practice-bonuses">Bonuses</button>
+            </div>
+            <button type="button" class="btn btn-lg btn-go" data-go="multiplayer"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 15c2 .7 3.2 2.3 3.8 5"/></svg>Multiplayer</button>
+            <div class="row2">
+              <button type="button" class="btn btn-md" id="menu-review" data-go="review"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>Review<span class="btn-num" id="review-count">0</span></button>
+              <button type="button" class="btn btn-md" data-go="stats"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Statistics</button>
+            </div>
+          </section>
+          <section class="hcard" aria-labelledby="h-db">
+            <h2 id="h-db"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2V5z"/><path d="M4 19a2 2 0 0 1 2-2h12"/></svg>Question database</h2>
+            <button type="button" class="btn btn-lg" data-go="db-search"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search questions</button>
+            <div class="row2">
+              <button type="button" class="btn btn-lg" data-go="db-sets">Browse sets</button>
+              <button type="button" class="btn btn-lg" data-go="db-frequency">Frequency</button>
+            </div>
+            <button type="button" class="btn btn-md" data-go="db-starred"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>Starred</button>
+          </section>
+        </div>
+      </div>
+      <!-- kept for themes and plugins that look for them; the home does not show them -->
+      <div class="title-art" id="title-art" hidden></div>
+      <div id="title-streak" hidden></div>
+      <div id="title-status" hidden></div>
     </div>
 
     <!-- ── PRACTICE SCREEN ── -->
     <div id="practice-screen" class="screen">
-      <div class="top-bar">
+      <div class="top-bar page-head">
         <div class="top-bar-left">
-          <span class="top-bar-title" id="practice-title">PRACTICE: TOSSUPS</span>
+          <span class="top-bar-title" id="practice-title">Tossups</span>
         </div>
         <div class="top-bar-right">
-          <span class="pill" id="session-counter">0</span>
-          <span class="pill pill-green" id="session-score">Score: 0</span>
-          <button class="btn btn-sm btn-ghost" id="btn-end-session">[Q] End</button>
-          <button class="btn btn-sm btn-ghost" id="btn-home">[Esc] Home</button>
+          <button type="button" class="btn" id="btn-open-setup"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Setup</button>
+          <button type="button" class="btn" id="btn-end-session">End</button>
+          <button type="button" class="btn btn-ghost" id="btn-home">Back</button>
         </div>
       </div>
 
       <div class="practice-layout">
-        <aside class="filters-panel" id="filters-panel">
-          <div class="filter-section collapsible collapsed" id="sec-mode">
-            <button type="button" class="collapse-header"><span class="collapse-chevron"></span>MODE</button>
+        <div class="drawer-backdrop" id="setup-backdrop" hidden></div>
+        <aside class="filters-panel" id="filters-panel" aria-label="Practice setup">
+          <div class="fp-head"><h2 class="fp-title">Practice setup</h2><button type="button" class="btn btn-ghost btn-icon fp-close" id="btn-close-setup" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+          <div class="filter-section" id="sec-mode">
+            <div class="filter-label">Mode</div>
             <div class="filter-body">
               <select id="mode-select" class="mode-input">
                 <option value="random">Random questions</option>
@@ -109,7 +111,7 @@
                 <option value="import">Imported packet file</option>
               </select>
               <div id="set-mode-fields" class="hidden">
-                <label class="mode-field"><span>Set Name</span>
+                <label class="mode-field"><span>Set name</span>
                   <select id="mode-set-name" class="mode-input"><option value="">choose…</option></select>
                 </label>
                 <label class="mode-field"><span>Packet #</span>
@@ -119,129 +121,114 @@
               <div id="import-mode-fields" class="hidden">
                 <button type="button" class="btn btn-sm" id="import-packet-btn">Choose packet file…</button>
                 <input type="file" id="import-packet-file" accept=".json,application/json" class="hidden">
-                <div class="text-muted" id="import-packet-status" style="font-size:11px">No packet loaded</div>
+                <div class="text-muted" id="import-packet-status" style="font-size:12px">No packet loaded</div>
               </div>
             </div>
           </div>
-          <div class="filter-section collapsible collapsed" id="sec-difficulty">
-            <button type="button" class="collapse-header"><span class="collapse-chevron"></span>DIFFICULTY</button>
-            <div class="filter-body">
-              <div class="diff-checks" id="difficulty-filters">
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="0"><span>0 · Unrated</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="1"><span>1 · Middle School</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="2" checked><span>2 · Easy High School</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="3" checked><span>3 · Regular High School</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="4" checked><span>4 · Hard High School</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="5" checked><span>5 · National High School</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="6"><span>6 · Easy College</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="7"><span>7 · Medium College</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="8"><span>8 · Regionals College</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="9"><span>9 · Nationals College</span></label>
-                <label class="diff-row"><input type="checkbox" class="diff-checkbox" value="10"><span>10 · Open</span></label>
-              </div>
-            </div>
-          </div>
-          <!-- CATEGORIES launcher. The tree itself lives in #cat-ovl at the end of this panel
+          <!-- CATEGORIES launcher. The picker lives in #cat-ovl at the end of this panel
                (see AGENTS.md "CATEGORY GUI"). Keep the id sec-categories: packet-builder hides it by id. -->
           <div class="filter-section" id="sec-categories">
-            <button type="button" class="btn btn-sm btn-full cat-open-btn" id="btn-open-categories" aria-haspopup="dialog" aria-controls="cat-ovl">Categories</button>
+            <div class="filter-label">Categories</div>
+            <button type="button" class="btn btn-full cat-open-btn" id="btn-open-categories" aria-haspopup="dialog" aria-controls="cat-ovl"><span class="cat-sum" id="cat-summary">All</span><svg class="cat-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
           </div>
-          <div class="filter-section">
-            <div class="filter-label">READING SPEED</div>
+          <div class="filter-section packet-disable" id="sec-tags">
+            <div class="filter-label">Tags <span class="qb-info" data-tip="Type \ to add a tag, then pick one. Click a tag to switch it between required and skipped.">i</span></div>
+            <div class="tagfield-host" id="practice-tagfield"></div>
+          </div>
+          <div class="filter-section" id="sec-difficulty">
+            <div class="filter-label">Difficulty</div>
+            <div class="filter-body">
+              <div class="diff-checks" id="difficulty-filters">
+                <label class="diff-row" title="Unrated"><input type="checkbox" class="diff-checkbox" value="0"><span>0</span></label>
+                <label class="diff-row" title="Middle school"><input type="checkbox" class="diff-checkbox" value="1"><span>1</span></label>
+                <label class="diff-row" title="Easy high school"><input type="checkbox" class="diff-checkbox" value="2" checked><span>2</span></label>
+                <label class="diff-row" title="Regular high school"><input type="checkbox" class="diff-checkbox" value="3" checked><span>3</span></label>
+                <label class="diff-row" title="Hard high school"><input type="checkbox" class="diff-checkbox" value="4" checked><span>4</span></label>
+                <label class="diff-row" title="National high school"><input type="checkbox" class="diff-checkbox" value="5" checked><span>5</span></label>
+                <label class="diff-row" title="Easy college"><input type="checkbox" class="diff-checkbox" value="6"><span>6</span></label>
+                <label class="diff-row" title="Medium college"><input type="checkbox" class="diff-checkbox" value="7"><span>7</span></label>
+                <label class="diff-row" title="Regionals college"><input type="checkbox" class="diff-checkbox" value="8"><span>8</span></label>
+                <label class="diff-row" title="Nationals college"><input type="checkbox" class="diff-checkbox" value="9"><span>9</span></label>
+                <label class="diff-row" title="Open"><input type="checkbox" class="diff-checkbox" value="10"><span>10</span></label>
+              </div>
+            </div>
+          </div>
+          <div class="filter-section packet-disable" id="sec-year">
+            <div class="filter-label">Years <span class="range-values" id="year-range-label">2010 – 2026</span></div>
+            <div class="dual-range" id="year-dual">
+              <div class="dual-range-track"><div class="dual-range-fill" id="year-fill"></div></div>
+              <input type="range" id="year-min" min="2000" max="2026" value="2010" aria-label="From year">
+              <input type="range" id="year-max" min="2000" max="2026" value="2026" aria-label="To year">
+            </div>
+          </div>
+          <div class="filter-section" id="sec-options">
+            <div class="filter-label">Options</div>
+            <div class="fp-checks">
+              <label class="checkbox-row packet-disable"><input type="checkbox" id="filter-powermark" checked> Powermarked only</label>
+              <span class="checkbox-row-wrap packet-disable"><label class="checkbox-row"><input type="checkbox" id="filter-clean"> Clean questions only</label><span class="qb-info" data-tip="Skips questions the database flags as possibly garbled, merged with another question, or missing a part.">i</span></span>
+              <label class="checkbox-row"><input type="checkbox" id="filter-standard"> Standard sets only</label>
+              <label class="checkbox-row packet-disable"><input type="checkbox" id="filter-starred"> Starred only</label>
+              <label class="checkbox-row"><input type="checkbox" id="opt-bonus-after"> Bonus after a correct tossup</label>
+              <label class="checkbox-row"><input type="checkbox" id="opt-allow-rebuzzes"> Allow rebuzzes</label>
+              <label class="checkbox-row"><input type="checkbox" id="opt-stop-on-power"> Stop on power</label>
+              <label class="checkbox-row"><input type="checkbox" id="opt-allow-skips" checked> Allow skips</label>
+              <label class="checkbox-row"><input type="checkbox" id="filter-hide-pron"> Hide pronunciation guides</label>
+              <label class="checkbox-row"><input type="checkbox" id="filter-hide-notes"> Hide moderator notes</label>
+            </div>
+          </div>
+          <div class="filter-section" id="sec-timing">
+            <div class="filter-label">Reading &amp; timers</div>
             <div class="slider-group">
-              <input type="range" id="panel-speed-slider" min="0" max="100" step="5" value="50">
+              <span class="sg-label">Reading speed</span>
+              <input type="range" id="panel-speed-slider" min="0" max="100" step="5" value="50" aria-label="Reading speed">
               <span class="slider-value" id="panel-speed-label">50ms</span>
             </div>
-          </div>
-          <div class="filter-section">
-            <div class="filter-label">TIMERS</div>
             <div class="slider-group">
-              <span style="font-size:11px;min-width:78px">Buzz window <span class="qb-info" data-tip="Seconds you get to buzz once the question finishes reading.">i</span></span>
-              <input type="range" id="panel-buzz-window" min="0" max="30" step="1" value="10">
+              <span class="sg-label">Buzz window <span class="qb-info" data-tip="Seconds you get to buzz once the question finishes reading.">i</span></span>
+              <input type="range" id="panel-buzz-window" min="0" max="30" step="1" value="10" aria-label="Buzz window">
               <span class="slider-value" id="panel-buzz-window-label">10s</span>
             </div>
-            <div class="slider-group" style="margin-top:6px">
-              <span style="font-size:11px;min-width:78px">Answer time <span class="qb-info" data-tip="Seconds you get to type your answer after buzzing.">i</span></span>
-              <input type="range" id="panel-buzz-timer" min="0" max="30" step="1" value="10">
+            <div class="slider-group">
+              <span class="sg-label">Answer time <span class="qb-info" data-tip="Seconds you get to type your answer after buzzing.">i</span></span>
+              <input type="range" id="panel-buzz-timer" min="0" max="30" step="1" value="10" aria-label="Answer time">
               <span class="slider-value" id="panel-buzz-timer-label">10s</span>
             </div>
-            <div class="slider-group" style="margin-top:6px">
-              <span style="font-size:11px;min-width:78px">Bonus part</span>
-              <input type="range" id="panel-bonus-timer" min="0" max="60" step="1" value="15">
+            <div class="slider-group">
+              <span class="sg-label">Bonus part</span>
+              <input type="range" id="panel-bonus-timer" min="0" max="60" step="1" value="15" aria-label="Bonus part time">
               <span class="slider-value" id="panel-bonus-timer-label">15s</span>
             </div>
-          </div>
-          <div class="filter-section">
-            <div class="filter-label">STANDARD</div>
-            <label class="checkbox-row">
-              <input type="checkbox" id="filter-standard"> Standard sets only
-            </label>
-          </div>
-          <div class="filter-section">
-            <button class="btn btn-primary btn-full" id="btn-start-session">[S] Start Session</button>
-          </div>
-          <div class="filter-section">
-            <div class="filter-label">OPTIONS</div>
-            <label class="checkbox-row packet-disable">
-              <input type="checkbox" id="filter-starred"> Play starred questions only
-            </label>
-            <label class="checkbox-row packet-disable">
-              <input type="checkbox" id="filter-powermark" checked> Powermarked questions only
-            </label>
-            <span class="checkbox-row-wrap packet-disable"><label class="checkbox-row">
-              <input type="checkbox" id="filter-clean"> Clean questions only
-            </label><span class="qb-info" data-tip="Skips questions the database flags as possibly garbled, merged with another question, or missing a part.">i</span></span>
-            <label class="checkbox-row">
-              <input type="checkbox" id="opt-allow-rebuzzes"> Allow rebuzzes
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="opt-stop-on-power"> Stop on power
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="opt-allow-skips" checked> Allow skips
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="filter-hide-pron"> Hide pronunciation guides
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="filter-hide-notes"> Hide moderator notes
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="opt-bonus-after"> Bonus after correct tossup
-            </label>
-          </div>
-          <div class="filter-section">
-            <div class="filter-label">ANSWER STRICTNESS</div>
             <div class="slider-group">
-              <input type="range" id="strictness-slider" min="0" max="20" step="1" value="20">
+              <span class="sg-label">Strictness <span class="qb-info" data-tip="How close a typed answer must be to the answer line. Higher is stricter.">i</span></span>
+              <input type="range" id="strictness-slider" min="0" max="20" step="1" value="20" aria-label="Answer strictness">
               <span class="slider-value" id="strictness-label">20</span>
             </div>
           </div>
           <div class="filter-section" id="ext-practice-section">
             <div id="ext-practice-host"></div>
           </div>
-          <div class="filter-section packet-disable" id="sec-year">
-            <div class="filter-label">YEAR RANGE</div>
-            <div class="dual-range" id="year-dual">
-              <div class="dual-range-track"><div class="dual-range-fill" id="year-fill"></div></div>
-              <input type="range" id="year-min" min="2000" max="2026" value="2010">
-              <input type="range" id="year-max" min="2000" max="2026" value="2026">
-            </div>
-            <div class="range-values" id="year-range-label">2010 – 2026</div>
+          <div class="filter-section fp-legacy-start">
+            <button class="btn btn-primary btn-full" id="btn-start-session">Start Session</button>
+          </div>
+          <div class="fp-foot">
+            <span class="fp-count num" id="fp-count"></span>
+            <button type="button" class="btn btn-primary fp-start" id="btn-drawer-start">Start</button>
           </div>
           <!-- CATEGORY GUI. Must stay INSIDE #filters-panel (it travels with every panel borrow, and the
                panel's capture listeners — prefetch invalidation, multiplayer sync — must see its edits) and
                must carry settings-ovl (the global Esc handler .remove()s any other .qb-overlay, which would
-               detach #category-filters for good). No other form controls in here: their events would reach
-               those capture listeners too. -->
+               detach #category-filters for good). The two-pane picker (#cat-picker) is a VIEW of the
+               #category-filters tree, which stays the source of truth (hidden). -->
           <div class="qb-overlay settings-ovl cat-ovl hidden" id="cat-ovl" role="dialog" aria-modal="true" aria-labelledby="cat-ovl-title">
             <div class="settings-modal cat-modal" tabindex="-1">
-              <div class="settings-modal-head"><span id="cat-ovl-title">CATEGORIES</span><button type="button" class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
-              <div class="cat-modal-tools">
-                <span class="cat-weights-toggle"><label class="checkbox-row"><input type="checkbox" id="enable-cat-weights"> Use category / subcategory weights</label><span class="qb-info" data-tip="Nothing ticked plays every category. Weights are ratios (default 10); 0 unticks a row.">i</span></span>
+              <div class="cat-picker" id="cat-picker"></div>
+              <div class="cat-model" hidden>
+                <span id="cat-ovl-title">Categories</span>
+                <label class="checkbox-row"><input type="checkbox" id="enable-cat-weights"> Weights</label>
+                <button type="button" class="btn btn-sm btn-ghost settings-ovl-close" id="cat-legacy-close">Close</button>
                 <button type="button" class="btn btn-sm btn-ghost" id="btn-cat-clear">Clear all</button>
+                <div class="filter-list" id="category-filters"></div>
               </div>
-              <div class="filter-list" id="category-filters"></div>
             </div>
           </div>
         </aside>
@@ -260,7 +247,7 @@
 
           <div class="buzz-area hidden" id="buzz-area">
             <div class="buzz-prompt">
-              <span class="prompt-symbol">></span>
+              <span class="prompt-symbol">&gt;</span>
               <input type="text" id="buzz-input" placeholder="type answer and press Enter..." autocomplete="off" autocorrect="off" spellcheck="false">
             </div>
           </div>
@@ -268,34 +255,27 @@
           <div class="result-area hidden" id="result-area">
             <div class="result-banner" id="result-banner"></div>
             <div class="result-answer" id="result-answer"></div>
-          </div>
-
-          <div class="history-panel" id="history-panel" style="display:none">
-            <button class="btn btn-full" id="btn-history-open">Session history (<span id="history-count">0</span>)</button>
+            <div class="result-tags" id="result-tags"></div>
+            <div class="result-actions" id="result-actions" hidden><button type="button" class="btn btn-primary" id="btn-result-next">Next<span aria-hidden="true">→</span></button></div>
           </div>
         </main>
 
-        <aside class="stats-panel" id="live-stats">
-          <div class="stat-item">
-            <div class="stat-label">ACC</div>
-            <div class="stat-value" id="stat-acc">—</div>
+        <aside class="stats-panel practice-side" id="live-stats" aria-label="This session">
+          <div class="side-stats">
+            <div class="stat-item stat-score"><div class="stat-value" id="session-score">0</div><div class="stat-label">SCORE</div></div>
+            <div class="stat-item stat-heard"><div class="stat-value" id="session-counter">0</div><div class="stat-label">HEARD</div></div>
+            <div class="stat-item"><div class="stat-value" id="stat-acc">—</div><div class="stat-label">ACC</div></div>
+            <div class="stat-item"><div class="stat-value" id="stat-ppq">—</div><div class="stat-label">PTS/Q</div></div>
+            <div class="stat-item"><div class="stat-value stat-pwr" id="stat-pwr">—</div><div class="stat-label">PWR</div></div>
+            <div class="stat-item"><div class="stat-value stat-neg" id="stat-neg">—</div><div class="stat-label">NEG</div></div>
+            <div class="stat-item stat-cel"><div class="stat-value" id="stat-cel">—</div><div class="stat-label">CEL</div><div class="stat-detail" id="stat-cel-detail"></div></div>
           </div>
-          <div class="stat-item">
-            <div class="stat-label">PWR</div>
-            <div class="stat-value" id="stat-pwr">—</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">NEG</div>
-            <div class="stat-value" id="stat-neg">—</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">CEL</div>
-            <div class="stat-value" id="stat-cel">—</div>
-            <div class="stat-detail" id="stat-cel-detail"></div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">PTS/Q</div>
-            <div class="stat-value" id="stat-ppq">—</div>
+          <div class="side-hist">
+            <div class="eyebrow">This session</div>
+            <div class="session-mini" id="session-mini"></div>
+            <div class="history-panel" id="history-panel" style="display:none">
+              <button class="btn btn-full" id="btn-history-open">Session history (<span id="history-count">0</span>)</button>
+            </div>
           </div>
         </aside>
       </div>
@@ -303,23 +283,20 @@
 
     <!-- ── STATS SCREEN ── -->
     <div id="stats-screen" class="screen">
-      <div class="top-bar">
+      <div class="top-bar page-head">
         <div class="top-bar-left">
-          <span class="top-bar-title">STATISTICS</span>
+          <span class="top-bar-title">Statistics</span>
         </div>
         <div class="top-bar-right">
-          <select id="stats-period" title="Time period" style="font-family:var(--font);font-size:11px;padding:2px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+          <select id="stats-period" title="Time period">
             <option value="all">All time</option>
             <option value="today">Today</option>
             <option value="7">Last 7 days</option>
             <option value="30">Last 30 days</option>
             <option value="90">Last 90 days</option>
           </select>
-          <select id="stats-cat-filter" style="font-family:var(--font);font-size:11px;padding:2px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:4px;color:var(--text)">
-            <option value="">All categories</option>
-          </select>
-          <button class="btn btn-sm btn-ghost" id="btn-stats-export" title="Download your stats as an image">Export PNG</button>
-          <button class="btn btn-sm btn-ghost" id="btn-stats-home">[Esc] Home</button>
+          <button type="button" class="btn cat-launch" id="stats-cat-btn"></button>
+          <button class="btn btn-ghost" id="btn-stats-home">Back</button>
         </div>
       </div>
       <div class="stats-container" id="stats-container">
@@ -329,36 +306,37 @@
 
     <!-- ── DATABASE SCREEN ── -->
     <div id="database-screen" class="screen">
-      <div class="top-bar">
+      <div class="top-bar page-head">
         <div class="top-bar-left">
-          <span class="top-bar-title">DATABASE</span>
+          <span class="top-bar-title">Question database</span>
         </div>
         <div class="top-bar-right">
-          <button class="btn btn-sm btn-ghost" id="btn-db-compact">Compact all</button>
-          <button class="btn btn-sm btn-ghost" id="btn-db-expand">Expand all</button>
-          <button class="btn btn-sm btn-ghost" id="btn-db-home">[Esc] Home</button>
+          <button class="btn" id="btn-db-compact" title="Collapse every card">Compact all</button>
+          <button class="btn" id="btn-db-expand" title="Expand every card">Expand all</button>
+          <button class="btn btn-ghost" id="btn-db-home">Back</button>
         </div>
       </div>
-      <div class="db-tabs">
-        <button class="db-tab active" data-tab="search">Search</button>
-        <button class="db-tab" data-tab="sets">Browse Sets</button>
-        <button class="db-tab" data-tab="frequency">Frequency</button>
-        <button class="db-tab" data-tab="starred">Starred</button>
+      <div class="db-tabs" role="tablist" aria-label="Question database">
+        <button class="db-tab active" role="tab" data-tab="search">Search</button>
+        <button class="db-tab" role="tab" data-tab="sets">Browse sets</button>
+        <button class="db-tab" role="tab" data-tab="frequency">Frequency</button>
+        <button class="db-tab" role="tab" data-tab="starred">Starred</button>
+        <div class="pop-wrap db-plugtools" id="db-plugtools" hidden>
+          <button type="button" class="db-tab db-plugtools-btn" id="db-plugtools-btn" aria-haspopup="menu" aria-expanded="false">Plugin tools<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          <div class="pop left" id="db-plugtools-menu" role="menu" hidden></div>
+        </div>
       </div>
       <div class="db-content" id="db-content"></div>
     </div>
 
-    <!-- ── PLAYER SCREEN ── -->
+    <!-- ── PLAYER (PROFILE) SCREEN ── -->
     <div id="player-screen" class="screen">
-      <div class="top-bar">
+      <div class="top-bar page-head">
         <div class="top-bar-left">
-          <span class="top-bar-title">PLAYER</span>
+          <span class="top-bar-title">Profile</span>
         </div>
         <div class="top-bar-right">
-          <button class="btn btn-sm btn-ghost" id="btn-export-data">Export</button>
-          <button class="btn btn-sm btn-ghost" id="btn-import-data">Import</button>
-          <input type="file" id="import-file" accept=".json" style="display:none">
-          <button class="btn btn-sm btn-ghost" id="btn-player-home">[Esc] Home</button>
+          <button class="btn btn-ghost" id="btn-player-home">Back</button>
         </div>
       </div>
       <div class="player-container" id="player-container">
@@ -366,14 +344,14 @@
       </div>
     </div>
 
-    <!-- ── EXTENSIONS SCREEN (Plugins & Themes) ── -->
+    <!-- ── PLUGINS SCREEN ── -->
     <div id="extensions-screen" class="screen">
-      <div class="top-bar">
+      <div class="top-bar page-head">
         <div class="top-bar-left">
-          <span class="top-bar-title">PLUGINS &amp; THEMES</span>
+          <span class="top-bar-title">Plugins</span>
         </div>
         <div class="top-bar-right">
-          <button class="btn btn-sm btn-ghost" id="btn-ext-home">[Esc] Home</button>
+          <button class="btn btn-ghost" id="btn-ext-home">Back</button>
         </div>
       </div>
       <div class="extensions-container" id="extensions-container"></div>
@@ -382,227 +360,238 @@
     <!-- Player Setup Overlay -->
     <div id="player-setup" class="setup-overlay hidden">
       <div class="setup-box">
-        <div class="setup-title">WELCOME TO OFFLINEQUIZ</div>
+        <div class="setup-title">Welcome to OfflineQuiz</div>
         <div class="setup-field">
-          <input type="text" id="setup-username" placeholder="Enter username..." maxlength="24">
+          <input type="text" id="setup-username" placeholder="Your name" maxlength="24">
         </div>
         <div class="setup-avatar" id="setup-avatar">(◕‿◕)</div>
         <div class="setup-avatar-grid" id="setup-avatar-grid"></div>
-        <button class="btn btn-primary btn-full" id="btn-setup-done">Start Playing</button>
+        <button class="btn btn-primary btn-full" id="btn-setup-done">Start playing</button>
       </div>
     </div>
 
-    <!-- ── SETTINGS SCREEN ── -->
-    <div id="settings-screen" class="screen">
-      <div class="top-bar">
-        <div class="top-bar-left">
-          <span class="top-bar-title">SETTINGS</span>
-        </div>
-        <div class="top-bar-right">
-          <button class="btn btn-sm btn-ghost" id="btn-settings-home">[Esc] Home</button>
-        </div>
-      </div>
-      <div class="settings-layout">
-        <div class="settings-container">
-          <div class="stats-section" id="appearance-section">
-            <div class="stats-section-title">APPEARANCE</div>
-            <div id="default-appearance">
-              <div class="setting-row" id="app-mode-row">
-                <span class="setting-label">Appearance mode</span>
-                <select id="app-mode" class="mode-input" style="width:140px">
-                  <option value="preset">Preset palette</option>
-                  <option value="custom">Custom color</option>
-                </select>
-              </div>
-              <div id="app-preset-controls">
-                <div class="setting-row">
-                  <span class="setting-label">Accent color</span>
-                  <select id="app-accent" class="mode-input" style="width:140px">
-                    <option value="gold">Gold (default)</option>
-                    <option value="blue">Blue</option>
-                    <option value="green">Green</option>
-                    <option value="cyan">Cyan</option>
-                    <option value="magenta">Magenta</option>
-                    <option value="amber">Amber</option>
-                    <option value="red">Red</option>
-                  </select>
-                </div>
-              </div>
-              <div id="app-custom-controls" class="hidden">
-                <div class="setting-row">
-                  <span class="setting-label">Accent color</span>
-                  <input type="color" id="app-custom-accent" class="mode-input" style="width:140px;height:32px;padding:2px;cursor:pointer">
-                </div>
-                <div class="setting-row">
-                  <span class="setting-label">Font</span>
-                  <select id="app-font" class="mode-input" style="width:140px">
-                    <option value="default">Default</option>
-                    <option value="mono">Monospace</option>
-                    <option value="sans">Sans-serif</option>
-                    <option value="serif">Serif</option>
-                    <option value="rounded">Rounded</option>
-                  </select>
+    <!-- ── SETTINGS (one modal, sections on the left) ── -->
+    <div class="qb-overlay settings-ovl hidden" id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="set-h">
+      <div class="settings-modal set-modal" tabindex="-1">
+        <div class="modal-head"><h2 id="set-h">Settings</h2><span class="spacer"></span><button type="button" class="btn btn-ghost btn-icon settings-ovl-close" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+        <div class="set-layout">
+          <nav class="set-nav" id="set-nav" aria-label="Settings sections">
+            <button type="button" class="set-nav-btn" data-sec="gameplay">Gameplay</button>
+            <button type="button" class="set-nav-btn" data-sec="review">Review</button>
+            <button type="button" class="set-nav-btn" data-sec="tags">Tags</button>
+            <button type="button" class="set-nav-btn" data-sec="appearance">Appearance</button>
+            <button type="button" class="set-nav-btn" data-sec="hotkeys">Hotkeys</button>
+            <button type="button" class="set-nav-btn" data-sec="plugins" id="set-nav-plugins">Plugins</button>
+            <button type="button" class="set-nav-btn" data-sec="updates">Updates</button>
+            <button type="button" class="set-nav-btn" data-sec="profile">Profile</button>
+          </nav>
+          <div class="set-body" id="set-body">
+            <section class="set-pane" data-pane="gameplay" id="ovl-gameplay">
+              <h3>Gameplay</h3>
+              <div class="setting-row">
+                <span class="setting-label">Reveal speed<span class="qb-info" data-tip="How fast question text appears, in milliseconds per character. 0 shows the whole question instantly.">i</span></span>
+                <div class="slider-group">
+                  <input type="range" id="speed-slider" min="0" max="100" step="5" value="50" aria-label="Reveal speed">
+                  <span class="slider-value" id="speed-slider-label">50ms</span>
                 </div>
               </div>
               <div class="setting-row">
-                <span class="setting-label">Corner roundness</span>
-                <select id="app-radius" class="mode-input" style="width:140px">
-                  <option value="default">Default</option>
-                  <option value="sharp">Sharp</option>
-                  <option value="round">Round</option>
+                <span class="setting-label">Answer timer<span class="qb-info" data-tip="Seconds you get to type an answer after buzzing. 0 means no limit.">i</span></span>
+                <div class="slider-group">
+                  <input type="range" id="buzz-timeout-slider" min="0" max="30" step="1" value="10" aria-label="Answer timer">
+                  <span class="slider-value" id="buzz-timeout-label">10s</span>
+                </div>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Auto-reveal past power<span class="qb-info" data-tip="When the reading passes the power mark, the rest of the question reveals instantly.">i</span></span>
+                <input type="checkbox" class="switch" id="auto-reveal" checked>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Question info bar<span class="qb-info" data-tip="Shows the category, difficulty and set name above each question.">i</span></span>
+                <input type="checkbox" class="switch" id="opt-show-qmeta" checked>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Hide pronunciation guides<span class="qb-info" data-tip="Strips pronunciation hints like (&quot;KAH-fka&quot;) out of the question text.">i</span></span>
+                <input type="checkbox" class="switch" id="opt-hide-pron">
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="review" id="ovl-review">
+              <h3>Review</h3>
+              <div class="setting-subhead">Add wrong tossups automatically</div>
+              <div class="setting-row">
+                <span class="setting-label">Negs<span class="qb-info" data-tip="A wrong buzz before the question finishes (−5).">i</span></span>
+                <input type="checkbox" class="switch" id="opt-review-negs" checked>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Wrong at the end<span class="qb-info" data-tip="Answered wrong after the question was fully read (0 points).">i</span></span>
+                <input type="checkbox" class="switch" id="opt-review-wrongend" checked>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Unanswered<span class="qb-info" data-tip="The question ended without you buzzing at all.">i</span></span>
+                <input type="checkbox" class="switch" id="opt-review-unans" checked>
+              </div>
+              <div class="setting-subhead">Add correct tossups automatically</div>
+              <div class="setting-row">
+                <span class="setting-label">No power<span class="qb-info" data-tip="Answered correctly, but after the power mark — worth reviewing for a faster buzz.">i</span></span>
+                <input type="checkbox" class="switch" id="opt-review-nopower">
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="tags" id="ovl-tags">
+              <h3>Tags</h3>
+              <div class="setting-row">
+                <span class="setting-label">Show tags under questions</span>
+                <input type="checkbox" class="switch" id="opt-tags-show" checked>
+              </div>
+              <div class="setting-row setting-row-wrap">
+                <span class="setting-label">Families to show</span>
+                <div class="tag-fam-chips" id="tag-fam-chips"></div>
+              </div>
+              <div class="setting-row setting-row-wrap">
+                <span class="setting-label">Show them on</span>
+                <div class="tag-where" id="tag-where">
+                  <label class="checkbox-row"><input type="checkbox" data-where="search" checked> Search results</label>
+                  <label class="checkbox-row"><input type="checkbox" data-where="sets" checked> Packets and sets</label>
+                  <label class="checkbox-row"><input type="checkbox" data-where="starred" checked> Starred and review</label>
+                  <label class="checkbox-row"><input type="checkbox" data-where="history" checked> Session history</label>
+                  <label class="checkbox-row"><input type="checkbox" data-where="practice" checked> Practice, after answering</label>
+                </div>
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="appearance">
+              <h3>Appearance</h3>
+              <div class="stats-section" id="appearance-section">
+                <div id="default-appearance">
+                  <div class="setting-row" id="app-mode-row">
+                    <span class="setting-label">Appearance mode</span>
+                    <select id="app-mode" class="mode-input">
+                      <option value="preset">Preset palette</option>
+                      <option value="custom">Custom color</option>
+                    </select>
+                  </div>
+                  <div id="app-preset-controls">
+                    <div class="setting-row">
+                      <span class="setting-label">Accent color</span>
+                      <select id="app-accent" class="mode-input">
+                        <option value="blue">Blue (default)</option>
+                        <option value="gold">Gold</option>
+                        <option value="green">Green</option>
+                        <option value="cyan">Cyan</option>
+                        <option value="magenta">Magenta</option>
+                        <option value="amber">Amber</option>
+                        <option value="red">Red</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div id="app-custom-controls" class="hidden">
+                    <div class="setting-row">
+                      <span class="setting-label">Accent color</span>
+                      <input type="color" id="app-custom-accent" class="mode-input">
+                    </div>
+                    <div class="setting-row">
+                      <span class="setting-label">Font</span>
+                      <select id="app-font" class="mode-input">
+                        <option value="default">Default</option>
+                        <option value="mono">Monospace</option>
+                        <option value="sans">Sans-serif</option>
+                        <option value="serif">Serif</option>
+                        <option value="rounded">Rounded</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="setting-row">
+                    <span class="setting-label">Corner roundness</span>
+                    <select id="app-radius" class="mode-input">
+                      <option value="default">Default</option>
+                      <option value="sharp">Sharp</option>
+                      <option value="round">Round</option>
+                    </select>
+                  </div>
+                  <div class="setting-row">
+                    <span class="setting-label">Button spacing</span>
+                    <select id="app-btngap" class="mode-input">
+                      <option value="default">Default</option>
+                      <option value="compact">Compact</option>
+                      <option value="spacious">Spacious</option>
+                    </select>
+                  </div>
+                </div>
+                <div id="theme-appearance-host"></div>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Theme</span>
+                <span class="set-theme-name" id="set-theme-name">Default</span>
+                <button type="button" class="btn btn-sm" id="btn-browse-themes">Browse themes</button>
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="hotkeys" id="ovl-hotkeys">
+              <h3>Hotkeys</h3>
+              <div class="hotkey-section">
+                <div id="hotkey-table"></div>
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="plugins" id="ovl-extensions">
+              <h3>Plugins</h3>
+              <div class="stats-section" id="ext-settings-section">
+                <div id="ext-settings-host"></div>
+              </div>
+            </section>
+
+            <section class="set-pane" data-pane="updates" id="ovl-updates">
+              <h3>Updates</h3>
+              <div class="setting-row">
+                <span class="setting-label">Question database<span class="qb-info" data-tip="Downloads new and updated questions. Needs internet; the app stays fully usable during the update.">i</span></span>
+                <button class="btn btn-sm" id="btn-update-db">Check for Updates</button>
+              </div>
+              <div id="update-status" class="set-status"></div>
+              <div class="setting-row">
+                <span class="setting-label">Keep sessions for<span class="qb-info" data-tip="Practice sessions older than this are deleted automatically. Statistics keep only what remains.">i</span></span>
+                <select id="session-retention" class="mode-input">
+                  <option value="0">Never delete</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="180">180 days</option>
+                  <option value="365">1 year</option>
                 </select>
               </div>
               <div class="setting-row">
-                <span class="setting-label">Button spacing</span>
-                <select id="app-btngap" class="mode-input" style="width:140px">
-                  <option value="default">Default</option>
-                  <option value="compact">Compact</option>
-                  <option value="spacious">Spacious</option>
-                </select>
+                <span class="setting-label">Hidden questions<span class="qb-info" data-tip="Questions you marked &quot;never serve again&quot;. Manage or restore them here.">i</span></span>
+                <button class="btn btn-sm" id="btn-hidden-manager">Manage</button>
               </div>
-            </div>
-            <div id="theme-appearance-host"></div>
-          </div>
-        <div class="stats-section" id="settings-nav">
-            <div class="stats-section-title">SETTINGS</div>
-            <div class="settings-nav-grid">
-              <button class="btn settings-nav-btn" data-ovl="ovl-gameplay">Gameplay</button>
-              <button class="btn settings-nav-btn" data-ovl="ovl-updates">Updates &amp; Database</button>
-              <button class="btn settings-nav-btn" data-ovl="ovl-extensions">Extensions</button>
-              <button class="btn settings-nav-btn" data-ovl="ovl-hotkeys">Hotkeys</button>
-            </div>
-        </div>
-        </div>
-          <div class="settings-art-panel">
-            <div id="settings-art-content" style="flex:1;overflow:hidden"></div>
-          </div>
-      </div>
-    </div>
-
-
-    <div class="qb-overlay settings-ovl hidden" id="ovl-gameplay">
-      <div class="settings-modal">
-        <div class="settings-modal-head"><span>GAMEPLAY</span><button class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
-        <div class="settings-modal-body">
-        <div class="stats-section">
-                        <div class="setting-row">
-              <span class="setting-label">Reveal speed<span class="qb-info" data-tip="How fast question text appears, in milliseconds per character. 0 shows the whole question instantly.">i</span></span>
-              <div class="slider-group">
-                <input type="range" id="speed-slider" min="0" max="100" step="5" value="50">
-                <span class="slider-value" id="speed-slider-label">50ms</span>
+              <div id="app-update-section">
+                <div class="setting-subhead">App updates</div>
+                <div class="setting-row">
+                  <span class="setting-label">App updates<span class="qb-info" data-tip="Updates the app in place — no reinstall or new download. Applies on the next launch.">i</span></span>
+                  <button class="btn btn-sm" id="btn-app-update">Check for updates</button>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label">Check on launch</span>
+                  <input type="checkbox" class="switch" id="opt-app-autoupdate" checked>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label">Auto-install critical fixes<span class="qb-info" data-tip="Critical fixes install on their own; regular updates still ask first.">i</span></span>
+                  <input type="checkbox" class="switch" id="opt-app-critical-auto" checked>
+                </div>
+                <div id="app-update-status" class="set-status"></div>
               </div>
-            </div>
-          <div class="setting-row">
-            <span class="setting-label">Auto-reveal past power<span class="qb-info" data-tip="When the reading passes the power mark, the rest of the question reveals instantly.">i</span></span>
-            <input type="checkbox" id="auto-reveal" checked>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">Question info bar<span class="qb-info" data-tip="Shows the category, difficulty and set name above each question.">i</span></span>
-            <input type="checkbox" id="opt-show-qmeta" checked>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">Hide pronunciation guides<span class="qb-info" data-tip="Strips pronunciation hints like (&quot;KAH-fka&quot;) out of the question text.">i</span></span>
-            <input type="checkbox" id="opt-hide-pron">
-          </div>
-          <div class="setting-subhead">Auto-add wrong tossups to Review</div>
-          <div class="setting-row">
-            <span class="setting-label">Negs<span class="qb-info" data-tip="A wrong buzz before the question finishes (−5).">i</span></span>
-            <input type="checkbox" id="opt-review-negs" checked>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">Wrong at the end<span class="qb-info" data-tip="Answered wrong after the question was fully read (0 points).">i</span></span>
-            <input type="checkbox" id="opt-review-wrongend" checked>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">Unanswered<span class="qb-info" data-tip="The question ended without you buzzing at all.">i</span></span>
-            <input type="checkbox" id="opt-review-unans" checked>
-          </div>
-          <div class="setting-subhead">Auto-add correct tossups to Review</div>
-          <div class="setting-row">
-            <span class="setting-label">No power<span class="qb-info" data-tip="Answered correctly, but after the power mark — worth reviewing for a faster buzz.">i</span></span>
-            <input type="checkbox" id="opt-review-nopower">
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">Answer timer<span class="qb-info" data-tip="Seconds you get to type an answer after buzzing. 0 means no limit.">i</span></span>
-            <div class="slider-group">
-              <input type="range" id="buzz-timeout-slider" min="0" max="30" step="1" value="10">
-              <span class="slider-value" id="buzz-timeout-label">10s</span>
-            </div>
-          </div>
-        </div>
+            </section>
 
-        </div>
-      </div>
-    </div>
-
-    <div class="qb-overlay settings-ovl hidden" id="ovl-updates">
-      <div class="settings-modal">
-        <div class="settings-modal-head"><span>UPDATES &amp; DATABASE</span><button class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
-        <div class="settings-modal-body">
-          <div class="stats-section">
-            <div class="stats-section-title">DATABASE</div>
-            <div class="setting-row">
-              <span class="setting-label">Question database<span class="qb-info" data-tip="Downloads new and updated questions. Needs internet; the app stays fully usable during the update.">i</span></span>
-              <button class="btn btn-sm" id="btn-update-db">Check for Updates</button>
-            </div>
-            <div id="update-status" class="text-muted" style="font-size:11px;margin-top:6px"></div>
-            <div class="setting-row">
-              <span class="setting-label">Keep sessions for<span class="qb-info" data-tip="Practice sessions older than this are deleted automatically. Statistics keep only what remains.">i</span></span>
-              <select id="session-retention" class="mode-input" style="width:150px">
-                <option value="0">Never</option>
-                <option value="30">30 days</option>
-                <option value="90">90 days</option>
-                <option value="180">180 days</option>
-                <option value="365">1 year</option>
-              </select>
-            </div>
-            <div class="setting-row">
-              <span class="setting-label">Hidden questions<span class="qb-info" data-tip="Questions you marked &quot;never serve again&quot;. Manage or restore them here.">i</span></span>
-              <button class="btn btn-sm" id="btn-hidden-manager">Manage</button>
-            </div>
+            <section class="set-pane" data-pane="profile" id="ovl-profile">
+              <h3>Profile</h3>
+              <div class="setting-row">
+                <span class="setting-label">Name</span>
+                <input type="text" class="mode-input set-name-input" id="set-username" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Name">
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Profile and achievements</span>
+                <button type="button" class="btn btn-sm" id="btn-open-profile">Open profile</button>
+              </div>
+            </section>
           </div>
-          <div class="stats-section" id="app-update-section">
-            <div class="stats-section-title">APP UPDATES</div>
-            <div class="setting-row">
-              <span class="setting-label">App updates<span class="qb-info" data-tip="Updates the app in place — no reinstall or new download. Applies on the next launch.">i</span></span>
-              <button class="btn btn-sm" id="btn-app-update">Check for updates</button>
-            </div>
-            <div class="setting-row">
-              <span class="setting-label">Check on launch</span>
-              <input type="checkbox" id="opt-app-autoupdate" checked>
-            </div>
-            <div class="setting-row">
-              <span class="setting-label">Auto-install critical fixes<span class="qb-info" data-tip="Critical fixes install on their own; regular updates still ask first.">i</span></span>
-              <input type="checkbox" id="opt-app-critical-auto" checked>
-            </div>
-            <div id="app-update-status" class="text-muted" style="font-size:11px;margin-top:6px"></div>
-          </div>
-
-        </div>
-      </div>
-    </div>
-
-    <div class="qb-overlay settings-ovl hidden" id="ovl-extensions">
-      <div class="settings-modal">
-        <div class="settings-modal-head"><span>EXTENSIONS</span><button class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
-        <div class="settings-modal-body">
-          <div class="stats-section" id="ext-settings-section">
-                        <div id="ext-settings-host"></div>
-          </div>
-
-        </div>
-      </div>
-    </div>
-
-    <div class="qb-overlay settings-ovl hidden" id="ovl-hotkeys">
-      <div class="settings-modal">
-        <div class="settings-modal-head"><span>HOTKEYS</span><button class="btn btn-sm btn-ghost settings-ovl-close">[Esc] Close</button></div>
-        <div class="settings-modal-body">
-          <div class="stats-section hotkey-section">
-                        
-            <div id="hotkey-table"></div>
-          </div>
-
         </div>
       </div>
     </div>
@@ -638,6 +627,7 @@
     </div>
   </div>
 
+  <div id="layer-root"></div>
   <script src="art_data.js"></script>
   <script src="extensions.js"></script>
   <script src="app.js"></script>

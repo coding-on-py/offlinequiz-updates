@@ -72,11 +72,11 @@ contextBridge.exposeInMainWorld("qbreader", {
   checkStarred: (questionId, type) =>
     ipcRenderer.invoke("check-starred", { questionId, type }),
 
-  getStats: (sessionId, since) => ipcRenderer.invoke("get-stats", { sessionId, since }),
+  getStats: (sessionId, since, categoryIds) => ipcRenderer.invoke("get-stats", { sessionId, since, categoryIds }),
 
   getSessions: () => ipcRenderer.invoke("get-sessions"),
 
-  getSessionBreakdown: (category, difficulty) => ipcRenderer.invoke("get-session-breakdown", { category, difficulty }),
+  getSessionBreakdown: (category, difficulty, categoryIds) => ipcRenderer.invoke("get-session-breakdown", { category, difficulty, categoryIds }),
 
   getSessionEntries: (sessionId) => ipcRenderer.invoke("get-session-entries", { sessionId }),
 
@@ -109,11 +109,13 @@ contextBridge.exposeInMainWorld("qbreader", {
 
   getPacketContent: (setName, packetNumber) => ipcRenderer.invoke("get-packet-content", { setName, packetNumber }),
 
-  getFrequentAnswers: (category, subcategory, alternateSubcategory, limit, qtype, nodeId) => ipcRenderer.invoke("get-frequent-answers", { category, subcategory, alternateSubcategory, limit, qtype, nodeId }),
+  getFrequentAnswers: (category, subcategory, alternateSubcategory, limit, qtype, nodeId, offset, nodeIds) => ipcRenderer.invoke("get-frequent-answers", { category, subcategory, alternateSubcategory, limit, qtype, nodeId, offset, nodeIds }),
 
   getCategoryTree: (type) => ipcRenderer.invoke("get-category-tree", { type }),
 
   getDbInfo: () => ipcRenderer.invoke("get-db-info"),
+  getTagVocab: () => ipcRenderer.invoke("get-tag-vocab"),
+  getTagFacets: (type, query, filters) => ipcRenderer.invoke("get-tag-facets", { type, query, filters }),
 
   checkUpdate: () => ipcRenderer.invoke("check-update"),
   dbUpdateStatus: () => ipcRenderer.invoke("db-update-status"),

@@ -61,9 +61,9 @@ const API = isElectron
         if (path.startsWith("/api/bonuses/")) return window.qbreader.getBonus(path.split("/")[3]);
         if (path === "/api/starred") return window.qbreader.getStarred(q.type);
         if (path === "/api/starred/check") return window.qbreader.checkStarred(q.questionId, q.type);
-        if (path === "/api/stats") return window.qbreader.getStats(q.sessionId, q.since);
+        if (path === "/api/stats") return window.qbreader.getStats(q.sessionId, q.since, q.categoryIds || null);
         if (path === "/api/sessions") return window.qbreader.getSessions();
-        if (path === "/api/sessions/breakdown") return window.qbreader.getSessionBreakdown(q.category, q.difficulty);
+        if (path === "/api/sessions/breakdown") return window.qbreader.getSessionBreakdown(q.category, q.difficulty, q.categoryIds || null);
         if (path === "/api/sessions/entries") return window.qbreader.getSessionEntries(q.sessionId);
         if (path === "/api/sessions/all-entries")
           return window.qbreader.getAllSessionEntries({ answers: q.answers === "1" || q.answers === "true" });
@@ -78,9 +78,11 @@ const API = isElectron
         if (path === "/api/set-packets") return window.qbreader.getSetPackets(q.setName);
         if (path === "/api/packets-for-set") return window.qbreader.getPacketsForSet(q.setName);
         if (path === "/api/packet-content") return window.qbreader.getPacketContent(q.setName, parseInt(q.packetNumber) || 0);
-        if (path === "/api/frequent-answers") return window.qbreader.getFrequentAnswers(q.category, q.subcategory, q.alternateSubcategory, parseInt(q.limit) || 50, q.qtype || "tossup", q.nodeId || null);
+        if (path === "/api/frequent-answers") return window.qbreader.getFrequentAnswers(q.category, q.subcategory, q.alternateSubcategory, parseInt(q.limit) || 50, q.qtype || "tossup", q.nodeId || null, parseInt(q.offset) || 0, q.nodeIds || null);
         if (path === "/api/category-tree") return window.qbreader.getCategoryTree ? window.qbreader.getCategoryTree(q.type || "tossups") : { tree: [] };
         if (path === "/api/db-info") return window.qbreader.getDbInfo ? window.qbreader.getDbInfo() : { schema: 1 };
+        if (path === "/api/tag-vocab") return window.qbreader.getTagVocab ? window.qbreader.getTagVocab() : { tags: {} };
+        if (path === "/api/tag-facets") return window.qbreader.getTagFacets ? window.qbreader.getTagFacets(q.type || "tossups", q.query || "", q) : { facets: [] };
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
@@ -227,6 +229,7 @@ function persistSettingsToLocalStorage() {
     "qb-review-wrongend": st.reviewWrongEnd, "qb-session-retention": st.sessionRetentionDays,
     "qb-hotkeys": JSON.stringify(st.hotkeys || {}), "qb-viewmode": state.viewMode,
     "qb-username": state.username, "qb-avatar": state.avatar,
+    "qb-tag-display": JSON.stringify(st.tagDisplay || null),
   };
   for (const [k, v] of Object.entries(map)) window.localStorage.setItem(k, String(v));
 }
@@ -245,8 +248,8 @@ async function loadProfileSettings() {
     initGameplayControls();
     setRevealSpeed(state.settings.revealSpeed);
     updateKeyLabels();
-    const greeting = document.getElementById("title-greeting");
-    if (greeting) greeting.textContent = state.username ? `HELLO, ${state.username.toUpperCase()}!` : "";
+    renderGreeting();
+    renderTopbarProfile();
   } catch {}
 }
 
@@ -299,9 +302,9 @@ const state = {
     showQuestionMeta: localStorage.getItem("qb-show-qmeta") !== "false",
     hidePronunciations: localStorage.getItem("qb-hide-pron") === "true",
     hideNotes: localStorage.getItem("qb-hide-notes") === "true",
-    appAccent: localStorage.getItem("qb-app-accent") || "gold",
+    appAccent: localStorage.getItem("qb-app-accent") || "blue",
     appAppearanceMode: localStorage.getItem("qb-app-mode") || "preset",
-    appCustomAccent: localStorage.getItem("qb-app-custom-accent") || "#dfb347",
+    appCustomAccent: localStorage.getItem("qb-app-custom-accent") || "#58a6ff",
     appFont: localStorage.getItem("qb-app-font") || "default",
     bonusAfter: localStorage.getItem("qb-bonus-after") === "true",
     reviewNegs: localStorage.getItem("qb-review-negs") !== "false",
@@ -314,6 +317,7 @@ const state = {
     useWeights: localStorage.getItem("qb-use-weights") === "true",
     sessionRetentionDays: parseInt(localStorage.getItem("qb-session-retention") || "0"),
     hotkeys: JSON.parse(localStorage.getItem("qb-hotkeys") || "{}"),
+    tagDisplay: (() => { try { return JSON.parse(localStorage.getItem("qb-tag-display") || "null"); } catch (e) { return null; } })(),
   },
   hotkeyRebinding: null,
 };
@@ -448,15 +452,671 @@ function updateKeyLabels() {
   const startBtn = $("#btn-start-session");
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
-  if (endBtn) endBtn.innerHTML = keyLabelHtml("end-session", "End");
+  if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
   [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"]]
-    .forEach(([sel]) => { const el = $(sel); if (el) el.innerHTML = keyLabelHtml("home", "Back"); });
+    .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
 
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
+
+// ═════════════════════════════════════════════════════════════════════════
+// UI KIT — icons, category/tag colors, badges, tags, the \ tag field.
+// Declared up here so top-level code further down can use it at load time.
+// ═════════════════════════════════════════════════════════════════════════
+const ICON = {
+  play: '<path d="M7 4l13 8-13 8z"/>',
+  book: '<path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2V5z"/><path d="M4 19a2 2 0 012-2h12"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 010 7M18 15c2 .7 3.2 2.3 3.8 5"/>',
+  star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  puzzle: '<path d="M9 3h6v3a2 2 0 004 0V3h2v8h-3a2 2 0 000 4h3v6h-8v-3a2 2 0 00-4 0v3H3v-6h3a2 2 0 000-4H3V3z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+  review: '<path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
+  left: '<path d="M15 6l-6 6 6 6"/>',
+  right: '<path d="M9 6l6 6-6 6"/>',
+  check: '<path d="M5 12l5 5 9-10"/>',
+  sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  tag: '<path d="M3 12V4a1 1 0 011-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+  bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
+  chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+};
+function ic(name, size, extra) {
+  const s = size || 18;
+  return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || "") + ">" + (ICON[name] || "") + "</svg>";
+}
+
+// Twelve root categories each keep one hue everywhere (badges, tiles, dots).
+const ROOT_COLOR = { "Literature": "#bc8cff", "Science and Math": "#58a6ff", "Fine Arts": "#f778ba", "History": "#e3b341", "Geography": "#56d364", "Mythology": "#ffa657", "Pop Culture Sports": "#ff7b72", "Social Science": "#3dd6a3", "Philosophy": "#39c5cf", "Theology": "#8e9bff", "Current Events": "#c9d16b", "Miscellaneous": "#8b949e" };
+function rootColorOf(path) { return ROOT_COLOR[String(path || "").split(" > ")[0]] || "#8b949e"; }
+// Tag families: short label + hue. "subject" = a category-tree node.
+const TAG_FAM = {
+  era: { label: "era", name: "Era", color: "#e3b341" },
+  place: { label: "place", name: "Place", color: "#56d364" },
+  theme: { label: "theme", name: "Theme", color: "#bc8cff" },
+  form: { label: "form", name: "Form", color: "#f778ba" },
+  answer_type: { label: "answer", name: "Answer type", color: "#39c5cf" },
+  format: { label: "format", name: "Format", color: "#ffa657" },
+  subject: { label: "subject", name: "Subject", color: "#58a6ff" },
+};
+const TAG_FAM_ORDER = ["era", "place", "theme", "form", "answer_type", "format"];
+const DIFF_FULL = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
+
+function qPathOf(q) {
+  if (!q) return "";
+  return String(q.category_path || [q.category, q.subcategory, q.alternate_subcategory].filter(Boolean).join(" > "));
+}
+// "Literature › American Literature" — root and leaf of the record's path.
+function catBadgeHtml(path) {
+  const parts = String(path || "").split(" > ").filter(Boolean);
+  if (!parts.length) return "";
+  const short = parts.length > 1 ? parts[0] + " › " + parts[parts.length - 1] : parts[0];
+  return `<span class="badge cat-badge" style="--c:${rootColorOf(path)}" title="${escapeHtml(parts.join(" › "))}"><span class="dot"></span><span class="t">${escapeHtml(short)}</span></span>`;
+}
+function yearBadgeHtml(y) { return y ? `<span class="badge year-badge">${escapeHtml(String(y))}</span>` : ""; }
+
+// ── tag display settings (Settings → Tags) ──
+const TAG_DISPLAY_DEFAULT = { show: true, fams: { era: true, place: true, theme: true, form: true, answer_type: true, format: true }, where: { search: true, sets: true, starred: true, history: true, practice: true } };
+function tagDisplay() {
+  const d = state.settings.tagDisplay;
+  if (!d || typeof d !== "object") return TAG_DISPLAY_DEFAULT;
+  return { show: d.show !== false, fams: { ...TAG_DISPLAY_DEFAULT.fams, ...(d.fams || {}) }, where: { ...TAG_DISPLAY_DEFAULT.where, ...(d.where || {}) } };
+}
+function setTagDisplay(patch) {
+  const cur = tagDisplay();
+  state.settings.tagDisplay = { show: patch.show != null ? !!patch.show : cur.show, fams: { ...cur.fams, ...(patch.fams || {}) }, where: { ...cur.where, ...(patch.where || {}) } };
+  lsSet("qb-tag-display", JSON.stringify(state.settings.tagDisplay));
+}
+function tagsVisibleOn(where) { const d = tagDisplay(); return d.show && d.where[where] !== false; }
+function questionTags(q) {
+  if (!q || !q.tags) return null;
+  if (typeof q.tags === "object") return q.tags;
+  try { return JSON.parse(q.tags); } catch (e) { return null; }
+}
+// The record's tags as clickable chips (a click searches the database for it).
+function tagChipsHtml(q, where) {
+  if (where && !tagsVisibleOn(where)) return "";
+  const t = questionTags(q); if (!t) return "";
+  const d = tagDisplay();
+  const out = [];
+  for (const f of TAG_FAM_ORDER) {
+    if (!d.fams[f]) continue;
+    for (const v of (Array.isArray(t[f]) ? t[f] : [])) {
+      if (typeof v !== "string" || !v) continue;
+      out.push(`<button type="button" class="qtag" style="--c:${TAG_FAM[f].color}" data-tag-fam="${f}" data-tag-val="${escapeHtml(v)}" title="Search ${escapeHtml(TAG_FAM[f].name.toLowerCase())}: ${escapeHtml(v)}"><span class="dot"></span><span class="t">${escapeHtml(v)}</span></button>`);
+    }
+  }
+  return out.join("");
+}
+// Category + year badges, the source, then the tags — one row under a question.
+function questionMetaRowHtml(q, where, opts) {
+  if (!q) return "";
+  const o = opts || {};
+  const src = o.src != null ? o.src : (q.set_name || "");
+  const tags = tagChipsHtml(q, where);
+  return `<div class="qmeta-row">${catBadgeHtml(qPathOf(q))}${yearBadgeHtml(q.set_year)}${src ? `<span class="src">${escapeHtml(src)}</span>` : ""}${tags ? '<span class="vsep" aria-hidden="true"></span>' + tags : ""}</div>`;
+}
+// Clicking any tag chip opens Database → Search with just that tag.
+document.addEventListener("click", (e) => {
+  const t = e.target.closest?.(".qtag[data-tag-fam]");
+  if (!t) return;
+  e.preventDefault(); e.stopPropagation();
+  searchDatabase({ query: "", tags: [{ f: t.dataset.tagFam, v: t.dataset.tagVal }] });
+});
+
+// ── range sliders paint their filled part from --pct (ui.css): kept in sync on
+//    input, on programmatic .value writes, and when a slider is rendered ──
+(function syncRangeFill() {
+  const sync = (el) => {
+    const min = parseFloat(el.min) || 0, max = parseFloat(el.max), v = parseFloat(el.value);
+    const hi = Number.isFinite(max) ? max : 100;
+    el.style.setProperty("--pct", (hi > min ? Math.max(0, Math.min(100, ((v - min) / (hi - min)) * 100)) : 0) + "%");
+  };
+  const isRange = (el) => el && el.tagName === "INPUT" && el.type === "range" && !el.closest(".dual-range");
+  document.addEventListener("input", (e) => { if (isRange(e.target)) sync(e.target); }, true);
+  const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  if (d && d.set) Object.defineProperty(HTMLInputElement.prototype, "value", { ...d, set(v) { d.set.call(this, v); if (isRange(this)) sync(this); } });
+  const scan = (root) => { if (root.querySelectorAll) root.querySelectorAll('input[type="range"]').forEach((el) => { if (isRange(el)) sync(el); }); };
+  new MutationObserver((muts) => { for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) { if (isRange(n)) sync(n); else if (n.firstElementChild) scan(n); } })
+    .observe(document.documentElement, { childList: true, subtree: true });
+  if (document.body) scan(document.body); else document.addEventListener("DOMContentLoaded", () => scan(document.body));
+})();
+
+// ── light / dark detection: html[data-scheme] drives the derived tokens ──
+function syncScheme() {
+  try {
+    const bg = getComputedStyle(document.body || document.documentElement).backgroundColor || "";
+    const m = bg.match(/\d+(\.\d+)?/g);
+    if (!m || m.length < 3) return;
+    const [r, g, b] = m.slice(0, 3).map(Number);
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    document.documentElement.dataset.scheme = lum > 140 ? "light" : "dark";
+    const acc = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+    const am = acc.match(/^#([0-9a-f]{6})$/i);
+    if (am) {
+      const n = parseInt(am[1], 16);
+      const al = 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+      document.documentElement.style.setProperty("--on-accent", al > 170 ? "#0d1117" : "#fff");
+    }
+  } catch (e) {}
+}
+
+// ── tag vocabulary (for the \ composer) ──
+let _tagVocab = null, _tagVocabP = null;
+function loadTagVocab() {
+  if (_tagVocab) return Promise.resolve(_tagVocab);
+  if (!_tagVocabP) {
+    _tagVocabP = Promise.all([API.get("/api/tag-vocab").catch(() => ({ tags: {} })), fetchCatTree("tossups").catch(() => null)]).then(([v, tree]) => {
+      const list = [];
+      const tags = (v && v.tags) || {};
+      for (const f of TAG_FAM_ORDER) for (const e of (tags[f] || [])) list.push({ f, v: e[0], n: (e[1] || 0) + (e[2] || 0) });
+      // subjects: category-tree nodes down to level 3 with enough questions
+      if (tree) {
+        const walk = (n) => { if (n.depth <= 3 && n.count >= 250) list.push({ f: "subject", v: n.name, n: n.count, id: n.id, path: n.path }); if (n.depth < 3) (n.children || []).forEach(walk); };
+        tree.roots.forEach(walk);
+      }
+      _tagVocab = list;
+      return list;
+    }).catch(() => { _tagVocabP = null; return []; });
+  }
+  return _tagVocabP;
+}
+
+// ── TagField: a chip field with the "\" composer ──
+// opts: { host, chips: [{f,v,x,id}], placeholder, small, icon, onChange(chips),
+//         textInput (search bar: the free-text input lives in the same field) }
+// Typing "\" (anywhere in the field's text box) opens an empty dashed tag
+// bubble with suggestions; typing filters them; Enter/Tab adds, Esc or
+// Backspace on an empty bubble closes. Clicking a chip flips required/skipped.
+function TagField(opts) {
+  const self = { chips: (opts.chips || []).slice(), compose: null, opts };
+  const host = opts.host;
+  const small = !!opts.small;
+  host.innerHTML =
+    `<div class="cfield${small ? " small" : ""}">` + (opts.icon ? ic(opts.icon, small ? 16 : 18) : "") +
+    `<span class="chips-holder"></span>` +
+    `<input class="cinput" type="text" autocomplete="off" spellcheck="false" aria-label="${escapeHtml(opts.ariaLabel || "Tags")}">` +
+    (opts.rightHtml || "") +
+    `<div class="sugg" hidden role="listbox"></div></div>`;
+  const field = host.querySelector(".cfield");
+  const holder = host.querySelector(".chips-holder");
+  const input = host.querySelector(".cinput");
+  const sugg = host.querySelector(".sugg");
+  self.field = field; self.input = input;
+  if (opts.textValue) input.value = opts.textValue;
+
+  const fire = () => { try { opts.onChange && opts.onChange(self.chips.slice()); } catch (e) { console.error(e); } };
+  const placeholder = () => {
+    if (self.compose) return "";
+    if (opts.placeholder) return typeof opts.placeholder === "function" ? opts.placeholder(self.chips) : opts.placeholder;
+    return self.chips.length ? "\\ for another" : "Type \\ to add a tag";
+  };
+  function chipHtml(c, i) {
+    const fam = TAG_FAM[c.f] || TAG_FAM.subject;
+    return `<span class="qchip${c.x ? " ex" : ""}" style="--c:${fam.color}"><button type="button" class="qchip-main" data-i="${i}" title="${c.x ? "Skipping — click to require it" : "Required — click to skip it"}"><span class="qchip-fam">${escapeHtml(fam.label)}${c.x ? " not" : ""}</span><span class="qchip-val">${escapeHtml(c.v)}</span></button><button type="button" class="qchip-x" data-i="${i}" aria-label="Remove ${escapeHtml(c.v)}">×</button></span>`;
+  }
+  function paint(focusCompose) {
+    let h = self.chips.map(chipHtml).join("");
+    if (self.compose) h += `<span class="composer"><span aria-hidden="true">\\</span><input class="composer-in" type="text" autocomplete="off" spellcheck="false" aria-label="Tag" placeholder="tag" value="${escapeHtml(self.compose.q)}"></span>`;
+    holder.innerHTML = h;
+    input.placeholder = placeholder();
+    paintSugg();
+    if (focusCompose) {
+      const ci = holder.querySelector(".composer-in");
+      if (ci) { ci.focus(); try { ci.setSelectionRange(ci.value.length, ci.value.length); } catch (e) {} }
+    }
+  }
+  function matches() {
+    const vocab = _tagVocab || [];
+    const q = (self.compose && self.compose.q || "").trim().toLowerCase();
+    const have = new Set(self.chips.map((c) => c.f + "|" + (c.id || c.v)));
+    let list;
+    if (!q) {
+      // one of each family, then the two biggest subjects
+      list = TAG_FAM_ORDER.map((f) => vocab.find((x) => x.f === f)).concat(vocab.filter((x) => x.f === "subject").sort((a, b) => b.n - a.n).slice(0, 2));
+    } else {
+      const score = (x) => { const v = x.v.toLowerCase(); return v.startsWith(q) ? 0 : v.split(/[\s,&/()-]+/).some((w) => w.startsWith(q)) ? 1 : 2; };
+      list = vocab.filter((x) => x.v.toLowerCase().includes(q)).sort((a, b) => score(a) - score(b) || b.n - a.n);
+    }
+    return list.filter((x) => x && !have.has(x.f + "|" + (x.id || x.v))).slice(0, 8);
+  }
+  function paintSugg() {
+    if (!self.compose) { sugg.hidden = true; sugg.innerHTML = ""; return; }
+    if (!_tagVocab) {
+      sugg.hidden = false;
+      sugg.innerHTML = '<div class="sugg-empty">Loading tags…</div>';
+      loadTagVocab().then(() => { if (self.compose) paintSugg(); });
+      return;
+    }
+    const list = matches();
+    self._list = list;
+    const hi = Math.min(self.compose.hi || 0, Math.max(0, list.length - 1));
+    sugg.hidden = false;
+    sugg.innerHTML = `<div class="sugg-head"><span class="sh-l">${self.compose.q ? "Tags matching “" + escapeHtml(self.compose.q) + "”" : "Tags"}</span><span class="sh-r">↵ add · esc close</span></div>` +
+      (list.length ? list.map((x, i) => `<button type="button" role="option" class="sugg-item${i === hi ? " hi" : ""}" data-i="${i}" style="--c:${(TAG_FAM[x.f] || TAG_FAM.subject).color}"><span class="f">${escapeHtml((TAG_FAM[x.f] || TAG_FAM.subject).label)}</span><span class="v">${escapeHtml(x.v)}</span><span class="c">${Number(x.n || 0).toLocaleString()}</span></button>`).join("")
+        : '<div class="sugg-empty">No tag matches</div>');
+    if (!small) {
+      // float under the composer bubble, kept inside the field
+      const comp = holder.querySelector(".composer");
+      if (comp) {
+        sugg.style.width = Math.min(460, field.clientWidth) + "px";
+        const max = Math.max(0, field.clientWidth - sugg.offsetWidth);
+        sugg.style.left = Math.min(comp.offsetLeft, max) + "px";
+        sugg.style.top = (comp.offsetTop + comp.offsetHeight + 8) + "px";
+      }
+    }
+  }
+  function add(x) {
+    if (!x) return;
+    if (!self.chips.some((c) => c.f === x.f && (c.id || c.v) === (x.id || x.v))) self.chips.push(x.id ? { f: x.f, v: x.v, x: false, id: x.id, p: x.path || x.p || "" } : { f: x.f, v: x.v, x: false });
+    self.compose = null;
+    paint(false);
+    input.focus();
+    fire();
+  }
+  function startCompose(q) { self.compose = { q: q || "", hi: 0 }; loadTagVocab(); paint(true); }
+  function cancelCompose(refocus) { self.compose = null; paint(false); if (refocus) input.focus(); }
+  self.setChips = (chips) => { self.chips = (chips || []).slice(); self.compose = null; paint(false); };
+  self.addChip = (c) => add(c);
+  self.focus = () => input.focus();
+
+  field.addEventListener("mousedown", (e) => {
+    if (e.target === field || e.target === holder) { e.preventDefault(); (holder.querySelector(".composer-in") || input).focus(); }
+  });
+  holder.addEventListener("click", (e) => {
+    const flip = e.target.closest(".qchip-main"), rm = e.target.closest(".qchip-x");
+    if (rm) { e.stopPropagation(); self.chips.splice(+rm.dataset.i, 1); paint(false); fire(); return; }
+    if (flip) { e.stopPropagation(); const c = self.chips[+flip.dataset.i]; if (c) c.x = !c.x; paint(false); fire(); }
+  });
+  sugg.addEventListener("mousedown", (e) => {
+    const it = e.target.closest(".sugg-item");
+    e.preventDefault();
+    if (it && self._list) add(self._list[+it.dataset.i]);
+  });
+  holder.addEventListener("input", (e) => {
+    if (!e.target.classList.contains("composer-in") || !self.compose) return;
+    self.compose.q = e.target.value.replace(/\\/g, "");
+    self.compose.hi = 0;
+    paintSugg();
+  });
+  holder.addEventListener("keydown", (e) => {
+    if (!e.target.classList.contains("composer-in") || !self.compose) return;
+    e.stopPropagation();
+    const list = self._list || [];
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); self.compose.hi = Math.max(0, Math.min(list.length - 1, (self.compose.hi || 0) + (e.key === "ArrowDown" ? 1 : -1))); paintSugg(); return; }
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); if (list.length) add(list[Math.min(self.compose.hi || 0, list.length - 1)]); return; }
+    if (e.key === "Escape" || (e.key === "Backspace" && !e.target.value)) { e.preventDefault(); cancelCompose(true); return; }
+    if (e.key === "\\") e.preventDefault();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "\\") { e.preventDefault(); e.stopPropagation(); startCompose(""); return; }
+    if (e.key === "Backspace" && !input.value && self.chips.length && !opts.keepOnBackspace) { e.stopPropagation(); self.chips.pop(); paint(false); fire(); }
+  });
+  input.addEventListener("input", () => {
+    if (input.value.includes("\\")) {
+      const i = input.value.indexOf("\\");
+      const rest = input.value.slice(i + 1);
+      input.value = input.value.slice(0, i).replace(/\s+$/, "");
+      if (opts.onText) opts.onText(input.value);
+      startCompose(rest);
+      return;
+    }
+    if (opts.onText) opts.onText(input.value);
+  });
+  // focus leaving the field closes an open bubble (and its suggestions)
+  document.addEventListener("mousedown", (e) => {
+    if (self.compose && field.isConnected && !field.contains(e.target)) cancelCompose(false);
+  }, true);
+  paint(false);
+  return self;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// APP SHELL — top bar, home, navigation shortcuts, setup drawer, settings.
+// ═════════════════════════════════════════════════════════════════════════
+function goTo(target) {
+  if (_dbLocked) { openSettings("updates"); return; }
+  closeSetupDrawer();
+  closeAllPops();
+  switch (target) {
+    case "home": goHome(); break;
+    case "practice-tossups": showScreen("practice-tossups"); setMode("tossups"); break;
+    case "practice-bonuses": showScreen("practice-bonuses"); setMode("bonuses"); break;
+    case "multiplayer": window.QB?.showPage?.("multiplayer::lobby"); break;
+    case "review": openReviewMenu(_reviewItems); break;
+    case "stats": showScreen("stats"); state.statsSessionId = null; loadStats(); break;
+    case "db-search": case "db-sets": case "db-frequency": case "db-starred":
+      state.dbTab = { "db-search": "search", "db-sets": "sets", "db-frequency": "frequency", "db-starred": "starred" }[target];
+      showScreen("database"); loadDatabase(); break;
+    case "plugins": case "plugins-themes": case "plugins-manage":
+      if (window.QB) window.QB._extTab = target === "plugins-themes" ? "themes" : target === "plugins-manage" ? "manage" : (window.QB._extTab || "open");
+      showScreen("extensions"); window.QB?.renderScreen(); break;
+    case "settings": toggleSettings(); break;
+    case "player": showScreen("player"); loadPlayer(); break;
+  }
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest?.("[data-go]");
+  if (!b || b.disabled) return;
+  e.preventDefault();
+  goTo(b.dataset.go);
+});
+(function wireTopbar() {
+  const on = (id, fn) => document.getElementById(id)?.addEventListener("click", fn);
+  on("tb-brand", () => { closeSetupDrawer(); if (!document.querySelector("#title-screen.active")) goHome(); });
+  on("tb-streak", () => goTo("stats"));
+  on("tb-plugins", () => goTo("plugins"));
+  on("tb-settings", () => toggleSettings());
+  // the avatar opens a small menu: Profile (achievements) and, later, Account
+  on("tb-profile", (e) => {
+    const menu = document.getElementById("tb-profile-menu"), b = e.currentTarget;
+    if (!menu) return;
+    const open = menu.hidden;
+    closeAllPops();
+    if (open) { renderTopbarProfile(); menu.hidden = false; b.setAttribute("aria-expanded", "true"); }
+  });
+})();
+
+// "MULTIPLAYER" -> "Multiplayer"; mixed-case titles and codes (K7Q2) stay.
+function niceTitle(s) {
+  s = String(s || "").trim();
+  if (!s || /[a-z]/.test(s)) return s;
+  return s.toLowerCase().replace(/(^|[\s:/(·-])([a-z])/g, (m, a, b) => a + b.toUpperCase()).replace(/\b([a-z]*\d[a-z\d]*)\b/gi, (w) => w.toUpperCase());
+}
+function updateTopbar() {
+  const active = document.querySelector(".screen.active");
+  const crumb = document.getElementById("tb-crumb"), txt = document.getElementById("tb-crumb-text");
+  if (crumb && txt) {
+    if (!active || active.id === "title-screen") crumb.hidden = true;
+    else {
+      const t = active.querySelector(".top-bar-title");
+      txt.textContent = niceTitle(t ? t.textContent : "");
+      crumb.hidden = !txt.textContent;
+    }
+  }
+  renderTopbarProfile();
+}
+function renderTopbarProfile() {
+  const initial = (String(state.username || "").trim()[0] || "?").toUpperCase();
+  ["tb-avatar", "tbm-avatar"].forEach((id) => { const av = document.getElementById(id); if (av) av.textContent = initial; });
+  const nm = document.getElementById("tbm-name"); if (nm) nm.textContent = state.username || "Player";
+  const prof = document.getElementById("tb-profile");
+  if (prof) prof.title = state.username || "Profile";
+}
+function renderGreeting() {
+  const g = document.getElementById("title-greeting");
+  if (!g) return;
+  g.innerHTML = state.username ? `Welcome back, <b>${escapeHtml(state.username)}</b>` : "Welcome";
+}
+function renderStreak(n) {
+  const b = document.getElementById("tb-streak"), c = document.getElementById("tb-streak-n");
+  if (!b || !c) return;
+  b.hidden = !(n >= 1);
+  c.textContent = String(n || 0);
+  b.title = (n || 0) + "-day streak";
+  const lbl = b.querySelector(".lbl"); if (lbl) lbl.textContent = n === 1 ? "day" : "days";
+}
+
+// ── home background: real power-marked tossups drifting upward, each with
+//    one to three buzz marks in three player colours and its answer line ──
+let _homeBgState = 0;   // 0 never, 1 loading, 2 done
+async function ensureHomeBg() {
+  if (_homeBgState) return;
+  _homeBgState = 1;
+  const host = document.getElementById("home-bg");
+  if (!host) return;
+  // A random narrow slice (one difficulty, a few years) keeps the random pick
+  // on the filter index: ~0.1s instead of seconds over every powermarked tossup.
+  let rows = [];
+  for (let attempt = 0; attempt < 3 && rows.length < 24; attempt++) {
+    const d = 2 + Math.floor(Math.random() * 6), y0 = 2010 + Math.floor(Math.random() * 12);
+    try {
+      const r = await API.get(`/api/tossups/query?powermarkOnly=true&cleanOnly=1&random=1&limit=40&difficulties=${d}&yearMin=${y0}&yearMax=${y0 + 4}`);
+      rows = rows.concat((r && r.rows) || []);
+    } catch (e) { break; }
+  }
+  const cards = [];
+  for (const q of rows) {
+    const raw = String(q.question_sanitized || "");
+    const i = raw.indexOf("(*)");
+    if (i < 40 || raw.indexOf("(*)", i + 3) >= 0 || raw.length < 260 || raw.length > 680) continue;
+    if (/\b(note to|moderator|do not read|read slowly)\b/i.test(raw)) continue;
+    let ans = "";
+    try { ans = apPrimary(q.answer || "", q.answer_sanitized || ""); } catch (e) { ans = ""; }
+    if (!ans) ans = primaryAnswerText(q.answer_sanitized || "");
+    if (!ans || ans.length > 40) continue;
+    cards.push(homeBgCardHtml(raw.slice(0, i).trim(), raw.slice(i + 3).trim(), ans));
+    if (cards.length >= 24) break;
+  }
+  if (!cards.length) { _homeBgState = 2; return; }
+  const cols = [[], [], [], []];
+  cards.forEach((c, k) => cols[k % 4].push(c));
+  const durs = [96, 122, 106, 134];
+  host.innerHTML = cols.map((c, k) => `<div class="home-track" style="--dur:${durs[k]}s">${c.join("")}${c.join("")}</div>`).join("");
+  _homeBgState = 2;
+}
+function homeBgCardHtml(pre, post, ans) {
+  const words = (pre + " \u00b6 " + post).split(/\s+/);
+  const n = words.length;
+  const marks = 1 + Math.floor(Math.random() * 3);
+  const spots = new Set();
+  for (let t = 0; spots.size < marks && t < 20; t++) spots.add(3 + Math.floor(Math.random() * Math.max(1, n - 6)));
+  const order = [...spots].sort((a, b) => a - b);
+  let out = "<b>", inPre = true;
+  words.forEach((w, k) => {
+    if (w === "\u00b6") { out += '</b> <span class="pm">(*)</span>'; inPre = false; return; }
+    out += (k ? " " : "") + escapeHtml(w);
+    const at = order.indexOf(k);
+    if (at >= 0) out += ` <span class="bz b${(at % 3) + 1}">(#)</span>`;
+  });
+  if (inPre) out += "</b>";
+  return `<div class="home-bgq">${out}<div class="ans">ANSWER <strong>${escapeHtml(ans)}</strong></div></div>`;
+}
+
+// ── practice setup panel (#filters-panel while it sits on the practice screen):
+//    it opens beside the page and pushes it left (CSS :has(.filters-panel.open)),
+//    so the session keeps running and its hotkeys keep working ──
+function setupDrawerEl() {
+  const p = document.getElementById("filters-panel");
+  return p && p.closest("#practice-screen") ? p : null;
+}
+function isSetupDrawerOpen() { const p = setupDrawerEl(); return !!(p && p.classList.contains("open")); }
+function openSetupDrawer() {
+  const p = setupDrawerEl(); if (!p) return;
+  closeSettings();
+  p.classList.add("open");
+  updateYearLabel();
+  document.getElementById("btn-open-setup")?.setAttribute("aria-expanded", "true");
+  syncDrawerStart();
+  refreshDrawerCount();
+}
+function closeSetupDrawer() {
+  const p = document.getElementById("filters-panel");
+  if (p) p.classList.remove("open");
+  document.getElementById("btn-open-setup")?.setAttribute("aria-expanded", "false");
+}
+function syncDrawerStart() {
+  const b = document.getElementById("btn-drawer-start");
+  if (b) b.textContent = state.sessionActive ? "Done" : "Start";
+}
+document.getElementById("btn-open-setup")?.addEventListener("click", () => (isSetupDrawerOpen() ? closeSetupDrawer() : openSetupDrawer()));
+document.getElementById("btn-close-setup")?.addEventListener("click", closeSetupDrawer);
+document.getElementById("btn-drawer-start")?.addEventListener("click", () => {
+  const wasActive = state.sessionActive;
+  const onPractice = !!setupDrawerEl();   // borrowed by a multiplayer room: just close
+  closeSetupDrawer();
+  if (!wasActive && onPractice) startSession();
+});
+// While the panel is open Esc closes it (unless a picker / dropdown inside it
+// owns Esc); every other key reaches the page, so practice goes on beside it.
+window.addEventListener("keydown", (e) => {
+  if (!isSetupDrawerOpen() || e.key !== "Escape") return;
+  if (isCatOverlayOpen && isCatOverlayOpen()) return;
+  if (document.querySelector('.qb-select[data-open="true"], .pop:not([hidden])')) return;
+  e.preventDefault(); e.stopPropagation(); closeSetupDrawer();
+}, true);
+// A mouse click on a checkbox or button in the panel hands focus back to the
+// page, so the next hotkey (Space, N…) isn't swallowed by the focused control.
+document.getElementById("filters-panel")?.addEventListener("pointerup", (e) => {
+  const t = e.target.closest?.('input[type="checkbox"], button');
+  if (t && !t.closest(".cat-ovl")) setTimeout(() => { if (document.activeElement === t) t.blur(); }, 0);
+});
+// How many questions the current setup matches (weights ignored: all units).
+let _drawerCountTimer = null, _drawerCountSeq = 0;
+function refreshDrawerCount() {
+  clearTimeout(_drawerCountTimer);
+  _drawerCountTimer = setTimeout(async () => {
+    const el = document.getElementById("fp-count");
+    if (!el || !isSetupDrawerOpen()) return;
+    const mv = $("#mode-select")?.value;
+    if (mv === "set" || mv === "import" || mv === "custom") { el.textContent = ""; return; }
+    const seq = ++_drawerCountSeq;
+    const f = getActiveFilters({ real: true, allUnits: true });
+    const type = filtersMode();
+    const params = _randomQuestionParams(f);
+    params.delete("random");
+    try {
+      const d = await API.get(`/api/${type}/count?${params}`);
+      if (seq !== _drawerCountSeq) return;
+      const n = d && typeof d.count === "number" ? d.count : null;
+      el.textContent = n == null ? "" : n.toLocaleString() + " " + (type === "bonuses" ? (n === 1 ? "bonus" : "bonuses") : (n === 1 ? "tossup" : "tossups"));
+    } catch (e) { if (seq === _drawerCountSeq) el.textContent = ""; }
+  }, 250);
+}
+document.getElementById("filters-panel")?.addEventListener("change", () => { if (isSetupDrawerOpen()) refreshDrawerCount(); }, true);
+document.getElementById("filters-panel")?.addEventListener("input", () => { if (isSetupDrawerOpen()) refreshDrawerCount(); }, true);
+
+// ── practice Tags (the \ field in the setup drawer; saved per mode like the
+//    other filters, mirrored to multiplayer through the panel snapshot) ──
+let _practiceTagField = null;
+function practiceTagFieldInit() {
+  const host = document.getElementById("practice-tagfield");
+  if (!host || _practiceTagField) return;
+  _practiceTagField = TagField({
+    host, small: true, icon: "tag", ariaLabel: "Add a tag", chips: state._pendingPracticeTags || [],
+    onChange: () => { host.dispatchEvent(new Event("change", { bubbles: true })); debounceSaveFilters(); },
+  });
+  state._pendingPracticeTags = null;
+}
+function cleanTagList(list) {
+  return (Array.isArray(list) ? list : []).filter((t) => t && t.f && t.v)
+    .map((t) => (t.id ? { f: t.f, v: String(t.v), x: !!t.x, id: String(t.id), p: String(t.p || "") } : { f: String(t.f), v: String(t.v), x: !!t.x }));
+}
+function practiceTags() { return cleanTagList(_practiceTagField ? _practiceTagField.chips : state._pendingPracticeTags); }
+function setPracticeTags(list) {
+  const clean = cleanTagList(list);
+  if (_practiceTagField) _practiceTagField.setChips(clean); else state._pendingPracticeTags = clean;
+}
+practiceTagFieldInit();
+
+// ── practice sidebar: the last few answers of this session ──
+function renderSessionMini() {
+  const el = document.getElementById("session-mini");
+  if (!el) return;
+  const items = [...state.sessionHistory].reverse().slice(0, 8);
+  el.innerHTML = items.map((e) => {
+    const q = e.question || {};
+    const pts = e.points || 0;
+    const col = e.isPower ? "var(--yellow)" : pts > 0 ? "var(--green)" : pts < 0 ? "var(--red)" : "var(--muted)";
+    let ans = "";
+    if (e.type === "bonus") {
+      try { ans = (e.answers && e.answers.length ? e.answers : JSON.parse(q.answers_sanitized || "[]")).map(primaryAnswerText).filter(Boolean).join(" / "); } catch (er) { ans = ""; }
+    } else ans = primaryAnswerText(e.answer || q.answer_sanitized || "");
+    return `<button type="button" class="sm-row" title="${escapeHtml(ans)}"><span class="dot" style="background:${rootColorOf(qPathOf(q))}"></span><span class="a">${escapeHtml(ans || "\u2014")}</span><b style="color:${col}">${pts > 0 ? "+" : ""}${pts}</b></button>`;
+  }).join("");
+}
+document.getElementById("session-mini")?.addEventListener("click", (e) => { if (e.target.closest(".sm-row")) openHistoryOverlay(); });
+
+// ── after answering: category, year, source and the question's tags ──
+function showResultActions(on) {
+  const a = document.getElementById("result-actions");
+  if (a) a.hidden = !on;
+}
+document.getElementById("btn-result-next")?.addEventListener("click", () => { if (state.resultAreaVisible && state.sessionActive) nextQuestion(); });
+function renderResultTags(q) {
+  showResultActions(!!q && state.sessionActive);
+  if (q) document.getElementById("question-meta")?.classList.remove("qm-reading");
+  const el = document.getElementById("result-tags");
+  if (!el) return;
+  if (!q) { el.innerHTML = ""; return; }
+  const src = [q.set_name, q.packet_number ? "packet " + q.packet_number : "", q.question_number ? "#" + q.question_number : ""].filter(Boolean).join(" \u00b7 ");
+  el.innerHTML = questionMetaRowHtml(q, "practice", { src });
+}
+
+// ── Settings modal: sections on the left, one pane at a time ──
+function settingsModal() { return document.getElementById("settings-modal"); }
+function isSettingsOpen() { const m = settingsModal(); return !!(m && !m.classList.contains("hidden")); }
+function openSettings(sec) {
+  const m = settingsModal();
+  if (!m) return;
+  closeSetupDrawer();
+  closeAllPops();
+  try { initSettings(); } catch (e) { console.error(e); }
+  showSettingsSection(sec || state._setSec || "gameplay");
+  m.classList.remove("hidden");
+  try { m.querySelector(".set-modal")?.focus({ preventScroll: true }); } catch (e) {}
+}
+function closeSettings() {
+  if (_dbLocked || !isSettingsOpen()) return false;
+  state.hotkeyRebinding = null;
+  settingsModal().classList.add("hidden");
+  return true;
+}
+function toggleSettings(sec) { if (isSettingsOpen() && !sec) closeSettings(); else openSettings(sec); }
+function showSettingsSection(sec) {
+  if (_dbLocked) sec = "updates";
+  const panes = [...document.querySelectorAll("#set-body .set-pane")];
+  if (!panes.some((p) => p.dataset.pane === sec)) sec = "gameplay";
+  const navBtn = document.querySelector(`#set-nav .set-nav-btn[data-sec="${sec}"]`);
+  if (navBtn && navBtn.hidden) sec = "gameplay";
+  state._setSec = sec;
+  document.querySelectorAll("#set-nav .set-nav-btn").forEach((b) => b.setAttribute("aria-current", String(b.dataset.sec === sec)));
+  panes.forEach((p) => p.classList.toggle("on", p.dataset.pane === sec));
+  if (sec === "tags") renderTagSettings();
+  if (sec === "hotkeys") renderHotkeySettings();
+  if (sec === "profile") { const n = document.getElementById("set-username"); if (n) n.value = state.username || ""; }
+  if (sec === "appearance") { const tn = document.getElementById("set-theme-name"); if (tn) tn.textContent = activeTheme()?.name || "Default"; }
+  const body = document.getElementById("set-body"); if (body) body.scrollTop = 0;
+}
+document.getElementById("set-nav")?.addEventListener("click", (e) => { const b = e.target.closest(".set-nav-btn"); if (b) showSettingsSection(b.dataset.sec); });
+function renderTagSettings() {
+  const d = tagDisplay();
+  const sw = document.getElementById("opt-tags-show"); if (sw) sw.checked = d.show;
+  const chips = document.getElementById("tag-fam-chips");
+  if (chips) chips.innerHTML = TAG_FAM_ORDER.map((f) => `<button type="button" class="chip${d.fams[f] ? " on" : ""}" style="--c:${TAG_FAM[f].color}" data-fam="${f}" aria-pressed="${!!d.fams[f]}"><span class="dot"></span>${escapeHtml(TAG_FAM[f].name)}</button>`).join("");
+  document.querySelectorAll("#tag-where input[data-where]").forEach((cb) => { cb.checked = d.where[cb.dataset.where] !== false; });
+}
+function refreshTagViews() {
+  try { if (state.resultAreaVisible && state.currentQuestion) renderResultTags(state.currentQuestion); } catch (e) {}
+  try { renderHistoryPanel(); } catch (e) {}
+  try { if (document.querySelector("#database-screen.active") && (state.dbTab || "search") === "search" && document.getElementById("db-results")) performDbSearch({ page: _dbPage }); } catch (e) {}
+}
+document.getElementById("opt-tags-show")?.addEventListener("change", (e) => { setTagDisplay({ show: e.target.checked }); refreshTagViews(); });
+document.getElementById("tag-fam-chips")?.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-fam]"); if (!b) return;
+  const d = tagDisplay();
+  setTagDisplay({ fams: { [b.dataset.fam]: !d.fams[b.dataset.fam] } });
+  renderTagSettings(); refreshTagViews();
+});
+document.getElementById("tag-where")?.addEventListener("change", (e) => {
+  const cb = e.target.closest("input[data-where]"); if (!cb) return;
+  setTagDisplay({ where: { [cb.dataset.where]: cb.checked } }); refreshTagViews();
+});
+document.getElementById("set-username")?.addEventListener("change", (e) => {
+  const v = e.target.value.trim().slice(0, 24);
+  if (!v) { e.target.value = state.username || ""; return; }
+  state.username = v; lsSet("qb-username", v);
+  renderGreeting(); renderTopbarProfile();
+});
+document.getElementById("btn-open-profile")?.addEventListener("click", () => { closeSettingsOverlays(); goTo("player"); });
+document.getElementById("btn-browse-themes")?.addEventListener("click", () => { closeSettingsOverlays(); goTo("plugins-themes"); });
 
 let _dom = {};
 function dom(id) { return _dom[id] || (_dom[id] = document.getElementById(id)); }
@@ -690,9 +1350,13 @@ function goBack() {
 }
 
 function showScreen(name, opts) {
+  // Settings is a modal over whatever is showing, not a screen of its own.
+  if (name === "settings") { openSettings(); return; }
+  if (_dbLocked) return;   // locked on Settings → Updates until the new database is open
   // A settings modal left open would float its click-eating backdrop over the
   // next screen (the "Back did nothing / buttons stopped working" bug).
   try { closeSettingsOverlays(); } catch (e) {}
+  try { closeSetupDrawer(); } catch (e) {}
   try { flushPendingFilterSave(); } catch (e) {}   // while state.mode still names the outgoing tab
   const back = opts ? !!opts.back : _navBack;
   saveScreenScroll(); // must run while the outgoing screen is still visible
@@ -712,11 +1376,12 @@ function showScreen(name, opts) {
   if (mapped === "title") {
     loadTitleArt();
     refreshReviewBadge();
-    // Keep the greeting in sync — a rename on the Player screen must show
+    // Keep the greeting in sync — a rename on the Profile screen must show
     // everywhere immediately, not only after a restart.
-    const greeting = document.getElementById("title-greeting");
-    if (greeting) greeting.textContent = state.username ? `HELLO, ${state.username.toUpperCase()}!` : "";
+    renderGreeting();
+    ensureHomeBg();
   }
+  updateTopbar();
   qbEmit("screen:change", { name, back });
   if (screen) restoreScreenScroll(screen);
 }
@@ -755,8 +1420,9 @@ function needsEscConfirm() {
   if (!active) return false;
   // Mid-question in tossups/bonuses: leaving costs the buzz, so confirm.
   if (active.id === "practice-screen") return !!state.sessionActive;
-  // Multiplayer: leaving drops you out of a live game for everyone else too.
-  return active.id.startsWith("ext-page-multiplayer-");
+  // Multiplayer: only inside a room (leaving drops you out of a live game for
+  // everyone else); the join screen leaves on one Esc.
+  return active.id.startsWith("ext-page-multiplayer-") && active.classList.contains("mp-in-room");
 }
 
 function showEscHint() {
@@ -782,7 +1448,7 @@ function hideEscHint() {
 
 function toggleHotkeySheet() {
   let el = document.getElementById("hotkey-sheet");
-  if (el) { el.remove(); return; }
+  if (el) { animateRemove(el); return; }
   el = document.createElement("div");
   el.id = "hotkey-sheet";
   el.className = "hotkey-sheet";
@@ -795,7 +1461,7 @@ function toggleHotkeySheet() {
       ${rows}
       <div class="hk-row"><span>Show this sheet</span><kbd>?</kbd></div>
     </div>`;
-  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  el.addEventListener("click", (ev) => { if (ev.target === el) animateRemove(el); });
   document.body.appendChild(el);
 }
 
@@ -862,7 +1528,7 @@ document.addEventListener("keydown", (e) => {
     const overlays = [
       ...document.querySelectorAll("#confirm-dialog, #save-menu, #review-menu, #review-viewer, #history-overlay, #hotkey-sheet, .qb-overlay:not(.settings-ovl), .fo-overlay, .ar-overlay"),
     ].filter((el) => !el.classList.contains("hidden") && getComputedStyle(el).display !== "none");
-    if (overlays.length) { e.preventDefault(); overlays[overlays.length - 1].remove(); return; }
+    if (overlays.length) { e.preventDefault(); animateRemove(overlays[overlays.length - 1]); return; }
     if (needsEscConfirm()) {
       if (state.escOnce) {
         clearTimeout(state.escTimer);
@@ -886,6 +1552,12 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
+  // A confirm dialog owns the keyboard: Enter confirms, nothing fires behind it.
+  if (document.querySelector("#confirm-dialog:not(.qb-leaving)")) {
+    if (e.key === "Enter") { e.preventDefault(); document.getElementById("cf-yes")?.click(); }
+    return;
+  }
+
   {
     const isInputG = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA";
     if (!isInputG) {
@@ -903,7 +1575,7 @@ document.addEventListener("keydown", (e) => {
     if (matchesHotkey(e, "nav-bonuses")) { showScreen("practice-bonuses"); setMode("bonuses"); }
     if (matchesHotkey(e, "nav-stats")) { showScreen("stats"); state.statsSessionId = null; loadStats(); }
     if (matchesHotkey(e, "nav-starred")) { showScreen("database"); loadDatabase(); }
-    if (matchesHotkey(e, "nav-settings")) { showScreen("settings"); initSettings(); }
+    if (matchesHotkey(e, "nav-settings")) toggleSettings();
     if (matchesHotkey(e, "nav-player")) { showScreen("player"); loadPlayer(); }
     if (matchesHotkey(e, "nav-extensions")) { showScreen("extensions"); window.QB?.renderScreen(); }
     return;
@@ -924,8 +1596,7 @@ document.addEventListener("keydown", (e) => {
       else if (state.settings.allowSkips) skipQuestion();
     }
     if (matchesHotkey(e, "end-session") && !isInput) {
-      if (state.sessionActive) endSession();
-      goHome();
+      confirmEndSession(goHome);
     }
     if (matchesHotkey(e, "next-question") && !isInput) {
       if (state.sessionActive && advanceBonusPart()) {
@@ -1060,30 +1731,13 @@ function computeDailyStreak(byDate) {
 }
 
 async function initTitle() {
-  try {
-    const data = await API.get("/api/tossups/count");
-    const bonusData = await API.get("/api/bonuses/count");
-    const sets = await API.get("/api/sets");
-    $("#title-status").textContent =
-      `DB: ${(data.count + bonusData.count).toLocaleString()} questions · ${sets.sets.length} sets`;
-  } catch (e) {
-    $("#title-status").textContent = "DB: offline (server not running)";
-  }
   loadTitleArt();
-  const greeting = document.getElementById("title-greeting");
-  if (greeting) {
-    greeting.textContent = state.username ? `HELLO, ${state.username.toUpperCase()}!` : "";
-  }
+  renderGreeting();
+  renderTopbarProfile();
+  ensureHomeBg();
   try {
     const sd = await API.get("/api/stats");
-    const streak = computeDailyStreak(sd.stats?.questionsByDate);
-    const el = document.getElementById("title-streak");
-    // Line-icon flame (stroke = currentColor, recolors with the theme) — never an emoji.
-    // The teardrop outline this replaced didn't read as fire at 14px; this one
-    // has the licking tip and the inner tongue that make a flame legible small.
-    el && (el.innerHTML = streak >= 2
-      ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>' + escapeHtml(`${streak}-day streak`)
-      : "");
+    renderStreak(computeDailyStreak(sd.stats?.questionsByDate));
   } catch {}
   refreshReviewBadge();
 }
@@ -1096,12 +1750,8 @@ async function refreshReviewBadge() {
   try {
     const due = await API.get(reviewDueUrl());
     _reviewItems = due.items || (due.ids || []).map((id) => ({ id, type: "tossup", ageMs: 0 }));
-    const item = document.getElementById("menu-review");
-    if (!item) return;
-    item.classList.remove("hidden");
-    item.style.opacity = "";
-    item.innerHTML = `<span class="key">[\u21bb]</span> Review (<span id="review-count">${_reviewItems.length}</span>)`;
-    item.onclick = () => openReviewMenu(_reviewItems);
+    const n = _reviewItems.length;
+    const c = document.getElementById("review-count"); if (c) c.textContent = n ? String(n) : "";
   } catch {}
 }
 
@@ -1118,54 +1768,51 @@ function reviewRemoveAfter() { return localStorage.getItem("qb-review-remove") =
 function openReviewMenu(items) {
   document.getElementById("review-menu")?.remove();
   const hasFlashcards = (window.QB?.getActivePages?.() || []).some((pg) => pg.id.startsWith("flashcards::"));
-  const catSet = [...new Set(items.map((it) => it.category).filter(Boolean))].sort();
   const el = document.createElement("div");
   el.id = "review-menu";
-  el.className = "hotkey-sheet";
+  el.className = "qb-overlay review-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "rv-h");
+  const seg = [["", "All"], ["tossup", "Tossups"], ["bonus", "Bonuses"]].map(([v, l]) => `<button type="button" data-rvtype="${v}" aria-pressed="${!v}">${l}</button>`).join("");
+  const diffs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((d) => `<label title="${escapeHtml(DIFF_FULL[d] || "")}"><input type="checkbox" class="rv-diff" value="${d}"><span>${d}</span></label>`).join("");
   el.innerHTML = `
-    <div class="hotkey-sheet-box rv-box">
-      <div class="hotkey-sheet-title">REVIEW</div>
-      <div class="rv-filter">
-        <div class="rv-row"><span class="rv-lbl">Age range</span>
+    <div class="settings-modal rv-modal" tabindex="-1">
+      <div class="modal-head"><h2 id="rv-h">Review</h2><span class="rv-due num">${items.length.toLocaleString()} to review</span><span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-icon" id="rv-x" aria-label="Close">${ic("x")}</button></div>
+      <div class="rv-cols">
+      <div class="rv-body">
+        <div class="rv-f"><span class="rv-k">Categories</span><button type="button" id="rv-cat-btn"></button></div>
+        <div class="rv-f"><span class="rv-k">Type</span><div class="seg" id="rv-type-seg" role="group" aria-label="Question type">${seg}</div></div>
+        <div class="rv-f"><span class="rv-k">Difficulty</span><div class="diff-toggles" id="rv-diffs" role="group" aria-label="Difficulty">${diffs}</div></div>
+        <div class="rv-f"><span class="rv-k">Missed <span class="qb-info" data-tip="How long ago you last missed the question.">i</span></span>
           <div class="dual-range rv-dual"><div class="dual-range-track"><div class="dual-range-fill" id="rv-fill"></div></div>
-            <input type="range" id="rv-lo" min="0" max="9" step="1" value="0">
-            <input type="range" id="rv-hi" min="0" max="9" step="1" value="9"></div>
-          <span class="rv-lbl" id="rv-rangeval" style="min-width:96px;text-align:right"></span>
-        </div>
-        <div class="rv-row"><span class="rv-lbl">Category</span>
-          <select id="rv-cat" class="mode-input" style="flex:1">
-            <option value="">All categories</option>
-            ${catSet.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}
-          </select>
-        </div>
-        <div class="rv-row"><span class="rv-lbl">Type</span>
-          <select id="rv-type" class="mode-input" style="flex:1">
-            <option value="">Tossups &amp; bonuses</option>
-            <option value="tossup">Tossups only</option>
-            <option value="bonus">Bonuses only</option>
-          </select>
-        </div>
-        <div class="rv-row rv-difficulties"><span class="rv-lbl">Difficulty</span>
-          <div class="rv-diff-grid" id="rv-diffs">
-            ${[0,1,2,3,4,5,6,7,8,9,10].map((d) => `<label class="rv-diff-chip"><input type="checkbox" class="rv-diff" value="${d}"> ${d}</label>`).join("")}
-          </div>
-        </div>
-        <label class="checkbox-row" style="font-size:12px"><input type="checkbox" id="rv-remove"${reviewRemoveAfter() ? " checked" : ""}> Remove when correct</label>
-        <div class="rv-count text-muted" id="rv-matchcount"></div>
+            <input type="range" id="rv-lo" min="0" max="9" step="1" value="0" aria-label="Newest">
+            <input type="range" id="rv-hi" min="0" max="9" step="1" value="9" aria-label="Oldest"></div>
+          <span class="rv-range num" id="rv-rangeval"></span></div>
+        <div class="rv-f"><span class="rv-k"></span><label class="checkbox-row"><input type="checkbox" id="rv-remove"${reviewRemoveAfter() ? " checked" : ""}> Remove when correct</label></div>
       </div>
-      <div class="review-menu-actions">
-        <button class="btn btn-primary btn-full" id="rv-play">Play matching as tossups</button>
-        ${hasFlashcards ? '<button class="btn btn-full" id="rv-cards">Study matching as flashcards</button>' : ""}
-        <button class="btn btn-full" id="rv-view">View matching questions</button>
-        <button class="btn btn-full" id="rv-saved">Saved items — ${itemReviewList().length}</button>
-        <button class="btn btn-ghost btn-full" id="rv-clearall">Remove all from review</button>
+      <aside class="rv-side" aria-label="Matching questions">
+        <div class="rv-total"><b class="num" id="rv-total-n">0</b><span id="rv-matchcount"></span></div>
+        <div class="rv-split num" id="rv-split"></div>
+        <div class="eyebrow rv-side-h">By category</div>
+        <div class="rv-bars" id="rv-bars"></div>
+      </aside>
+      </div>
+      <div class="modal-foot rv-foot">
+        <button type="button" class="btn btn-ghost" id="rv-saved">Saved items<span class="btn-num">${itemReviewList().length}</span></button>
+        <button type="button" class="btn btn-ghost rv-danger" id="rv-clearall">Remove all</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="rv-view">View</button>
+        ${hasFlashcards ? '<button type="button" class="btn" id="rv-cards">Flashcards</button>' : ""}
+        <button type="button" class="btn btn-primary" id="rv-play">${ic("play", 14)}<span id="rv-play-l">Play</span></button>
       </div>
     </div>`;
-  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  el.addEventListener("click", (ev) => { if (ev.target === el) animateRemove(el); });
   document.body.appendChild(el);
+  el.querySelector("#rv-x").onclick = () => animateRemove(el);
 
   const lo = el.querySelector("#rv-lo"), hi = el.querySelector("#rv-hi");
-  const catSel = el.querySelector("#rv-cat");
+  let typ = "";
+  const cat = CategoryButton(el.querySelector("#rv-cat-btn"), { label: "", live: true, onChange: () => paint() });
   function ageBand() {
     let mn = Math.min(parseInt(lo.value), parseInt(hi.value));
     let mx = Math.max(parseInt(lo.value), parseInt(hi.value));
@@ -1175,39 +1822,60 @@ function openReviewMenu(items) {
   function selectedDiffs() {
     return new Set([...el.querySelectorAll(".rv-diff:checked")].map((cb) => parseInt(cb.value)));
   }
-  const typeSel = el.querySelector("#rv-type");
   function matching() {
     const band = ageBand();
-    const cat = catSel ? catSel.value : "";
-    const typ = typeSel ? typeSel.value : "";
     const diffs = selectedDiffs();
-    const noDiffFilter = diffs.size === 0;
     return items.filter((it) => {
       const age = it.ageMs == null ? 0 : it.ageMs;
       if (age < band.lo || age > band.hi) return false;
-      if (cat && it.category !== cat) return false;
+      if (!cat.matches(it.path || it.category || "")) return false;
       if (typ && (it.type || "tossup") !== typ) return false;
-      if (!noDiffFilter && it.difficulty != null && !diffs.has(it.difficulty)) return false;
+      if (diffs.size && it.difficulty != null && !diffs.has(it.difficulty)) return false;
       return true;
     });
   }
   function paint() {
     const band = ageBand();
     const mn = band.mnI, mx = band.mxI;
-    el.querySelector("#rv-rangeval").textContent = AGE_LABELS[mn] + " \u2013 " + AGE_LABELS[mx];
+    el.querySelector("#rv-rangeval").textContent = AGE_LABELS[mn] + " – " + AGE_LABELS[mx];
     const fill = el.querySelector("#rv-fill");
     if (fill) { fill.style.left = (mn / 9) * 100 + "%"; fill.style.right = ((9 - mx) / 9) * 100 + "%"; }
     const m = matching();
-    el.querySelector("#rv-matchcount").textContent = m.length + " of " + items.length + " match";
-    const playable = m.some((it) => (it.type || "tossup") === "tossup");
-    const pb = el.querySelector("#rv-play"); if (pb) pb.disabled = !playable;
-    const cb = el.querySelector("#rv-cards"); if (cb) cb.disabled = !playable;
+    const tus = m.filter((it) => (it.type || "tossup") === "tossup").length;
+    el.querySelector("#rv-total-n").textContent = m.length.toLocaleString();
+    el.querySelector("#rv-matchcount").textContent = m.length === items.length ? (m.length === 1 ? "question" : "questions") : "of " + items.length.toLocaleString() + " match";
+    el.querySelector("#rv-split").textContent = tus.toLocaleString() + (tus === 1 ? " tossup" : " tossups") + " \u00b7 " + (m.length - tus).toLocaleString() + (m.length - tus === 1 ? " bonus" : " bonuses");
+    // due by root category; a bar narrows the picker to that category
+    const byRoot = new Map();
+    for (const it of m) { const r = String(it.path || it.category || "Other").split(" > ")[0] || "Other"; byRoot.set(r, (byRoot.get(r) || 0) + 1); }
+    const rows = [...byRoot].sort((a, b) => b[1] - a[1]);
+    const top = rows.length ? rows[0][1] : 1;
+    const t = cat.tree(), picked = new Set(cat.get());
+    el.querySelector("#rv-bars").innerHTML = rows.length ? rows.map(([r, n]) => {
+      const node = t && t.byPath.get(r);
+      return `<button type="button" class="rv-bar${node && picked.size === 1 && picked.has(node.id) ? " on" : ""}" data-root="${escapeHtml(r)}"${node ? "" : " disabled"}><span class="dot" style="background:${rootColorOf(r)}"></span><span class="rv-bar-n">${escapeHtml(r)}</span><span class="rv-bar-t"><i style="width:${Math.max(3, Math.round(100 * n / top))}%;background:${rootColorOf(r)}"></i></span><span class="rv-bar-c num">${n.toLocaleString()}</span></button>`;
+    }).join("") : '<div class="rv-empty">Nothing matches</div>';
+    el.querySelector("#rv-play-l").textContent = tus ? "Play " + tus.toLocaleString() + (tus === 1 ? " tossup" : " tossups") : "Play";
+    const pb = el.querySelector("#rv-play"); if (pb) pb.disabled = !tus;
+    const cb = el.querySelector("#rv-cards"); if (cb) cb.disabled = !tus;
+    const vb = el.querySelector("#rv-view"); if (vb) vb.disabled = !m.length;
   }
   clampDualRange(lo, hi);
   lo.addEventListener("input", paint); hi.addEventListener("input", paint);
-  if (catSel) catSel.addEventListener("change", paint);
-  if (typeSel) typeSel.addEventListener("change", paint);
+  el.querySelector("#rv-type-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-rvtype]"); if (!b) return;
+    typ = b.dataset.rvtype;
+    el.querySelectorAll("#rv-type-seg [data-rvtype]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    paint();
+  });
   el.querySelectorAll(".rv-diff").forEach((cb) => cb.addEventListener("change", paint));
+  el.querySelector("#rv-bars").addEventListener("click", (e) => {
+    const b = e.target.closest(".rv-bar"); const t = cat.tree(); if (!b || !t) return;
+    const node = t.byPath.get(b.dataset.root); if (!node) return;
+    cat.set(b.classList.contains("on") ? [] : [node.id]);
+    paint();
+  });
+  cat.ready.then(() => paint());
   paint();
   el.querySelector("#rv-remove").addEventListener("change", (e) => localStorage.setItem("qb-review-remove", e.target.checked.toString()));
 
@@ -1224,7 +1892,7 @@ function openReviewMenu(items) {
     confirmDialog(`Remove all ${items.length} questions from review? This can't be undone.`, async () => {
       try { await API.post("/api/review/clear", {}); } catch {}
       el.remove(); refreshReviewBadge();
-    }, { yes: "Remove all" });
+    }, { yes: "Remove all", danger: true });
   };
 }
 
@@ -1253,16 +1921,14 @@ async function openReviewViewer(items) {
       </div>
       <div class="rv-filterbar">
         <select id="rv-ftype" class="mode-input"><option value="">All types</option><option value="tossup">Tossups</option><option value="bonus">Bonuses</option></select>
-        <select id="rv-fcat" class="mode-input"><option value="">All categories</option></select>
-        <select id="rv-fsub" class="mode-input"><option value="">All subcategories</option></select>
-        <select id="rv-falt" class="mode-input"><option value="">All alternate subcategories</option></select>
+        <button type="button" id="rv-fcat-btn"></button>
         <input type="text" id="rv-vsearch" class="mode-input" placeholder="Search answer / text" autocomplete="off">
       </div>
       <div class="review-viewer-list"><div class="text-muted" style="padding:12px">Loading…</div></div>
     </div>`;
-  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  el.addEventListener("click", (ev) => { if (ev.target === el) animateRemove(el); });
   document.body.appendChild(el);
-  el.querySelector("#rv-close").onclick = () => el.remove();
+  el.querySelector("#rv-close").onclick = () => animateRemove(el);
   await refreshDbStarred();
   const cards = [];
   for (const it of items.slice(0, 80)) {
@@ -1285,7 +1951,7 @@ async function openReviewViewer(items) {
     const side = `<span class="star-btn rv-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders" style="font-size:16px">+</span>` +
       `<button class="btn btn-sm btn-ghost rv-remove" data-qid="${escapeHtml(q.id)}" title="Stop showing this question in Review">Remove from review</button>` +
       `<span class="qb-star${starred ? " on" : ""}" data-qid="${q.id}" data-type="${type}">${starred ? "\u2605" : "\u2606"}</span>`;
-    const dataAttrs = ` data-rvqid="${escapeHtml(q.id)}" data-rvtype="${type}" data-rvsearch="${escapeHtml(search)}" data-cat="${escapeHtml(q.category || "")}" data-sub="${escapeHtml(q.subcategory || "")}" data-alt="${escapeHtml(q.alternate_subcategory || "")}"`;
+    const dataAttrs = ` data-rvqid="${escapeHtml(q.id)}" data-rvtype="${type}" data-rvsearch="${escapeHtml(search)}" data-path="${escapeHtml(qPathOf(q))}"`;
     if (type === "bonus") {
       let parts = [], answers = [], raws = [];
       try { parts = JSON.parse(q.parts_sanitized || "[]"); } catch {}
@@ -1294,7 +1960,7 @@ async function openReviewViewer(items) {
       const body = `<div class="qcard-text">${escapeHtml(q.leadin_sanitized || "")}</div>` +
         parts.map((pt, k) => `<div class="qcard-part">[${bonusPartValues(q).values[k] || 10}] ${escapeHtml(pt)}<br><span class="ans">ANSWER: ${answerLineHtml(raws[k], answers[k] || "")}</span></div>`).join("");
       return qcardHtml({
-        compact: false, category: q.category, subcategory: q.subcategory, year: q.set_year, difficulty: q.difficulty,
+        compact: false, question: q, tagsWhere: "starred", category: q.category, subcategory: q.subcategory, year: q.set_year, difficulty: q.difficulty,
         attrs: dataAttrs,
         sideHtml: `<span class="pill">BONUS</span>` + side,
         answerHtml: `Bonus · ${parts.length} parts`,
@@ -1303,7 +1969,7 @@ async function openReviewViewer(items) {
     }
     const fake = { type: "tossup", question: q, buzzPosition: it.buzzPosition || 0 };
     return qcardHtml({
-      compact: false, category: q.category, subcategory: q.subcategory, altSub: q.alternate_subcategory, year: q.set_year, difficulty: q.difficulty,
+      compact: false, question: q, tagsWhere: "starred", category: q.category, subcategory: q.subcategory, altSub: q.alternate_subcategory, year: q.set_year, difficulty: q.difficulty,
       attrs: dataAttrs,
       sideHtml: side,
       answerHtml: `Answer: <span class="ans">${answerLineHtml(q.answer, q.answer_sanitized || "")}</span>`,
@@ -1314,28 +1980,19 @@ async function openReviewViewer(items) {
   const html = cards.map(cardHtml).join("") || '<div class="text-muted" style="padding:12px">Nothing to show.</div>';
   const list = el.querySelector(".review-viewer-list");
   if (list) list.innerHTML = html;
-  const fcat = el.querySelector("#rv-fcat"), fsub = el.querySelector("#rv-fsub"), falt = el.querySelector("#rv-falt"), vs = el.querySelector("#rv-vsearch"), ftype = el.querySelector("#rv-ftype");
-  const meta = cards.map(({ q }) => ({ cat: q.category || "", sub: q.subcategory || "", alt: q.alternate_subcategory || "" }));
-  function fill(sel, values) { const cur = sel.value; const opts = [...new Set(values.filter(Boolean))].sort(); sel.innerHTML = sel.options[0].outerHTML + opts.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join(""); if (opts.includes(cur)) sel.value = cur; }
-  fill(fcat, meta.map((m) => m.cat));
-  function refillSub() { const c = fcat.value; fill(fsub, meta.filter((m) => !c || m.cat === c).map((m) => m.sub)); fill(falt, meta.filter((m) => !c || m.cat === c).map((m) => m.alt)); }
-  refillSub();
+  const vs = el.querySelector("#rv-vsearch"), ftype = el.querySelector("#rv-ftype");
+  const vcat = CategoryButton(el.querySelector("#rv-fcat-btn"), { live: true, onChange: () => applyFilters() });
   function applyFilters() {
-    const c = fcat.value, su = fsub.value, al = falt.value, q = (vs.value || "").toLowerCase().trim();
+    const q = (vs.value || "").toLowerCase().trim();
     const ty = ftype ? ftype.value : "";
     list.querySelectorAll(".qcard[data-rvqid]").forEach((card) => {
       let show = true;
       if (ty && (card.getAttribute("data-rvtype") || "tossup") !== ty) show = false;
-      if (c && (card.getAttribute("data-cat") || "") !== c) show = false;
-      if (su && (card.getAttribute("data-sub") || "") !== su) show = false;
-      if (al && (card.getAttribute("data-alt") || "") !== al) show = false;
+      if (!vcat.matches(card.getAttribute("data-path") || "")) show = false;
       if (q && (card.getAttribute("data-rvsearch") || "").indexOf(q) < 0) show = false;
       card.classList.toggle("hidden", !show);
     });
   }
-  fcat.addEventListener("change", () => { refillSub(); applyFilters(); });
-  fsub.addEventListener("change", applyFilters);
-  falt.addEventListener("change", applyFilters);
   if (ftype) ftype.addEventListener("change", applyFilters);
   if (vs) vs.addEventListener("input", applyFilters);
   list.querySelectorAll(".rv-save").forEach((b) => {
@@ -1379,53 +2036,10 @@ function startBonusIdsSession(ids) {
   startSession();
 }
 
-$$(".menu-item").forEach((item) => {
-  item.addEventListener("click", () => {
-    const screen = item.dataset.screen;
-    if (!screen) return;
-    showScreen(screen);
-    if (screen === "practice-tossups") setMode("tossups");
-    if (screen === "practice-bonuses") setMode("bonuses");
-    if (screen === "stats") { state.statsSessionId = null; loadStats(); }
-    if (screen === "starred") loadDatabase();
-    if (screen === "database") loadDatabase();
-    if (screen === "settings") initSettings();
-    if (screen === "player") loadPlayer();
-    if (screen === "extensions") window.QB?.renderScreen();
-  });
-});
+// (The home buttons navigate through the [data-go] handler in the app shell.)
 
 
 let allCategories = [];
-
-let _allCategoryNames = null;
-async function getAllCategoryNames() {
-  if (_allCategoryNames) return _allCategoryNames;
-  try {
-    const [t, b] = await Promise.all([
-      API.get("/api/categories?type=tossups"),
-      API.get("/api/categories?type=bonuses"),
-    ]);
-    const set = new Set();
-    (t.categories || []).forEach((c) => c.category && set.add(c.category));
-    (b.categories || []).forEach((c) => c.category && set.add(c.category));
-    _allCategoryNames = [...set].sort();
-  } catch {
-    _allCategoryNames = [];
-  }
-  return _allCategoryNames;
-}
-
-async function fillCategoryDropdown(sel) {
-  if (!sel) return;
-  const cats = await getAllCategoryNames();
-  const current = sel.value;
-  const firstLabel = sel.options[0] ? sel.options[0].textContent : "All categories";
-  sel.innerHTML =
-    `<option value="">${escapeHtml(firstLabel)}</option>` +
-    cats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
-  if ([...sel.options].some((o) => o.value === current)) sel.value = current;
-}
 
 function filtersMode() { return state.mode === "bonuses" ? "bonuses" : "tossups"; }
 function loadFilterBlob() {
@@ -1462,6 +2076,7 @@ function saveFilterState() {
     cleanOnly: !!$("#filter-clean")?.checked,
     yearMin: $("#year-min")?.value,
     yearMax: $("#year-max")?.value,
+    tags: practiceTags(),
     settings: Object.fromEntries(PER_MODE_SETTING_KEYS.map((k) => [k, state.settings[k]])),
   };
   if (filterState.mode === "custom") filterState.mode = "random";   // never persist the placeholder
@@ -1497,6 +2112,7 @@ function restoreFilterState() {
     if (saved.yearMax !== undefined) $("#year-max").value = saved.yearMax;
     if (saved.setName !== undefined && $("#mode-set-name")) $("#mode-set-name").value = currentSetName(saved.setName);
     if (saved.packet !== undefined && $("#mode-packet")) $("#mode-packet").value = saved.packet;
+    setPracticeTags(Array.isArray(saved.tags) ? saved.tags : []);
     applyModeSettings(saved);
     updateModeFields();
     updateYearLabel();
@@ -1824,6 +2440,7 @@ function resetPracticeFiltersToDefaults() {
   const st = $("#filter-starred"); if (st) st.checked = false;
   const ymin = $("#year-min"); if (ymin) ymin.value = 2010;
   const ymax = $("#year-max"); if (ymax) ymax.value = 2026;
+  setPracticeTags([]);
   updateYearLabel();
   saveFilterState();
   refreshCategorySummary();
@@ -1870,6 +2487,7 @@ function getFilterSelectionSnapshot() {
     cleanOnly: !!$("#filter-clean")?.checked,
     standard: !!$("#filter-standard")?.checked,
     starredOnly: !!$("#filter-starred")?.checked,
+    tags: practiceTags(),
   };
 }
 
@@ -1932,6 +2550,7 @@ async function _applySnapshotInner(snap, gen) {
   if (snap.cleanOnly != null) { const e = $("#filter-clean"); if (e) e.checked = !!snap.cleanOnly; }
   if (snap.standard != null) { const e = $("#filter-standard"); if (e) e.checked = !!snap.standard; }
   if (snap.starredOnly != null) { const e = $("#filter-starred"); if (e) e.checked = !!snap.starredOnly; }
+  if (Array.isArray(snap.tags)) setPracticeTags(snap.tags);
   // Panel knobs apply EVENT-FREE: real change events broke multiplayer's
   // no-events invariant — every apply echoed a setConfig, chat blamed the
   // wrong player for "changed mode", saves persisted room state into the solo
@@ -2199,9 +2818,13 @@ function getActiveFilters(opts) {
     yearMax,
   };
 
+  const tags = practiceTags();
+  if (tags.length) filters.tags = tags;
+
   // Tree node ids travel in `categories` (the server reads an id as its whole
   // subtree); categoryPaths is for client-side matching and display only.
-  if (state.settings.useWeights) {
+  // opts.allUnits: the whole selection even in weighted mode (counts).
+  if (state.settings.useWeights && !(opts && opts.allUnits)) {
     const el = weightedPickCategoryNode();   // ONE weighted pick per call
     if (el) { filters.categories = [el.dataset.id]; filters.categoryPaths = [catNodePath(el)]; return filters; }
   }
@@ -2223,6 +2846,7 @@ function describeActiveFilters(opts) {
   if (names.length) parts.push("Categories: " + names.join(", "));
   if (!names.length && !f.setNames) parts.push("All categories");
   if (f.difficulties && f.difficulties.length) parts.push("Difficulty: " + f.difficulties.join(", "));
+  if (f.tags && f.tags.length) parts.push("Tags: " + f.tags.map((t) => (t.x ? "not " : "") + t.v).join(", "));
   if (f.yearMin || f.yearMax) parts.push("Years: " + (f.yearMin || 2000) + "–" + (f.yearMax || 2026));
   if (state.settings.useWeights) parts.push("weighted");
   if (f.powermarkOnly) parts.push("powermarked");
@@ -2302,6 +2926,7 @@ function updateYearLabel() {
     fill.style.right = ((max - mx) / span) * 100 + "%";
   }
 }
+updateYearLabel();   // a fresh profile restores no filters: draw the fill now
 
 document.addEventListener("change", (e) => {
   const cb = e.target.closest("#category-filters .cat-checkbox");
@@ -2384,6 +3009,7 @@ function openCategoryOverlay() {
   const b = document.getElementById("btn-open-categories"), o = document.getElementById("cat-ovl");
   if (!b || !o || b.disabled || isPacketModeSelected()) return;
   o.classList.remove("hidden");
+  practicePicker().open();
   refreshCategorySummary();
   try { o.querySelector(".cat-modal")?.focus({ preventScroll: true }); } catch (e) {}
 }
@@ -2393,14 +3019,448 @@ function closeCategoryOverlay() {
   o.classList.add("hidden");
   return true;
 }
+
+// ═══ CATEGORY PICKER — two panes: the 12 roots on the left (tick / focus /
+// share bar / weight), the focused root's subcategories on the right as
+// sections of pills (+n opens deeper levels in place), a Find box, presets and
+// the weights switch. It is a VIEW over a model:
+//  • practice: the hidden #category-filters checkbox tree (source of truth —
+//    saving, prefetch invalidation and multiplayer sync all hang off its
+//    change events, so every edit here dispatches one);
+//  • search: an in-memory set of whole-subtree units.
+const CAT_PRESET_LS = "qb-cat-presets";
+const ACF_DISTRIBUTION = { "Literature": 40, "History": 40, "Science and Math": 40, "Fine Arts": 30, "Mythology": 10, "Theology": 10, "Philosophy": 10, "Social Science": 10, "Geography": 5, "Current Events": 3, "Miscellaneous": 2 };
+function catPresetsLoad(kind) { try { const m = JSON.parse(localStorage.getItem(CAT_PRESET_LS) || "{}") || {}; return Array.isArray(m[kind]) ? m[kind] : []; } catch (e) { return []; } }
+function catPresetsSave(kind, list) { let m = {}; try { m = JSON.parse(localStorage.getItem(CAT_PRESET_LS) || "{}") || {}; } catch (e) {} m[kind] = list.slice(0, 30); try { localStorage.setItem(CAT_PRESET_LS, JSON.stringify(m)); } catch (e) {} }
+
+function CatPicker(model) {
+  const v = { focus: 0, expand: null, find: "", findHi: 0, hl: null, saving: false, tree: null };
+  const self = { model, v };
+  const host = () => model.host();
+  const root = () => (v.tree && v.tree.roots[v.focus]) || null;
+  const fmt = (n) => Number(n || 0).toLocaleString();
+  const box = (id, label) => {
+    const st = model.state(id);
+    return `<button type="button" class="cp-box${st === "on" ? " on" : st === "partial" ? " partial" : ""}" data-cp="toggle" data-id="${escapeHtml(id)}" aria-pressed="${st === "on" ? "true" : st === "partial" ? "mixed" : "false"}" aria-label="Include ${escapeHtml(label)}">${st === "on" ? ic("check", 13, ' style="stroke-width:3"') : ""}</button>`;
+  };
+  function selectedCount(n) {
+    const st = model.state(n.id);
+    if (st === "on") return n.count;
+    if (st === "off") return 0;
+    return (n.children || []).reduce((a, k) => a + selectedCount(k), 0);
+  }
+  function pill(n) {
+    const st = model.state(n.id);
+    const open = v.expand === n.id || (v.expand && v.tree.byId.get(v.expand) && v.tree.byId.get(v.expand).path.startsWith(n.path + " > "));
+    const more = (n.children || []).filter((k) => k.count > 0).length;
+    return `<span class="cp-pillgrp"><button type="button" class="cp-pill${st === "on" ? " on" : st === "partial" ? " partial" : ""}${more ? " has-more" : ""}${v.hl === n.id ? " hl" : ""}" data-cp="toggle" data-id="${escapeHtml(n.id)}" aria-pressed="${st === "on"}" title="${escapeHtml(n.definition || n.path.replace(/ > /g, " \u203a "))}">${st === "on" ? ic("check", 12, ' style="stroke-width:3"') : ""}<span class="t">${escapeHtml(n.name)}</span><span class="n">${fmt(n.count)}</span></button>` +
+      (more ? `<button type="button" class="cp-more${open ? " open" : ""}" data-cp="expand" data-id="${escapeHtml(n.id)}" aria-expanded="${!!open}" aria-label="Open ${escapeHtml(n.name)}">+${more}</button>` : "") + "</span>";
+  }
+  function stepper(n, pct, wTotal) {
+    if (!model.supportsWeights || !model.weightsOn()) return "";
+    const st = model.state(n.id); if (st === "off") return "";
+    const w = model.weight(n.id);
+    const label = pct ? Math.round(100 * w / (wTotal || 1)) + "%" : "\u00d7" + w;
+    return `<span class="cp-stepper"><button type="button" data-cp="w" data-id="${escapeHtml(n.id)}" data-d="-2" aria-label="Less ${escapeHtml(n.name)}">\u2212</button><span>${label}</span><button type="button" data-cp="w" data-id="${escapeHtml(n.id)}" data-d="2" aria-label="More ${escapeHtml(n.name)}">+</button></span>`;
+  }
+  function render() {
+    const h = host(); if (!h) return;
+    v.tree = model.tree();
+    if (!v.tree || !v.tree.roots.length) { h.innerHTML = '<div class="cp-empty">' + (v.tree ? "No categories" : "Loading categories\u2026") + "</div>"; return; }
+    if (v.focus >= v.tree.roots.length) v.focus = 0;
+    // keep scroll + find focus across the rebuild
+    const sc = h.querySelector(".cp-scroll"), lf = h.querySelector(".cp-left");
+    const keep = { top: sc ? sc.scrollTop : 0, lt: lf ? lf.scrollTop : 0, ll: lf ? lf.scrollLeft : 0, findFocus: document.activeElement && document.activeElement.classList.contains("cp-find-in") };
+    const wOn = model.supportsWeights && model.weightsOn();
+    const rootsOn = v.tree.roots.filter((r) => model.state(r.id) !== "off");
+    const wTotal = rootsOn.reduce((a, r) => a + model.weight(r.id), 0);
+    const tiles = v.tree.roots.map((r, i) => {
+      const pct = Math.round(100 * selectedCount(r) / Math.max(1, r.count));
+      const col = ROOT_COLOR[r.name] || "#8b949e";
+      return `<div class="cp-tile${i === v.focus ? " focus" : ""}">${box(r.id, r.name)}<button type="button" class="cp-tile-main" data-cp="focus" data-i="${i}"><span class="cp-tile-top"><span class="dot" style="background:${col}"></span><span class="cp-tile-name">${escapeHtml(r.name)}</span><span class="tile-n">${fmt(r.count)}</span></span><span class="cp-share"><span style="width:${pct}%;background:${col}"></span></span></button>${stepper(r, true, wTotal)}</div>`;
+    }).join("");
+    const rt = root();
+    const secs = (rt.children || []).filter((n) => n.count > 0).map((l2) => {
+      let sub = "";
+      const ex = v.expand && v.tree.byId.get(v.expand);
+      if (ex && (ex.id === l2.id || ex.path.startsWith(l2.path + " > ")) && ex.depth >= 3) {
+        const chain = []; let q = ex;
+        while (q && q.depth >= 3) { chain.unshift(q); q = q.parentId ? v.tree.byId.get(q.parentId) : null; }
+        sub = `<div class="cp-sub"><div class="cp-crumbs">` + chain.map((c, j) => (j ? '<span aria-hidden="true">\u203a</span>' : "") + `<button type="button" data-cp="expand-to" data-id="${escapeHtml(c.id)}" aria-current="${j === chain.length - 1}">${escapeHtml(c.name)}</button>`).join("") +
+          `<span class="spacer"></span><button type="button" class="btn btn-ghost btn-icon btn-sm" data-cp="expand-to" data-id="" aria-label="Close">${ic("x", 14)}</button></div><div class="cp-pills">${(ex.children || []).filter((k) => k.count > 0).map(pill).join("")}</div></div>`;
+      }
+      const kids = (l2.children || []).filter((k) => k.count > 0);
+      return `<div class="cp-sec"><div class="cp-sec-head">${box(l2.id, l2.name)}<span class="cp-sec-name${v.hl === l2.id ? " hl" : ""}">${escapeHtml(l2.name)}</span><span class="cp-sec-n">${fmt(l2.count)}</span>${wOn && model.state(l2.id) !== "off" ? '<span class="spacer"></span>' + stepper(l2, false) : ""}</div>` +
+        (kids.length ? `<div class="cp-pills">${kids.map(pill).join("")}</div>` : "") + sub + "</div>";
+    }).join("");
+    const q = v.find.trim().toLowerCase();
+    let hits = [];
+    if (q.length >= 2) hits = v.tree.all.filter((n) => n.depth > 1 && n.count > 0 && n.name.toLowerCase().includes(q)).sort((a, b) => (a.name.toLowerCase().startsWith(q) ? 0 : 1) - (b.name.toLowerCase().startsWith(q) ? 0 : 1) || b.count - a.count).slice(0, 8);
+    self._hits = hits;
+    const findPop = q.length >= 2 ? `<div class="cp-find-pop" role="listbox">${hits.length ? hits.map((n, i) => `<button type="button" class="cp-hit${i === v.findHi ? " hi" : ""}" data-cp="reveal" data-id="${escapeHtml(n.id)}"><span class="r1"><b>${escapeHtml(n.name)}</b><span class="tile-n">${fmt(n.count)}</span></span><span class="r2">${escapeHtml(String(n.path).split(" > ").slice(0, -1).join(" \u203a "))}</span></button>`).join("") : '<div class="sugg-empty">No topic matches</div>'}</div>` : "";
+    const units = model.unitCount();
+    const head = units ? `${fmt(model.total())} ${model.noun} \u00b7 ${units} ${units === 1 ? "pick" : "picks"}` : "Everything";
+    const presets = model.presets();
+    const presetHtml = presets.map((p, i) => `<button type="button" class="chip${p.active ? " on" : ""}" data-cp="preset" data-i="${i}">${escapeHtml(p.name)}${p.user ? `<span class="cp-preset-x" data-cp="preset-del" data-i="${i}" title="Delete preset" aria-label="Delete preset">\u00d7</span>` : ""}</button>`).join("");
+    const saveHtml = v.saving
+      ? `<span class="ifield" style="flex:none;width:200px;height:32px"><input class="cp-save-in" type="text" maxlength="40" placeholder="Preset name" aria-label="Preset name"></span>`
+      : `<button type="button" class="chip" data-cp="preset-save" style="border-style:dashed;color:var(--muted)" title="Save these picks as a preset">+ Save</button>`;
+    h.innerHTML =
+      `<div class="modal-head"><h2>Categories</h2><span class="tile-n cp-headn">${escapeHtml(model.headLabel ? model.headLabel() : "")}</span><span class="spacer"></span><span class="num" style="color:var(--muted);font-size:12.5px">${escapeHtml(head)}</span><button type="button" class="btn btn-ghost btn-icon" data-cp="close" aria-label="Close">${ic("x")}</button></div>` +
+      `<div class="cp-body"><nav class="cp-left${wOn ? " weights" : ""}" aria-label="Categories">${tiles}</nav>` +
+      `<section class="cp-right" aria-label="${escapeHtml(rt.name)}"><div class="cp-head"><div class="cp-title"><h3>${escapeHtml(rt.name)}</h3><p class="num">${fmt(rt.count)} ${model.noun} \u00b7 ${(rt.children || []).filter((n) => n.count > 0).length} subcategories</p></div>` +
+        `<button type="button" class="btn btn-sm" data-cp="toggle-root" data-id="${escapeHtml(rt.id)}">${model.state(rt.id) === "on" ? "Deselect all" : "Select all"}</button>` +
+        `<div class="cp-find"><label class="field">${ic("search", 15)}<input class="cp-find-in" type="text" value="${escapeHtml(v.find)}" placeholder="Find a topic\u2026" aria-label="Find a topic" autocomplete="off" spellcheck="false"></label>${findPop}</div></div>` +
+        `<div class="cp-scroll">${secs || '<div class="cp-empty">No subcategories</div>'}</div></section></div>` +
+      `<div class="cp-foot"><div class="foot-left" role="group" aria-label="Presets"><span style="flex:none;display:inline-flex;color:var(--muted)" title="Presets">${ic("bookmark", 17)}</span>${presetHtml}${saveHtml}</div>` +
+        `<div class="foot-right">${model.supportsWeights ? `<label class="cp-weights-lbl"><input type="checkbox" class="switch" data-cp="weights"${wOn ? " checked" : ""} aria-label="Weights">Weights</label>` : ""}` +
+        `<button type="button" class="btn" data-cp="clear">Clear</button><button type="button" class="btn btn-primary" data-cp="close">Done</button></div></div>`;
+    const sc2 = h.querySelector(".cp-scroll"); if (sc2) sc2.scrollTop = keep.top;
+    const lf2 = h.querySelector(".cp-left"); if (lf2) { lf2.scrollTop = keep.lt; lf2.scrollLeft = keep.ll; }
+    if (keep.findFocus) { const f = h.querySelector(".cp-find-in"); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }
+    if (v.saving) { const si = h.querySelector(".cp-save-in"); if (si) si.focus(); }
+  }
+  function reveal(id) {
+    const n = v.tree.byId.get(id); if (!n) return;
+    const rootName = n.path.split(" > ")[0];
+    v.focus = Math.max(0, v.tree.roots.findIndex((r) => r.name === rootName));
+    v.expand = n.depth >= 4 ? n.parentId : null;
+    if (model.state(id) !== "on") model.toggle(id);
+    v.find = ""; v.hl = id;
+    render();
+    setTimeout(() => { const el = host()?.querySelector(".cp-pill.hl, .cp-sec-name.hl"); if (el) el.scrollIntoView({ block: "center" }); }, 0);
+  }
+  function wire() {
+    const h = host(); if (!h || h._cpWired) return;
+    h._cpWired = true;
+    h.addEventListener("click", (e) => {
+      const t = e.target.closest("[data-cp]"); if (!t || !h.contains(t)) return;
+      const a = t.dataset.cp, id = t.dataset.id;
+      e.preventDefault(); e.stopPropagation();
+      if (a === "toggle") { v.hl = null; model.toggle(id); render(); }
+      else if (a === "toggle-root") { v.hl = null; model.toggle(id); render(); }
+      else if (a === "focus") { v.focus = +t.dataset.i; v.expand = null; v.hl = null; render(); h.querySelector(".cp-scroll") && (h.querySelector(".cp-scroll").scrollTop = 0); }
+      else if (a === "expand") { v.expand = v.expand === id ? null : id; render(); }
+      else if (a === "expand-to") { v.expand = id || null; render(); }
+      else if (a === "w") { model.setWeight(id, Math.max(0, model.weight(id) + (+t.dataset.d))); render(); }
+      else if (a === "clear") { v.hl = null; model.clear(); render(); }
+      else if (a === "close") model.close();
+      else if (a === "reveal") reveal(id);
+      else if (a === "preset") { const p = model.presets()[+t.dataset.i]; if (p) { p.apply(); v.hl = null; render(); } }
+      else if (a === "preset-del") { model.deletePreset(+t.dataset.i); render(); }
+      else if (a === "preset-save") { v.saving = true; render(); }
+    });
+    h.addEventListener("change", (e) => {
+      const t = e.target.closest('[data-cp="weights"]');
+      if (t) { e.stopPropagation(); model.setWeightsOn(t.checked); render(); }
+    });
+    h.addEventListener("input", (e) => {
+      if (e.target.classList.contains("cp-find-in")) { e.stopPropagation(); v.find = e.target.value; v.findHi = 0; render(); }
+    });
+    h.addEventListener("keydown", (e) => {
+      if (e.target.classList.contains("cp-find-in")) {
+        const hits = self._hits || [];
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); v.findHi = Math.max(0, Math.min(hits.length - 1, v.findHi + (e.key === "ArrowDown" ? 1 : -1))); render(); }
+        else if (e.key === "Enter") { e.preventDefault(); if (hits[v.findHi]) reveal(hits[v.findHi].id); }
+        else if (e.key === "Escape" && v.find) { e.preventDefault(); e.stopPropagation(); v.find = ""; render(); }
+      } else if (e.target.classList.contains("cp-save-in")) {
+        if (e.key === "Enter") { e.preventDefault(); const name = e.target.value.trim(); if (name) model.savePreset(name); v.saving = false; render(); }
+        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); v.saving = false; render(); }
+      }
+    });
+    h.addEventListener("focusout", (e) => {
+      if (e.target.classList.contains("cp-save-in") && v.saving) setTimeout(() => { if (v.saving && !h.contains(document.activeElement)) { v.saving = false; render(); } }, 0);
+    });
+  }
+  self.open = () => { v.find = ""; v.hl = null; v.saving = false; wire(); render(); };
+  self.render = () => { if (host() && host().isConnected) render(); };
+  return self;
+}
+
+// index for a fetched tree: byId, flat list with parentId (fetchCatTree adds parentId)
+function catTreeView(tree) {
+  if (!tree) return null;
+  if (!tree.all) { const all = []; const walk = (n) => { all.push(n); (n.children || []).forEach(walk); }; tree.roots.forEach(walk); tree.all = all; }
+  return tree;
+}
+
+document.querySelector("#cat-ovl .cat-modal")?.addEventListener("keydown", (e) => { if (e.key !== "Escape") e.stopPropagation(); });
+
+// ── practice model: the hidden checkbox tree ──
+let _practicePicker = null;
+function practicePicker() {
+  if (_practicePicker) return _practicePicker;
+  const nodeEl = (id) => document.querySelector(`#category-filters .cat-node[data-id="${CSS.escape(id)}"]`);
+  const fireTree = () => document.getElementById("category-filters")?.dispatchEvent(new Event("change", { bubbles: true }));
+  const model = {
+    noun: "questions",
+    host: () => document.getElementById("cat-picker"),
+    tree: () => { const t = catTreeView(_catIndex); if (t) model.noun = filtersMode() === "bonuses" ? "bonuses" : "tossups"; return t; },
+    headLabel: () => (filtersMode() === "bonuses" ? "Bonuses" : "Tossups"),
+    state(id) {
+      const el = nodeEl(id); const cb = _catRowBox(el);
+      if (!cb || !cb.checked) return "off";
+      return _catUnits(el).whole ? "on" : "partial";
+    },
+    toggle(id) {
+      const el = nodeEl(id); const cb = _catRowBox(el); if (!cb) return;
+      cb.checked = model.state(id) !== "on";
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    clear() { clearAllCategories(); },
+    supportsWeights: true,
+    weightsOn: () => !!document.getElementById("enable-cat-weights")?.checked,
+    setWeightsOn(on) { const ew = document.getElementById("enable-cat-weights"); if (ew && ew.checked !== !!on) { ew.checked = !!on; ew.dispatchEvent(new Event("change", { bubbles: true })); } },
+    weight(id) { const el = nodeEl(id); const w = parseFloat(_catW(el)?.value); return Number.isFinite(w) ? w : 10; },
+    setWeight(id, val) { const el = nodeEl(id); const w = _catW(el); if (!w) return; w.value = String(val); w.dispatchEvent(new Event("change", { bubbles: true })); },
+    unitCount: () => catSelectedUnits().length,
+    total() { const t = _catIndex; return catSelectedUnits().reduce((a, el) => a + ((t && t.byId.get(el.dataset.id)?.count) || 0), 0); },
+    presets() {
+      const kind = "practice-" + filtersMode();
+      const cur = JSON.stringify(catStateFromDom().ids.slice().sort());
+      const out = [{ name: "All", apply: () => { clearAllCategories(); model.setWeightsOn(false); }, active: !catSelectedUnits().length }];
+      if (_catIndex && !_catIndex.v1) out.push({ name: "ACF distribution", apply: () => applyAcfPreset() });
+      catPresetsLoad(kind).forEach((p, i) => out.push({ name: p.name, user: true, idx: i, active: JSON.stringify((p.state.ids || []).slice().sort()) === cur, apply: () => { applyCatState(catStateForTree(p.state)); model.setWeightsOn(!!p.useWeights); fireTree(); } }));
+      return out;
+    },
+    savePreset(name) {
+      const kind = "practice-" + filtersMode();
+      const list = catPresetsLoad(kind).filter((p) => p.name !== name);
+      list.push({ name, state: catStateFromDom(), useWeights: model.weightsOn() });
+      catPresetsSave(kind, list);
+    },
+    deletePreset(i) {
+      const p = model.presets()[i]; if (!p || !p.user) return;
+      const kind = "practice-" + filtersMode();
+      const list = catPresetsLoad(kind); list.splice(p.idx, 1); catPresetsSave(kind, list);
+    },
+    close() { closeCategoryOverlay(); },
+  };
+  function applyAcfPreset() {
+    const t = _catIndex; if (!t) return;
+    const ids = [], weights = {};
+    const tickWhole = (n) => { ids.push(n.id); (n.children || []).forEach(tickWhole); };
+    t.roots.forEach((r) => { const w = ACF_DISTRIBUTION[r.name]; if (w) { tickWhole(r); weights[r.id] = w; } });
+    applyCatState({ v: 1, ids, auto: [], weights });
+    model.setWeightsOn(true);
+    fireTree();
+  }
+  _practicePicker = CatPicker(model);
+  return _practicePicker;
+}
+// Live redraw when the tree changes underneath (multiplayer mirror, clear…).
+function refreshCatPicker() {
+  try { if (_practicePicker && isCatOverlayOpen()) _practicePicker.render(); } catch (e) {}
+  try { if (_searchPicker && document.getElementById("cat-ovl-search") && !document.getElementById("cat-ovl-search").classList.contains("hidden")) _searchPicker.render(); } catch (e) {}
+}
+
+// ── units pickers: whole-subtree picks held in memory. Database → Search and
+//    Frequency use the same picker, tree (_dbCatTree) and saved presets. ──
+let _searchPicker = null, _freqPicker = null;
+let _dbCatUnits = [];
+let _dbCatTree = null;
+function unitsSummary(units) {
+  const t = _dbCatTree; if (!t || !units.length) return "All";
+  const names = units.map((id) => t.byId.get(id)?.name).filter(Boolean);
+  return !names.length ? "All" : names.length <= 2 ? names.join(", ") : names.slice(0, 2).join(", ") + " +" + (names.length - 2);
+}
+function dbUnitsSummary() { return unitsSummary(_dbCatUnits); }
+// cfg: { overlayId, get() -> ids, set(ids), changed(), tree() -> view (default the
+//        Database tree), presetKind (saved presets bucket; null = none) }
+function makeUnitsPicker(cfg) {
+  const T = () => (cfg.tree ? cfg.tree() : _dbCatTree);
+  const presetKind = cfg.presetKind === undefined ? "search" : cfg.presetKind;
+  const U = () => new Set(cfg.get());
+  const anc = (id) => { const t = T(); const out = []; let n = t && t.byId.get(id); while (n && n.parentId) { out.push(n.parentId); n = t.byId.get(n.parentId); } return out; };
+  const isOn = (id) => { const u = U(); return u.has(id) || anc(id).some((a) => u.has(a)); };
+  const commit = (ids) => { cfg.set(ids); cfg.changed(); };
+  const model = {
+    noun: "questions",
+    host: () => document.querySelector("#" + cfg.overlayId + " .cat-picker"),
+    tree: () => catTreeView(T()),
+    headLabel: () => "",
+    state(id) {
+      if (isOn(id)) return "on";
+      const t = T(), n = t && t.byId.get(id);
+      return n && cfg.get().some((u) => { const un = t.byId.get(u); return un && un.path.startsWith(n.path + " > "); }) ? "partial" : "off";
+    },
+    toggle(id) {
+      const t = T(); if (!t) return;
+      const u = U();
+      const n = t.byId.get(id); if (!n) return;
+      if (isOn(id)) {
+        if (u.has(id)) u.delete(id);
+        else {
+          // a covered descendant: split the covering unit into its other branches
+          let a = anc(id).find((x) => u.has(x));
+          u.delete(a);
+          let node = t.byId.get(a);
+          while (node && node.id !== id) {
+            const next = (node.children || []).find((k) => k.id === id || n.path.startsWith(k.path + " > "));
+            (node.children || []).forEach((k) => { if (k !== next && k.count > 0) u.add(k.id); });
+            node = next;
+          }
+        }
+      } else {
+        [...u].forEach((x) => { const xn = t.byId.get(x); if (xn && xn.path.startsWith(n.path + " > ")) u.delete(x); });
+        u.add(id);
+        let node = n;
+        while (node && node.parentId) {
+          const par = t.byId.get(node.parentId);
+          const kids = (par.children || []).filter((k) => k.count > 0);
+          if (kids.every((k) => u.has(k.id))) { kids.forEach((k) => u.delete(k.id)); u.add(par.id); node = par; } else break;
+        }
+      }
+      commit([...u]);
+    },
+    clear() { commit([]); },
+    supportsWeights: false, weightsOn: () => false, setWeightsOn() {}, weight: () => 10, setWeight() {},
+    unitCount: () => cfg.get().length,
+    total() { const t = T(); return cfg.get().reduce((a, id) => a + ((t && t.byId.get(id)?.count) || 0), 0); },
+    presets() {
+      const cur = JSON.stringify(cfg.get().slice().sort());
+      const out = [{ name: "All", apply: () => commit([]), active: !cfg.get().length }];
+      if (presetKind) catPresetsLoad(presetKind).forEach((p, i) => out.push({ name: p.name, user: true, idx: i, active: JSON.stringify((p.units || []).slice().sort()) === cur, apply: () => { const t = T(); commit((p.units || []).filter((id) => t && t.byId.has(id))); } }));
+      return out;
+    },
+    savePreset(name) { if (!presetKind) return; const list = catPresetsLoad(presetKind).filter((p) => p.name !== name); list.push({ name, units: cfg.get().slice() }); catPresetsSave(presetKind, list); },
+    deletePreset(i) { const p = model.presets()[i]; if (!p || !p.user || !presetKind) return; const list = catPresetsLoad(presetKind); list.splice(p.idx, 1); catPresetsSave(presetKind, list); },
+    close() { document.getElementById(cfg.overlayId)?.classList.add("hidden"); },
+  };
+  return CatPicker(model);
+}
+function searchPicker() {
+  return _searchPicker || (_searchPicker = makeUnitsPicker({
+    overlayId: "cat-ovl-search", get: () => _dbCatUnits, set: (ids) => { _dbCatUnits = ids; },
+    changed: () => { const b = document.getElementById("db-cat-btn-val"); if (b) b.textContent = dbUnitsSummary(); dbSearchSoon(true); },
+  }));
+}
+function freqPicker() {
+  // Rebuilding a frequency list takes a moment, so it runs once the window closes.
+  return _freqPicker || (_freqPicker = makeUnitsPicker({
+    overlayId: "cat-ovl-freq", get: () => _freqUnits, set: (ids) => { _freqUnits = ids; },
+    changed: () => { const b = document.getElementById("freq-cat-val"); if (b) b.textContent = unitsSummary(_freqUnits); },
+  }));
+}
+async function openUnitsPicker(overlayId, pk, onClose, loadTree) {
+  let o = document.getElementById(overlayId);
+  if (!o) {
+    o = document.createElement("div");
+    o.id = overlayId;
+    o.className = "qb-overlay settings-ovl cat-ovl hidden";
+    o.setAttribute("role", "dialog"); o.setAttribute("aria-modal", "true"); o.setAttribute("aria-label", "Categories");
+    o.innerHTML = '<div class="settings-modal cat-modal" tabindex="-1"><div class="cat-picker"></div></div>';
+    document.getElementById("app").appendChild(o);
+    o.querySelector(".cat-modal").addEventListener("keydown", (e) => { if (e.key !== "Escape") e.stopPropagation(); });
+    // closing by backdrop, Esc or Done all just add .hidden
+    new MutationObserver(() => { if (o.classList.contains("hidden") && o._onClose) { const f = o._onClose; o._onClose = null; f(); } }).observe(o, { attributes: true, attributeFilter: ["class"] });
+  }
+  if (loadTree) { try { await loadTree(); } catch (e) {} }
+  else { try { _dbCatTree = catTreeView(await fetchCatTree("tossups")); } catch (e) { _dbCatTree = null; } }
+  o._onClose = onClose || null;
+  o.classList.remove("hidden");
+  if (!pk.model._noun) pk.model.noun = "tossups";
+  pk.open();
+  try { o.querySelector(".cat-modal").focus({ preventScroll: true }); } catch (e) {}
+}
+function openSearchCategories() { return openUnitsPicker("cat-ovl-search", searchPicker()); }
+function openFreqCategories() {
+  const before = JSON.stringify(_freqUnits.slice().sort());
+  return openUnitsPicker("cat-ovl-freq", freqPicker(), () => {
+    if (JSON.stringify(_freqUnits.slice().sort()) !== before) { _freqPage = 0; runFrequency(); }
+  });
+}
+
+// ── CategoryButton: the one category selector, for every screen and plugin
+//    (host.categoryPicker). A button that reads "Categories  All ▾" (or the
+//    picks) and opens the two-pane picker. Picks are whole subtrees: node ids
+//    of the question category tree, or of a caller's own tree.
+// opts: { selected: [ids], onChange(ids), live (report every toggle; default:
+//         once, when the window closes), tree: [{id, name, count, children}]
+//         (own tree; default the question tree), type: "tossups"|"bonuses"
+//         (counts), label ("Categories"), noun, presets (bucket name, or false) }
+// returns { el, get(), set(ids), paths(), matches(path), open(), summary(), tree(), ready }
+let _catBtnSeq = 0;
+function normCatTree(roots) {
+  const byId = new Map(), byPath = new Map(), all = [];
+  const walk = (n, parent, depth) => {
+    const node = { id: String(n.id), name: String(n.name || n.id), count: Number(n.count) || 0, definition: n.definition || "", depth };
+    node.path = parent ? parent.path + " > " + node.name : node.name;
+    node.parentId = parent ? parent.id : null;
+    byId.set(node.id, node); byPath.set(node.path, node); all.push(node);
+    node.children = (n.children || []).map((c) => walk(c, node, depth + 1));
+    if (!node.count && node.children.length) node.count = node.children.reduce((a, c) => a + c.count, 0);
+    return node;
+  };
+  const r = (roots || []).map((n) => walk(n, null, 1));
+  return { roots: r, byId, byPath, all };
+}
+function CategoryButton(btn, opts) {
+  opts = opts || {};
+  const el = btn || document.createElement("button");
+  if (!btn) el.type = "button";
+  el.classList.add("btn", "cat-launch");
+  const id = "cat-ovl-u" + (++_catBtnSeq);
+  let units = (opts.selected || []).map(String);
+  let view = null;
+  const custom = Array.isArray(opts.tree);
+  const loadTree = async () => {
+    if (view) return view;
+    view = custom ? normCatTree(opts.tree) : catTreeView(await fetchCatTree(opts.type === "bonuses" ? "bonuses" : "tossups"));
+    return view;
+  };
+  const summary = () => {
+    if (!units.length || !view) return "All";
+    const names = units.map((u) => view.byId.get(u)?.name).filter(Boolean);
+    return !names.length ? "All" : names.length <= 2 ? names.join(", ") : names.slice(0, 2).join(", ") + " +" + (names.length - 2);
+  };
+  const label = opts.label != null ? opts.label : "Categories";   // "" = just the picks (a labelled row)
+  const paint = () => { el.innerHTML = `${label ? escapeHtml(label) + " " : ""}<span class="accent-val">${escapeHtml(summary())}</span>${ic("down", 14)}`; el.setAttribute("aria-label", "Categories: " + summary()); };
+  const fire = () => { try { if (opts.onChange) opts.onChange(units.slice()); } catch (e) { console.error(e); } };
+  const pk = makeUnitsPicker({
+    overlayId: id, get: () => units, set: (ids) => { units = ids; }, tree: () => view,
+    presetKind: opts.presets === false ? null : (opts.presets || (custom ? null : "search")),
+    changed: () => { paint(); if (opts.live) fire(); },
+  });
+  if (opts.noun) { pk.model.noun = opts.noun; pk.model._noun = true; }
+  const api = {
+    el,
+    get: () => units.slice(),
+    set(ids) { units = (ids || []).map(String); paint(); },
+    summary,
+    tree: () => view,
+    paths: () => units.map((u) => view && view.byId.get(u)?.path).filter(Boolean),
+    // a record's category path lies inside the picks (always true with none)
+    matches(path) {
+      if (!units.length) return true;
+      const p = String(path || "");
+      return api.paths().some((u) => p === u || p.startsWith(u + " > "));
+    },
+    open() {
+      const before = JSON.stringify(units.slice().sort());
+      return openUnitsPicker(id, pk, () => { paint(); if (!opts.live && JSON.stringify(units.slice().sort()) !== before) fire(); }, loadTree);
+    },
+  };
+  el.addEventListener("click", (e) => { e.preventDefault(); api.open(); });
+  paint();
+  api.ready = loadTree().then(() => { paint(); return api; }).catch(() => api);
+  return api;
+}
 // Custom lists, sets and packet files decide their own questions.
 function categoriesLocked() { return ["custom", "set", "import"].includes($("#mode-select")?.value); }
-// The launcher always reads just "Categories"; only its locked state and the
-// tree's weights class are live.
+// The launcher summarizes the selection ("All", up to two names + N, or "Set by
+// the mode" when locked) and keeps the tree's weights class in sync.
 function refreshCategorySummary() {
   try {
     const tree = document.getElementById("category-filters");
     if (tree) tree.classList.toggle("weights-on", !!document.getElementById("enable-cat-weights")?.checked);
+    const sum = document.getElementById("cat-summary");
+    if (sum) {
+      const locked = categoriesLocked();
+      const names = locked ? [] : getSelectedCategoryNames();
+      sum.textContent = locked ? "Set by the mode" : !names.length ? "All" : names.length <= 2 ? names.join(", ") : names.slice(0, 2).join(", ") + " +" + (names.length - 2);
+    }
+    if (typeof refreshCatPicker === "function") refreshCatPicker();
     const b = document.getElementById("btn-open-categories");
     if (!b) return;
     const locked = categoriesLocked();
@@ -2438,11 +3498,22 @@ window.QB?.on?.("screen:change", () => {
 // a hotkey rebound to Ctrl/Cmd+K must not start a session behind the backdrop.
 // Default actions (typing, copy/paste, Space on a checkbox, menu accelerators)
 // are untouched — only propagation stops. Tab wraps inside the modal.
+// The open picker window: the practice one (#cat-ovl) or any other category
+// picker (Search, Frequency, Stats, Review, plugins — CategoryButton).
+function openCatPickerOverlay() {
+  if (isCatOverlayOpen()) return document.getElementById("cat-ovl");
+  return [...document.querySelectorAll(".cat-ovl:not(.hidden)")].find((o) => o.id !== "cat-ovl" && o.getClientRects().length > 0) || null;
+}
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" || !isCatOverlayOpen()) return;
+  const ovl = e.key === "Escape" ? null : openCatPickerOverlay();
+  if (!ovl) return;
   if (["text-bigger", "text-smaller", "text-reset"].some((a) => matchesHotkey(e, a))) return;
+  // Keys typed INSIDE the window reach their target (Find box arrows/Enter,
+  // the preset name); the modal's own bubble listener below stops them there.
+  const modal0 = ovl.querySelector(".cat-modal");
+  if (modal0 && modal0.contains(e.target) && e.key !== "Tab") return;
   if (e.key === "Tab") {
-    const modal = document.querySelector("#cat-ovl .cat-modal");
+    const modal = ovl.querySelector(".cat-modal");
     const f = modal ? [...modal.querySelectorAll("button, input, select")].filter((x) => !x.disabled && x.getClientRects().length) : [];
     if (f.length) {
       const i = f.indexOf(document.activeElement);
@@ -2690,8 +3761,8 @@ function setMode(mode) {
   state.mode = mode;
   state._practiceBase = mode;
   const type = mode === "tossups" ? "tossups" : "bonuses";
-  $("#practice-title").textContent =
-    `PRACTICE: ${mode.toUpperCase()}`;
+  $("#practice-title").textContent = mode === "bonuses" ? "Bonuses" : "Tossups";
+  updateTopbar();
   // Two async chains both call restoreFilterState; apply a pending packet-play
   // only after BOTH settle, or the later restore clobbers the selection.
   Promise.all([
@@ -2779,6 +3850,7 @@ function startSession() {
     ? keyLabelHtml("buzz", "Buzz")
     : keyLabelHtml("start-skip", "Skip");
   qbEmit("session:start", { sessionId: state.sessionId, mode: state.mode });
+  syncDrawerStart();
   nextQuestion();
 }
 
@@ -2818,6 +3890,7 @@ function endSession() {
   $("#btn-start-session").innerHTML = keyLabelHtml("start-skip", "Start Session");
   resetQuestionUI();
   updateLiveStats();
+  syncDrawerStart();
   qbEmit("session:end", { sessionId: state.sessionId });
 }
 
@@ -2996,6 +4069,7 @@ function _randomQuestionParams(filters) {
   if (filters.starredOnly) params.set("starredOnly", "true");
   if (filters.yearMin) params.set("yearMin", filters.yearMin);
   if (filters.yearMax) params.set("yearMax", filters.yearMax);
+  if (filters.tags && filters.tags.length) params.set("tags", JSON.stringify(filters.tags.map((t) => (t.id ? { f: t.f, v: t.v, x: t.x ? 1 : 0, id: t.id } : { f: t.f, v: t.v, x: t.x ? 1 : 0 }))));
   params.set("random", "1");
   return params;
 }
@@ -3178,6 +4252,16 @@ function _starredPasses(q, f) {
   if (f.difficulties && f.difficulties.length && q.difficulty != null && f.difficulties.map(String).indexOf(String(q.difficulty)) < 0) return false;
   if (f.yearMin && q.set_year && q.set_year < f.yearMin) return false;
   if (f.yearMax && q.set_year && q.set_year > f.yearMax) return false;
+  if (f.tags && f.tags.length) {
+    const qt = questionTags(q) || {};
+    const path = qPathOf(q);
+    for (const t of f.tags) {
+      const has = t.f === "subject"
+        ? !!(t.p && (path === t.p || path.startsWith(t.p + " > ")))
+        : Array.isArray(qt[t.f]) && qt[t.f].includes(t.v);
+      if (t.x ? has : !has) return false;
+    }
+  }
   return true;
 }
 async function serveStarredQuestion(filters) {
@@ -3185,7 +4269,7 @@ async function serveStarredQuestion(filters) {
   const sig = ["starred", type,
     (filters.categories || []).join(","), (filters.subcategories || []).join(","),
     (filters.alternateSubcategories || []).join(","), (filters.difficulties || []).join(","),
-    filters.yearMin, filters.yearMax].join("::");
+    filters.yearMin, filters.yearMax, JSON.stringify(filters.tags || [])].join("::");
   if (state._starredSig !== sig || !state._starredQueue) {
     let list = [], failed = false;
     try {
@@ -3243,7 +4327,7 @@ function restoreTossupDisplay() {
 
 function switchPracticeType(type, label) {
   state.mode = type;
-  $("#practice-title").textContent = (label || "PACKET GAME") + " \u2014 " + (type === "bonuses" ? "BONUS" : "TOSSUP");
+  $("#practice-title").textContent = type === "bonuses" ? (state._practiceBase === "tossups" ? "Tossups \u00b7 bonus" : "Bonuses") : "Tossups";
   const bonusArea = $("#bonus-parts-area");
   const questionArea = $("#question-area");
   if (type === "bonuses") {
@@ -3296,12 +4380,17 @@ function renderQuestion(question) {
 
   const diffName = DIFFICULTY_NAMES[parseInt(diffLabel)] || "";
   $("#question-meta").classList.toggle("hidden", !state.settings.showQuestionMeta);
+  // Category, difficulty and year stay hidden while the question is read; the
+  // result (renderResultTags) reveals them.
+  $("#question-meta").classList.add("qm-reading");
   $("#question-meta").innerHTML = `
-    ${questionCategoryHtml(question)}${questionWarnHtml(question)}
-    <span>Diff ${diffLabel}${diffName ? " \u00b7 " + escapeHtml(diffName) : ""}</span>
-    <span>${escapeHtml(setInfo)}</span>
+    <span class="q-num">Question ${state.questionCount || 1}</span>
+    <span class="qm-info">${catBadgeHtml(qPathOf(question))}${questionWarnHtml(question)}
+    <span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[parseInt(diffLabel)] || diffName)}">Diff ${escapeHtml(String(diffLabel))}</span>
+    ${yearBadgeHtml(question.set_year)}</span>
+    <span class="spacer q-spacer"></span>
     <span class="star-btn save-plus" id="save-indicator" title="Save to review / folders">+</span>
-    <span class="star-btn" id="star-indicator" data-id="${question.id}" data-type="${isTossup ? "tossup" : "bonus"}">
+    <span class="star-btn" id="star-indicator" data-id="${question.id}" data-type="${isTossup ? "tossup" : "bonus"}" title="Star">
       ${getStarChar(question.id, isTossup ? "tossup" : "bonus")}
     </span>
   `;
@@ -3707,7 +4796,8 @@ function markDeadQuestion(text) {
   area.classList.remove("hidden");
   banner.className = "result-banner dead";
   banner.textContent = "DEAD (0 pts)";
-  answerDiv.innerHTML = `Correct: <span class="actual">${answerLineHtml(state.currentQuestion?.answer, state.currentQuestion?.answer_sanitized || "")}</span>`;
+  answerDiv.innerHTML = `<div class="ra-row"><span class="ra-k">Answer</span><span class="actual">${answerLineHtml(state.currentQuestion?.answer, state.currentQuestion?.answer_sanitized || "")}</span></div>`;
+  renderResultTags(state.currentQuestion);
   $("#buzz-area").classList.add("hidden");
   state.resultAreaVisible = true;
   state.lastResult = { correct: false, isPower: false, points: 0, celerity: 1, answer: state.currentQuestion?.answer_sanitized, userAnswer: "", questionId: state.currentQuestion?.id, buzzPosition: state.buzzPosition, origBuzzPosition: displayPosToOriginal(state.buzzPosition || 0), category: state.currentQuestion?.category };
@@ -4196,23 +5286,31 @@ async function loadStarredIds() {
 
 function qcardHtml(o) {
   const cls = "qcard " + (o.compact ? "compact" : "expanded") + (o.extraClass ? " " + o.extraClass : "");
-  const meta = [
-    escapeHtml(o.category || "?") +
-      (o.subcategory ? " / " + escapeHtml(o.subcategory) : "") +
-      (o.altSub ? " \u00b7 " + escapeHtml(o.altSub) : ""),
-    o.year ? String(o.year) : null,
-    o.difficulty !== undefined && o.difficulty !== null && o.difficulty !== ""
-      ? `<span title="${escapeHtml(DIFFICULTY_NAMES[parseInt(o.difficulty)] || "")}">Diff ${escapeHtml(String(o.difficulty))}</span>`
-      : null,
-  ].filter(Boolean).map((x) => x.startsWith("<span") ? x : `<span>${x}</span>`).join("");
+  const q = o.question || null;
+  const path = o.path || (q ? qPathOf(q) : [o.category, o.subcategory, o.altSub].filter(Boolean).join(" > "));
+  const year = o.year != null ? o.year : (q ? q.set_year : null);
+  const diff = o.difficulty !== undefined && o.difficulty !== null && o.difficulty !== "" ? o.difficulty : (q ? q.difficulty : null);
+  const tags = q ? tagChipsHtml(q, o.tagsWhere || null) : "";
+  if (o.titleHtml != null) {
+    // Database cards: the answer is the title; category, year, source and tags
+    // sit under the text.
+    const src = o.src != null ? o.src : (q && q.set_name ? q.set_name : "");
+    return `<div class="${cls}"${o.attrs || ""}>
+      <div class="qcard-head"><span class="qcard-chev" aria-hidden="true"></span><div class="qcard-title"><span class="qcard-ans">${o.titleHtml}</span>${o.kindHtml ? `<span class="qcard-kind">${o.kindHtml}</span>` : ""}</div><span class="qcard-side">${o.sideHtml || ""}</span></div>
+      <div class="qcard-body">${o.bodyHtml || ""}</div>
+      <div class="qcard-tags qmeta-row">${catBadgeHtml(path)}${yearBadgeHtml(year)}${src ? `<span class="src">${escapeHtml(src)}</span>` : ""}${tags ? '<span class="vsep" aria-hidden="true"></span>' + tags : ""}</div>
+    </div>`;
+  }
+  const diffBadge = diff !== null && diff !== undefined && diff !== "" ? `<span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[parseInt(diff)] || "")}">Diff ${escapeHtml(String(diff))}</span>` : "";
   return `<div class="${cls}"${o.attrs || ""}>
     <div class="qcard-head">
       <span class="qcard-chev" aria-hidden="true"></span>
-      <span class="qcard-meta">${meta}</span>
+      <span class="qcard-meta">${catBadgeHtml(path)}${yearBadgeHtml(year)}${diffBadge}</span>
       <span class="qcard-side">${o.sideHtml || ""}</span>
     </div>
     ${o.answerHtml != null ? `<div class="qcard-answer">${o.answerHtml}</div>` : ""}
     <div class="qcard-body">${o.bodyHtml || ""}</div>
+    ${tags ? `<div class="qcard-tags qmeta-row">${tags}</div>` : ""}
   </div>`;
 }
 
@@ -4231,8 +5329,8 @@ document.addEventListener("click", (e) => {
 
 const DEFAULT_APPEARANCE = {
   accent: {
-    gold: ["#dfb347", "#dfb34733"],
     blue: ["#58a6ff", "#1f6feb33"],
+    gold: ["#dfb347", "#dfb34733"],
     green: ["#3fb950", "#2ea04333"],
     cyan: ["#2dd4bf", "#2dd4bf33"],
     magenta: ["#d65bd6", "#d65bd633"],
@@ -4305,7 +5403,7 @@ function applyDefaultAppearance() {
     else { root.removeProperty("--accent"); root.removeProperty("--accent-dim"); }
     if (!theme) root.removeProperty("--font");
   } else {
-    const hex = state.settings.appCustomAccent || "#dfb347";
+    const hex = state.settings.appCustomAccent || "#58a6ff";
     root.setProperty("--accent", hex);
     root.setProperty("--accent-dim", hexToDim(hex));
     const font = DEFAULT_APPEARANCE.fonts[state.settings.appFont];
@@ -4321,7 +5419,7 @@ $("#app-btngap")?.addEventListener("change", (e) => { state.settings.appBtnGap =
 function appearanceLabel(k, kind) {
   const fontLabels = { default: "Default", mono: "Monospace", sans: "Sans-serif", serif: "Serif", rounded: "Rounded" };
   if (kind === "font" && fontLabels[k]) return fontLabels[k];
-  if (k === "gold") return "Gold (default)";
+  if (k === "blue") return "Blue (default)";
   return k.charAt(0).toUpperCase() + k.slice(1);
 }
 function rebuildAppearanceOptions() {
@@ -4342,23 +5440,49 @@ window.QB?.on?.("theme:change", () => applyDefaultAppearance());
 rebuildAppearanceOptions();
 applyDefaultAppearance();
 
+// opts: { yes, no, title, detail, danger }. Enter confirms, Esc / backdrop cancel.
 function confirmDialog(message, onYes, opts) {
   opts = opts || {};
   document.getElementById("confirm-dialog")?.remove();
   const el = document.createElement("div");
   el.id = "confirm-dialog";
   el.className = "qb-overlay confirm-overlay";
-  el.innerHTML = `<div class="confirm-box"><div class="confirm-msg">${escapeHtml(message)}</div>
-    <div class="confirm-actions"><button class="btn btn-primary" id="cf-yes">${escapeHtml(opts.yes || "Delete")}</button>
-    <button class="btn btn-ghost" id="cf-no">Cancel</button></div></div>`;
-  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  el.setAttribute("role", "alertdialog"); el.setAttribute("aria-modal", "true");
+  el.innerHTML = `<div class="confirm-box">${opts.title ? `<div class="confirm-title">${escapeHtml(opts.title)}</div>` : ""}<div class="confirm-msg">${escapeHtml(message)}</div>` +
+    (opts.detail ? `<div class="confirm-detail">${escapeHtml(opts.detail)}</div>` : "") +
+    `<div class="confirm-actions"><button class="btn btn-ghost" id="cf-no">${escapeHtml(opts.no || "Cancel")}</button>` +
+    `<button class="btn ${opts.danger ? "btn-danger" : "btn-primary"}" id="cf-yes">${escapeHtml(opts.yes || "Delete")}</button></div></div>`;
+  const close = () => animateRemove(el);
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
   document.body.appendChild(el);
-  el.querySelector("#cf-yes").onclick = () => { el.remove(); try { onYes(); } catch (e) { console.error(e); } };
-  el.querySelector("#cf-no").onclick = () => el.remove();
+  el.querySelector("#cf-yes").onclick = () => { close(); try { onYes(); } catch (e) { console.error(e); } };
+  el.querySelector("#cf-no").onclick = close;
+}
+// Removes an overlay / menu after its closing animation (.qb-leaving), so
+// things that are created on open and dropped on close still animate out.
+function animateRemove(el) {
+  if (!el || !el.isConnected || el.classList.contains("qb-leaving")) return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { el.remove(); return; }
+  el.classList.add("qb-leaving");
+  el.style.pointerEvents = "none";
+  let done = false;
+  const fin = () => { if (done) return; done = true; el.remove(); };
+  el.addEventListener("animationend", (e) => { if (e.target === el) fin(); });
+  setTimeout(fin, 260);
+}
+// End session asks first (the button and the hotkey); Enter confirms.
+function confirmEndSession(after) {
+  if (!state.sessionActive) { if (after) after(); return; }
+  const heard = (state.sessionHistory || []).length, score = state.totalPoints || 0;
+  confirmDialog("End this session?", () => { endSession(); if (after) after(); }, {
+    yes: "End session", no: "Keep playing", danger: true,
+    detail: heard ? `${heard} ${heard === 1 ? "question" : "questions"} · ${score} ${score === 1 ? "point" : "points"}` : "",
+  });
 }
 
 function closeSaveMenu() {
-  document.getElementById("save-menu")?.remove();
+  const m = document.getElementById("save-menu");
+  if (m) { m.removeAttribute("id"); animateRemove(m); }   // the next menu reuses the id at once
   // Always disarm the click-away closer. With {once:true} alone, choosing a
   // menu item (which stops propagation) left it armed — and it then instantly
   // swallowed the NEXT save menu you tried to open.
@@ -4466,9 +5590,9 @@ function openItemReviewViewer() {
       </div>
       <div class="review-viewer-list">${list.length ? cards : '<div class="text-muted" style="padding:12px">No saved items yet</div>'}</div>
     </div>`;
-  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  el.addEventListener("click", (ev) => { if (ev.target === el) animateRemove(el); });
   document.body.appendChild(el);
-  el.querySelector("#ir-close").onclick = () => el.remove();
+  el.querySelector("#ir-close").onclick = () => animateRemove(el);
   const fl = el.querySelector("#ir-flash"); if (fl) fl.onclick = () => { el.remove(); reviewItemsAsFlashcards(); };
   const cl = el.querySelector("#ir-clear"); if (cl) cl.onclick = () => confirmDialog("Clear all saved review items?", () => { itemReviewSave([]); el.remove(); }, { yes: "Clear" });
   el.querySelectorAll(".ir-remove").forEach((b) => {
@@ -4715,6 +5839,7 @@ function histTrackHtml(e) {
 }
 
 function renderHistoryPanel() {
+  try { renderSessionMini(); } catch (e) {}
   const panel = document.getElementById("history-panel");
   if (panel) {
     panel.style.display = state.sessionHistory.length ? "" : "none";
@@ -4741,7 +5866,7 @@ function renderHistoryPanel() {
   if (hf && (hf.res || hf.type || hf.cat || hf.q)) {
     entries = entries.filter((e) => {
       if (hf.type && e.type !== hf.type) return false;
-      if (hf.cat && (e.question?.category || "") !== hf.cat) return false;
+      if (hf.cat && !hf.cat.matches(qPathOf(e.question))) return false;
       if (hf.res) {
         const pts = e.points || 0;
         const res = e.isPower ? "power" : (e.correct ? "correct" : pts < 0 ? "neg" : "zero");
@@ -4778,6 +5903,8 @@ function renderHistoryPanel() {
     const yourAnswer = e.userAnswer ?? (e.userAnswers ? e.userAnswers.join(", ") : "(skipped)");
     return qcardHtml({
       compact: isCompact,
+      question: e.question || null,
+      tagsWhere: "history",
       category: e.question?.category,
       subcategory: e.question?.subcategory,
       altSub: e.question?.alternate_subcategory,
@@ -4883,10 +6010,11 @@ function renderTossupResult() {
   const unsure = r.unsure && !state.resultOverridden;
   const markTip = keyDisplay("mark-correct") + " marks it correct, " + keyDisplay("mark-incorrect") + " marks it incorrect";
   answerDiv.innerHTML = `
-    Your answer<span class="qb-info" data-tip="${escapeHtml(unsure ? "This answer line accepts equivalents and your answer matched none of the listed ones, so judge it yourself: " + markTip : markTip)}">i</span>: <strong>${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">UNSURE</span>' : ''}${state.resultOverridden ? ' <span style="color:var(--yellow)">(overridden)</span>' : ''}
-    ${r.correct ? "" : `<br>Correct: <span class="actual">${answerLineHtml(state.currentQuestion?.answer, r.answer || "")}</span>`}
-    <br>Celerity: ${celPct}% remaining
+    <div class="ra-row"><span class="ra-k">Your answer</span><strong class="ra-you ${r.correct ? "ok" : "bad"}">${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">UNSURE</span>' : ''}${state.resultOverridden ? ' <span class="ra-over">overridden</span>' : ''}<span class="qb-info" data-tip="${escapeHtml(unsure ? "This answer line accepts equivalents and your answer matched none of the listed ones, so judge it yourself: " + markTip : markTip)}">i</span><span class="ra-keys"><kbd>${escapeHtml(keyDisplay("mark-correct"))}</kbd><kbd>${escapeHtml(keyDisplay("mark-incorrect"))}</kbd> change verdict</span></div>
+    <div class="ra-row"><span class="ra-k">Answer</span><span class="actual">${answerLineHtml(state.currentQuestion?.answer, r.answer || state.currentQuestion?.answer_sanitized || "")}</span></div>
+    <div class="ra-row ra-cel"><span class="ra-k">Celerity</span><span>${celPct}% remaining</span></div>
   `;
+  renderResultTags(state.currentQuestion);
 
   setTimeout(() => {
     if (!state.resultAreaVisible) return;
@@ -5061,6 +6189,7 @@ function displayBonusResult(result, userAnswers) {
 
   const actualAnswers = result.answers || [];
   answerDiv.innerHTML = "";
+  renderResultTags(state.currentQuestion);
 
   state.sessionHistory.push({
     id: state.currentQuestion?.id,
@@ -5095,7 +6224,7 @@ function updateSessionStats(result) {
     if (result.correct) state.correct++;
   }
 
-  $("#session-score").textContent = `Score: ${state.totalPoints}`;
+  $("#session-score").textContent = `${state.totalPoints}`;
   updateLiveStats();
 }
 
@@ -5151,6 +6280,8 @@ function resetQuestionUI() {
   $("#buzz-area").classList.add("hidden");
   $("#result-area").classList.add("hidden");
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
+  { const rt = document.getElementById("result-tags"); if (rt) rt.innerHTML = ""; }
+  showResultActions(false);
   $("#bonus-parts-area").classList.add("hidden");
   state.bonusAwait = null;
   $("#bonus-next-hint")?.classList.add("hidden");
@@ -5210,14 +6341,14 @@ function openHiddenManager() {
         <button class="btn btn-primary" id="hid-close">Close</button>
       </div>
     </div>`;
-    el.querySelector("#hid-close").onclick = () => el.remove();
+    el.querySelector("#hid-close").onclick = () => animateRemove(el);
     const clr = el.querySelector("#hid-clear");
     if (clr) clr.onclick = () => confirmDialog("Unhide all hidden questions?", () => { hiddenQsSave({}); render(); }, { yes: "Unhide all" });
     el.querySelectorAll(".hid-un").forEach((b) => {
       b.onclick = () => { const m2 = hiddenQs(); delete m2[b.dataset.k]; hiddenQsSave(m2); render(); };
     });
   };
-  el.addEventListener("click", (ev) => { if (ev.target === el) el.remove(); });
+  el.addEventListener("click", (ev) => { if (ev.target === el) animateRemove(el); });
   render();
   document.body.appendChild(el);
 }
@@ -5410,10 +6541,7 @@ $("#btn-start-session").addEventListener("click", () => {
   else if (state.mode === "bonuses" && state.settings.allowSkips) skipQuestion();
 });
 
-$("#btn-end-session").addEventListener("click", () => {
-  endSession();
-  goHome();
-});
+$("#btn-end-session").addEventListener("click", () => confirmEndSession(goHome));
 
 function exportSessionHistory() {
   // Export whatever the overlay is currently showing, so a plugin-supplied
@@ -5473,28 +6601,29 @@ function openHistoryOverlay(opts) {
       <div class="rv-filterbar">
         <select id="hist-fres" class="mode-input"><option value="">All results</option><option value="power">Powers</option><option value="correct">Correct</option><option value="neg">Negs</option><option value="zero">Dead / skipped / wrong</option></select>
         <select id="hist-ftype" class="mode-input"><option value="">Tossups + Bonuses</option><option value="tossup">Tossups</option><option value="bonus">Bonuses</option></select>
-        <select id="hist-fcat" class="mode-input"><option value="">All categories</option>${[...new Set(src.map((e) => e.question?.category).filter(Boolean))].sort().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select>
+        <button type="button" id="hist-fcat-btn"></button>
         <input type="text" id="hist-fq" class="mode-input" placeholder="Search answers / questions" autocomplete="off">
       </div>
       <div class="review-viewer-list history-list" id="history-list"></div>
     </div>`;
   // Closing must drop the borrowed list, or the next solo open would still be
   // showing the plugin's entries.
-  const close = () => { _histEntries = null; el.remove(); };
+  const close = () => { _histEntries = null; animateRemove(el); };
   el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
   document.body.appendChild(el);
-  _histFilter = { res: "", type: "", cat: "", q: "" };
+  _histFilter = { res: "", type: "", cat: null, q: "" };
   _moreShown.delete("hist");
+  const hcat = CategoryButton(el.querySelector("#hist-fcat-btn"), { live: true, onChange: () => syncF() });
   const syncF = () => {
     _histFilter = {
       res: el.querySelector("#hist-fres").value,
       type: el.querySelector("#hist-ftype").value,
-      cat: el.querySelector("#hist-fcat").value,
+      cat: hcat.get().length ? hcat : null,
       q: el.querySelector("#hist-fq").value.trim().toLowerCase(),
     };
     renderHistoryPanel();
   };
-  ["hist-fres", "hist-ftype", "hist-fcat"].forEach((id) => el.querySelector("#" + id).addEventListener("change", syncF));
+  ["hist-fres", "hist-ftype"].forEach((id) => el.querySelector("#" + id).addEventListener("change", syncF));
   el.querySelector("#hist-fq").addEventListener("input", syncF);
   el.querySelector("#btn-history-close").onclick = close;
   el.querySelector("#btn-history-export").onclick = exportSessionHistory;
@@ -5507,9 +6636,16 @@ $("#btn-history-open")?.addEventListener("click", openHistoryOverlay);
 
 $("#btn-home").addEventListener("click", goBack);
 $("#btn-stats-home").addEventListener("click", goBack);
-$("#stats-cat-filter")?.addEventListener("change", () => loadStats());
+// One category picker drives the whole Stats page (numbers, graphs, breakdown).
+let _statsCat = null;
+function statsCatIds() { return _statsCat ? _statsCat.get() : []; }
+function initStatsCategories() {
+  const b = document.getElementById("stats-cat-btn");
+  if (!b || _statsCat) return;
+  _statsCat = CategoryButton(b, { onChange: () => loadStats() });
+}
 $("#stats-period")?.addEventListener("change", (e) => { _statsPeriod = e.target.value; loadStats(); });
-$("#btn-settings-home").addEventListener("click", goBack);
+$("#btn-settings-home")?.addEventListener("click", goBack);
 $("#btn-player-home")?.addEventListener("click", goBack);
 $("#btn-ext-home")?.addEventListener("click", goBack);
 
@@ -5538,6 +6674,7 @@ function endOfQueue(msg) {
 }
 
 function showError(msg) {
+  showResultActions(false);
   const banner = $("#result-banner");
   const area = $("#result-area");
   area.classList.remove("hidden");
@@ -5793,28 +6930,26 @@ function drawDiffBonus(canvas, stats) {
 }
 
 function populateGraphFilters(stats) {
-  const catSel = document.getElementById("graph-filter-cat");
   const diffSel = document.getElementById("graph-filter-diff");
 
-  if (catSel && catSel.options.length <= 1) fillCategoryDropdown(catSel);
   if (diffSel && diffSel.options.length <= 1) {
     for (let d = 1; d <= 10; d++) { const o = document.createElement("option"); o.value = String(d); o.textContent = "Diff " + d; diffSel.appendChild(o); }
   }
 
-  if (catSel) catSel.onchange = () => redrawFilteredGraphs();
   if (diffSel) diffSel.onchange = () => redrawFilteredGraphs();
 }
 
 let _breakdownCache = null;
 async function redrawFilteredGraphs(breakdown) {
-  const cat = document.getElementById("graph-filter-cat")?.value || "";
+  const cat = "";   // categories: the page's picker (categoryIds)
+  const cids = statsCatIds();
   const diff = document.getElementById("graph-filter-diff")?.value || "";
 
   let bd;
   if (breakdown) { _breakdownCache = breakdown; bd = breakdown; }
   else {
     try {
-      const params = (cat ? "category=" + encodeURIComponent(cat) : "") + (diff ? (cat ? "&" : "") + "difficulty=" + encodeURIComponent(diff) : "");
+      const params = [diff ? "difficulty=" + encodeURIComponent(diff) : "", cids.length ? "categoryIds=" + encodeURIComponent(cids.join(",")) : ""].filter(Boolean).join("&");
       const res = await API.get("/api/sessions/breakdown" + (params ? "?" + params : ""));
       bd = res.breakdown || [];
     } catch { bd = _breakdownCache || []; }
@@ -5933,75 +7068,6 @@ function drawCelerityDetail(canvas, breakdown) {
   });
 }
 
-async function exportStatsImage() {
-  let stats;
-  try {
-    const sid = state.statsSessionId || null;
-    stats = (await API.get("/api/stats" + (sid ? "?sessionId=" + encodeURIComponent(sid) : ""))).stats;
-  } catch { return; }
-  if (!stats || !stats.totalQuestions) return;
-  const t = chartTheme();
-  const W = 760, H = 540, dpr = 2;
-  const canvas = document.createElement("canvas");
-  canvas.width = W * dpr; canvas.height = H * dpr;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  ctx.fillStyle = t.bg || "#0d1117"; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = t.accent; ctx.font = "700 22px " + t.font;
-  ctx.fillText("OFFLINEQUIZ \u2014 STATISTICS", 32, 48);
-  ctx.fillStyle = t.muted; ctx.font = "12px " + t.font;
-  const sub = (state.username ? state.username + " \u00b7 " : "") +
-    (state.statsSessionId ? "session " + formatSessionTitle(state.statsSessionId) : "all time") +
-    " \u00b7 " + new Date().toLocaleDateString();
-  ctx.fillText(sub, 32, 70);
-  const cards = [
-    ["Questions", String(stats.totalQuestions)],
-    ["Total points", String(stats.totalPoints)],
-    ["Pts / question", (stats.averagePointsPerQuestion || 0).toFixed(1)],
-    ["TU accuracy", ((stats.tossupAccuracy || 0) * 100).toFixed(1) + "%"],
-    ["Powers", String(stats.tossupPowers || 0)],
-    ["PPB", (stats.bonusConversion || 0).toFixed(1)],
-  ];
-  const cw = (W - 64 - 5 * 12) / 6;
-  cards.forEach(([label, val], i) => {
-    const x = 32 + i * (cw + 12);
-    ctx.fillStyle = t.border; ctx.globalAlpha = 0.25;
-    rrect(ctx, x, 92, cw, 74, 8); ctx.fill(); ctx.globalAlpha = 1;
-    ctx.fillStyle = t.text; ctx.font = "700 20px " + t.font; ctx.textAlign = "center";
-    ctx.fillText(val, x + cw / 2, 128);
-    ctx.fillStyle = t.muted; ctx.font = "10px " + t.font;
-    ctx.fillText(label.toUpperCase(), x + cw / 2, 150);
-    ctx.textAlign = "left";
-  });
-  const cats = Object.values(stats.byCategory || {})
-    .sort((a, b) => b.totalQuestions - a.totalQuestions).slice(0, 8);
-  ctx.fillStyle = t.sec; ctx.font = "600 12px " + t.font;
-  ctx.fillText("BY CATEGORY", 32, 204);
-  const maxQ = Math.max(...cats.map((c) => c.totalQuestions), 1);
-  cats.forEach((c, i) => {
-    const y = 224 + i * 36;
-    ctx.fillStyle = t.text; ctx.font = "12px " + t.font;
-    ctx.fillText(c.category, 32, y + 13);
-    ctx.fillStyle = t.border; ctx.globalAlpha = 0.3;
-    rrect(ctx, 200, y, 420, 18, 5); ctx.fill(); ctx.globalAlpha = 1;
-    ctx.fillStyle = t.accent;
-    rrect(ctx, 200, y, Math.max(8, (c.totalQuestions / maxQ) * 420), 18, 5); ctx.fill();
-    ctx.fillStyle = t.muted; ctx.font = "11px " + t.font;
-    ctx.fillText(`${c.totalQuestions} q \u00b7 ${c.totalPoints} pts`, 632, y + 13);
-  });
-  ctx.fillStyle = t.muted; ctx.font = "10px " + t.font;
-  ctx.fillText("made with OfflineQuiz", 32, H - 18);
-  canvas.toBlob((blob) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `offlinequiz-stats-${Date.now()}.png`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, "image/png");
-}
-$("#btn-stats-export")?.addEventListener("click", exportStatsImage);
-
 
 let _statsPeriod = "all";
 function statsSinceMs() {
@@ -6017,7 +7083,7 @@ function syncStatsControls(sid) {
   const per = document.getElementById("stats-period");
   if (per && per.value !== _statsPeriod) per.value = _statsPeriod;
   if (per) per.style.display = sid ? "none" : "";
-  const cat = document.getElementById("stats-cat-filter");
+  const cat = document.getElementById("stats-cat-btn");
   if (cat) cat.style.display = sid ? "none" : "";
 }
 function qhDetailHtml(q, type) {
@@ -6043,12 +7109,12 @@ async function loadStats(preserveScroll = false) {
   const sid = state.statsSessionId || null;
   const since = sid ? 0 : statsSinceMs();
   try {
-    const data = await API.get("/api/stats" + (sid ? "?sessionId=" + encodeURIComponent(sid) : (since ? "?since=" + since : "")));
+    initStatsCategories();
+    const cids = statsCatIds();
+    const data = await API.get("/api/stats" + (sid ? "?sessionId=" + encodeURIComponent(sid) : "?since=" + (since || 0) + (cids.length ? "&categoryIds=" + encodeURIComponent(cids.join(",")) : "")));
     const stats = data.stats;
 
     syncStatsControls(sid);
-    const exportBtn = $("#btn-stats-export");
-    if (exportBtn) exportBtn.disabled = (!stats || stats.totalQuestions === 0) && (!!sid || _statsPeriod === "all");
     if (!stats || stats.totalQuestions === 0) {
       container.innerHTML = `
         ${sid ? '<button class="btn btn-sm btn-ghost" id="stats-back">\u2190 All sessions</button>' : ""}
@@ -6067,27 +7133,9 @@ async function loadStats(preserveScroll = false) {
     let sessionEntries = [];
     if (sid) { try { sessionEntries = (await API.get("/api/sessions/entries?sessionId=" + encodeURIComponent(sid))).entries || []; } catch (e) {} }
 
-    const catFilter = $("#stats-cat-filter");
-    if (catFilter && catFilter.options.length <= 1) await fillCategoryDropdown(catFilter);
-
-    const selectedCat = catFilter?.value || "";
-    const catData = selectedCat ? stats.byCategory[selectedCat] : null;
-    const view = catData ? {
-      totalQuestions: catData.totalQuestions,
-      totalPoints: catData.totalPoints,
-      averagePointsPerQuestion: catData.totalQuestions ? catData.totalPoints / catData.totalQuestions : 0,
-      tossupAccuracy: catData.tossupsAttempted ? catData.tossupsCorrect / catData.tossupsAttempted : 0,
-      bonusConversion: catData.bonusesAttempted ? catData.bonusPoints / catData.bonusesAttempted : 0,
-      powerRate: catData.tossupsAttempted ? (catData.tossupPowers || 0) / catData.tossupsAttempted : 0,
-      tossupsAttempted: catData.tossupsAttempted,
-      tossupsCorrect: catData.tossupsCorrect || 0,
-      tossupPowers: catData.tossupPowers || 0,
-      tossupNegs: catData.tossupNegs || 0,
-      tossupAvgCelerity: catData.celerityCount ? catData.celeritySum / catData.celerityCount : 0,
-      bonusesAttempted: catData.bonusesAttempted,
-      bonusPartsCorrect: catData.bonusPartsCorrect || 0,
-      bonusPartsTotal: catData.bonusPartsTotal != null ? catData.bonusPartsTotal : (catData.bonusesAttempted || 0) * 3,
-    } : stats;
+    // the backend already filtered everything to the picked categories
+    const selectedCat = !sid && cids.length && _statsCat ? _statsCat.summary() : "";
+    const view = stats;
 
     let html = "";
 
@@ -6224,7 +7272,7 @@ async function loadStats(preserveScroll = false) {
             '<div class="qh-buzzmark" style="left:' + (cel * 100).toFixed(1) + '%"></div></div>';
         const ans = en.given_answer ? escapeHtml(en.given_answer) : '<span class="text-muted">(no answer)</span>';
         const res = isBonus ? ((en.bonus_parts_correct || 0) >= (en.part_count || 3) ? "correct" : en.points > 0 ? "partial" : "miss") : (en.points >= 15 ? "power" : en.correct ? "correct" : en.points < 0 ? "neg" : "miss");
-        return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" data-res="' + res + '" data-cat="' + escapeHtml(en.category || "") + '" data-ans="' + escapeHtml((en.given_answer || "").toLowerCase()) + '" style="cursor:pointer" title="Show the question & answer">' +
+        return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" data-res="' + res + '" data-path="' + escapeHtml(en.category_path || en.category || "") + '" data-ans="' + escapeHtml((en.given_answer || "").toLowerCase()) + '" style="cursor:pointer" title="Show the question & answer">' +
           '<td><span class="qh-chev">▸</span> <span class="qh-badge ' + cls + '">' + label + "</span></td>" +
           "<td>" + escapeHtml(en.category || "") + (en.difficulty != null ? ' <span class="text-muted">d' + en.difficulty + "</span>" : "") + "</td>" +
           "<td>" + ans + "</td>" +
@@ -6233,13 +7281,12 @@ async function loadStats(preserveScroll = false) {
         "</tr>" +
         '<tr class="qh-detail hidden" data-qhd="' + i + '"><td colspan="5"><div class="text-muted">Loading…</div></td></tr>';
       }).join("");
-      const qhCats = [...new Set(sessionEntries.map((en) => en.category).filter(Boolean))].sort();
       html += '<div class="stats-section" data-coll="stats:question-history">' +
         '<div class="stats-section-title">QUESTION HISTORY (<span id="qh-count">' + sessionEntries.length + "</span>)</div>" +
         '<div class="db-toolbar" style="border:none;background:none;padding:8px 0">' +
           '<select id="qh-fres" class="db-input db-input-sm"><option value="">All results</option><option value="power">Powers</option><option value="correct">Correct</option><option value="neg">Negs</option><option value="miss">Misses</option><option value="partial">Partial bonuses</option></select>' +
           '<select id="qh-ftype" class="db-input db-input-sm"><option value="">Tossups + Bonuses</option><option value="tossup">Tossups</option><option value="bonus">Bonuses</option></select>' +
-          '<select id="qh-fcat" class="db-input db-input-sm"><option value="">All categories</option>' + qhCats.map((c) => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + "</option>").join("") + "</select>" +
+          '<button type="button" id="qh-fcat-btn"></button>' +
           '<input type="text" id="qh-fq" class="db-input" placeholder="Search your answers…" autocomplete="off" style="max-width:220px">' +
         "</div>" +
         '<table class="stats-table qh-table"><thead><tr><th>Result</th><th>Category</th><th>Your answer</th><th>Buzz location</th><th>Pts</th></tr></thead><tbody>' +
@@ -6286,6 +7333,7 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
+    const pickedRoots = selectedCat && _statsCat ? [...new Set(_statsCat.paths().map((p) => p.split(" > ")[0]))] : [];
     if (!sid && sessionList.length > 0) {
       html += `<div class="stats-section" data-coll="stats:sessions">
         <div class="stats-section-title">SESSIONS (${sessionList.length})</div>
@@ -6298,7 +7346,7 @@ async function loadStats(preserveScroll = false) {
               .map((s) => {
                 const outOfPeriod = since && (s.ended_at || s.started_at || 0) < since;
                 const sCats = (s.categories || "").split(",").map((c) => c.trim()).filter(Boolean);
-                const outOfCat = selectedCat && !sCats.includes(selectedCat);
+                const outOfCat = selectedCat && !sCats.some((c) => pickedRoots.includes(c));
                 const faint = outOfPeriod || outOfCat;
                 return `
               <tr class="session-row${faint ? " session-faint" : ""}" data-session="${escapeHtml(s.session_id)}" title="${faint ? "Outside the current filter — click to open anyway" : "View this session's stats"}">
@@ -6329,9 +7377,6 @@ async function loadStats(preserveScroll = false) {
 
     if (!sid) html += `<div class="stats-section" data-coll="stats:breakdown">
       <div class="stats-section-title">SESSION BREAKDOWN
-        <select id="graph-filter-cat" style="margin-left:12px;font-family:var(--font);font-size:10px;padding:1px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:3px;color:var(--text)">
-          <option value="">All categories</option>
-        </select>
         <select id="graph-filter-diff" style="margin-left:4px;font-family:var(--font);font-size:10px;padding:1px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:3px;color:var(--text)">
           <option value="">All Difficulties</option>
         </select>
@@ -6349,7 +7394,7 @@ async function loadStats(preserveScroll = false) {
     let breakdown = [];
     if (!sid) {
       try {
-        const bd = await API.get("/api/sessions/breakdown");
+        const bd = await API.get("/api/sessions/breakdown" + (cids.length ? "?categoryIds=" + encodeURIComponent(cids.join(",")) : ""));
         breakdown = bd.breakdown || [];
       } catch {}
     }
@@ -6381,12 +7426,11 @@ async function loadStats(preserveScroll = false) {
       const applyQH = () => {
         const res = container.querySelector("#qh-fres")?.value || "";
         const typ = container.querySelector("#qh-ftype")?.value || "";
-        const cat = container.querySelector("#qh-fcat")?.value || "";
         const q = (container.querySelector("#qh-fq")?.value || "").trim().toLowerCase();
         let shown = 0;
         container.querySelectorAll(".qh-row").forEach((row) => {
           const ok = (!res || row.dataset.res === res) && (!typ || row.dataset.qtype === typ) &&
-            (!cat || row.dataset.cat === cat) && (!q || (row.dataset.ans || "").includes(q));
+            (!qhCat || qhCat.matches(row.dataset.path || "")) && (!q || (row.dataset.ans || "").includes(q));
           row.style.display = ok ? "" : "none";
           const d = container.querySelector('[data-qhd="' + row.dataset.qh + '"]');
           if (d && !ok) d.classList.add("hidden");
@@ -6395,7 +7439,9 @@ async function loadStats(preserveScroll = false) {
         });
         const cnt = container.querySelector("#qh-count"); if (cnt) cnt.textContent = String(shown);
       };
-      ["qh-fres", "qh-ftype", "qh-fcat"].forEach((id) => container.querySelector("#" + id)?.addEventListener("change", applyQH));
+      const qhBtn = container.querySelector("#qh-fcat-btn");
+      const qhCat = qhBtn ? CategoryButton(qhBtn, { live: true, onChange: () => applyQH() }) : null;
+      ["qh-fres", "qh-ftype"].forEach((id) => container.querySelector("#" + id)?.addEventListener("change", applyQH));
       container.querySelector("#qh-fq")?.addEventListener("input", applyQH);
     }
     // Eagerly place the (*) power tick on every tossup row's buzz bar — no
@@ -6598,7 +7644,7 @@ function initSettings() {
   const rsm = $("#opt-review-skipnomark"); if (rsm) rsm.checked = state.settings.autoReviewSkipNoMark;
   const aAcc = $("#app-accent"); if (aAcc) aAcc.value = state.settings.appAccent;
   const aMode = $("#app-mode"); if (aMode) aMode.value = state.settings.appAppearanceMode;
-  const aCust = $("#app-custom-accent"); if (aCust) aCust.value = /^#[0-9a-fA-F]{6}$/.test(state.settings.appCustomAccent || "") ? state.settings.appCustomAccent : "#dfb347";
+  const aCust = $("#app-custom-accent"); if (aCust) aCust.value = /^#[0-9a-fA-F]{6}$/.test(state.settings.appCustomAccent || "") ? state.settings.appCustomAccent : "#58a6ff";
   const aFont = $("#app-font"); if (aFont) aFont.value = state.settings.appFont;
   const aRad = $("#app-radius"); if (aRad) aRad.value = state.settings.appRadius;
   const aGap = $("#app-btngap"); if (aGap) aGap.value = state.settings.appBtnGap;
@@ -6613,6 +7659,7 @@ function initSettings() {
   renderHotkeySettings();
   window.QB?.renderAppearanceSettings(document.getElementById("theme-appearance-host"));
   window.QB?.renderSettingsSections(document.getElementById("ext-settings-host"));
+  { const host = document.getElementById("ext-settings-host"), nb = document.getElementById("set-nav-plugins"), pane = document.getElementById("ovl-extensions"); const has = !!(host && host.children.length); if (nb) nb.hidden = !has; if (pane) pane.hidden = !has; }
   loadSettingsArt();
 }
 
@@ -6755,12 +7802,13 @@ $("#opt-app-autoupdate")?.addEventListener("change", (e) => lsSet("qb-app-autoup
 function openSettingsOverlay(id) { const o = document.getElementById(id); if (o) o.classList.remove("hidden"); }
 function closeSettingsOverlays() {
   let any = false;
-  document.querySelectorAll(".settings-ovl:not(.hidden)").forEach((o) => { o.classList.add("hidden"); any = true; });
+  document.querySelectorAll(".settings-ovl:not(.hidden)").forEach((o) => { if (_dbLocked && o.id === "settings-modal") return; o.classList.add("hidden"); any = true; });
   return any;
 }
 document.addEventListener("click", (e) => {
   const nav = e.target.closest?.(".settings-nav-btn");
   if (nav) { openSettingsOverlay(nav.dataset.ovl); return; }
+  if (_dbLocked && e.target.closest?.("#settings-modal")) return;   // the lock keeps it open
   if (e.target.classList?.contains("settings-ovl")) e.target.classList.add("hidden");
   else if (e.target.closest?.(".settings-ovl-close")) e.target.closest(".settings-ovl").classList.add("hidden");
 });
@@ -7143,9 +8191,6 @@ async function loadPlayer() {
     // rename can't lose it to the debounce window.
     $("#player-username-input")?.addEventListener("blur", () => { clearTimeout(_profileSyncTimer); pushProfileSettings(); });
 
-    $("#btn-export-data")?.addEventListener("click", exportData);
-    $("#btn-import-data")?.addEventListener("click", () => $("#import-file")?.click());
-    $("#import-file")?.addEventListener("change", importData);
   } catch (e) {
     container.innerHTML = `<div class="text-muted">Failed to load player data</div>`;
   }
@@ -7370,18 +8415,21 @@ function scheduleAchievementCheck() {
   _rtAchTimer = setTimeout(refreshAchievementsRealtime, 250);
 }
 
+// A plugin's icons win (map, then function — e.g. "Achievement Glyphs" brings
+// back the Chinese characters); otherwise the built-in line icons
+// (achievement-icons.js); the achievement's own glyph is the last resort.
 function resolveAchievementIcon(ach) {
-  let icon = ach.icon;
+  let icon = null;
   try {
     const map = window.QB && window.QB._achievementIcons;
-    if (map && map[ach.id] != null && map[ach.id] !== "") {
-      icon = map[ach.id];
-    } else {
+    if (map && map[ach.id] != null && map[ach.id] !== "") icon = map[ach.id];
+    else {
       const fn = window.QB && window.QB._achievementIconFn;
       if (typeof fn === "function") { const r = fn(ach); if (r != null && r !== "") icon = r; }
     }
+    if (icon == null && window.QB_ACHIEVEMENT_ICONS) icon = window.QB_ACHIEVEMENT_ICONS.iconFor(ach);
   } catch (e) {}
-  return icon;
+  return icon == null ? ach.icon : icon;
 }
 
 function achievementIconHTML(ach, extraClass) {
@@ -7805,64 +8853,6 @@ function showAvatarPicker() {
   });
 }
 
-async function exportData() {
-  try {
-    const [stats, sessions, starred] = await Promise.all([
-      API.get("/api/stats"),
-      API.get("/api/sessions"),
-      API.get("/api/starred"),
-    ]);
-    const exportObj = {
-      version: "0.9",
-      exportedAt: new Date().toISOString(),
-      username: state.username,
-      stats: stats.stats,
-      sessions: sessions.sessions,
-      starred: starred.starred,
-    };
-    const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `offlinequiz-export-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    alert("Export failed: " + e.message);
-  }
-}
-
-async function importData(e) {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    if (!data.version) throw new Error("Invalid export file");
-
-    if (data.sessions) {
-      alert("Session history import requires question database. Starred questions will be imported.");
-    }
-    if (data.starred) {
-      for (const s of data.starred) {
-        try {
-          const cur = await API.get(`/api/starred/check?questionId=${encodeURIComponent(s.question_id)}&type=${s.type}`);
-          if (!cur.starred) await API.post("/api/starred/toggle", { questionId: s.question_id, type: s.type });
-        } catch {}
-      }
-    }
-    if (data.username) {
-      state.username = data.username;
-      lsSet("qb-username", data.username);
-    }
-    alert("Data imported successfully!");
-    loadPlayer();
-  } catch (e) {
-    alert("Import failed: " + e.message);
-  }
-  e.target.value = "";
-}
-
 let _dbWired = false;
 let _dbStarred = null;
 async function refreshDbStarred() {
@@ -7875,29 +8865,21 @@ async function refreshDbStarred() {
 }
 
 function renderDbProviderTabs() {
-  const strip = document.querySelector(".db-tabs");
-  if (!strip) return;
-  strip.querySelectorAll(".db-tab.prov").forEach((t) => t.remove());
-  (window.QB?.getStarredProviders?.() || []).forEach((p) => {
-    const b = document.createElement("button");
-    b.className = "db-tab prov";
-    b.dataset.tab = "prov:" + p.id;
-    b.textContent = "\u2605 " + p.title.replace(/^STARRED\s+/i, "");
-    b.addEventListener("click", () => {
-      _dbTabFrom = null; // an explicit tab pick replaces any remembered origin
-      state.dbTab = b.dataset.tab;
-      document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x === b));
-      renderDbTab();
-    });
-    strip.appendChild(b);
-  });
+  const wrap = document.getElementById("db-plugtools"), menu = document.getElementById("db-plugtools-menu");
+  if (!wrap || !menu) return;
+  const provs = window.QB?.getStarredProviders?.() || [];
+  wrap.hidden = !provs.length;
+  menu.innerHTML = provs.map((p) => `<button type="button" class="pop-item" role="menuitem" data-prov="${escapeHtml(p.id)}">${ic("puzzle", 15)}<span>${escapeHtml(String(p.title || p.id).replace(/^STARRED\s+/i, ""))}</span></button>`).join("");
+  syncDbTabActive();
 }
 
 // Re-mark the active Database tab after the provider tabs are rebuilt, without
 // re-rendering the tab body (a Back entry keeps its filters/results).
 function syncDbTabActive() {
   const tab = state.dbTab || "search";
-  document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
+  document.querySelectorAll(".db-tabs .db-tab[data-tab]").forEach((x) => { x.classList.toggle("active", x.dataset.tab === tab); x.setAttribute("aria-selected", String(x.dataset.tab === tab)); });
+  const pb = document.getElementById("db-plugtools-btn");
+  if (pb) pb.classList.toggle("active", tab.startsWith("prov:"));
 }
 
 function loadDatabase() {
@@ -7920,13 +8902,23 @@ function loadDatabase() {
     };
     document.getElementById("btn-db-compact")?.addEventListener("click", () => setAll(true));
     document.getElementById("btn-db-expand")?.addEventListener("click", () => setAll(false));
-    document.querySelectorAll(".db-tab").forEach((t) => {
+    document.querySelectorAll(".db-tabs .db-tab[data-tab]").forEach((t) => {
       t.addEventListener("click", () => {
         _dbTabFrom = null; // an explicit tab pick replaces any remembered origin
         state.dbTab = t.dataset.tab;
-        document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x === t));
+        syncDbTabActive();
         renderDbTab();
       });
+    });
+    const pb = document.getElementById("db-plugtools-btn"), pm = document.getElementById("db-plugtools-menu");
+    pb?.addEventListener("click", (e) => { e.stopPropagation(); const open = pm.hidden; closeAllPops(); pm.hidden = !open; pb.setAttribute("aria-expanded", String(open)); });
+    pm?.addEventListener("click", (e) => {
+      const it = e.target.closest("[data-prov]"); if (!it) return;
+      pm.hidden = true; pb.setAttribute("aria-expanded", "false");
+      _dbTabFrom = null;
+      state.dbTab = "prov:" + it.dataset.prov;
+      syncDbTabActive();
+      renderDbTab();
     });
   }
   // Mark the tab strip too — rendering the body alone left every tab
@@ -7947,100 +8939,118 @@ function renderDbTab() {
 async function renderProviderTab(id) {
   const c = document.getElementById("db-content"); if (!c) return;
   const p = (window.QB?.getStarredProviders?.() || []).find((x) => x.id === id);
-  c.innerHTML = '<div class="search-results" id="db-results"></div>';
+  c.innerHTML = '<div class="db-page"><div class="search-results" id="db-results"></div></div>';
   const host = document.getElementById("db-results");
-  if (!p) { host.innerHTML = '<div class="text-muted" style="padding:16px">This section\u2019s plugin is disabled.</div>'; return; }
+  if (!p) { host.innerHTML = '<div class="db-empty">This section’s plugin is disabled.</div>'; return; }
   try { await p.render(host); }
-  catch { host.innerHTML = '<div class="text-muted" style="padding:16px">Failed to load.</div>'; }
+  catch { host.innerHTML = '<div class="db-empty">Failed to load.</div>'; }
 }
 
 let _dbTimer = null;
 const DIFFICULTY_NAMES = ["Unrated", "Middle School", "Easy HS", "Regular HS", "Hard HS", "National HS", "Easy College", "Medium College", "Regionals College", "Nationals College", "Open"];
 function renderSearchTab() {
   const c = document.getElementById("db-content"); if (!c) return;
-  const diffChecks = DIFFICULTY_NAMES.map((name, i) =>
-    `<label class="db-diff" title="${escapeHtml(name)}"><input type="checkbox" class="db-diff-cb" value="${i}"> ${i}</label>`
-  ).join("");
+  const q = _dbq;
+  const diffs = DIFFICULTY_NAMES.map((name, i) =>
+    `<label title="${escapeHtml(DIFF_FULL[i] || name)}"><input type="checkbox" class="db-diff-cb" value="${i}"${q.diffs.includes(String(i)) ? " checked" : ""}><span>${i}</span></label>`).join("");
+  const seg = [["all", "All"], ["tossup", "Tossups"], ["bonus", "Bonuses"]].map(([v, l]) => `<button type="button" data-qtype="${v}" aria-pressed="${q.qtype === v}">${l}</button>`).join("");
+  const opt = (v, l, cur) => `<option value="${v}"${cur === v ? " selected" : ""}>${l}</option>`;
   c.innerHTML =
-    '<div class="db-toolbar">' +
-      '<input type="text" id="db-search-input" class="db-input" placeholder="Search questions…" autocomplete="off">' +
-      '<select id="db-qtype" class="db-input db-input-sm"><option value="all">Tossups + Bonuses</option><option value="tossup">Tossups only</option><option value="bonus">Bonuses only</option></select>' +
-      '<select id="db-search-type" class="db-input db-input-sm" title="All text also matches category, subcategory and set names"><option value="all">All text</option><option value="question">Question only</option><option value="answer">Answer only</option></select>' +
-      '<select id="db-match" class="db-input db-input-sm" title="How the words must match"><option value="phrase">Exact phrase</option><option value="all">All words</option><option value="any">Any word</option></select>' +
-      '<label class="db-opt" title="Match word beginnings: symphon matches symphony, symphonies"><input type="checkbox" id="db-prefix"> Word starts</label>' +
-      '<label class="db-opt"><input type="checkbox" id="db-hide-ans"> Hide answers</label>' +
-      '<button type="button" class="btn btn-sm btn-ghost" id="db-more-toggle" aria-expanded="false" aria-controls="db-more">More filters<span id="db-more-count" class="db-more-count"></span></button>' +
-    "</div>" +
-    // The three category selects carry long labels ("All alternate
-    // subcategories"); crowded onto the search row they overlapped. Their own
-    // row gives each a real minimum width.
-    '<div class="db-toolbar db-toolbar-cats">' +
-      '<select id="db-cat-filter" class="db-input db-input-cat"><option value="">All categories</option></select>' +
-      '<select id="db-sub-filter" class="db-input db-input-cat"><option value="">All subcategories</option></select>' +
-      '<select id="db-alt-filter" class="db-input db-input-cat"><option value="">All topics</option></select>' +
-      '<select id="db-deep-filter" class="db-input db-input-cat"><option value="">All subtopics</option></select>' +
-    "</div>" +
-    '<div class="db-toolbar db-toolbar-adv">' +
-      '<span class="db-adv-label">Difficulty:</span>' + diffChecks +
-      '<span class="db-adv-label" style="margin-left:12px">Years:</span>' +
-      '<div class="dual-range db-year-dual"><div class="dual-range-track"><div class="dual-range-fill" id="db-year-fill"></div></div>' +
-        '<input type="range" id="db-year-min" min="2000" max="2026" value="2000">' +
-        '<input type="range" id="db-year-max" min="2000" max="2026" value="2026"></div>' +
-      '<span class="db-adv-label" id="db-year-label">2000 – 2026</span>' +
-    "</div>" +
-    // Collapsible (the "More filters" button); remembered per machine. Placeholders
-    // avoid "search|find|answer|query" — the coss-ui theme decorates those inputs.
-    '<div class="db-toolbar db-toolbar-adv db-toolbar-more" id="db-more" hidden>' +
-      '<select id="db-set-filter" class="db-input db-input-set"><option value="">All sets</option></select>' +
-      '<select id="db-packet-filter" class="db-input db-input-pkt" disabled><option value="">All packets</option></select>' +
-      '<input type="text" id="db-exclude" class="db-input db-input-sm" placeholder="Exclude words" autocomplete="off" title="Hide results containing any of these words">' +
-      '<select id="db-sort" class="db-input db-input-sm" title="Result order"><option value="relevance">Best match</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="easiest">Easiest first</option><option value="hardest">Hardest first</option></select>' +
-      '<label class="db-opt"><input type="checkbox" id="db-standard"> Standard sets only</label>' +
-      '<label class="db-opt" id="db-powermark-lbl" title="Tossups that have a power mark (*)"><input type="checkbox" id="db-powermark"> Powermarked (tossups)</label>' +
-      '<label class="db-opt"><input type="checkbox" id="db-starred"> Starred only</label>' +
-    "</div>" +
-    '<div class="search-results" id="db-results"></div>';
-  // _dbRestoring: Back restores many controls at once; their events must not
-  // each fire a search (applySearchState runs exactly one at the end).
-  const deb = () => { if (_dbRestoring) return; clearTimeout(_dbTimer); _dbTimer = setTimeout(performDbSearch, 300); };
-  _dbPacketsFor = null;
-  fillCatTreeSelect(document.getElementById("db-cat-filter")).then(() => {
-    // The tab may have been replaced (another Database tab clicked) before the
-    // category list arrived: nothing left to wire.
-    const cs = document.getElementById("db-cat-filter"), ss = document.getElementById("db-sub-filter"), as = document.getElementById("db-alt-filter"), ds = document.getElementById("db-deep-filter");
-    if (!cs || !ss || !as) return;
-    wireCatCascade(cs, ss, as, deb, ds);
+    '<div class="db-page db-search">' +
+      '<div id="db-searchbar" class="db-searchbar"></div>' +
+      '<div class="qrow">' +
+        `<button type="button" class="btn" id="db-cat-btn">Categories <span class="accent-val" id="db-cat-btn-val">${escapeHtml(dbUnitsSummary())}</span>${ic("down", 14)}</button>` +
+        `<div class="diff-toggles" id="db-diffs" role="group" aria-label="Difficulty"><span class="dt-lbl">Difficulty</span>${diffs}</div>` +
+        `<div class="pop-wrap"><button type="button" class="btn" id="db-years-btn" aria-expanded="false" aria-controls="db-years-pop">Years <span class="accent-val num" id="db-years-val">${escapeHtml(dbYearsLabel())}</span>${ic("down", 14)}</button>` +
+          `<div class="pop left years-pop" id="db-years-pop" hidden><form id="db-years-form"><div class="yrow"><label class="ifield"><span>From</span><input id="db-year-from" inputmode="numeric" autocomplete="off" value="${q.yearMin || 2000}" aria-label="From year"></label><label class="ifield"><span>To</span><input id="db-year-to" inputmode="numeric" autocomplete="off" value="${q.yearMax || 2026}" aria-label="To year"></label></div>` +
+          `<div class="yrow"><button type="button" class="btn btn-sm" id="db-years-any" style="flex:1">Any year</button><button type="submit" class="btn btn-sm btn-primary" style="flex:1">Apply</button></div></form></div></div>` +
+        '<span class="spacer"></span>' +
+        `<button type="button" class="btn" id="db-more-toggle" aria-expanded="${_dbMoreOpen}" aria-controls="db-more">${ic("sliders", 16)}Filters<span class="count-badge num db-more-count" id="db-more-count"></span></button>` +
+      "</div>" +
+      `<section class="drawer-panel" id="db-more"${_dbMoreOpen ? "" : " hidden"} aria-label="More filters">` +
+        `<label class="f"><span>Match</span><select id="db-match" title="How the words must match">${opt("phrase", "Exact phrase", q.match)}${opt("all", "All words", q.match)}${opt("any", "Any word", q.match)}</select></label>` +
+        `<label class="f"><span>Exclude words</span><input type="text" id="db-exclude" class="mode-input" autocomplete="off" value="${escapeHtml(q.exclude)}" aria-label="Exclude words"></label>` +
+        '<label class="f"><span>Set</span><select id="db-set-filter"><option value="">All sets</option></select></label>' +
+        '<label class="f"><span>Packet</span><select id="db-packet-filter" disabled><option value="">All packets</option></select></label>' +
+        '<div class="checks">' +
+          `<label class="checkbox-row"><input type="checkbox" id="db-standard"${q.standard ? " checked" : ""}> Standard sets only</label>` +
+          `<label class="checkbox-row" id="db-powermark-lbl" title="Tossups that have a power mark (*)"><input type="checkbox" id="db-powermark"${q.powermark ? " checked" : ""}> Powermarked tossups</label>` +
+          `<label class="checkbox-row"><input type="checkbox" id="db-starred"${q.starred ? " checked" : ""}> Starred only</label>` +
+          `<label class="checkbox-row" title="Match word beginnings: symphon matches symphony, symphonies"><input type="checkbox" id="db-prefix"${q.prefix ? " checked" : ""}> Word starts</label>` +
+          `<label class="checkbox-row"><input type="checkbox" id="db-hide-ans"${q.hideAns ? " checked" : ""}> Hide answers</label>` +
+        "</div>" +
+      "</section>" +
+      `<div class="rhead" id="db-rhead"><span class="total num" id="db-total"></span><select id="db-sort" title="Result order">${opt("relevance", "Best match", q.sort)}${opt("newest", "Newest first", q.sort)}${opt("oldest", "Oldest first", q.sort)}${opt("easiest", "Easiest first", q.sort)}${opt("hardest", "Hardest first", q.sort)}</select><span class="spacer"></span><span id="db-pager-top"></span></div>` +
+      '<div class="results search-results" id="db-results"></div>' +
+      '<div class="rfoot" id="db-pager-bottom"></div>' +
+    "</div>";
+
+  _searchTagField = TagField({
+    host: document.getElementById("db-searchbar"), icon: "search", ariaLabel: "Search questions", chips: q.tags, textValue: q.text,
+    placeholder: (chips) => (chips.length ? "Add words, or \\ for a tag" : "Search questions · type \\ for a tag"),
+    rightHtml: `<div class="sbar-right"><div class="seg" id="db-qtype-seg" role="group" aria-label="Question type">${seg}</div><select id="db-search-type" title="All text also matches category, subcategory and set names">${opt("all", "Question & answer", q.field)}${opt("question", "Question only", q.field)}${opt("answer", "Answer only", q.field)}</select></div>`,
+    onChange: (chips) => { _dbq.tags = chips; dbSearchSoon(true); },
+    onText: (t) => { _dbq.text = t; dbSearchSoon(true); },
   });
-  c.querySelectorAll("#db-search-input, #db-qtype, #db-search-type, #db-match, #db-prefix, .db-diff-cb, #db-year-min, #db-year-max, #db-set-filter, #db-packet-filter, #db-exclude, #db-sort, #db-standard, #db-powermark, #db-starred")
-    .forEach((el) => el.addEventListener(el.type === "text" || el.type === "number" || el.type === "range" ? "input" : "change", deb));
+  _searchTagField.input.id = "db-search-input";
+  _searchTagField.input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(_dbTimer); performDbSearch({ page: 0 }); } });
+
+  const g = (id) => document.getElementById(id);
+  _dbPacketsFor = null;
+  const syncPm = () => { const off = _dbq.qtype === "bonus"; const pm = g("db-powermark"), lbl = g("db-powermark-lbl"); if (pm) pm.disabled = off; if (lbl) lbl.classList.toggle("is-disabled", off); };
+  syncPm();
+  g("db-qtype-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-qtype]"); if (!b) return;
+    _dbq.qtype = b.dataset.qtype;
+    g("db-qtype-seg").querySelectorAll("[data-qtype]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    syncPm(); dbSearchSoon(true);
+  });
+  g("db-search-type").addEventListener("change", (e) => { _dbq.field = e.target.value; dbSearchSoon(true); });
+  g("db-cat-btn").addEventListener("click", openSearchCategories);
+  g("db-diffs").addEventListener("change", () => { _dbq.diffs = [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value); dbSearchSoon(true); });
+  const yb = g("db-years-btn"), yp = g("db-years-pop");
+  yb.addEventListener("click", (e) => { e.stopPropagation(); const open = yp.hidden; closeAllPops(); yp.hidden = !open; yb.setAttribute("aria-expanded", String(open)); if (open) { const f = g("db-year-from"); f && f.focus(); f && f.select(); } });
+  g("db-years-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const a = parseInt(g("db-year-from").value, 10), b = parseInt(g("db-year-to").value, 10);
+    if (a && b) { _dbq.yearMin = Math.max(2000, Math.min(a, b)); _dbq.yearMax = Math.min(2026, Math.max(a, b)); if (_dbq.yearMin <= 2000 && _dbq.yearMax >= 2026) { _dbq.yearMin = _dbq.yearMax = null; } }
+    yp.hidden = true; yb.setAttribute("aria-expanded", "false");
+    g("db-years-val").textContent = dbYearsLabel();
+    performDbSearch({ page: 0 });
+  });
+  g("db-years-any").addEventListener("click", () => { _dbq.yearMin = _dbq.yearMax = null; yp.hidden = true; g("db-years-val").textContent = dbYearsLabel(); performDbSearch({ page: 0 }); });
+  const more = g("db-more"), mt = g("db-more-toggle");
+  mt.addEventListener("click", () => {
+    _dbMoreOpen = more.hidden;
+    more.hidden = !_dbMoreOpen; mt.setAttribute("aria-expanded", String(_dbMoreOpen));
+    // plain localStorage: lsSet would schedule a profile push for a UI toggle
+    try { localStorage.setItem("qb-db-more", _dbMoreOpen ? "1" : "0"); } catch (e) {}
+  });
+  g("db-match").addEventListener("change", (e) => { _dbq.match = e.target.value; dbSearchSoon(true); });
+  g("db-exclude").addEventListener("input", (e) => { _dbq.exclude = e.target.value; dbSearchSoon(true); });
+  g("db-set-filter").addEventListener("change", (e) => { _dbq.set = e.target.value; _dbq.packet = ""; dbSearchSoon(true); });
+  g("db-packet-filter").addEventListener("change", (e) => { _dbq.packet = e.target.value; dbSearchSoon(true); });
+  [["db-standard", "standard"], ["db-powermark", "powermark"], ["db-starred", "starred"], ["db-prefix", "prefix"]].forEach(([id, key]) => g(id).addEventListener("change", (e) => { _dbq[key] = e.target.checked; dbSearchSoon(true); }));
+  // Hiding answers is instant — a CSS cover over each answer, no re-query.
+  g("db-hide-ans").addEventListener("change", (e) => {
+    _dbq.hideAns = e.target.checked;
+    g("db-results")?.classList.toggle("db-hide-ans", e.target.checked);
+    document.querySelectorAll("#db-results .ans-toggle.shown").forEach((t) => t.classList.remove("shown"));
+    dbMoreCount();
+  });
+  g("db-sort").addEventListener("change", (e) => { _dbq.sort = e.target.value; dbSearchSoon(true); });
   getDbSets().then((s) => {
-    const sel = document.getElementById("db-set-filter");
+    const sel = g("db-set-filter");
     if (!sel || sel.options.length > 1) return;   // two quick renders must not append twice
     const seen = new Set();
     sel.insertAdjacentHTML("beforeend", s.filter((x) => x.name && !seen.has(x.name) && seen.add(x.name))
       .map((x) => '<option value="' + escapeHtml(x.name) + '">' + escapeHtml(x.name) + "</option>").join(""));
+    if (_dbq.set) sel.value = _dbq.set;
     _syncSel(sel);
   });
-  // Powermark exists only on tossups: the backend ignores it for bonuses, so
-  // "Bonuses only" disables it (and performDbSearch skips the bonus side).
-  const qt = document.getElementById("db-qtype"), pmCb = document.getElementById("db-powermark"), pmLbl = document.getElementById("db-powermark-lbl");
-  const syncPm = () => { const off = qt.value === "bonus"; pmCb.disabled = off; pmLbl.classList.toggle("is-disabled", off); };
-  qt.addEventListener("change", syncPm); syncPm();
-  const more = document.getElementById("db-more"), mt = document.getElementById("db-more-toggle");
-  let moreOpen = false; try { moreOpen = localStorage.getItem("qb-db-more") === "1"; } catch (e) {}
-  const setMore = (open) => {
-    more.hidden = !open; mt.setAttribute("aria-expanded", String(open));
-    // plain localStorage: lsSet would schedule a profile push for a UI toggle
-    try { localStorage.setItem("qb-db-more", open ? "1" : "0"); } catch (e) {}
-  };
-  more.hidden = !moreOpen; mt.setAttribute("aria-expanded", String(moreOpen));
-  mt.addEventListener("click", () => setMore(more.hidden));
-  // Hiding answers is instant — a CSS cover over each answer, no re-query.
-  document.getElementById("db-hide-ans").addEventListener("change", (e) => {
-    document.getElementById("db-results")?.classList.toggle("db-hide-ans", e.target.checked);
-    document.querySelectorAll("#db-results .ans-toggle.shown").forEach((t) => t.classList.remove("shown"));
-  });
-  performDbSearch();
+  wireDbPagers(c.querySelector(".db-page"), (p) => performDbSearch({ page: p }));
+  dbMoreCount();
+  performDbSearch(_dbPage ? { page: _dbPage } : undefined);
 }
 
 // Google-style highlighting: wrap search-term matches in <mark> inside the
@@ -8056,7 +9066,7 @@ function highlightTerms(container, terms, opts) {
       re.lastIndex = 0;   // a /g regex carries lastIndex between .test() calls and skipped nodes
       if (!re.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
       const p = n.parentElement;
-      if (!p || p.closest("mark, script, style, .pill, .qb-star, .star-btn, .db-count, .db-pager")) return NodeFilter.FILTER_REJECT;
+      if (!p || p.closest("mark, script, style, .pill, .qb-star, .star-btn, .db-count, .db-pager, .qtag, .badge, .qcard-kind, .qmeta-row")) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });
@@ -8104,15 +9114,132 @@ function loadingBarHtml(label) {
 }
 
 let _dbPage = 0;
-const DB_PAGE_SIZE = 50;
-function dbPagerHtml(hasMore) {
-  return '<div class="db-pager"><button class="btn btn-sm" id="db-prev"' + (_dbPage <= 0 ? " disabled" : "") + ">‹ Prev</button>" +
-    '<span class="text-muted" style="font-size:12px">Page ' + (_dbPage + 1) + "</span>" +
-    '<button class="btn btn-sm" id="db-next"' + (hasMore ? "" : " disabled") + ">Next ›</button></div>";
+const DB_PAGE_SIZE = 25;
+// Database → Search query (the tab re-renders from it; Back restores it).
+function dbQueryDefaults() {
+  return { text: "", field: "all", qtype: "all", match: "phrase", prefix: false, exclude: "", hideAns: false, tags: [], diffs: [], yearMin: null, yearMax: null, set: "", packet: "", sort: "relevance", standard: false, powermark: false, starred: false };
 }
-function wireDbPager(container) {
-  const prev = container.querySelector("#db-prev"); if (prev) prev.onclick = () => performDbSearch({ page: _dbPage - 1 });
-  const next = container.querySelector("#db-next"); if (next) next.onclick = () => performDbSearch({ page: _dbPage + 1 });
+const _dbq = dbQueryDefaults();
+let _dbMoreOpen = (() => { try { return localStorage.getItem("qb-db-more") === "1"; } catch (e) { return false; } })();
+let _searchTagField = null;
+function dbSearchSoon(resetPage) {
+  clearTimeout(_dbTimer);
+  _dbTimer = setTimeout(() => performDbSearch(resetPage ? { page: 0 } : undefined), 300);
+}
+function dbYearsLabel() {
+  const a = _dbq.yearMin, b = _dbq.yearMax;
+  if (!a && !b) return "Any";
+  return (a || 2000) + "\u2013" + (b || 2026);
+}
+function dbMoreCount() {
+  const q = _dbq;
+  const n = [q.set, q.packet, String(q.exclude || "").trim(), q.standard, q.powermark && q.qtype !== "bonus", q.starred, q.prefix, q.hideAns, q.match !== "phrase"].filter(Boolean).length;
+  const el = document.getElementById("db-more-count"); if (el) el.textContent = n ? String(n) : "";
+}
+// One open popover at a time; a click anywhere else closes it.
+function closeAllPops(except) {
+  document.querySelectorAll(".pop:not([hidden])").forEach((p) => {
+    if (except && (p === except || p.contains(except))) return;
+    p.hidden = true;
+    const w = p.closest(".pop-wrap"); const b = w && w.querySelector("[aria-expanded]"); if (b) b.setAttribute("aria-expanded", "false");
+  });
+}
+document.addEventListener("mousedown", (e) => {
+  if (e.target.closest?.(".pop, .pop-wrap > button")) return;
+  closeAllPops();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const open = document.querySelector(".pop:not([hidden])");
+  if (open) { e.preventDefault(); e.stopPropagation(); closeAllPops(); }
+}, true);
+
+// ── pager: ‹ [scrollable page strip] [Page n of N ▾] › ──
+function dbPagerHtml(where, page, pages) {
+  if (pages <= 1) return "";
+  const lo = Math.max(0, page - 60), hi = Math.min(pages - 1, page + 60);
+  let strip = "";
+  const d4 = (i) => (i + 1 >= 1000 ? ' class="d4"' : "");   // four-digit pages use a smaller font
+  for (let i = lo; i <= hi; i++) strip += `<button type="button" data-page="${i}"${d4(i)}${i === page ? ' aria-current="page"' : ""}>${i + 1}</button>`;
+  const glo = pages <= 400 ? 0 : Math.max(0, page - 100), ghi = pages <= 400 ? pages - 1 : Math.min(pages - 1, page + 100);
+  let grid = "";
+  for (let i = glo; i <= ghi; i++) grid += `<button type="button" data-page="${i}"${d4(i)}${i === page ? ' aria-current="page"' : ""}>${i + 1}</button>`;
+  return `<nav class="pager db-pager" aria-label="Pages">` +
+    `<button type="button" class="btn btn-icon" data-page="${page - 1}" aria-label="Previous page"${page <= 0 ? " disabled" : ""}>${ic("left", 16)}</button>` +
+    `<div class="pager-strip" data-strip>${strip}</div>` +
+    `<div class="pop-wrap"><button type="button" class="btn" data-jump aria-expanded="false" aria-haspopup="dialog">Page <b class="num" style="color:var(--strong)">${page + 1}</b> of <span class="num">${pages.toLocaleString()}</span>${ic("down", 14)}</button>` +
+      `<div class="pop right jump${where === "bottom" ? " up" : ""}" role="dialog" aria-label="Go to page" hidden><form data-jump-form><label class="ifield"><span>Page</span><input inputmode="numeric" autocomplete="off" aria-label="Page number"><span>/ ${pages.toLocaleString()}</span></label><button class="btn btn-primary" type="submit">Go</button></form><div class="jump-grid">${grid}</div></div></div>` +
+    `<button type="button" class="btn btn-icon" data-page="${page + 1}" aria-label="Next page"${page >= pages - 1 ? " disabled" : ""}>${ic("right", 16)}</button>` +
+  `</nav>`;
+}
+// go(page) loads a page and returns a promise; a click on the BOTTOM pager
+// scrolls back up to the results header once it lands.
+function wireDbPagers(root, go) {
+  if (!root) return;
+  root._pagerGo = go || ((p) => performDbSearch({ page: p }));
+  if (root._pagersWired) return;
+  root._pagersWired = true;
+  root.addEventListener("click", (e) => {
+    const pg = e.target.closest(".pager [data-page], .jump-grid [data-page]");
+    if (pg && !pg.disabled) {
+      const fromBottom = !!pg.closest(".rfoot");
+      closeAllPops();
+      Promise.resolve(root._pagerGo(+pg.dataset.page)).then(() => { if (fromBottom) root.querySelector(".rhead")?.scrollIntoView({ block: "start" }); });
+      return;
+    }
+    const j = e.target.closest("[data-jump]");
+    if (j) {
+      e.stopPropagation();
+      const pop = j.parentElement.querySelector(".pop");
+      const open = pop.hidden;
+      closeAllPops();
+      pop.hidden = !open; j.setAttribute("aria-expanded", String(open));
+      if (open) { const cur = pop.querySelector('[aria-current="page"]'); if (cur) cur.scrollIntoView({ block: "nearest" }); const i = pop.querySelector("input"); if (i) i.focus(); }
+    }
+  });
+  root.addEventListener("submit", (e) => {
+    const f = e.target.closest("[data-jump-form]"); if (!f) return;
+    e.preventDefault();
+    const n = parseInt(f.querySelector("input").value, 10);
+    if (n >= 1) { closeAllPops(); root._pagerGo(n - 1); }
+  });
+}
+// Keep the current page centred in each strip; fade only the side with more.
+function positionPagerStrips() {
+  document.querySelectorAll("[data-strip]").forEach((strip) => {
+    const cur = strip.querySelector('[aria-current="page"]');
+    if (cur) { strip.style.scrollBehavior = "auto"; strip.scrollLeft = cur.offsetLeft - strip.clientWidth / 2 + cur.offsetWidth / 2; strip.style.scrollBehavior = ""; }
+    pagerStripFade(strip);
+    strip.onscroll = () => pagerStripFade(strip);
+  });
+}
+function pagerStripFade(strip) {
+  strip.classList.toggle("fade-l", strip.scrollLeft > 2);
+  strip.classList.toggle("fade-r", strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 2);
+}
+// The mouse wheel scrolls a page strip sideways.
+document.addEventListener("wheel", (ev) => {
+  const strip = ev.target.closest && ev.target.closest(".pager-strip");
+  if (!strip || Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) return;
+  ev.preventDefault();
+  strip.style.scrollBehavior = "auto"; strip.scrollLeft += ev.deltaY; strip.style.scrollBehavior = "";
+}, { passive: false });
+
+// Fetched result pages, so Back / revisiting a page / the prefetched next page
+// render at once. Keyed by the search signature + page; starred-only searches
+// are never cached (starring changes them).
+const _dbPageCache = new Map();
+function dbFetchPage(key, urls) {
+  const none = Promise.resolve({ rows: [], total: 0 });
+  if (key && _dbPageCache.has(key)) { const hit = _dbPageCache.get(key); _dbPageCache.delete(key); _dbPageCache.set(key, hit); return hit; }
+  const t0 = performance.now();
+  const entry = { t: urls.t ? API.get(urls.t) : none, b: urls.b ? API.get(urls.b) : none, ms: null };
+  Promise.all([entry.t, entry.b]).then(() => { entry.ms = performance.now() - t0; }, () => { if (key) _dbPageCache.delete(key); });
+  if (key) {
+    _dbPageCache.set(key, entry);
+    while (_dbPageCache.size > 30) _dbPageCache.delete(_dbPageCache.keys().next().value);
+  }
+  return entry;
 }
 let _dbSearchSeq = 0;
 async function performDbSearch(opts) {
@@ -8120,63 +9247,54 @@ async function performDbSearch(opts) {
   // race where an earlier (e.g. empty-input) query resolves last and clobbers.
   const seq = ++_dbSearchSeq;
   const g = (id) => document.getElementById(id);
-  const query = g("db-search-input")?.value?.trim();
-  const qtype = g("db-qtype")?.value || "all";
-  const textType = g("db-search-type")?.value || "all";
-  const catSel = g("db-cat-filter"), subSel = g("db-sub-filter"), altSel = g("db-alt-filter"), deepSel = g("db-deep-filter");
-  const { nodeId: catNode } = catSel ? getCatCascadeFilter(catSel, subSel, altSel, deepSel) : { nodeId: "" };
-  const match = g("db-match")?.value || "phrase";
-  const prefix = !!g("db-prefix")?.checked;
-  const hideAns = g("db-hide-ans")?.checked;
-  const diffs = [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value);
-  const _ya = parseInt(g("db-year-min")?.value || 2000);
-  const _yb = parseInt(g("db-year-max")?.value || 2026);
-  const yearMin = Math.min(_ya, _yb), yearMax = Math.max(_ya, _yb);
-  const sort = g("db-sort")?.value || "relevance";
-  const std = !!g("db-standard")?.checked;
-  const pm = !!g("db-powermark")?.checked && qtype !== "bonus";
-  const starred = !!g("db-starred")?.checked;
-  const setRaw = g("db-set-filter")?.value || "";
-  const yl = g("db-year-label");
-  if (yl) yl.textContent = `${yearMin} – ${yearMax}`;
-  const fill = g("db-year-fill");
-  if (fill) { fill.style.left = ((yearMin - 2000) / 26) * 100 + "%"; fill.style.right = ((2026 - yearMax) / 26) * 100 + "%"; }
+  const q = _dbq;
   const container = g("db-results");
   if (!container) return;
-  container.classList.toggle("db-hide-ans", !!hideAns);
+  const query = String(q.text || "").trim();
+  const qtype = q.qtype || "all";
+  const textType = q.field || "all";
+  const match = q.match || "phrase";
+  const prefix = !!q.prefix;
+  const diffs = q.diffs.slice();
+  const yearMin = q.yearMin || 2000, yearMax = q.yearMax || 2026;
+  const sort = q.sort || "relevance";
+  const std = !!q.standard;
+  const pm = !!q.powermark && qtype !== "bonus";
+  const starred = !!q.starred;
+  const setRaw = q.set || "";
+  const tagsQ = (q.tags || []).length ? JSON.stringify(q.tags.map((t) => (t.id ? { f: t.f, v: t.v, x: t.x ? 1 : 0, id: t.id } : { f: t.f, v: t.v, x: t.x ? 1 : 0 }))) : "";
+  container.classList.toggle("db-hide-ans", !!q.hideAns);
 
   const tokens = query ? (query.match(/[\p{L}\p{N}]+/gu) || []) : [];   // phrase mode + highlighting
   const qWords = dbFtsWords(query);
-  const exclRaw = (g("db-exclude")?.value || "").trim();
+  const exclRaw = String(q.exclude || "").trim();
   const excl = dbFtsWords(exclRaw);
 
   const sets = await dbResolveSets();
   if (seq !== _dbSearchSeq) return;
   dbSyncPackets(sets.single);   // not awaited: fills the packet list when exactly one set matches
-  const pktSel = g("db-packet-filter");
-  const pkt = pktSel && !pktSel.disabled ? (pktSel.value || "") : "";
+  const pkt = q.packet && g("db-packet-filter") && !g("db-packet-filter").disabled ? q.packet : "";
 
   // Page rule: an explicit page wins; otherwise only a CHANGED search resets to
-  // page 1. Late cascade / debounced calls after a Back restore used to reset
-  // the restored page to 0.
-  const sig = JSON.stringify([query, qtype, textType, match, prefix, excl, catNode, diffs, yearMin, yearMax, setRaw, pkt, sort, std, pm, starred]);
+  // page 1. Late debounced calls after a Back restore used to reset the page.
+  const sig = JSON.stringify([query, qtype, textType, match, prefix, excl, _dbCatUnits, tagsQ, diffs, yearMin, yearMax, setRaw, pkt, sort, std, pm, starred]);
   if (opts && opts.page != null) _dbPage = Math.max(0, opts.page);
   else if (sig !== _dbLastSig) _dbPage = 0;
   _dbLastSig = sig;
+  dbMoreCount();
 
   const setsOn = !!setRaw && sets.n > 0;
-  const active = [setsOn, !!pkt, excl.length > 0, sort !== "relevance", std, pm, starred].filter(Boolean).length;
-  const badge = g("db-more-count");
-  if (badge) badge.textContent = active ? String(active) : "";
+  const total = g("db-total"), pt = g("db-pager-top"), pb = g("db-pager-bottom");
   if (setRaw && sets.n === 0) {
-    container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">No set matches "' + escapeHtml(setRaw) + '"</div>';
+    container.innerHTML = '<div class="db-empty">No set matches "' + escapeHtml(setRaw) + '"</div>';
+    if (total) total.textContent = ""; if (pt) pt.innerHTML = ""; if (pb) pb.innerHTML = "";
     return;
   }
 
   // Search shows every record, the unplayable ones too (marked on the card).
   const common =
     `limit=${DB_PAGE_SIZE}&offset=${_dbPage * DB_PAGE_SIZE}&includeUnplayable=1` +
-    (catNode ? `&categoryIds=${encodeURIComponent(catNode)}` : "") +
+    (_dbCatUnits.length ? `&categoryIds=${encodeURIComponent(_dbCatUnits.join(","))}` : "") +
     (diffs.length ? `&difficulties=${diffs.join(",")}` : "") +
     (yearMin > 2000 ? `&yearMin=${yearMin}` : "") +
     (yearMax < 2026 ? `&yearMax=${yearMax}` : "") +
@@ -8187,46 +9305,82 @@ async function performDbSearch(opts) {
     (std ? "&standard=1" : "") +   // never standard=0: that means NON-standard only
     (pm ? "&powermarkOnly=true" : "") +
     (starred ? "&starredOnly=true" : "") +
+    (tagsQ ? `&tags=${encodeURIComponent(tagsQ)}` : "") +
     (sort !== "relevance" ? `&sort=${encodeURIComponent(sort)}` : "");
   // With search text the exclusion rides inside the FTS query (NOT); without it
   // FTS has nothing to NOT against, so the backend applies it as its own filter.
   const exclQS = excl.length ? `&exclude=${encodeURIComponent(exclRaw)}&excludeIn=${encodeURIComponent(textType)}` : "";
 
   const wantT = qtype !== "bonus", wantB = qtype !== "tossup" && !pm;
-  const none = Promise.resolve({ rows: [], total: 0 });
-  container.innerHTML = loadingBarHtml(tokens.length ? "Searching…" : "Loading questions…");
+  const expr = tokens.length ? dbFtsExpr(tokens, qWords, excl, match, prefix) : "";
+  const urlsFor = (page) => {
+    const cq = common.replace(/offset=\d+/, "offset=" + page * DB_PAGE_SIZE);
+    return tokens.length
+      ? { t: wantT ? `/api/tossups/search?query=${encodeURIComponent(dbFtsFor(expr, textType, false))}&${cq}` : null, b: wantB ? `/api/bonuses/search?query=${encodeURIComponent(dbFtsFor(expr, textType, true))}&${cq}` : null }
+      : { t: wantT ? `/api/tossups/query?${cq}${exclQS}` : null, b: wantB ? `/api/bonuses/query?${cq}${exclQS}` : null };
+  };
+  const keyFor = (page) => (starred ? null : sig + "|" + page);
+  const entry = dbFetchPage(keyFor(_dbPage), urlsFor(_dbPage));
+  // A cached page renders at once; otherwise show the bar only if it takes a moment.
+  const barT = entry.ms != null ? null : setTimeout(() => { if (seq === _dbSearchSeq) container.innerHTML = loadingBarHtml(tokens.length ? "Searching…" : "Loading questions…"); }, 90);
+  if (entry.ms == null) container.classList.add("db-loading");
+  const hl = (el) => { if (tokens.length) highlightTerms(el, match === "phrase" ? [tokens.join(" "), ...tokens] : tokens, { prefix }); };
+  // Tossups and bonuses are separate queries: unless a sort mixes them, the
+  // tossup section shows as soon as it lands and the bonuses follow it.
+  const mixed = wantT && wantB && Object.hasOwn(DB_SORT_CMP, sort);
+  let early = false;
+  if (wantT && wantB && !mixed) {
+    entry.t.then((t) => {
+      if (seq !== _dbSearchSeq || early === null || !(t.rows || []).length) return;
+      clearTimeout(barT);
+      container.classList.remove("db-loading");
+      container.innerHTML = '<div class="db-sec" data-sec="t">' + t.rows.map((r) => renderSearchResult(r, "search")).join("") + "</div>" +
+        '<div class="db-sec db-sec-wait" data-sec="b">' + loadingBarHtml("Loading bonuses…") + "</div>";
+      hl(container.querySelector('[data-sec="t"]'));
+      early = true;
+    }, () => {});
+  }
   try {
-    let t, b;
-    if (!tokens.length) {
-      [t, b] = await Promise.all([
-        wantT ? API.get(`/api/tossups/query?${common}${exclQS}`) : none,
-        wantB ? API.get(`/api/bonuses/query?${common}${exclQS}`) : none,
-      ]);
-    } else {
-      const expr = dbFtsExpr(tokens, qWords, excl, match, prefix);
-      [t, b] = await Promise.all([
-        wantT ? API.get(`/api/tossups/search?query=${encodeURIComponent(dbFtsFor(expr, textType, false))}&${common}`) : none,
-        wantB ? API.get(`/api/bonuses/search?query=${encodeURIComponent(dbFtsFor(expr, textType, true))}&${common}`) : none,
-      ]);
-    }
+    const [t, b] = await Promise.all([entry.t, entry.b]);
+    clearTimeout(barT);
     if (seq !== _dbSearchSeq) return;
+    container.classList.remove("db-loading");
     const rows = [...(t.rows || []), ...(b.rows || [])];
     // Tossups and bonuses come from separate queries; a chosen order is applied
     // to the merged page (bm25 relevance can't be compared across tables).
-    if (wantT && wantB && Object.hasOwn(DB_SORT_CMP, sort)) rows.sort(DB_SORT_CMP[sort]);
+    if (mixed) rows.sort(DB_SORT_CMP[sort]);
     const totT = wantT ? (t.total || 0) : 0, totB = wantB ? (b.total || 0) : 0;
-    const hasMore = (_dbPage + 1) * DB_PAGE_SIZE < Math.max(totT, totB);
-    if (!rows.length) {
-      container.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">' +
-        (_dbPage > 0 ? "No more results" : tokens.length ? "No results" : "No questions match these filters") + "</div>" + (_dbPage > 0 ? dbPagerHtml(false) : "");
-    } else {
-      const count = [wantT ? `${totT.toLocaleString()} tossup${totT === 1 ? "" : "s"}` : null, wantB ? `${totB.toLocaleString()} bonus${totB === 1 ? "" : "es"}` : null].filter(Boolean).join(" · ");
-      container.innerHTML = '<div class="db-count text-muted">' + count + "</div>" + rows.map((q) => renderSearchResult(q)).join("") + dbPagerHtml(hasMore);
-      // Highlight what was searched — the whole phrase first in phrase mode.
-      if (tokens.length) highlightTerms(container, match === "phrase" ? [tokens.join(" "), ...tokens] : tokens, { prefix });
+    const pages = Math.max(1, Math.ceil(Math.max(totT, totB) / DB_PAGE_SIZE));
+    if (_dbPage > pages - 1 && (totT || totB)) { early = null; performDbSearch({ page: pages - 1 }); return; }
+    const sum = totT + totB;
+    if (total) {
+      total.textContent = sum.toLocaleString() + (sum === 1 ? " result" : " results");
+      total.title = [wantT ? `${totT.toLocaleString()} tossup${totT === 1 ? "" : "s"}` : null, wantB ? `${totB.toLocaleString()} bonus${totB === 1 ? "" : "es"}` : null].filter(Boolean).join(" · ");
     }
-    wireDbPager(container);
-  } catch (e) { if (seq === _dbSearchSeq) container.innerHTML = '<div class="text-muted" style="padding:16px">Search failed: ' + escapeHtml(e.message || "") + "</div>"; }
+    if (pt) pt.innerHTML = sum ? dbPagerHtml("top", _dbPage, pages) : "";
+    if (pb) pb.innerHTML = sum && rows.length > 3 ? dbPagerHtml("bottom", _dbPage, pages) : "";
+    positionPagerStrips();
+    if (!rows.length) {
+      container.innerHTML = '<div class="db-empty">' + (tokens.length ? "No results" : "No questions match these filters") + "</div>";
+    } else if (early === true) {
+      const wait = container.querySelector(".db-sec-wait");
+      if (wait) { wait.classList.remove("db-sec-wait"); wait.innerHTML = (b.rows || []).map((r) => renderSearchResult(r, "search")).join(""); hl(wait); }
+    } else {
+      container.innerHTML = rows.map((r) => renderSearchResult(r, "search")).join("");
+      hl(container);
+    }
+    early = null;
+    // Quick searches prefetch the next page so Next is instant (slow ones
+    // don't: the backend is single-threaded and the next click would wait).
+    if (_dbPage + 1 < pages && keyFor(_dbPage + 1) && entry.ms != null && entry.ms < 450) {
+      const next = _dbPage + 1;
+      setTimeout(() => { if (seq === _dbSearchSeq) dbFetchPage(keyFor(next), urlsFor(next)); }, 200);
+    }
+  } catch (e) {
+    clearTimeout(barT);
+    early = null;
+    if (seq === _dbSearchSeq) { container.classList.remove("db-loading"); container.innerHTML = '<div class="db-empty">Search failed: ' + escapeHtml(e.message || "") + "</div>"; if (pt) pt.innerHTML = ""; if (pb) pb.innerHTML = ""; }
+  }
 }
 
 // Unplayable records (never served in practice) get "✕", warning-group ones "!".
@@ -8240,36 +9394,38 @@ function questionFlagMark(q) {
   }
   return questionWarnHtml(q || {});
 }
-function renderSearchResult(q) {
+function renderSearchResult(q, where) {
   const isTossup = q.question_sanitized != null;
   const type = isTossup ? "tossup" : "bonus";
   const starred = _dbStarred && _dbStarred.has(type + ":" + q.id);
-  const star = `<span class="qb-star${starred ? " on" : ""}" data-qid="${q.id}" data-type="${type}" title="Star">${starred ? "\u2605" : "\u2606"}</span>`;
-  let answerHtmlStr;
-  let body;
+  const star = `<span class="qb-star${starred ? " on" : ""}" data-qid="${q.id}" data-type="${type}" title="Star">${starred ? "★" : "☆"}</span>`;
+  let title, kind, body;
+  const diff = q.difficulty != null ? ` · Diff ${q.difficulty}` : "";
   if (isTossup) {
-    answerHtmlStr = answerLineHtml(q.answer, q.answer_sanitized || "?");
-    body = `<div class="qcard-text">${colorizePowerMarks(escapeHtml(q.question_sanitized || ""))}</div>`;
+    title = escapeHtml(primaryAnswerText(q.answer_sanitized || "") || "?");
+    kind = "Tossup" + diff;
+    body = `<div class="qcard-text">${colorizePowerMarks(escapeHtml(q.question_sanitized || ""))}</div>` +
+      `<div class="qcard-answer"><span class="ra-k">Answer</span> <span class="ans-toggle"><span class="ans">${answerLineHtml(q.answer, q.answer_sanitized || "?")}</span></span></div>`;
   } else {
     let parts = [], answers = [], rawAnswers = [];
     try { parts = JSON.parse(q.parts_sanitized || "[]"); } catch {}
     try { answers = JSON.parse(q.answers_sanitized || "[]"); } catch {}
     try { rawAnswers = JSON.parse(q.answers || "[]"); } catch {}
-    answerHtmlStr = answers.map((a, i) => answerLineHtml(rawAnswers[i], a)).join(" / ") || "?";
+    title = answers.map((a) => escapeHtml(primaryAnswerText(a))).filter(Boolean).join(" / ") || "?";
+    kind = `Bonus · ${parts.length} part${parts.length === 1 ? "" : "s"}` + diff;
     body = `<div class="qcard-text">${escapeHtml(q.leadin_sanitized || "")}</div>` +
       parts.map((p, i) =>
         `<div class="qcard-part">[${bonusPartValues(q).values[i] || 10}] ${escapeHtml(p)}<br><span class="ans-toggle"><span class="ans">ANSWER: ${answerLineHtml(rawAnswers[i], answers[i] || "")}</span></span></div>`).join("");
   }
-  if (q.set_name) body += `<div class="qcard-foot"><span class="qcard-note">${escapeHtml(q.set_name)}${q.set_year ? " (" + q.set_year + ")" : ""}</span></div>`;
+  const src = q.set_name ? q.set_name + (q.packet_number ? " · packet " + q.packet_number : "") : "";
   return qcardHtml({
     compact: state.viewMode === "compact",
-    category: q.category,
-    subcategory: q.subcategory,
-    altSub: q.alternate_subcategory,
-    year: q.set_year,
-    difficulty: q.difficulty,
-    sideHtml: `${questionFlagMark(q)}<span class="star-btn save-plus db-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders">+</span><span class="pill">${isTossup ? "TU" : "BO"}</span>${star}`,
-    answerHtml: `Answer: <span class="ans-toggle"><span class="ans">${answerHtmlStr}</span></span>`,
+    question: q,
+    titleHtml: `<span class="ans-toggle"><span class="ans">${title}</span></span>`,
+    kindHtml: kind,
+    src,
+    tagsWhere: where || "search",
+    sideHtml: `${questionFlagMark(q)}<span class="star-btn save-plus db-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders">+</span>${star}`,
     bodyHtml: body,
   });
 }
@@ -8281,7 +9437,7 @@ async function getDbSets() {
 }
 // The picked set name -> its id(s) (a name can repeat across ids).
 async function dbResolveSets() {
-  const name = document.getElementById("db-set-filter")?.value || "";
+  const name = _dbq.set || "";
   if (!name) return { ids: [], n: 0, single: null };
   const list = (await getDbSets()).filter((s) => s.name === name);
   return { ids: list.map((s) => s.id), n: list.length, single: list.length ? name : null };
@@ -8331,6 +9487,7 @@ async function dbSyncPackets(name) {
   if (_dbPacketsFor !== name) return;
   nums.forEach((n) => _catAddOpt(sel, String(typeof n === "object" && n ? (n.number ?? n.packet_number ?? "") : n)));
   _catSetDisabled(sel, !nums.length);
+  if (_dbq.packet && [...sel.options].some((o) => o.value === _dbq.packet)) sel.value = _dbq.packet;
   _syncSel(sel);
 }
 // Where the sets browser is drilled to — back steps up one level (packet →
@@ -8346,62 +9503,27 @@ let _dbTabFrom = null;
 // jump past the Database entirely. Remember each previous search instead.
 let _dbSearchStack = [];
 function currentSearchState() {
-  const g = (id) => document.getElementById(id);
-  if (!g("db-search-input")) return null;
-  const on = (id) => !!g(id)?.checked, val = (id, d = "") => (g(id) ? g(id).value : d);
-  const live = (id) => (g(id) && !g(id).disabled ? g(id).value || "" : "");
-  return {
-    query: val("db-search-input"), field: val("db-search-type", "all"), qtype: val("db-qtype", "all"),
-    match: val("db-match", "phrase"), prefix: on("db-prefix"), exclude: val("db-exclude"), hideAns: on("db-hide-ans"),
-    cat: val("db-cat-filter"), sub: live("db-sub-filter"), alt: live("db-alt-filter"), deep: live("db-deep-filter"),
-    diffs: [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value),
-    yearMin: val("db-year-min", "2000"), yearMax: val("db-year-max", "2026"),
-    set: val("db-set-filter"), packet: live("db-packet-filter"), sort: val("db-sort", "relevance"),
-    standard: on("db-standard"), powermark: on("db-powermark"), starred: on("db-starred"),
-    page: _dbPage,
-  };
+  if (!document.getElementById("db-search-input")) return null;
+  return { ...JSON.parse(JSON.stringify(_dbq)), query: _dbq.text, cats: _dbCatUnits.slice(), page: _dbPage };
 }
 // Restore a saved search into the rebuilt controls, then run ONE search. Selects
 // dispatch change so their QBSelect labels follow; the cascade waits for its
 // options exactly like applyFrequencySelection.
+// Restore a saved search into the tab, then run ONE search.
 async function applySearchState(s) {
-  const g = (id) => document.getElementById(id);
-  const sel = (id, v) => { const el = g(id); if (el && v != null && el.value !== v) { el.value = v; el.dispatchEvent(new Event("change")); } };
-  const chk = (id, v) => { if (g(id)) g(id).checked = !!v; };
-  _dbRestoring = true;
-  try {
-    if (g("db-search-input")) g("db-search-input").value = s.query || "";
-    sel("db-search-type", s.field); sel("db-qtype", s.qtype);
-    sel("db-match", s.match || (s.exact === false ? "all" : "phrase"));   // older entries carried `exact`
-    sel("db-sort", s.sort || "relevance");
-    chk("db-prefix", s.prefix); chk("db-hide-ans", s.hideAns); chk("db-standard", s.standard); chk("db-powermark", s.powermark); chk("db-starred", s.starred);
-    if (g("db-exclude")) g("db-exclude").value = s.exclude || "";
-    document.querySelectorAll(".db-diff-cb").forEach((cb) => { cb.checked = (s.diffs || []).includes(cb.value); });
-    if (g("db-year-min")) g("db-year-min").value = s.yearMin || "2000";
-    if (g("db-year-max")) g("db-year-max").value = s.yearMax || "2026";
-    if (s.set) { await getDbSets(); if (await waitForOption(g("db-set-filter"), s.set, 4000)) sel("db-set-filter", s.set); }
-    else sel("db-set-filter", "");
-    const cS = g("db-cat-filter"), sS = g("db-sub-filter"), aS = g("db-alt-filter");
-    if (cS && cS.value !== (s.cat || "") && (!s.cat || await waitForOption(cS, s.cat))) { cS.value = s.cat || ""; cS.dispatchEvent(new Event("change")); }
-    // An EMPTY saved value must clear the control too: with the category / set
-    // unchanged nothing else resets a sub / alt / packet picked after the jump.
-    if (sS) {
-      if (s.sub && await waitForOption(sS, s.sub)) { sS.value = s.sub; sS.dispatchEvent(new Event("change")); }
-      else if (sS.value) { sS.value = ""; sS.dispatchEvent(new Event("change")); }
-    }
-    if (aS) {
-      if (s.alt && await waitForOption(aS, s.alt)) { aS.value = s.alt; aS.dispatchEvent(new Event("change")); }
-      else if (aS.value) { aS.value = ""; aS.dispatchEvent(new Event("change")); }
-    }
-    const dS = g("db-deep-filter");
-    if (dS) {
-      if (s.deep && await waitForOption(dS, s.deep)) { dS.value = s.deep; dS.dispatchEvent(new Event("change")); }
-      else if (dS.value) { dS.value = ""; dS.dispatchEvent(new Event("change")); }
-    }
-    if (s.packet) { await dbSyncPackets((await dbResolveSets()).single); if (await waitForOption(g("db-packet-filter"), s.packet)) sel("db-packet-filter", s.packet); }
-    else sel("db-packet-filter", "");
-  } finally { _dbRestoring = false; }
+  if (!s) return;
+  Object.assign(_dbq, dbQueryDefaults(), {
+    text: s.query != null ? s.query : (s.text || ""), field: s.field || "all", qtype: s.qtype || "all",
+    match: s.match || (s.exact === false ? "all" : "phrase"), prefix: !!s.prefix, exclude: s.exclude || "", hideAns: !!s.hideAns,
+    tags: Array.isArray(s.tags) ? s.tags : [], diffs: (s.diffs || []).map(String),
+    yearMin: s.yearMin && +s.yearMin > 2000 ? +s.yearMin : null, yearMax: s.yearMax && +s.yearMax < 2026 ? +s.yearMax : null,
+    set: s.set || "", packet: s.packet || "", sort: s.sort || "relevance", standard: !!s.standard, powermark: !!s.powermark, starred: !!s.starred,
+  });
+  _dbCatUnits = Array.isArray(s.cats) ? s.cats.slice() : [];
+  _dbPage = s.page || 0;
+  _dbLastSig = null;
   clearTimeout(_dbTimer);
+  renderSearchTab();
   performDbSearch({ page: s.page || 0 });
 }
 function dbBrowseBack() {
@@ -8432,20 +9554,21 @@ function dbBrowseBack() {
 async function renderSetsTab() {
   _dbBrowse = null;
   const c = document.getElementById("db-content"); if (!c) return;
-  c.innerHTML = loadingBarHtml("Loading sets…");
+  c.innerHTML = '<div class="db-page">' + loadingBarHtml("Loading sets…") + "</div>";
   if (!_dbSets) { try { _dbSets = (await API.get("/api/sets")).sets || []; } catch { _dbSets = []; } }
   c.innerHTML =
-    '<div class="db-toolbar"><input type="text" id="db-set-search" class="db-input" placeholder="Filter sets…" autocomplete="off"></div>' +
-    '<div class="db-browse" id="db-set-list"></div>';
-  let lastTerm = "";   // the rebuilt box is empty: Back / "← Sets" keeps "Show all"
+    '<div class="db-page">' +
+      `<div class="db-toolbar"><label class="ifield" style="max-width:420px">${ic("search", 15)}<input type="text" id="db-set-search" placeholder="Filter sets…" autocomplete="off" aria-label="Filter sets"></label><span class="spacer"></span><span class="tile-n" id="db-set-n"></span></div>` +
+      '<div class="list db-browse" id="db-set-list"></div>' +
+    "</div>";
+  // every set is listed (~700 rows); content-visibility keeps it cheap to draw
   const render = () => {
     const term = (document.getElementById("db-set-search").value || "").toLowerCase();
-    if (term !== lastTerm) { _moreShown.delete("db:sets"); lastTerm = term; }
     const list = _dbSets.filter((s) => !term || (s.name || "").toLowerCase().includes(term));
+    const n = document.getElementById("db-set-n"); if (n) n.textContent = list.length.toLocaleString() + " sets";
     document.getElementById("db-set-list").innerHTML = list.map((s) =>
-      `<div class="db-row" data-set="${escapeHtml(s.name)}"><span>${escapeHtml(s.name)}</span><span class="text-muted">${s.year || ""}</span></div>`
-    ).join("") || '<div class="text-muted" style="padding:12px">No sets</div>';
-    limitList(document.getElementById("db-set-list"), ":scope > .db-row", "db:sets", 100, 200);
+      `<div class="list-row clickable db-row" data-set="${escapeHtml(s.name)}"><span class="lr-name">${escapeHtml(s.name)}</span>${yearBadgeHtml(s.year)}<span class="lr-diff">${escapeHtml(DIFF_FULL[s.difficulty] || "")}</span><span class="lr-std">${s.standard ? '<span class="qtag">standard</span>' : '<span class="qtag" style="opacity:.6">non-standard</span>'}</span></div>`
+    ).join("") || '<div class="db-empty" style="border:0">No sets</div>';
     document.querySelectorAll("#db-set-list .db-row").forEach((r) => {
       r.addEventListener("click", () => openSet(r.dataset.set));
       r.addEventListener("contextmenu", (ev) => {
@@ -8468,16 +9591,19 @@ async function renderSetsTab() {
 async function openSet(setName) {
   _dbBrowse = { set: setName };
   const c = document.getElementById("db-content");
-  c.innerHTML = `<div class="db-crumb"><button class="ext-link" id="db-back-sets">← Sets</button> / <strong>${escapeHtml(setName)}</strong></div><div class="db-browse" id="db-packet-list"><div class="text-muted" style="padding:12px">Loading packets…</div></div>`;
+  const s = (_dbSets || []).find((x) => x.name === setName) || {};
+  c.innerHTML = `<div class="db-page"><div class="db-crumb"><button class="ext-link" id="db-back-sets">${ic("left", 14)} Sets</button><span aria-hidden="true">/</span><strong>${escapeHtml(setName)}</strong>${yearBadgeHtml(s.year)}<span class="db-pkt-view"><button class="btn btn-sm btn-primary" id="db-set-play-tu">${ic("play", 13)}Play tossups</button><button class="btn btn-sm" id="db-set-play-bo">Play bonuses</button></span></div><div class="list db-browse" id="db-packet-list">${loadingBarHtml("Loading packets…")}</div></div>`;
   document.getElementById("db-back-sets").addEventListener("click", renderSetsTab);
+  document.getElementById("db-set-play-tu").addEventListener("click", () => playSetPacket(setName, "", false));
+  document.getElementById("db-set-play-bo").addEventListener("click", () => playSetPacket(setName, "", true));
   let packets = [], err = "";
   try {
     const res = await API.get("/api/packets-for-set?setName=" + encodeURIComponent(setName));
     packets = (res && (res.packets || (Array.isArray(res) ? res : []))) || [];
   } catch (e) { err = e.message || String(e); }
   document.getElementById("db-packet-list").innerHTML = packets.length
-    ? packets.map((p) => `<div class="db-row" data-pkt="${p.packet_number}"><span>Packet ${p.packet_number}${p.packet_name && p.packet_name !== String(p.packet_number) ? " — " + escapeHtml(p.packet_name) : ""}</span></div>`).join("")
-    : `<div class="text-muted" style="padding:12px">${err ? "Couldn't load packets: " + escapeHtml(err) : "No packets in this set."}</div>`;
+    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}"><span class="lr-name">Packet ${p.packet_number}${p.packet_name && p.packet_name !== String(p.packet_number) ? " — " + escapeHtml(p.packet_name) : ""}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
+    : `<div class="db-empty" style="border:0">${err ? "Couldn't load packets: " + escapeHtml(err) : "No packets in this set."}</div>`;
   document.querySelectorAll("#db-packet-list .db-row").forEach((r) => {
     r.addEventListener("click", () => openPacket(setName, parseInt(r.dataset.pkt)));
     r.addEventListener("contextmenu", (ev) => {
@@ -8498,34 +9624,34 @@ async function openPacket(setName, packetNumber) {
   _dbBrowse = { set: setName, pkt: packetNumber };
   const c = document.getElementById("db-content");
   c.innerHTML =
-    `<div class="db-crumb"><button class="ext-link" id="db-back-sets">← Sets</button> / <button class="ext-link" id="db-back-set">${escapeHtml(setName)}</button> / <strong>Packet ${packetNumber}</strong>` +
+    `<div class="db-page"><div class="db-crumb"><button class="ext-link" id="db-back-sets">${ic("left", 14)} Sets</button><span aria-hidden="true">/</span><button class="ext-link" id="db-back-set">${escapeHtml(setName)}</button><span aria-hidden="true">/</span><strong>Packet ${packetNumber}</strong>` +
     `<span class="db-pkt-view">` +
-      `<button class="btn btn-sm btn-primary" id="db-play-tu" title="Read this packet's tossups in order">▶ Play tossups</button>` +
-      `<button class="btn btn-sm" id="db-play-bo" title="Read this packet's bonuses in order">▶ Play bonuses</button>` +
-      `<button class="btn btn-sm" id="db-view-sections">Tossups → Bonuses</button><button class="btn btn-sm" id="db-view-inter">Interleaved</button></span></div>` +
-    `<div class="search-results" id="db-pkt-content">${loadingBarHtml("Loading packet…")}</div>`;
+      `<button class="btn btn-sm btn-primary" id="db-play-tu" title="Read this packet's tossups in order">${ic("play", 13)}Play tossups</button>` +
+      `<button class="btn btn-sm" id="db-play-bo" title="Read this packet's bonuses in order">Play bonuses</button>` +
+      `<span class="seg" role="group" aria-label="Order"><button type="button" id="db-view-sections">Tossups → Bonuses</button><button type="button" id="db-view-inter">Interleaved</button></span></span></div>` +
+    `<div class="results search-results" id="db-pkt-content">${loadingBarHtml("Loading packet…")}</div></div>`;
   document.getElementById("db-back-sets").addEventListener("click", renderSetsTab);
   document.getElementById("db-back-set").addEventListener("click", () => openSet(setName));
   let data = { tossups: [], bonuses: [] }, pErr = "";
   try { data = await API.get(`/api/packet-content?setName=${encodeURIComponent(setName)}&packetNumber=${packetNumber}`); } catch (e) { pErr = e.message || String(e); }
   const el = document.getElementById("db-pkt-content");
-  if (pErr) { el.innerHTML = '<div class="text-muted" style="padding:12px">Couldn\'t load packet: ' + escapeHtml(pErr) + "</div>"; return; }
+  if (pErr) { el.innerHTML = '<div class="db-empty">Couldn\'t load packet: ' + escapeHtml(pErr) + "</div>"; return; }
   const tus = data.tossups || [], bos = data.bonuses || [];
   const render = () => {
     const inter = lsGet("qb-pkt-view") === "interleaved";
-    document.getElementById("db-view-sections")?.classList.toggle("btn-primary", !inter);
-    document.getElementById("db-view-inter")?.classList.toggle("btn-primary", inter);
+    document.getElementById("db-view-sections")?.setAttribute("aria-pressed", String(!inter));
+    document.getElementById("db-view-inter")?.setAttribute("aria-pressed", String(inter));
     let html = "";
     if (inter) {
       for (let i = 0; i < Math.max(tus.length, bos.length); i++) {
-        if (tus[i]) html += `<div class='db-section-label'>TOSSUP ${i + 1}</div>` + renderSearchResult(tus[i]);
-        if (bos[i]) html += `<div class='db-section-label'>BONUS ${i + 1}</div>` + renderSearchResult(bos[i]);
+        if (tus[i]) html += `<div class='db-section-label'>TOSSUP ${i + 1}</div>` + renderSearchResult(tus[i], "sets");
+        if (bos[i]) html += `<div class='db-section-label'>BONUS ${i + 1}</div>` + renderSearchResult(bos[i], "sets");
       }
     } else {
-      html = "<div class='db-section-label'>TOSSUPS</div>" + tus.map((q) => renderSearchResult(q)).join("");
-      html += "<div class='db-section-label'>BONUSES</div>" + bos.map((b) => renderSearchResult(b)).join("");
+      html = "<div class='db-section-label'>TOSSUPS</div>" + tus.map((q) => renderSearchResult(q, "sets")).join("");
+      html += "<div class='db-section-label'>BONUSES</div>" + bos.map((b) => renderSearchResult(b, "sets")).join("");
     }
-    el.innerHTML = html || '<div class="text-muted" style="padding:12px">Empty packet</div>';
+    el.innerHTML = html || '<div class="db-empty">Empty packet</div>';
   };
   document.getElementById("db-view-sections").addEventListener("click", () => { lsSet("qb-pkt-view", "sections"); render(); });
   document.getElementById("db-view-inter").addEventListener("click", () => { lsSet("qb-pkt-view", "interleaved"); render(); });
@@ -8536,75 +9662,19 @@ async function openPacket(setName, packetNumber) {
 
 function _catAddOpt(sel, v, label) { const o = document.createElement("option"); o.value = v; o.textContent = label != null ? label : v; sel.appendChild(o); }
 function _catSetDisabled(sel, dis) { if (!sel) return; sel.disabled = dis; sel.style.opacity = dis ? "0.5" : "1"; sel.title = dis ? "Not applicable for this selection" : ""; }
-// Category pickers over the tree: level 1, 2 and 3 selects, plus an optional
-// fourth listing every deeper node under the level-3 pick ("A > B" relative
-// paths). Values are node ids; the deepest pick is the filter (one subtree).
-async function fillCatTreeSelect(sel) {
-  if (!sel) return;
-  let tree; try { tree = await fetchCatTree("tossups"); } catch { return; }
-  const cur = sel.value, first = sel.options[0] ? sel.options[0].textContent : "All categories";
-  sel.innerHTML = `<option value="">${escapeHtml(first)}</option>`;
-  tree.roots.forEach((n) => _catAddOpt(sel, n.id, n.name));
-  if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
-  _syncSel(sel);
-}
-function wireCatCascade(catSel, subSel, altSel, onChange, deepSel) {
-  const LABELS = { sub: "All subcategories", alt: "All topics", deep: "All subtopics" };
-  const reset = (sel, key) => { if (!sel) return; sel.innerHTML = `<option value="">${LABELS[key]}</option>`; _catSetDisabled(sel, true); _syncSel(sel); };
-  const fill = (sel, key, nodes, labelOf) => {
-    if (!sel) return;
-    sel.innerHTML = `<option value="">${LABELS[key]}</option>`;
-    nodes.forEach((n) => _catAddOpt(sel, n.id, labelOf ? labelOf(n) : n.name));
-    _catSetDisabled(sel, !nodes.length); _syncSel(sel);
-  };
-  const node = async (id) => (id ? (await fetchCatTree("tossups")).byId.get(id) : null);
-  reset(subSel, "sub"); reset(altSel, "alt"); reset(deepSel, "deep");
-  catSel.addEventListener("change", async () => {
-    reset(altSel, "alt"); reset(deepSel, "deep");
-    const n = await node(catSel.value);
-    fill(subSel, "sub", n ? n.children || [] : []);
-    onChange();
-  });
-  subSel.addEventListener("change", async () => {
-    reset(deepSel, "deep");
-    const n = await node(subSel.value);
-    fill(altSel, "alt", n ? n.children || [] : []);
-    onChange();
-  });
-  altSel.addEventListener("change", async () => {
-    if (deepSel) {
-      const n = await node(altSel.value);
-      const out = [];
-      const walk = (x, prefix) => (x.children || []).forEach((c) => { const lab = prefix ? prefix + " > " + c.name : c.name; out.push({ id: c.id, label: lab }); walk(c, lab); });
-      if (n) walk(n, "");
-      fill(deepSel, "deep", out, (o) => o.label);
-    }
-    onChange();
-  });
-  if (deepSel) deepSel.addEventListener("change", onChange);
-}
-function getCatCascadeFilter(catSel, subSel, altSel, deepSel) {
-  const pick = [deepSel, altSel, subSel, catSel].find((x) => x && !x.disabled && x.value);
-  return { nodeId: pick ? pick.value : "" };
-}
+// ── Frequency: the most-asked answers for any mix of categories (the same
+//    picker as Search), paged like search results. The backend builds a
+//    selection's whole list once, so every later page is instant. ──
+const FREQ_PAGE = 50;
+let _freqUnits = [], _freqType = "tossup", _freqPage = 0, _freqSeq = 0;
 
-// Snapshot of the Frequency tab's dropdowns, so returning to it via Back shows
-// the same list rather than resetting to "All categories".
+// Snapshot for Back: returning from an answer's search shows the same list and page.
 function currentFrequencySelection() {
-  const g = (id) => document.getElementById(id);
-  if (!g("freq-cat")) return null;
-  return {
-    cat: g("freq-cat").value || "",
-    sub: g("freq-sub") && !g("freq-sub").disabled ? g("freq-sub").value || "" : "",
-    alt: g("freq-alt") && !g("freq-alt").disabled ? g("freq-alt").value || "" : "",
-    deep: g("freq-deep") && !g("freq-deep").disabled ? g("freq-deep").value || "" : "",
-    type: g("freq-type") ? g("freq-type").value : "tossup",
-    limit: g("freq-limit") ? g("freq-limit").value : "50",
-  };
+  if (!document.getElementById("freq-results")) return null;
+  return { units: _freqUnits.slice(), type: _freqType, page: _freqPage };
 }
 
-// The category dropdowns cascade through async fetches, so a restored value can
-// only be applied once its options exist. Poll briefly rather than guessing.
+// Polls until an async-filled <select> has the option (plugins and tests use it).
 function waitForOption(sel, value, ms = 1500) {
   if (!sel || !value) return Promise.resolve(false);
   const deadline = Date.now() + ms;
@@ -8618,86 +9688,83 @@ function waitForOption(sel, value, ms = 1500) {
   });
 }
 
-// Set while a saved selection is being replayed: each dispatched change fires
-// the cascade's own runFrequency, and those in-flight fetches could land after
-// the final one and overwrite the correct results.
-let _freqRestoring = false;
-
-async function applyFrequencySelection(sel) {
-  const catSel = document.getElementById("freq-cat");
-  if (!catSel || !sel) return;
-  _freqRestoring = true;
-  try {
-    const typeSel = document.getElementById("freq-type");
-    const limSel = document.getElementById("freq-limit");
-    if (typeSel && sel.type) typeSel.value = sel.type;
-    if (limSel && sel.limit) limSel.value = String(sel.limit);
-    if (sel.cat && await waitForOption(catSel, sel.cat)) {
-      catSel.value = sel.cat;
-      catSel.dispatchEvent(new Event("change"));
-      const subSel = document.getElementById("freq-sub");
-      if (sel.sub && await waitForOption(subSel, sel.sub)) {
-        subSel.value = sel.sub;
-        subSel.dispatchEvent(new Event("change"));
-      }
-      const altSel = document.getElementById("freq-alt");
-      if (sel.alt && await waitForOption(altSel, sel.alt)) {
-        altSel.value = sel.alt;
-        altSel.dispatchEvent(new Event("change"));
-        const deepSel = document.getElementById("freq-deep");
-        if (sel.deep && await waitForOption(deepSel, sel.deep)) deepSel.value = sel.deep;
-      }
-    }
-  } finally {
-    _freqRestoring = false;
-  }
-  runFrequency();
+function applyFrequencySelection(sel) {
+  if (!sel) return;
+  // a selection saved before 2026-10 is the old 4-level cascade: its deepest pick
+  const units = Array.isArray(sel.units) ? sel.units : [sel.deep, sel.alt, sel.sub, sel.cat].filter(Boolean).slice(0, 1);
+  _freqUnits = units.map(String);
+  if (["tossup", "bonus", "both"].includes(sel.type)) _freqType = sel.type;
+  _freqPage = Math.max(0, parseInt(sel.page, 10) || 0);
 }
 
-async function renderFrequencyTab(restore) {
+function renderFrequencyTab(restore) {
+  if (restore) applyFrequencySelection(restore);
   const c = document.getElementById("db-content"); if (!c) return;
+  const seg = [["tossup", "Tossups"], ["bonus", "Bonuses"], ["both", "Both"]]
+    .map(([v, l]) => `<button type="button" data-ftype="${v}" aria-pressed="${_freqType === v}">${l}</button>`).join("");
   c.innerHTML =
-    '<div class="db-toolbar">' +
-      '<select id="freq-cat" class="db-input db-input-sm"><option value="">All categories</option></select>' +
-      '<select id="freq-sub" class="db-input db-input-sm"><option value="">All subcategories</option></select>' +
-      '<select id="freq-alt" class="db-input db-input-sm"><option value="">All topics</option></select>' +
-      '<select id="freq-deep" class="db-input db-input-sm"><option value="">All subtopics</option></select>' +
-      '<select id="freq-type" class="db-input db-input-sm"><option value="tossup">Tossups only</option><option value="bonus">Bonuses only</option><option value="both">Tossups + Bonuses</option></select>' +
-      '<select id="freq-limit" class="db-input db-input-sm"><option>25</option><option selected>50</option><option>100</option><option>200</option><option>500</option><option>1000</option></select>' +
-    "</div>" +
-    '<div id="freq-results" class="search-results"><div class="text-muted" style="padding:16px">Loading…</div></div>';
-  await fillCatTreeSelect(document.getElementById("freq-cat"));
-  const catSel = document.getElementById("freq-cat"), subSel = document.getElementById("freq-sub"), altSel = document.getElementById("freq-alt"), limSel = document.getElementById("freq-limit");
-  wireCatCascade(catSel, subSel, altSel, runFrequency, document.getElementById("freq-deep"));
-  limSel.addEventListener("change", runFrequency);
-  document.getElementById("freq-type")?.addEventListener("change", runFrequency);
-  if (restore) { applyFrequencySelection(restore); return; }
+    '<div class="db-page db-freq">' +
+      '<div class="qrow freq-toolbar">' +
+        `<button type="button" class="btn" id="freq-cat-btn">Categories <span class="accent-val" id="freq-cat-val">${escapeHtml(unitsSummary(_freqUnits))}</span>${ic("down", 14)}</button>` +
+        `<div class="seg" id="freq-type-seg" role="group" aria-label="Question type">${seg}</div>` +
+      "</div>" +
+      '<div class="rhead" id="freq-rhead"><span class="total num" id="freq-total"></span><span class="spacer"></span><span id="freq-pager-top"></span></div>' +
+      '<div id="freq-results" class="search-results"></div>' +
+      '<div class="rfoot" id="freq-pager-bottom"></div>' +
+    "</div>";
+  document.getElementById("freq-cat-btn").addEventListener("click", openFreqCategories);
+  document.getElementById("freq-type-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-ftype]"); if (!b || b.dataset.ftype === _freqType) return;
+    _freqType = b.dataset.ftype; _freqPage = 0;
+    document.querySelectorAll("#freq-type-seg [data-ftype]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    runFrequency();
+  });
+  wireDbPagers(c.querySelector(".db-page"), (p) => runFrequency(p));
+  // the button names the picks once the tree has loaded
+  if (_freqUnits.length && !_dbCatTree) fetchCatTree("tossups").then((t) => { _dbCatTree = catTreeView(t); const v = document.getElementById("freq-cat-val"); if (v) v.textContent = unitsSummary(_freqUnits); }).catch(() => {});
   runFrequency();
 }
 
-async function runFrequency() {
-  if (_freqRestoring) return;
-  const catSel = document.getElementById("freq-cat"), subSel = document.getElementById("freq-sub"), altSel = document.getElementById("freq-alt");
-  if (!catSel) return;
-  const { nodeId } = getCatCascadeFilter(catSel, subSel, altSel, document.getElementById("freq-deep"));
-  const limit = document.getElementById("freq-limit")?.value || 50;
-  const qtype = document.getElementById("freq-type")?.value || "tossup";
+async function runFrequency(page) {
+  if (page != null) _freqPage = Math.max(0, page);
   const el = document.getElementById("freq-results"); if (!el) return;
-  el.innerHTML = loadingBarHtml("Building frequency list…");
+  const seq = ++_freqSeq;
+  const qtype = _freqType;
+  const bar = setTimeout(() => { if (seq === _freqSeq) el.innerHTML = loadingBarHtml(_freqPage ? "Loading…" : "Building frequency list…"); }, 90);
   try {
-    const data = await API.get(`/api/frequent-answers?limit=${limit}&qtype=${qtype}` + (nodeId ? `&nodeId=${encodeURIComponent(nodeId)}` : ""));
-    const rows = data.answers || [];
-    if (rows.length === 0) { el.innerHTML = '<div class="text-muted" style="padding:16px">No answers found for this selection.</div>'; return; }
-    el.innerHTML = `<table class="stats-table"><thead><tr><th>#</th><th>Answer</th><th>Frequency</th></tr></thead><tbody>` +
-      rows.map((r, i) => `<tr><td>${i + 1}</td><td class="freq-answer" data-answer="${escapeHtml(r.answer)}">${escapeHtml(r.answer)}</td><td>${r.count}</td></tr>`).join("") + "</tbody></table>";
-    el.querySelectorAll(".freq-answer").forEach((td) =>
-      td.addEventListener("click", () => searchFromFrequency(td.dataset.answer, qtype)));
-  } catch (e) { el.innerHTML = '<div class="text-muted" style="padding:16px">Failed to load: ' + escapeHtml(e.message || String(e)) + "</div>"; }
+    const data = await API.get(`/api/frequent-answers?limit=${FREQ_PAGE}&offset=${_freqPage * FREQ_PAGE}&qtype=${qtype}` +
+      (_freqUnits.length ? `&nodeIds=${encodeURIComponent(_freqUnits.join(","))}` : ""));
+    clearTimeout(bar);
+    if (seq !== _freqSeq) return;
+    const rows = (data && data.answers) || [];
+    const totalN = data && typeof data.total === "number" ? data.total : rows.length;
+    const pages = Math.max(1, Math.ceil(totalN / FREQ_PAGE));
+    if (_freqPage > pages - 1 && totalN) return runFrequency(pages - 1);
+    const t = document.getElementById("freq-total"); if (t) t.textContent = totalN ? totalN.toLocaleString() + (totalN === 1 ? " answer" : " answers") : "";
+    const pt = document.getElementById("freq-pager-top"), pb = document.getElementById("freq-pager-bottom");
+    if (pt) pt.innerHTML = dbPagerHtml("top", _freqPage, pages);
+    if (pb) pb.innerHTML = rows.length > 10 ? dbPagerHtml("bottom", _freqPage, pages) : "";
+    positionPagerStrips();
+    if (!rows.length) { el.innerHTML = '<div class="db-empty">No answers found for this selection.</div>'; return; }
+    const max = (data && data.max) || rows[0].count || 1;
+    const off = _freqPage * FREQ_PAGE;
+    el.innerHTML = '<div class="list freq-list">' +
+      rows.map((r, i) => `<div class="list-row"><span class="lr-rank">${(off + i + 1).toLocaleString()}</span><span class="lr-ans freq-answer" data-answer="${escapeHtml(r.answer)}" title="Search for ${escapeHtml(r.answer)}">${escapeHtml(r.answer)}</span><span class="freq-bar"><span style="width:${Math.max(1, Math.round(100 * r.count / max))}%"></span></span><span class="lr-count">${r.count.toLocaleString()}</span></div>`).join("") +
+      "</div>";
+    el.querySelectorAll(".freq-answer").forEach((td) => td.addEventListener("click", () => searchFromFrequency(td.dataset.answer, qtype)));
+  } catch (e) {
+    clearTimeout(bar);
+    if (seq === _freqSeq) el.innerHTML = '<div class="db-empty">Failed to load: ' + escapeHtml(e.message || String(e)) + "</div>";
+  }
 }
 
 // Jump to Database → Search pre-filled and run it. Usable from anywhere in the
 // app AND from plugins (exposed as host.searchDatabase): field is
 // "answer" | "question" | "all"; qtype "tossup" | "bonus" | "all".
+// Jump to Database → Search pre-filled and run it. Usable from anywhere in the
+// app AND from plugins (exposed as host.searchDatabase): field is
+// "answer" | "question" | "all"; qtype "tossup" | "bonus" | "all";
+// tags [{f, v, x}] fills the search bar's tag chips.
 function searchDatabase(opts) {
   opts = opts || {};
   // Coming from another Database tab (Frequency, Starred, a provider tab)?
@@ -8705,34 +9772,33 @@ function searchDatabase(opts) {
   // that list instead of leaving the screen. Must be read before dbTab is
   // overwritten below.
   const fromTab = state.dbTab || "search";
-  // Capture the outgoing search BEFORE the rebuild; it is pushed after
-  // loadDatabase() below, which resets the stack on a fresh entry.
-  const _prevSearch = (document.querySelector("#database-screen.active") && fromTab === "search")
-    ? currentSearchState() : null;
-  _dbTabFrom = document.querySelector("#database-screen.active") && fromTab !== "search"
+  const onDb = !!document.querySelector("#database-screen.active");
+  const _prevSearch = onDb && fromTab === "search" ? currentSearchState() : null;
+  _dbTabFrom = onDb && fromTab !== "search"
     ? { tab: fromTab, freq: fromTab === "frequency" ? currentFrequencySelection() : null }
     : null;
+  // A fresh jump is a fresh search: no leftover tags, categories or filters.
+  Object.assign(_dbq, dbQueryDefaults(), {
+    text: String(opts.query || ""),
+    field: opts.field === "answer" ? "answer" : opts.field === "question" ? "question" : "all",
+    qtype: opts.qtype === "bonus" ? "bonus" : opts.qtype === "tossup" ? "tossup" : "all",
+    match: opts.exact != null ? (opts.exact ? "phrase" : "all") : "phrase",
+    tags: Array.isArray(opts.tags) ? cleanTagList(opts.tags) : [],
+  });
+  _dbCatUnits = [];
+  _dbPage = 0; _dbLastSig = null;
   // Tab FIRST — loadDatabase renders state.dbTab, and a stale async tab
   // renderer (e.g. Starred) would otherwise clobber the search UI after us.
   state.dbTab = "search";
+  closeSettingsOverlays();
   showScreen("database");
   loadDatabase();
   // Re-push after the rebuild so Back steps through earlier searches.
-  if (_prevSearch && _prevSearch.query && _prevSearch.query !== (opts.query || "")) {
+  if (_prevSearch && (_prevSearch.query || (_prevSearch.tags || []).length)) {
     _dbSearchStack.push(_prevSearch);
     if (_dbSearchStack.length > 20) _dbSearchStack.shift();
   }
-  document.querySelectorAll(".db-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === "search"));
-  const typeSel = document.getElementById("db-search-type");
-  const qtypeSel = document.getElementById("db-qtype");
-  const match = document.getElementById("db-match");
-  const inp = document.getElementById("db-search-input");
-  if (typeSel) { typeSel.value = opts.field === "answer" ? "answer" : opts.field === "question" ? "question" : "all"; _syncSel(typeSel); }
-  if (qtypeSel) { qtypeSel.value = opts.qtype === "bonus" ? "bonus" : opts.qtype === "tossup" ? "tossup" : "all"; _syncSel(qtypeSel); }
-  // opts.exact (plugin contract) maps onto the match mode; default stays phrase
-  if (match && opts.exact != null) { match.value = opts.exact ? "phrase" : "all"; _syncSel(match); }
-  if (inp) inp.value = String(opts.query || "");
-  performDbSearch({ page: 0 });   // a fresh jump is page 1, even for a query viewed before
+  syncDbTabActive();
 }
 // The primary part of a rendered answer line ("Ibsen, Henrik [or …]" → "Ibsen, Henrik").
 function primaryAnswerText(s) {
@@ -8745,7 +9811,7 @@ function searchFromFrequency(answer, qtype) {
 
 async function renderStarredTab() {
   const c = document.getElementById("db-content"); if (!c) return;
-  c.innerHTML = '<div class="search-results">' + loadingBarHtml("Loading starred…") + "</div>";
+  c.innerHTML = '<div class="db-page"><div class="search-results">' + loadingBarHtml("Loading starred…") + "</div></div>";
   let items = [];
   try { items = (await API.get("/api/starred")).starred || []; } catch {}
   const actions = (window.QB && window.QB.getStarredActions) ? window.QB.getStarredActions() : [];
@@ -8753,11 +9819,14 @@ async function renderStarredTab() {
   const hasTossups = items.some((it) => (it.type || "tossup") === "tossup");
   const actionBtns = actions.map((a, i) => '<button class="btn btn-sm" data-star-action="' + i + '"' + (hasTossups ? "" : " disabled") + ">" + escapeHtml(a.label) + "</button>").join("");
   c.innerHTML =
-    '<div class="db-toolbar">' +
-      '<button class="btn btn-sm btn-primary" id="db-practice-starred">Practice starred (tossups)</button>' +
-      actionBtns +
-    "</div>" +
-    '<div class="search-results" id="db-results"></div>';
+    '<div class="db-page">' +
+      '<div class="db-toolbar">' +
+        `<button class="btn btn-primary" id="db-practice-starred"${hasTossups ? "" : " disabled"}>${ic("play", 14)}Practice starred tossups</button>` +
+        actionBtns +
+        `<span class="spacer"></span><span class="tile-n">${items.length.toLocaleString()} starred</span>` +
+      "</div>" +
+      '<div class="results search-results" id="db-results"></div>' +
+    "</div>";
   document.getElementById("db-practice-starred")?.addEventListener("click", () => {
     if (state.customType && state.sessionActive) endSession();   // a suspended list would be served first
     try {
@@ -8780,8 +9849,8 @@ async function renderStarredTab() {
     });
   });
   const container = document.getElementById("db-results");
-  if (items.length === 0) { container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)"><p>No starred questions yet.</p></div>'; return; }
-  container.innerHTML = items.filter((it) => it.question).map((it) => renderSearchResult(it.question)).join("");
+  if (items.length === 0) { container.innerHTML = '<div class="db-empty">No starred questions yet</div>'; return; }
+  container.innerHTML = items.filter((it) => it.question).map((it) => renderSearchResult(it.question, "starred")).join("");
   limitList(container, ":scope > .qcard", "db:starred", 50, 50);
 }
 
@@ -8889,6 +9958,9 @@ function initApp() {
 }
 
 function renderPluginNav() {
+  // Plugin pages live on the Plugins page now (Open tab), not on the home.
+  if (document.getElementById("extensions-screen")?.classList.contains("active")) window.QB?.renderScreen?.();
+  updateTopbar();
   const menu = document.querySelector("#title-screen .title-menu");
   if (!menu) return;
   let extra = document.getElementById("title-extra-menu");
@@ -8923,6 +9995,7 @@ function init() {
       }),
       showScreen,
       goHome,
+      refreshTopbar: () => updateTopbar(),
       setReadingHold: (v) => { ttsHold = !!v; },
       // A plugin that must not be interrupted by a page reload (multiplayer in a
       // room) marks itself busy; the question-database switch waits for it.
@@ -8951,6 +10024,15 @@ function init() {
       // ── new question database helpers (category tree, text, N-part bonuses) ──
       // Nested category tree [{id,name,path,label,depth,leaf,count,definition,children}].
       getCategoryTree: (type) => fetchCatTree(type === "bonuses" ? "bonuses" : "tossups").then((t) => t.roots),
+      // The app's category selector for plugins: turns a <button> (or makes one)
+      // into the "Categories ▾" launcher with the two-pane picker. Picks are
+      // whole-subtree node ids — send them as categoryIds=a,b (questions) or
+      // nodeIds=a,b (/api/frequent-answers); handle.matches(path) filters local
+      // records by category_path. opts.tree = a plugin's own [{id,name,count,
+      // children}] tree instead. See CategoryButton in app.js for every option.
+      categoryPicker: (btn, opts) => CategoryButton(btn || null, opts || {}),
+      // true while the app is locked on Settings → Updates for the required database
+      isLocked: () => _dbLocked,
       // A record's text as the practice screen reads it: moderator notes hidden
       // (from the HTML) and pronunciation guides stripped per the user's
       // settings. kind: "question" (tossup), "leadin", or "part" with part index.
@@ -9039,7 +10121,8 @@ function init() {
       extractPrimaryAnswer: (raw, sani) => { try { return apPrimary(raw, sani); } catch (e) { return ""; } },
     });
   }
-  applyStagedPluginUpdates().then(maybeAutoCheckAppUpdate).then(maybeAutoDbUpdate);
+  enforceRequiredDb();
+  applyStagedPluginUpdates().then(maybeAutoCheckAppUpdate).then(() => { if (!_dbLocked) maybeAutoDbUpdate(); });
   startSplash();
 }
 
@@ -9074,6 +10157,7 @@ function appIdleForDbSwitch() {
   return !!document.querySelector("#title-screen.active") && !state.sessionActive && !_busyFlags.size && !dialogOpen;
 }
 async function maybeSwitchDb(force) {
+  if (_dbLocked) force = true;
   if (!_dbReady || _dbSwitching || (!force && !appIdleForDbSwitch())) return;
   _dbSwitching = true;
   try {
@@ -9110,7 +10194,8 @@ async function pollDbUpdate() {
   renderDbUpdateStatus(s);
   if (s && (s.state === "checking" || s.state === "downloading")) { _dbPoll = setTimeout(pollDbUpdate, 1500); return; }
   _dbPoll = null;
-  if (s && s.state === "ready") { _dbReady = true; maybeSwitchDb(_dbManual); }
+  if (s && s.state === "ready") { _dbReady = true; maybeSwitchDb(_dbManual); return; }
+  if (_dbLocked) dbLockShowError(s && s.state === "error" ? (s.error || "failed") : s && s.needsAppUpdate ? "the new database needs a newer app" : "");
 }
 function watchDbUpdate() { if (!_dbPoll) pollDbUpdate(); }
 async function maybeAutoDbUpdate() {
@@ -9119,6 +10204,84 @@ async function maybeAutoDbUpdate() {
   watchDbUpdate();
 }
 window.QB?.on?.("screen:change", (e) => { if (e && e.name === "title" && _dbReady) setTimeout(() => maybeSwitchDb(), 500); });
+
+// ── Required question database. This version is built for the 2026-10
+//    database (schema 2: the category tree, tags, N-part bonuses). Until that
+//    database is open the app is LOCKED on Settings → Updates: the download
+//    starts by itself, the page shows its progress (or the error and Retry),
+//    and the app switches to it and reloads the moment it is ready. Nothing
+//    else can be opened: no closing the window, no other section, no screen,
+//    no plugin page, no hotkey. ──
+const REQUIRED_DB_BUILT = 1791275706103;   // db-1791275706103 on the updates repo
+var _dbLocked = false;   // var: guards above may run before this line during load
+function isDbLocked() { return _dbLocked; }
+async function enforceRequiredDb() {
+  // Only an app that can fetch the database locks: a desktop install whose
+  // backend predates the database updater could never leave the lock.
+  if (isElectron && !(window.qbreader && window.qbreader.dbUpdateStart && window.qbreader.dbUpdateStatus && window.qbreader.getDbInfo)) return;
+  let info = null;
+  try { info = await API.get("/api/db-info"); } catch (e) {}
+  if (!info) return;                       // can't tell: never lock on a failed read
+  if ((info.schema || 1) >= 2 && Number(info.built || 0) >= REQUIRED_DB_BUILT) return;
+  lockForDbUpdate();
+}
+function lockForDbUpdate() {
+  if (_dbLocked) return;
+  try { if (state.sessionActive) endSession(); } catch (e) {}
+  try { closeSetupDrawer(); closeAllPops(); closeSettingsOverlays(); } catch (e) {}
+  document.querySelectorAll("#confirm-dialog, #review-menu, #review-viewer, #history-overlay, #hotkey-sheet, #save-menu").forEach((x) => x.remove());
+  try { if (!document.querySelector("#title-screen.active")) showScreen("title"); } catch (e) {}
+  _dbLocked = true;
+  document.body.classList.add("db-locked");
+  const pane = document.getElementById("ovl-updates");
+  if (pane && !document.getElementById("db-lock")) {
+    pane.insertAdjacentHTML("afterbegin",
+      '<div class="db-lock" id="db-lock" role="status"><span class="db-lock-ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v6.5c0 1.66 3.58 3 8 3s8-1.34 8-3V5.5"/><path d="M4 12v6.5c0 1.66 3.58 3 8 3s8-1.34 8-3V12"/></svg></span>' +
+      '<div class="db-lock-txt"><h3>New question database</h3><p>This version of OfflineQuiz needs it. It opens as soon as the download finishes.</p></div></div>');
+    const st = document.getElementById("update-status");
+    (st || pane).insertAdjacentHTML(st ? "afterend" : "beforeend", '<div class="db-lock-retry" id="db-lock-retry" hidden><button type="button" class="btn btn-primary" id="db-lock-retry-btn">Download</button></div>');
+    document.getElementById("db-lock-retry-btn").addEventListener("click", () => dbLockStart());
+  }
+  openSettings("updates");
+  _dbManual = true;   // ready → switch at once (maybeSwitchDb(true)), then reload
+  dbLockStart();
+}
+async function dbLockStart() {
+  const retry = document.getElementById("db-lock-retry");
+  if (retry) retry.hidden = true;
+  const status = document.getElementById("update-status");
+  let s = null;
+  try { s = await API.get("/api/db-update-status"); } catch (e) {}
+  if (!(s && ["checking", "downloading", "ready"].includes(s.state))) {
+    if (status) status.innerHTML = progressBarHtml("db-upd", "Checking…");
+    try {
+      const r = await API.post("/api/db-update-start", {});
+      if (r && r.state === "error") throw new Error(r.error || "failed");
+    } catch (e) { dbLockShowError(e.message || String(e)); return; }
+  }
+  watchDbUpdate();
+}
+function dbLockShowError(msg) {
+  const status = document.getElementById("update-status");
+  if (status) status.textContent = msg ? "Download failed: " + friendlyUpdateErr(msg) : "The download did not start.";
+  const retry = document.getElementById("db-lock-retry");
+  if (retry) { retry.hidden = false; const b = retry.querySelector("button"); if (b) b.textContent = "Try again"; }
+}
+// Locked: every key stops here (window capture, before every other handler)
+// except moving through and pressing the window's own buttons, and zoom.
+window.addEventListener("keydown", (e) => {
+  if (!_dbLocked) return;
+  if (["text-bigger", "text-smaller", "text-reset"].some((a) => matchesHotkey(e, a))) return;
+  // the lock window, plus what may sit over it (first-launch name, an app-update
+  // offer, a confirm): typing and their buttons work; Esc never closes anything
+  const allowed = e.target && e.target.closest && e.target.closest("#settings-modal, #player-setup, #update-dialog, #confirm-dialog");
+  if (allowed && e.key !== "Escape") {
+    if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName) && !/^(checkbox|radio|range)$/.test(e.target.type || "")) return;
+    if (e.key === "Tab" || e.key === "Enter" || e.key === " ") { e.stopImmediatePropagation(); return; }
+  }
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
 
 // Startup policy: normal updates are only ever OFFERED (Update / Ignore) —
 // never installed on their own. Critical releases (manifest.critical) install

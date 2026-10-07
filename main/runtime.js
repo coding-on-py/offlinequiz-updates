@@ -102,6 +102,8 @@ export async function start(env) {
     if (typeof data.sort === "string" && data.sort) f.sort = data.sort;   // whitelisted in database.js
     if (typeof data.exclude === "string" && data.exclude) f.exclude = data.exclude;   // words; database.js builds the FTS
     if (typeof data.excludeIn === "string" && data.excludeIn) f.excludeIn = data.excludeIn;
+    // tags: JSON string (query-string form) or array — database.js normalizes it
+    if ((typeof data.tags === "string" && data.tags) || (Array.isArray(data.tags) && data.tags.length)) f.tags = data.tags;
     return f;
   }
 
@@ -317,19 +319,19 @@ export async function start(env) {
       return { ok: true };
     });
 
-    ipcMain.handle("get-stats", (_e, { sessionId, since }) => {
+    ipcMain.handle("get-stats", (_e, { sessionId, since, categoryIds }) => {
       if (sessionId) {
         return { stats: qbApp.getSessionStats(sessionId) };
       }
-      return { stats: qbApp.getOverallStats(parseInt(since) || 0) };
+      return { stats: qbApp.getOverallStats(parseInt(since) || 0, categoryIds || "") };
     });
 
     ipcMain.handle("get-sessions", () => {
       return { sessions: qbApp.getSessionList() };
     });
 
-    ipcMain.handle("get-session-breakdown", (_e, { category, difficulty } = {}) => {
-      return { breakdown: qbApp.getSessionBreakdown(category, difficulty) };
+    ipcMain.handle("get-session-breakdown", (_e, { category, difficulty, categoryIds } = {}) => {
+      return { breakdown: qbApp.getSessionBreakdown(category, difficulty, categoryIds || "") };
     });
 
     ipcMain.handle("get-session-entries", (_e, { sessionId } = {}) => {
@@ -377,15 +379,16 @@ export async function start(env) {
       return qbApp.getPacketContent(setName || "", packetNumber);
     });
 
-    ipcMain.handle("get-frequent-answers", (_e, { category, subcategory, alternateSubcategory, limit, qtype, nodeId }) => {
-      return { answers: qbApp.getFrequentAnswers(category || null, subcategory || null, alternateSubcategory || null, limit || 50, qtype || "tossup", nodeId || null) };
-    });
+    ipcMain.handle("get-frequent-answers", (_e, args) => qbApp.frequentAnswersApi(args || {}));
 
     ipcMain.handle("get-category-tree", (_e, { type } = {}) => {
       return { tree: qbApp.getCategoryTree(type || "tossups") };
     });
 
     ipcMain.handle("get-db-info", () => qbApp.getDbInfo());
+    ipcMain.handle("get-tag-vocab", () => (qbApp.getTagVocab ? qbApp.getTagVocab() : { tags: {} }));
+    ipcMain.handle("get-tag-facets", (_e, { type, query, filters } = {}) =>
+      (qbApp.getTagFacets ? qbApp.getTagFacets(type || "tossups", query || "", parseFilters(filters || {})) : { facets: [] }));
 
     ipcMain.handle("db-update-status", () => qbApp.dbUpdateStatus());
     ipcMain.handle("db-update-start", () => qbApp.startDbUpdate());

@@ -1,5 +1,5 @@
 {
-  "version": "14.29",
+  "version": "14.30",
   "renderer": [
     "index.html",
     "style.css",
@@ -9,9 +9,9 @@
   ],
   "plugins": [
     {
-      "id": "achievement-icons",
-      "name": "Achievement Icons",
-      "file": "achievement-icons.zip"
+      "id": "achievement-glyphs",
+      "name": "Achievement Glyphs",
+      "file": "achievement-glyphs.zip"
     },
     {
       "id": "achievement-lab",
@@ -89,24 +89,9 @@
       "file": "keyword-freq.zip"
     },
     {
-      "id": "multiplayer",
-      "name": "Multiplayer",
-      "file": "multiplayer.zip"
-    },
-    {
       "id": "packet-builder",
       "name": "Packet Builder",
       "file": "packet-builder.zip"
-    },
-    {
-      "id": "fact-sheet",
-      "name": "Fact Sheet",
-      "file": "plugin1.zip"
-    },
-    {
-      "id": "class-sync",
-      "name": "Class Sync",
-      "file": "plugin2.zip"
     },
     {
       "id": "power-facts",
@@ -115,6 +100,5 @@
     }
   ],
   "main": true,
-  "critical": true,
-  "notes": "New question database: cleaned questions, a detailed category tree and stricter answer checking with prompts on bonuses. It downloads in the background (about 264 MB) and switches in when you are on the title screen."
+  "notes": "New look: labeled top bar, a Setup panel that opens beside the page, one category picker everywhere (Stats, Review, Frequency lists, plugins), a bigger Review menu, paged Frequency lists, new sliders and checkboxes, open/close animations, Join/Create Room. This version needs the new question database: it downloads on first launch and the app stays on Settings → Updates until it is ready."
 }
