@@ -1,5 +1,5 @@
 {
-  "version": "14.33",
+  "version": "14.34",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Light/dark switch in the top bar. Options are on/off switches. Multiplayer room tidied up (no Log tab). Search and Frequency load ahead, so pages open instantly. Accounts with sync between the app and onlinequiz.net, plus Friends (they appear once accounts open). Rounded app icon.",
+  "notes": "Leaderboards (global and your own, with friends), display names, and sign-in with Google through your browser. On-screen Start/Buzz/Pause buttons, tips for new features, nicer collapsible arrows and on/off switches. Multiplayer greys out when you're offline. Fixed the dull Multiplayer button.",
   "files": {
-    "renderer/index.html": "9fb76774ad11eb5998327aeecf82c2ef4a7a1fef7939b99a0a1f53a4e1ee063e",
-    "renderer/style.css": "f7d835f1c29f3dca1b9b3e551700d77070043e9582f717049628b9572142d794",
+    "renderer/index.html": "f93918e9557d670eec06b24e9c919fa336ec1e3fe2de7ee95c72cf0eb3678934",
+    "renderer/style.css": "97c60de9a0b90949b2e19d2186ee4c000a93f6a20063ed2718462ce88babb811",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "d4263f65d93064de589a1af4e37da7f07d5cf7ddd2ad55a86d7b9e887ce58f43",
-    "renderer/app.js": "4d1556a686842819f548f13d1fd544cf6a3ee26d54f829228af20ee5e1139315",
+    "renderer/extensions.js": "d13a41f2dc295127efef68beb4097a8c79be8a729a1e5fc5d27170c5e7fd41ef",
+    "renderer/app.js": "f8946f7e09354441298cc4b4438e1e68db69dc60b2b86e06bab8c3e5161292e8",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "FPzha990GpC6G5s9kvdLj+dlrvBaD0ZI0Qiefh/D1eRO9Zwy6xUnwoCptITyF2YrX3+L/CycSdMey8icTKbcCA=="
+  "signature": "K8GHaPBG+zuubMl46J3F0REuZ2/zYE4eomaSnnNnE53aqC95sGnKjkWLLIR4+xPuT4DO0pxaudGT6JEDBR5qDA=="
 }

@@ -35,6 +35,7 @@
       <div class="tb-right">
         <button type="button" class="tb-pill tb-streak" id="tb-streak" hidden><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg><span class="num" id="tb-streak-n">0</span><span class="lbl">days</span></button>
         <button type="button" class="btn btn-ghost tb-link tb-scheme" id="tb-scheme" title="Light mode" aria-label="Switch to light mode"><svg class="ic-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><svg class="ic-moon" hidden viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg></button>
+        <button type="button" class="btn btn-ghost tb-link" id="tb-leaderboards" title="Leaderboards" data-go="leaderboards" hidden><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21v-6h4v6M10 21V9h4v12M15 21v-9h4v9"/></svg><span>Leaderboards</span></button>
         <button type="button" class="btn btn-ghost tb-link" id="tb-plugins" title="Plugins"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="14" y="3" width="7" height="7" rx="1.5"/><path d="M10 21V9a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/></svg><span>Plugins</span></button>
         <button type="button" class="btn btn-ghost tb-link" id="tb-settings" aria-haspopup="dialog" aria-controls="settings-modal" title="Settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span>Settings</span></button>
         <div class="pop-wrap tb-profile-wrap">
@@ -84,8 +85,8 @@
         <!-- website only (html.web): the desktop app's download -->
         <section class="hcard home-dl web-only" aria-labelledby="h-dl">
           <div class="home-dl-text">
-            <h2 id="h-dl"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>The OfflineQuiz app</h2>
-            <p>A free quizbowl practice app. Read more than 187,000 tossups and 159,000 bonuses from 700 sets word by word, buzz in and get your answer checked instantly. Search the question database, study the answers that come up most, track your stats and play live rooms with friends. The desktop app works fully offline.</p>
+            <h2 id="h-dl"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>OfflineQuiz</h2>
+            <p>Our free quizbowl practice app. Read more than 187,000 tossups and 159,000 bonuses from 700 sets word by word, buzz in and get your answer checked instantly. Same features as the website, but all entirely local and offline. <span class="qb-info" data-tip="Multiplayer requires an internet connection.">i</span></p>
           </div>
           <button type="button" class="btn btn-lg btn-primary" data-go="download"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 20h16"/></svg>Download our app</button>
         </section>
@@ -269,6 +270,13 @@
             <div class="result-tags" id="result-tags"></div>
             <div class="result-actions" id="result-actions" hidden><button type="button" class="btn btn-primary" id="btn-result-next">Next<span aria-hidden="true">→</span></button></div>
           </div>
+
+          <!-- on-screen controls (phones, or anyone without the keys): app.js syncPracticeActions -->
+          <div class="practice-actions" id="practice-actions">
+            <button type="button" class="btn btn-go pa-buzz" id="pa-buzz" hidden>Buzz<kbd>Space</kbd></button>
+            <button type="button" class="btn btn-primary pa-main" id="pa-main" hidden>Start</button>
+            <button type="button" class="btn pa-pause" id="pa-pause" hidden>Pause</button>
+          </div>
         </main>
 
         <aside class="stats-panel practice-side" id="live-stats" aria-label="This session">
@@ -369,6 +377,18 @@
     </div>
 
     <!-- ── DOWNLOAD (website only; filled by renderDownload from /download/latest.json) ── -->
+    <div id="leaderboards-screen" class="screen">
+      <div class="top-bar page-head">
+        <div class="top-bar-left">
+          <span class="top-bar-title">Leaderboards</span>
+        </div>
+        <div class="top-bar-right">
+          <button class="btn btn-ghost" id="btn-leaderboards-home">Back</button>
+        </div>
+      </div>
+      <div class="lb-container" id="lb-container"></div>
+    </div>
+
     <div id="friends-screen" class="screen">
       <div class="top-bar page-head">
         <div class="top-bar-left">

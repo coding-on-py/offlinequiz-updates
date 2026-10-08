@@ -94,7 +94,7 @@ const API = isElectron
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
-        if (/^\/api\/(account\/|friends$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, null) : { available: false };
+        if (/^\/api\/(account\/|friends$|leaderboards(\/board)?$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
         throw new Error("Unknown API route: " + path);
       },
       post(url, data) {
@@ -120,7 +120,7 @@ const API = isElectron
         if (path === "/api/import-questions") return window.qbreader.importQuestions(data.sets, data.tossups, data.bonuses);
         if (path === "/api/apply-update") return window.qbreader.applyUpdate(data.folderId);
         if (path === "/api/app-update-check") return window.qbreader.appUpdateCheck ? window.qbreader.appUpdateCheck() : { configured: false, updated: false, dev: true };
-        if (/^\/api\/(account\/|friends\/|cloud\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
+        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
         throw new Error("Unknown API route: " + path);
       },
       delete(url) {
@@ -468,7 +468,7 @@ function updateKeyLabels() {
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
   if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
-  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"]]
+  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"]]
     .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
@@ -503,6 +503,7 @@ const ICON = {
   upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   tag: '<path d="M3 12V4a1 1 0 011-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+  bulb: '<path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2V17h6v-.3c0-.8.4-1.5 1-2A7 7 0 0 0 12 2z"/>',
   bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
   chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
 };
@@ -660,11 +661,14 @@ function TagField(opts) {
   const self = { chips: (opts.chips || []).slice(), compose: null, opts };
   const host = opts.host;
   const small = !!opts.small;
+  // a tag button opens the tag menu (the field's own tag icon is that button)
+  const tagBtnHtml = (lead) => `<button type="button" class="cfield-tag${lead ? " lead" : ""}" title="Add a tag" aria-label="Add a tag">${ic("tag", small ? 16 : 18)}</button>`;
   host.innerHTML =
-    `<div class="cfield${small ? " small" : ""}">` + (opts.icon ? ic(opts.icon, small ? 16 : 18) : "") +
+    `<div class="cfield${small ? " small" : ""}">` + (opts.icon === "tag" ? tagBtnHtml(true) : opts.icon ? ic(opts.icon, small ? 16 : 18) : "") +
     `<span class="chips-holder"></span>` +
     `<input class="cinput" type="text" autocomplete="off" spellcheck="false" aria-label="${escapeHtml(opts.ariaLabel || "Tags")}">` +
     (opts.rightHtml || "") +
+    (opts.icon === "tag" ? "" : tagBtnHtml(false)) +
     `<div class="sugg" hidden role="listbox"></div></div>`;
   const field = host.querySelector(".cfield");
   const holder = host.querySelector(".chips-holder");
@@ -677,7 +681,7 @@ function TagField(opts) {
   const placeholder = () => {
     if (self.compose) return "";
     if (opts.placeholder) return typeof opts.placeholder === "function" ? opts.placeholder(self.chips) : opts.placeholder;
-    return self.chips.length ? "\\ for another" : "Type \\ to add a tag";
+    return "";
   };
   function chipHtml(c, i) {
     const fam = TAG_FAM[c.f] || TAG_FAM.subject;
@@ -700,13 +704,13 @@ function TagField(opts) {
     const have = new Set(self.chips.map((c) => c.f + "|" + (c.id || c.v)));
     let list;
     if (!q) {
-      // one of each family, then the two biggest subjects
-      list = TAG_FAM_ORDER.map((f) => vocab.find((x) => x.f === f)).concat(vocab.filter((x) => x.f === "subject").sort((a, b) => b.n - a.n).slice(0, 2));
+      // every family, biggest tags first (the menu scrolls)
+      list = TAG_FAM_ORDER.flatMap((f) => vocab.filter((x) => x.f === f).sort((a, b) => b.n - a.n).slice(0, 25));
     } else {
       const score = (x) => { const v = x.v.toLowerCase(); return v.startsWith(q) ? 0 : v.split(/[\s,&/()-]+/).some((w) => w.startsWith(q)) ? 1 : 2; };
       list = vocab.filter((x) => x.v.toLowerCase().includes(q)).sort((a, b) => score(a) - score(b) || b.n - a.n);
     }
-    return list.filter((x) => x && !have.has(x.f + "|" + (x.id || x.v))).slice(0, 8);
+    return list.filter((x) => x && !have.has(x.f + "|" + (x.id || x.v))).slice(0, 150);
   }
   function paintSugg() {
     if (!self.compose) { sugg.hidden = true; sugg.innerHTML = ""; return; }
@@ -720,9 +724,10 @@ function TagField(opts) {
     self._list = list;
     const hi = Math.min(self.compose.hi || 0, Math.max(0, list.length - 1));
     sugg.hidden = false;
-    sugg.innerHTML = `<div class="sugg-head"><span class="sh-l">${self.compose.q ? "Tags matching “" + escapeHtml(self.compose.q) + "”" : "Tags"}</span><span class="sh-r">↵ add · esc close</span></div>` +
-      (list.length ? list.map((x, i) => `<button type="button" role="option" class="sugg-item${i === hi ? " hi" : ""}" data-i="${i}" style="--c:${(TAG_FAM[x.f] || TAG_FAM.subject).color}"><span class="f">${escapeHtml((TAG_FAM[x.f] || TAG_FAM.subject).label)}</span><span class="v">${escapeHtml(x.v)}</span><span class="c">${Number(x.n || 0).toLocaleString()}</span></button>`).join("")
+    sugg.innerHTML = `<div class="sugg-head"><span class="sh-l">${self.compose.q ? "Tags matching “" + escapeHtml(self.compose.q) + "”" : "Tags — type to narrow"}</span><span class="sh-r">↵ add · esc close</span></div>` +
+      (list.length ? '<div class="sugg-list">' + list.map((x, i) => `<button type="button" role="option" class="sugg-item${i === hi ? " hi" : ""}" data-i="${i}" style="--c:${(TAG_FAM[x.f] || TAG_FAM.subject).color}"><span class="f">${escapeHtml((TAG_FAM[x.f] || TAG_FAM.subject).label)}</span><span class="v">${escapeHtml(x.v)}</span><span class="c">${Number(x.n || 0).toLocaleString()}</span></button>`).join("") + "</div>"
         : '<div class="sugg-empty">No tag matches</div>');
+    sugg.querySelector(".sugg-item.hi")?.scrollIntoView({ block: "nearest" });
     if (!small) {
       // float under the composer bubble, kept inside the field
       const comp = holder.querySelector(".composer");
@@ -751,6 +756,12 @@ function TagField(opts) {
   field.addEventListener("mousedown", (e) => {
     if (e.target === field || e.target === holder) { e.preventDefault(); (holder.querySelector(".composer-in") || input).focus(); }
   });
+  // the tag button opens the tag menu (the same as typing \ — handy without a keyboard)
+  const tagBtn = field.querySelector(".cfield-tag");
+  if (tagBtn) {
+    tagBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    tagBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); if (self.compose) cancelCompose(true); else startCompose(""); });
+  }
   holder.addEventListener("click", (e) => {
     const flip = e.target.closest(".qchip-main"), rm = e.target.closest(".qchip-x");
     if (rm) { e.stopPropagation(); self.chips.splice(+rm.dataset.i, 1); paint(false); fire(); return; }
@@ -824,6 +835,7 @@ function goTo(target) {
     case "player": showScreen("player"); loadPlayer(); break;
     case "download": showScreen("download"); renderDownload(); break;
     case "friends": showScreen("friends"); renderFriends(); break;
+    case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -832,6 +844,79 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   goTo(b.dataset.go);
 });
+
+// ── Website addresses (onlinequiz.net/<page>) ──
+// Every screen has its own address — /tossups, /bonuses, /multiplayer and
+// /multiplayer/<room>, /search, /sets, /frequency, /starred, /stats, /profile,
+// /friends, /plugins (/plugins/store, /plugins/<plugin>/<page>), /download — so a
+// link, a bookmark or a reload opens that page, the browser's Back / Forward
+// move between pages, and the tab title names the page. server.js answers these
+// paths with the app's page (WEB_PAGE_PATHS). The desktop app (file://) has none.
+const WEB_PATHS = { tossups: "practice-tossups", bonuses: "practice-bonuses", multiplayer: "multiplayer", search: "db-search", sets: "db-sets",
+  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards" };
+let _webRouting = false;
+// the address of what is on screen now (null: leave the address alone)
+function webPathNow() {
+  const a = document.querySelector(".screen.active");
+  if (!a) return null;
+  const db = ["search", "sets", "frequency", "starred"];
+  switch (a.id) {
+    case "title-screen": return "/";
+    case "practice-screen": return state.mode === "bonuses" ? "/bonuses" : "/tossups";
+    case "database-screen": return "/" + (db.includes(state.dbTab) ? state.dbTab : "search");
+    case "stats-screen": return "/stats";
+    case "player-screen": return "/profile";
+    case "friends-screen": return "/friends";
+    case "leaderboards-screen": return "/leaderboards";
+    case "download-screen": return "/download";
+    case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
+  }
+  const pg = ((window.QB && window.QB._pages) || []).find((p) => p.screenEl === a);
+  if (!pg) return null;
+  if (pg.pluginId === "multiplayer") { const room = window.QB.mpRoom ? window.QB.mpRoom() : ""; return "/multiplayer" + (room ? "/" + encodeURIComponent(room) : ""); }
+  return "/plugins/" + encodeURIComponent(pg.pluginId) + "/" + encodeURIComponent(pg.id);
+}
+function webTitleSync() {
+  const crumb = document.getElementById("tb-crumb"), t = crumb && !crumb.hidden ? (document.getElementById("tb-crumb-text")?.textContent || "").trim() : "";
+  document.title = t ? t + " · onlinequiz" : "onlinequiz";
+}
+// after any screen change: a new history entry for a new address
+function webPathSync() {
+  if (!IS_WEB || _webRouting) return;
+  const p = webPathNow();
+  if (p && p !== location.pathname) { try { history.pushState({ qb: 1 }, "", p); } catch (e) {} }
+  webTitleSync();
+}
+window.qbWebPathSync = () => setTimeout(webPathSync, 0);
+// open the page an address names (a link, a reload, Back / Forward)
+function webRoute(path) {
+  let seg = [];
+  try { seg = String(path || "/").replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).map(decodeURIComponent); } catch (e) {}
+  const [a, b, c] = seg;
+  _webRouting = true;
+  try {
+    if (a === "multiplayer") {
+      if (b) window.QB?.mpJoin?.(b);
+      else { window.QB?.mpLeave?.(); goTo("multiplayer"); }
+    } else if (a === "plugins" && b && c) {
+      if (!window.QB?.showPage?.(b + "::" + c)) goTo("plugins");
+    } else if (a === "plugins") {
+      goTo("plugins");
+      if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
+    } else if (a && WEB_PATHS[a]) {
+      goTo(WEB_PATHS[a]);
+    } else if (!document.querySelector("#title-screen.active")) goHome();
+  } catch (e) { console.error("route:", e); }
+  _webRouting = false;
+  // an unknown or partly-known address settles on what actually opened
+  const now = webPathNow();
+  if (now && now !== location.pathname) { try { history.replaceState({ qb: 1 }, "", now); } catch (e) {} }
+  webTitleSync();
+}
+if (IS_WEB) {
+  window.addEventListener("popstate", () => webRoute(location.pathname));
+  window.QB?.on?.("screen:change", () => window.qbWebPathSync());
+}
 (function wireTopbar() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener("click", fn);
   on("tb-brand", () => { closeSetupDrawer(); if (!document.querySelector("#title-screen.active")) goHome(); });
@@ -959,6 +1044,7 @@ function openSetupDrawer() {
   const p = setupDrawerEl(); if (!p) return;
   closeSettings();
   p.classList.add("open");
+  tipInto(p, "setup", null, p.querySelector(".fp-head")?.nextElementSibling);
   updateYearLabel();
   document.getElementById("btn-open-setup")?.setAttribute("aria-expanded", "true");
   syncDrawerStart();
@@ -1337,6 +1423,7 @@ function buildScreen(name) {
   else if (name === "player") loadPlayer();
   else if (name === "extensions") window.QB?.renderScreen();
   else if (name === "friends") renderFriends();
+  else if (name === "leaderboards") renderLeaderboards();
 }
 function reviveScreen(name) {
   if (name === "database") {
@@ -1670,7 +1757,10 @@ function uiScheme() { try { return localStorage.getItem("qb-scheme") === "light"
 function applyTheme() {
   const themed = !!activeTheme();
   document.documentElement.setAttribute("data-theme", themed ? "dark" : uiScheme());
-  document.documentElement.setAttribute("data-accent", state.settings.accent);
+  // The old accent switch (qb-accent: magenta / gold / red / mono) is retired —
+  // Appearance's accent replaced it — but a value it saved still recoloured the
+  // greens, reds and yellows (the app's Multiplayer button looked dull).
+  document.documentElement.removeAttribute("data-accent");
   const b = document.getElementById("tb-scheme");
   if (b) {
     b.hidden = themed;
@@ -2235,7 +2325,7 @@ function _catEachDesc(el, fn) { _catKids(el).forEach((k) => { fn(k); _catEachDes
 function _catExpand(el, open) {
   const list = el && el.querySelector(":scope > .cat-children"); if (!list) return;
   list.classList.toggle("hidden", !open);
-  const a = el.querySelector(":scope > .cat-row .cat-expand"); if (a) a.textContent = open ? "▾" : "▸";
+  const a = el.querySelector(":scope > .cat-row .cat-expand"); if (a) { a.textContent = open ? "▾" : "▸"; a.classList.toggle("open", !!open); }
 }
 function catWeightOf(el) { return parseFloat(_catW(el)?.value) || 0; }
 // { whole, units }: units = the node elements whose WHOLE subtree is selected.
@@ -3060,6 +3150,7 @@ function openCategoryOverlay() {
   const b = document.getElementById("btn-open-categories"), o = document.getElementById("cat-ovl");
   if (!b || !o || b.disabled || isPacketModeSelected()) return;
   o.classList.remove("hidden");
+  if (!needsAccount()) tipInto(o.querySelector(".cat-modal"), "cat-presets", null, document.getElementById("cat-picker"));
   practicePicker().open();
   refreshCategorySummary();
   try { o.querySelector(".cat-modal")?.focus({ preventScroll: true }); } catch (e) {}
@@ -3081,8 +3172,27 @@ function closeCategoryOverlay() {
 //  • search: an in-memory set of whole-subtree units.
 const CAT_PRESET_LS = "qb-cat-presets";
 const ACF_DISTRIBUTION = { "Literature": 40, "History": 40, "Science and Math": 40, "Fine Arts": 30, "Mythology": 10, "Theology": 10, "Philosophy": 10, "Social Science": 10, "Geography": 5, "Current Events": 3, "Miscellaneous": 2 };
-function catPresetsLoad(kind) { try { const m = JSON.parse(localStorage.getItem(CAT_PRESET_LS) || "{}") || {}; return Array.isArray(m[kind]) ? m[kind] : []; } catch (e) { return []; } }
-function catPresetsSave(kind, list) { let m = {}; try { m = JSON.parse(localStorage.getItem(CAT_PRESET_LS) || "{}") || {}; } catch (e) {} m[kind] = list.slice(0, 30); try { localStorage.setItem(CAT_PRESET_LS, JSON.stringify(m)); } catch (e) {} }
+// Presets live in the profile's data (plugin-data "core / cat-presets"), so they
+// sync with an account between the app and the website; localStorage keeps a
+// copy (and is where older versions kept them — moved over on first load).
+let _catPresetsMem = null;
+function _catPresetsLocal() { try { return JSON.parse(localStorage.getItem(CAT_PRESET_LS) || "{}") || {}; } catch (e) { return {}; } }
+function catPresetsLoad(kind) { const m = _catPresetsMem || _catPresetsLocal(); return Array.isArray(m[kind]) ? m[kind] : []; }
+function catPresetsSave(kind, list) {
+  const m = { ...(_catPresetsMem || _catPresetsLocal()) };
+  m[kind] = list.slice(0, 30);
+  _catPresetsMem = m;
+  try { localStorage.setItem(CAT_PRESET_LS, JSON.stringify(m)); } catch (e) {}
+  API.post("/api/plugin-data", { plugin: "core", key: "cat-presets", value: m }).catch(() => {});
+}
+async function catPresetsSync() {
+  try {
+    const d = await API.get("/api/plugin-data?plugin=core&key=cat-presets");
+    const v = d && (d.value !== undefined ? d.value : d.data);
+    if (v && typeof v === "object") { _catPresetsMem = v; try { localStorage.setItem(CAT_PRESET_LS, JSON.stringify(v)); } catch (e) {} }
+    else { const local = _catPresetsLocal(); if (Object.keys(local).length) { _catPresetsMem = local; API.post("/api/plugin-data", { plugin: "core", key: "cat-presets", value: local }).catch(() => {}); } }
+  } catch (e) {}
+}
 
 function CatPicker(model) {
   const v = { focus: 0, expand: null, find: "", findHi: 0, hl: null, saving: false, tree: null };
@@ -3199,7 +3309,7 @@ function CatPicker(model) {
       else if (a === "reveal") reveal(id);
       else if (a === "preset") { const p = model.presets()[+t.dataset.i]; if (p) { p.apply(); v.hl = null; render(); } }
       else if (a === "preset-del") { model.deletePreset(+t.dataset.i); render(); }
-      else if (a === "preset-save") { v.saving = true; render(); }
+      else if (a === "preset-save") { if (accountGate("Sign in to save category presets.")) return; v.saving = true; render(); }
     });
     h.addEventListener("change", (e) => {
       const t = e.target.closest('[data-cp="weights"]');
@@ -3271,7 +3381,7 @@ function practicePicker() {
       const cur = JSON.stringify(catStateFromDom().ids.slice().sort());
       const out = [{ name: "All", apply: () => { clearAllCategories(); model.setWeightsOn(false); }, active: !catSelectedUnits().length }];
       if (_catIndex && !_catIndex.v1) out.push({ name: "ACF distribution", apply: () => applyAcfPreset() });
-      catPresetsLoad(kind).forEach((p, i) => out.push({ name: p.name, user: true, idx: i, active: JSON.stringify((p.state.ids || []).slice().sort()) === cur, apply: () => { applyCatState(catStateForTree(p.state)); model.setWeightsOn(!!p.useWeights); fireTree(); } }));
+      if (!needsAccount()) catPresetsLoad(kind).forEach((p, i) => out.push({ name: p.name, user: true, idx: i, active: JSON.stringify((p.state.ids || []).slice().sort()) === cur, apply: () => { applyCatState(catStateForTree(p.state)); model.setWeightsOn(!!p.useWeights); fireTree(); } }));
       return out;
     },
     savePreset(name) {
@@ -3529,7 +3639,7 @@ function clearAllCategories() {
   tree.querySelectorAll(".cat-checkbox").forEach((cb) => { cb.checked = false; delete cb.dataset.autoChecked; });
   tree.querySelectorAll(".cat-weight").forEach((w) => { w.value = "0"; });
   tree.querySelectorAll(".cat-children").forEach((l) => l.classList.add("hidden"));
-  tree.querySelectorAll(".cat-expand").forEach((x) => { x.textContent = "\u25B8"; });
+  tree.querySelectorAll(".cat-expand").forEach((x) => { x.textContent = "\u25B8"; x.classList.remove("open"); });
   tree.dispatchEvent(new Event("change", { bubbles: true }));
 }
 document.getElementById("btn-open-categories")?.addEventListener("click", openCategoryOverlay);
@@ -3872,6 +3982,7 @@ function applyModeVisibility(mode) {
 
 
 function startSession() {
+  setTimeout(() => tipInto(document.getElementById("question-area"), "practice-keys", null, document.getElementById("question-content")), 0);
   if (state.customType && !state.reviewIds && !state.bonusIds) endCustom();   // defensive
   state.sessionActive = true;
   state.sessionId = "session-" + Date.now();
@@ -4623,6 +4734,37 @@ function showBonusNextHint(idx) {
   el.innerHTML = keyLabelHtml("next-question", `Reveal Part ${bonusPartLetter(idx)}`);
   el.classList.remove("hidden");
 }
+
+// ── On-screen practice controls (#practice-actions) ──
+// The same moves as the keys, for phones and anyone who'd rather click: one
+// main button (Start → Skip while reading → "Next part" between bonus parts;
+// after an answer the result's own Next takes over), Buzz and Pause/Resume.
+// Kept in step with the session by a light poll while practice is on screen.
+function practiceMain() {
+  if (!state.sessionActive) return { label: "Start", key: "start-skip", run: () => startSession() };
+  if (state.mode === "bonuses" && state.bonusAwait != null) return { label: "Next part", key: "next-question", run: () => advanceBonusPart() };
+  if (!state.resultAreaVisible && state.settings.allowSkips && state.currentQuestion && !state.isBuzzed && !state._loadingQuestion) return { label: "Skip", key: "start-skip", run: () => skipQuestion() };
+  return null;
+}
+function syncPracticeActions() {
+  const bar = document.getElementById("practice-actions"); if (!bar) return;
+  const set = (el, show, text) => { if (!el) return; if (el.hidden === show) el.hidden = !show; if (text != null && el.firstChild && el.firstChild.nodeValue !== text) el.firstChild.nodeValue = text; };
+  const reading = state.sessionActive && !!state.currentQuestion && !state.resultAreaVisible && !state._loadingQuestion;
+  const m = practiceMain();
+  set(document.getElementById("pa-main"), !!m, m ? m.label : null);
+  const mk = document.querySelector("#pa-main kbd"); if (m && mk) mk.textContent = keyDisplay(m.key);
+  set(document.getElementById("pa-buzz"), state.mode === "tossups" && reading && !state.isBuzzed);
+  set(document.getElementById("pa-pause"), reading && !state.isBuzzed && state.bonusAwait == null, state.isPaused ? "Resume" : "Pause");
+}
+(function wirePracticeActions() {
+  const on = (id, fn) => document.getElementById(id)?.addEventListener("click", (e) => { e.preventDefault(); e.currentTarget.blur(); fn(); syncPracticeActions(); });
+  on("pa-main", () => { const m = practiceMain(); if (m) m.run(); });
+  on("pa-buzz", () => { if (state.sessionActive && !state.isBuzzed && state.mode === "tossups") buzz(); });
+  on("pa-pause", () => togglePause());
+  const main = document.getElementById("pa-main"); if (main && !main.querySelector("kbd")) main.appendChild(Object.assign(document.createElement("kbd"), { textContent: keyDisplay("start-skip") }));
+  const pause = document.getElementById("pa-pause"); if (pause && !pause.querySelector("kbd")) pause.appendChild(Object.assign(document.createElement("kbd"), { textContent: keyDisplay("pause-reveal") }));
+  setInterval(() => { if (document.querySelector("#practice-screen.active")) syncPracticeActions(); }, 200);
+})();
 
 function advanceBonusPart() {
   if (state.mode !== "bonuses" || !state.currentQuestion || state.bonusAwait == null) return false;
@@ -5554,6 +5696,27 @@ function confirmDialog(message, onYes, opts) {
   document.body.appendChild(el);
   el.querySelector("#cf-yes").onclick = () => { close(); try { onYes(); } catch (e) { console.error(e); } };
   el.querySelector("#cf-no").onclick = close;
+}
+// A one-line text question ("Name your leaderboard"): Enter or the button
+// answers it, Escape / the backdrop / Cancel drops it.
+function promptDialog(title, value, onOk, opts) {
+  opts = opts || {};
+  document.getElementById("prompt-dialog")?.remove();
+  const el = document.createElement("div");
+  el.id = "prompt-dialog";
+  el.className = "qb-overlay confirm-overlay";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true");
+  el.innerHTML = `<form class="confirm-box prompt-box"><div class="confirm-title">${escapeHtml(title)}</div>` +
+    `<input class="mode-input" id="pd-in" maxlength="${opts.max || 40}" autocomplete="off" placeholder="${escapeHtml(opts.placeholder || "")}" value="${escapeHtml(value || "")}">` +
+    `<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="pd-no">Cancel</button><button type="submit" class="btn btn-primary">${escapeHtml(opts.yes || "OK")}</button></div></form>`;
+  const close = () => animateRemove(el);
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
+  el.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(); } });
+  document.body.appendChild(el);
+  const inp = el.querySelector("#pd-in");
+  el.querySelector("form").addEventListener("submit", (ev) => { ev.preventDefault(); const v = inp.value.trim(); if (!v) { inp.focus(); return; } close(); try { onOk(v); } catch (e) { console.error(e); } });
+  el.querySelector("#pd-no").onclick = close;
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
 }
 // Removes an overlay / menu after its closing animation (.qb-leaving), so
 // things that are created on open and dropped on close still animate out.
@@ -6750,6 +6913,7 @@ $("#btn-player-home")?.addEventListener("click", goBack);
 $("#btn-ext-home")?.addEventListener("click", goBack);
 $("#btn-download-home")?.addEventListener("click", goBack);
 $("#btn-friends-home")?.addEventListener("click", goBack);
+$("#btn-leaderboards-home")?.addEventListener("click", goBack);
 
 function renderResultPanels(resultCtx) {
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
@@ -7507,6 +7671,7 @@ async function loadStats(preserveScroll = false) {
 
     container.innerHTML = html;
     initCollapsibles(container);
+    tipInto(container, "stats");
     limitList(container.querySelector(".stats-sessions-table"), "tbody > tr", "stats:sessions", 10, 25);
 
     if (!sid) {
@@ -7584,7 +7749,7 @@ async function loadStats(preserveScroll = false) {
         const d = container.querySelector('[data-qhd="' + row.dataset.qh + '"]');
         if (!d) return;
         d.classList.toggle("hidden");
-        const chev = row.querySelector(".qh-chev"); if (chev) chev.textContent = d.classList.contains("hidden") ? "▸" : "▾";
+        const chev = row.querySelector(".qh-chev"); if (chev) { chev.textContent = d.classList.contains("hidden") ? "▸" : "▾"; chev.classList.toggle("open", !d.classList.contains("hidden")); }
         if (d.classList.contains("hidden") || d.dataset.loaded) return;
         d.dataset.loaded = "1";
         const qid = row.dataset.qid, qtype = row.dataset.qtype;
@@ -9037,6 +9202,7 @@ function loadDatabase() {
 
 function renderDbTab() {
   const tab = state.dbTab || "search";
+  if (IS_WEB) window.qbWebPathSync();   // /search, /sets, /frequency, /starred
   if (tab.startsWith("prov:")) return renderProviderTab(tab.slice(5));
   if (tab === "search") renderSearchTab();
   else if (tab === "sets") renderSetsTab();
@@ -9058,6 +9224,7 @@ let _dbTimer = null;
 const DIFFICULTY_NAMES = ["Unrated", "Middle School", "Easy HS", "Regular HS", "Hard HS", "National HS", "Easy College", "Medium College", "Regionals College", "Nationals College", "Open"];
 function renderSearchTab() {
   const c = document.getElementById("db-content"); if (!c) return;
+  setTimeout(() => tipInto(c.querySelector(".db-page"), "search-tags", null, c.querySelector("#db-searchbar")), 0);
   const q = _dbq;
   const diffs = DIFFICULTY_NAMES.map((name, i) =>
     `<label title="${escapeHtml(DIFF_FULL[i] || name)}"><input type="checkbox" class="db-diff-cb" value="${i}"${q.diffs.includes(String(i)) ? " checked" : ""}><span>${i}</span></label>`).join("");
@@ -9095,7 +9262,7 @@ function renderSearchTab() {
 
   _searchTagField = TagField({
     host: document.getElementById("db-searchbar"), icon: "search", ariaLabel: "Search questions", chips: q.tags, textValue: q.text,
-    placeholder: (chips) => (chips.length ? "Add words, or \\ for a tag" : "Search questions · type \\ for a tag"),
+    placeholder: (chips) => (chips.length ? "Add words" : "Search questions"),
     rightHtml: `<div class="sbar-right"><div class="seg" id="db-qtype-seg" role="group" aria-label="Question type">${seg}</div><select id="db-search-type" title="All text also matches category, subcategory and set names">${opt("all", "Question & answer", q.field)}${opt("question", "Question only", q.field)}${opt("answer", "Answer only", q.field)}</select></div>`,
     onChange: (chips) => { _dbq.tags = chips; dbSearchSoon(true); },
     onText: (t) => { _dbq.text = t; dbSearchSoon(true); },
@@ -9687,6 +9854,7 @@ async function renderSetsTab() {
       `<div class="db-toolbar"><label class="ifield" style="max-width:420px">${ic("search", 15)}<input type="text" id="db-set-search" placeholder="Filter sets…" autocomplete="off" aria-label="Filter sets"></label><span class="spacer"></span><span class="tile-n" id="db-set-n"></span></div>` +
       '<div class="list db-browse" id="db-set-list"></div>' +
     "</div>";
+  tipInto(c.querySelector(".db-page"), "sets");
   // every set is listed (~700 rows); content-visibility keeps it cheap to draw
   const render = () => {
     const term = (document.getElementById("db-set-search").value || "").toLowerCase();
@@ -9826,6 +9994,7 @@ function applyFrequencySelection(sel) {
 function renderFrequencyTab(restore) {
   if (restore) applyFrequencySelection(restore);
   const c = document.getElementById("db-content"); if (!c) return;
+  setTimeout(() => tipInto(c.querySelector(".db-page"), "freq"), 0);
   const seg = [["tossup", "Tossups"], ["bonus", "Bonuses"], ["both", "Both"]]
     .map(([v, l]) => `<button type="button" data-ftype="${v}" aria-pressed="${_freqType === v}">${l}</button>`).join("");
   c.innerHTML =
@@ -10121,7 +10290,10 @@ function initApp() {
   loadStarredIds();
   loadProfileSettings().then(pruneOldSessions);
   setTimeout(() => prefetchDefaults().catch(() => {}), IS_WEB ? 600 : 2500);
-  if (!localStorage.getItem("qb-setup-done") && !state.username) {
+  checkMpReachable();
+  catPresetsSync();
+  // the website has no name prompt: an account's display name, or "unregistered" in multiplayer
+  if (!IS_WEB && !localStorage.getItem("qb-setup-done") && !state.username) {
     showSetupOverlay();
   }
 }
@@ -10152,6 +10324,8 @@ function init() {
     window.QB.boot({
       api: API,
       getState: () => ({
+        account: Account.user ? { handle: Account.user.handle, displayName: Account.user.displayName || Account.user.handle } : null,
+        web: IS_WEB,
         mode: state.mode,
         sessionActive: state.sessionActive,
         sessionId: state.sessionId,
@@ -10226,6 +10400,10 @@ function init() {
       playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),
       keyDisplay: (action) => keyDisplay(action),
       confirm: (message, onYes, opts) => confirmDialog(message, onYes, opts),
+      // accounts (website gates; multiplayer names)
+      needsAccount: () => needsAccount(),
+      tip: (container, id, text, ref) => tipInto(container, id, text, ref),
+      accountPanelHtml: (reason) => accountPanelHtml(reason),
       openSaveMenu: (question, type, anchor) => openSaveMenu(question, type, anchor),
       openItemSaveMenu: (spec, anchor) => openItemSaveMenu(spec, anchor),
       itemReviewAdd: (it) => itemReviewAdd(it),
@@ -10295,6 +10473,8 @@ function init() {
     });
   }
   if (IS_WEB) handleAccountLinks().then(refreshAccount); else refreshAccount();
+  // the website opened at a page's address (a link, a bookmark, a reload)
+  if (IS_WEB) setTimeout(() => { if (location.pathname !== "/") webRoute(location.pathname); else webTitleSync(); }, 0);
   // the website runs on the server's (current) question database and has no app to update
   if (!IS_WEB) {
     enforceRequiredDb();
@@ -10313,7 +10493,7 @@ function init() {
 // achievements and review need a signed-in account: a signed-out visitor gets
 // the account window, or a sign-in panel where the screen would be. Signing in
 // or out reloads the page — every user-scoped list comes from the new account.
-const Account = { available: false, user: null, required: false, app: false, lastSync: null, syncError: null, offline: false };
+const Account = { available: false, user: null, required: false, app: false, google: false, lastSync: null, syncError: null, offline: false, known: false };
 const needsAccount = () => IS_WEB && Account.required && !Account.user;
 const myTz = () => -new Date().getTimezoneOffset();
 function accountGate(reason) {
@@ -10331,9 +10511,17 @@ async function refreshAccount() {
     const d = await API.get("/api/account/me");
     Account.available = !!(d && d.available); Account.user = (d && d.user) || null; Account.required = !!(d && d.required);
     Account.app = !!(d && d.app); Account.lastSync = (d && d.lastSync) || null; Account.syncError = (d && d.syncError) || null; Account.offline = !!(d && d.offline);
+    Account.google = !!(d && d.google);
   } catch (e) {}
+  Account.known = true;
   _cloudOn = Account.app && !!Account.user;
   renderAccountMenu();
+  applyAccountName();
+  // website: plugins (the Store and running them) need an account when accounts are required
+  try { window.QB?.setPluginsAllowed?.(!needsAccount()); } catch (e) {}
+  if (document.querySelector("#extensions-screen.active")) window.QB?.renderScreen?.();
+  // signed in (e.g. with Google) without a username yet: finish setting up
+  if (Account.user && !Account.user.handle && !document.getElementById("account-ovl") && !refreshAccount._asked) { refreshAccount._asked = true; openAccount("profile"); }
   // the account's time zone dates its day streak for friends
   if (Account.user && !Account.offline && Account.user.tz !== myTz()) API.post("/api/account/profile", { tz: myTz() }).then((r) => { if (r && r.user) Account.user = r.user; }).catch(() => {});
   if (_cloudOn) cloudSyncSoon(1500);
@@ -10354,28 +10542,48 @@ function renderAccountMenu() {
     b.onclick = () => openAccount(Account.user ? "account" : "signin");
   }
   const fr = document.getElementById("tbm-friends"); if (fr) fr.hidden = false;
+  const lbBtn = document.getElementById("tb-leaderboards"); if (lbBtn) lbBtn.hidden = false;
   const head = document.querySelector("#tb-profile-menu .tbm-who");
   if (head) {
     let em = head.querySelector(".tbm-email");
     if (!em) { em = document.createElement("small"); em.className = "tbm-email"; head.appendChild(em); }
     em.textContent = Account.user ? (Account.user.handle ? "@" + Account.user.handle : Account.user.email) : "";
+    const nm = head.querySelector("b"); if (nm && Account.user && IS_WEB) nm.textContent = Account.user.displayName || Account.user.handle || "Player";
     em.hidden = !Account.user;
   }
 }
-// ?verify=… (the confirm email) and ?reset=… (the password email)
+// Links into the site: ?verify=… (the confirm email), ?reset=… (the password
+// email), ?applink=… (the app signing in through the browser), and the Google
+// sign-in's way back (?google=error|off, ?welcome=1 → finish setting up).
 async function handleAccountLinks() {
   const q = new URLSearchParams(location.search);
-  const clean = () => history.replaceState(null, "", location.pathname + location.hash);
+  const clean = (...keys) => { const u = new URL(location.href); (keys.length ? keys : ["verify", "reset", "google", "why", "welcome"]).forEach((k) => u.searchParams.delete(k)); history.replaceState(null, "", u.pathname + u.search + u.hash); };
   let note = "";
   try { note = sessionStorage.getItem("qb-acct-note") || ""; sessionStorage.removeItem("qb-acct-note"); } catch (e) {}
   if (q.get("verify")) {
     const r = await API.post("/api/account/verify", { token: q.get("verify") }).catch(() => ({ error: "Couldn't reach the server — try the link again." }));
-    clean();
+    clean("verify");
     if (r && r.ok) { try { sessionStorage.setItem("qb-acct-note", "confirmed"); } catch (e) {} location.reload(); return; }
     openAccount("signin", { error: (r && r.error) || "This link has expired or was already used.", offerResend: true });
     return;
   }
-  if (q.get("reset")) { const token = q.get("reset"); clean(); openAccount("reset", { token }); return; }
+  if (q.get("reset")) { const token = q.get("reset"); clean("reset"); openAccount("reset", { token }); return; }
+  if (q.get("google") === "error" || q.get("google") === "off") {
+    const g = q.get("google"), why = q.get("why");
+    clean("google", "why");
+    if (g === "off") openAccount("signin", { error: "Google sign-in isn't available yet — use your email for now." });
+    else openAccount("signin", { error: why || "Google sign-in didn't finish — try again." });
+    return;
+  }
+  if (q.get("welcome")) clean("welcome");
+  if (q.get("applink")) {
+    const code = q.get("applink");
+    await refreshAccount();
+    // the app's "Continue with Google": signed out here → straight to Google, then back to connect
+    if (!Account.user && q.get("google") === "1" && Account.google) { location.href = "/auth/google?next=" + encodeURIComponent("/?applink=" + code); return; }
+    openAccount("applink", { code });
+    return;
+  }
   if (note === "confirmed") { await refreshAccount(); openAccount("account", { note: "Your email is confirmed — you're signed in." }); }
 }
 const relTime = (t) => {
@@ -10392,6 +10600,10 @@ function syncLineText() {
   if (Account.syncError) return Account.syncError;
   return Account.lastSync ? "Synced " + relTime(Account.lastSync) : "Not synced yet";
 }
+const GOOGLE_G = '<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+// The account window: sign in, create an account, Google, password reset,
+// username + display name, the account itself, and (website) connecting the
+// app. Every password box gets a show/hide eye (passwordEyes below).
 function openAccount(mode, opts) {
   opts = opts || {};
   document.getElementById("account-ovl")?.remove();
@@ -10401,35 +10613,50 @@ function openAccount(mode, opts) {
   el.className = "qb-overlay confirm-overlay account-ovl";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "acct-h");
   document.body.appendChild(el);
-  const close = () => animateRemove(el);
+  let pollTimer = null;
+  const close = () => { clearTimeout(pollTimer); pollTimer = null; animateRemove(el); };
   el.addEventListener("click", (e) => { if (e.target === el) close(); });
   el.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } });
-  let email = opts.email || "", handle = "";
+  let email = opts.email || "", handle = "", display = "";
   const field = (id, type, label, auto, value, extra) => `<label class="acct-field"><span>${label}</span><input id="${id}" class="mode-input" type="${type}" autocomplete="${auto}" spellcheck="false" autocapitalize="off" value="${escapeHtml(value || "")}"${extra || ""}></label>`;
   const link = (to, text) => `<button type="button" class="acct-link" data-to="${to}">${text}</button>`;
-  const handleField = (v) => field("acct-handle", "text", 'Username <span class="qb-info" data-tip="Friends add you by it. 3–20 letters, numbers, _ or .">i</span>', "username", v, ' maxlength="20"');
+  const handleField = (v) => field("acct-handle", "text", 'Username <span class="qb-info" data-tip="Friends add you by it. 3–20 lowercase letters and numbers.">i</span>', "username", v, ' maxlength="20" inputmode="latin"');
+  const displayField = (v) => field("acct-display", "text", 'Display name <span class="qb-info" data-tip="Shown to friends and on leaderboards. It can be anything — it doesn\'t have to match your username.">i</span>', "nickname", v, ' maxlength="32"');
+  const googleBtn = () => Account.google ? `<button type="button" class="btn btn-md acct-google" data-to="google">${GOOGLE_G}Continue with Google</button><div class="acct-or"><span>or</span></div>` : "";
   const render = (m, o) => {
     o = o || {};
+    clearTimeout(pollTimer); pollTimer = null;
     const head = (title, sub) => `<div class="acct-head"><div class="acct-ico">${ic("user", 22)}</div><h2 id="acct-h">${title}</h2></div>` + (sub ? `<p class="acct-sub">${sub}</p>` : "");
     const err = o.error ? `<div class="acct-err" role="alert">${escapeHtml(o.error)}${o.offerResend ? " " + link("resend", "Send a new link") : ""}</div>` : "";
     const okLine = o.note ? `<div class="acct-ok">${escapeHtml(o.note)}</div>` : "";
     const u = Account.user || {};
     let html = "";
-    if (m === "signin") html = head("Sign in", o.reason ? escapeHtml(o.reason) : (Account.app ? "Your onlinequiz account: your stats and stars sync between this app and the website." : "")) + okLine + `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${field("acct-pass", "password", "Password", "current-password")}${err}<button type="submit" class="btn btn-primary btn-md">Sign in</button></form>` +
+    if (m === "signin") html = head("Sign in", o.reason ? escapeHtml(o.reason) : (Account.app ? "Your onlinequiz account: your stats and stars sync between this app and the website." : "")) + okLine + googleBtn() +
+      `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${field("acct-pass", "password", "Password", "current-password")}${err}<button type="submit" class="btn btn-primary btn-md">Sign in</button></form>` +
       `<div class="acct-links">${link("forgot", "Forgot password?")}${link("signup", "Create an account")}</div>`;
     else if (m === "syncing") html = head("Signing in", "Syncing your stats and stars…") + `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div></div>`;
-    else if (m === "signup") html = head("Create an account", o.reason ? escapeHtml(o.reason) : "") + `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${handleField(handle)}${field("acct-pass", "password", "Password (8+ characters)", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Create account</button></form>` +
+    else if (m === "browser") html = head("Finish in your browser", `Your browser opened onlinequiz.net — sign in there${o.google ? " with Google" : ""} and press <b>Connect app</b>. This window signs in by itself.`) +
+      `<div class="acct-code">Code <b>${escapeHtml(o.code || "")}</b></div>` + err + `<div class="acct-actions"><button type="button" class="btn" data-to="reopen">Open the page again</button><button type="button" class="btn" data-to="signin">Cancel</button></div>`;
+    else if (m === "signup") html = head("Create an account", o.reason ? escapeHtml(o.reason) : "") + googleBtn() +
+      `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${handleField(handle)}${displayField(display)}${field("acct-pass", "password", "Password (8+ characters)", "new-password")}${field("acct-pass2", "password", "Confirm password", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Create account</button></form>` +
       `<div class="acct-links">${link("signin", "Already have an account? Sign in")}</div>`;
     else if (m === "sent") html = head("Check your email", `We sent a link to <b>${escapeHtml(email)}</b>. Open it to confirm your account${Account.app ? ", then sign in here" : ""}.`) + okLine + err + `<div class="acct-actions"><button type="button" class="btn" data-to="resend">Resend email</button><button type="button" class="btn btn-primary" data-to="signin">Sign in</button></div>`;
     else if (m === "forgot") html = head("Reset your password") + `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${err}<button type="submit" class="btn btn-primary btn-md">Send reset link</button></form><div class="acct-links">${link("signin", "Back to sign in")}</div>`;
     else if (m === "forgot-sent") html = head("Check your email", `If there's an account for <b>${escapeHtml(email)}</b>, we sent it a link to set a new password.`) + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="signin">Back to sign in</button></div>`;
-    else if (m === "reset") html = head("Set a new password") + `<form class="acct-form">${field("acct-pass", "password", "New password (8+ characters)", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Save password</button></form>` + (o.expired ? `<div class="acct-links">${link("forgot", "Send a new link")}</div>` : "");
-    else if (m === "handle") html = head(u.handle ? "Change your username" : "Choose a username", "Friends find you by it.") + `<form class="acct-form">${handleField(u.handle || "")}${err}<button type="submit" class="btn btn-primary btn-md">Save</button></form><div class="acct-links">${link("account", "Back")}</div>`;
+    else if (m === "reset") html = head("Set a new password") + `<form class="acct-form">${field("acct-pass", "password", "New password (8+ characters)", "new-password")}${field("acct-pass2", "password", "Confirm password", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Save password</button></form>` + (o.expired ? `<div class="acct-links">${link("forgot", "Send a new link")}</div>` : "");
+    else if (m === "profile") html = head(u.handle ? "Edit profile" : "Finish setting up", u.handle ? "" : "Choose a username — friends add you by it.") +
+      `<form class="acct-form">${handleField(o.keepHandle != null ? o.keepHandle : (u.handle || ""))}${displayField(o.keepDisplay != null ? o.keepDisplay : (u.displayName || ""))}${err}<button type="submit" class="btn btn-primary btn-md">Save</button></form>` + (u.handle ? `<div class="acct-links">${link("account", "Back")}</div>` : "");
+    else if (m === "applink") html = Account.user
+      ? head("Connect the OfflineQuiz app", `Sign the app in as <b>${escapeHtml(u.displayName || u.handle || u.email || "")}</b>${u.handle ? " (@" + escapeHtml(u.handle) + ")" : ""}? Its stats and stars will sync with this account.`) + err +
+        `<div class="acct-actions"><button type="button" class="btn" data-to="close">Not now</button><button type="button" class="btn btn-primary" data-to="approve">Connect app</button></div>`
+      : head("Connect the OfflineQuiz app", "Sign in first — then connect the app.") + googleBtn() + `<div class="acct-actions"><button type="button" class="btn" data-to="signup">Create account</button><button type="button" class="btn btn-primary" data-to="signin">Sign in</button></div>`;
+    else if (m === "applinked") html = head("The app is signed in", "You can go back to OfflineQuiz — it syncs with this account from now on.") + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
     else if (m === "account") html = head("Account") + okLine + err +
-      `<div class="acct-rows"><div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}</span></div>` +
-      `<div class="acct-row"><span class="acct-at">@</span><span class="acct-v">${u.handle ? escapeHtml(u.handle) : '<span class="text-muted">No username yet</span>'}</span><button type="button" class="btn btn-sm" data-to="handle">${u.handle ? "Change" : "Choose"}</button></div>` +
+      `<div class="acct-rows"><div class="acct-row"><span class="fr-av">${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${escapeHtml(u.displayName || u.handle || "")}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
+      `<div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}${u.google ? '<small>Signs in with Google</small>' : ""}</span></div>` +
+      `<label class="acct-row checkbox-row"><input type="checkbox" id="acct-lb"${u.onLeaderboard !== false ? " checked" : ""}><span class="acct-v">Show me on the global leaderboard</span></label>` +
       (Account.app ? `<div class="acct-row">${ic("review", 16)}<span class="acct-v" id="acct-sync-line">${escapeHtml(syncLineText())}</span><button type="button" class="btn btn-sm" id="acct-sync-now">Sync now</button></div>` : "") +
-      `</div><div class="acct-actions"><button type="button" class="btn" id="acct-logout">Sign out</button><button type="button" class="btn" data-to="friends">Friends</button><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
+      `</div><div class="acct-actions"><button type="button" class="btn" id="acct-logout">Sign out</button><button type="button" class="btn" data-to="leaderboards">Leaderboards</button><button type="button" class="btn" data-to="friends">Friends</button><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
     el.innerHTML = `<div class="confirm-box acct-box">${html}</div>`;
     mode = m;
     el.querySelectorAll("[data-to]").forEach((b) => b.addEventListener("click", () => go(b.dataset.to)));
@@ -10439,12 +10666,50 @@ function openAccount(mode, opts) {
     if (lo) lo.onclick = async () => { lo.disabled = true; await API.post("/api/account/logout", {}).catch(() => {}); location.reload(); };
     const sn = el.querySelector("#acct-sync-now");
     if (sn) sn.onclick = async () => { sn.disabled = true; await cloudSyncNow(); sn.disabled = false; };
+    const lb = el.querySelector("#acct-lb");
+    if (lb) lb.onchange = async () => { const r = await API.post("/api/account/profile", { onLeaderboard: lb.checked }).catch(() => null); if (r && r.user) Account.user = r.user; };
+    const hIn = el.querySelector("#acct-handle");
+    if (hIn) hIn.addEventListener("input", () => { const v = hIn.value.toLowerCase().replace(/[^a-z0-9]/g, ""); if (v !== hIn.value) hIn.value = v; });
     const first = el.querySelector("input:not([value]), input[value='']") || el.querySelector("input") || el.querySelector(".btn-primary");
     setTimeout(() => first && first.focus(), 30);
+    if (m === "browser") pollBrowser(o);
+  };
+  // the app, signing in through the browser: poll until the page approves it
+  const pollBrowser = (o) => {
+    const started = Date.now();
+    const tick = async () => {
+      if (mode !== "browser" || !el.isConnected) return;
+      const r = await API.post("/api/account/app-link/poll", { tz: myTz() }).catch(() => null);
+      if (mode !== "browser" || !el.isConnected) return;
+      if (r && r.ok) { render("syncing", {}); _cloudOn = true; await API.post("/api/cloud/sync", {}, 600000).catch(() => {}); location.reload(); return; }
+      if ((r && r.expired) || Date.now() - started > 10 * 60e3) { render("signin", { error: "That browser sign-in expired — try again." }); return; }
+      pollTimer = setTimeout(tick, 2000);
+    };
+    pollTimer = setTimeout(tick, 2000);
   };
   const go = async (to) => {
     if (to === "close") { close(); return; }
     if (to === "friends") { close(); goTo("friends"); return; }
+    if (to === "leaderboards") { close(); goTo("leaderboards"); return; }
+    if (to === "google") {
+      if (Account.app) {   // the app: Google signs in in the person's own browser
+        const r = await API.post("/api/account/app-link/start", { google: true }).catch(() => ({ error: "Couldn't reach onlinequiz.net — check your internet connection." }));
+        if (!r || !r.ok) { render("signin", { error: (r && r.error) || "Couldn't start the sign-in." }); return; }
+        render("browser", { code: r.code, google: true, url: r.url });
+        el._linkUrl = r.url;
+        return;
+      }
+      const here = location.pathname + location.search;
+      location.href = "/auth/google?next=" + encodeURIComponent(here);
+      return;
+    }
+    if (to === "reopen") { if (el._linkUrl) API.post("/api/cloud/open", { url: el._linkUrl }).catch(() => {}); return; }
+    if (to === "approve") {
+      const r = await API.post("/api/account/app-link/approve", { code: opts.code }).catch(() => ({ error: "Couldn't reach the server — try again." }));
+      if (r && r.ok) { render("applinked", {}); history.replaceState(null, "", location.pathname); return; }
+      render("applink", { error: (r && r.error) || "Couldn't connect the app." });
+      return;
+    }
     if (to === "resend") {
       const e2 = (el.querySelector("#acct-email") || {}).value || email;
       if (!e2) { render("signin", { error: "Enter your email above, then send a new link." }); return; }
@@ -10455,15 +10720,21 @@ function openAccount(mode, opts) {
     }
     const e3 = el.querySelector("#acct-email"); if (e3) email = e3.value.trim();
     const h3 = el.querySelector("#acct-handle"); if (h3) handle = h3.value.trim();
+    const d3 = el.querySelector("#acct-display"); if (d3) display = d3.value.trim();
     render(to, {});
   };
   const submit = async (form) => {
     const btn = form.querySelector("button[type=submit]");
     const v = (id) => ((form.querySelector("#" + id) || {}).value || "");
     email = v("acct-email").trim() || email;
-    handle = v("acct-handle").trim() || handle;
-    btn.disabled = true;
+    handle = v("acct-handle").trim().toLowerCase() || handle;
+    display = v("acct-display").trim() || display;
     const post = (path, body) => API.post(path, body).catch(() => ({ error: "Couldn't reach the server — try again." }));
+    if ((mode === "signup" || mode === "reset") && v("acct-pass") !== v("acct-pass2")) {
+      render(mode, { error: "The two passwords don't match.", reason: opts.reason, expired: false });
+      return;
+    }
+    btn.disabled = true;
     let r;
     if (mode === "signin") {
       r = await post("/api/account/login", { email, password: v("acct-pass"), tz: myTz(), avatar: state.avatar || null });
@@ -10477,7 +10748,7 @@ function openAccount(mode, opts) {
       }
       render("signin", { error: r && r.error, offerResend: !!(r && r.unverified), reason: opts.reason });
     } else if (mode === "signup") {
-      r = await post("/api/account/signup", { email, password: v("acct-pass"), handle });
+      r = await post("/api/account/signup", { email, password: v("acct-pass"), handle, displayName: display || handle });
       if (r && r.ok) { render("sent", {}); return; }
       if (r && r.exists) { render("signin", { error: r.error }); return; }
       render("signup", { error: r && r.error, reason: opts.reason });
@@ -10489,14 +10760,53 @@ function openAccount(mode, opts) {
       r = await post("/api/account/reset", { token: opts.token, password: v("acct-pass") });
       if (r && r.ok) { location.reload(); return; }
       render("reset", { error: r && r.error, expired: !!(r && r.expired) });
-    } else if (mode === "handle") {
-      r = await post("/api/account/profile", { handle });
-      if (r && r.ok) { Account.user = r.user; renderAccountMenu(); if (document.querySelector("#friends-screen.active")) renderFriends(); render("account", { note: "Saved." }); return; }
-      render("handle", { error: r && r.error });
+    } else if (mode === "profile") {
+      r = await post("/api/account/profile", { handle, displayName: display || handle });
+      if (r && r.ok) {
+        Account.user = r.user; renderAccountMenu(); applyAccountName();
+        if (document.querySelector("#friends-screen.active")) renderFriends();
+        if (document.querySelector("#leaderboards-screen.active")) renderLeaderboards();
+        render("account", { note: "Saved." }); return;
+      }
+      render("profile", { error: r && r.error, keepHandle: handle, keepDisplay: display });
     }
   };
   render(mode, opts);
 }
+// The website shows the account's display name (greeting, avatar, multiplayer):
+// it has no name prompt of its own.
+function applyAccountName() {
+  if (!IS_WEB) return;
+  state.username = Account.user ? (Account.user.displayName || Account.user.handle || "") : "";
+  renderGreeting(); renderTopbarProfile();
+}
+// Every password box gets a show/hide eye (the account window, plugins…).
+(function passwordEyes() {
+  const EYE = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="M4 4l16 16"/></svg>';
+  const add = (inp) => {
+    if (inp._qbEye || !inp.parentNode) return;
+    inp._qbEye = true;
+    const w = document.createElement("span");
+    w.className = "pw-wrap";
+    inp.parentNode.insertBefore(w, inp);
+    w.appendChild(inp);
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "pw-eye"; b.tabIndex = -1;
+    b.setAttribute("aria-label", "Show password"); b.title = "Show password";
+    b.innerHTML = EYE;
+    b.addEventListener("mousedown", (e) => e.preventDefault());   // keep the caret in the box
+    b.addEventListener("click", () => {
+      const show = inp.type === "password";
+      inp.type = show ? "text" : "password";
+      b.classList.toggle("on", show);
+      b.setAttribute("aria-label", show ? "Hide password" : "Show password"); b.title = show ? "Hide password" : "Show password";
+    });
+    w.appendChild(b);
+  };
+  const scan = (root) => { if (root.matches && root.matches('input[type="password"]')) add(root); if (root.querySelectorAll) root.querySelectorAll('input[type="password"]').forEach(add); };
+  new MutationObserver((muts) => { for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) scan(n); }).observe(document.documentElement, { childList: true, subtree: true });
+  if (document.body) scan(document.body); else document.addEventListener("DOMContentLoaded", () => scan(document.body));
+})();
 
 // ── App: keep this profile synced with its account ──
 // After any write to the profile's data (an answer, a star, review, settings,
@@ -10530,6 +10840,137 @@ async function cloudSyncNow() {
 }
 setInterval(() => { if (_cloudOn && !document.hidden) cloudSyncNow(); }, 5 * 60e3);
 
+// ── The app offline: Multiplayer greys out ──
+// Rooms need the game server (or, failing that, the relay). Without either —
+// no internet, or a network that blocks them — the home's Multiplayer button
+// stays where it is but can't be clicked; it comes back by itself.
+async function mpReachable() {
+  if (navigator.onLine === false) return false;
+  const probe = (url) => fetch(url, { mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(6000) }).then(() => true, () => false);
+  let custom = "";
+  try { const o = localStorage.getItem("qb-mp-server"); if (o && o !== "off") custom = o.replace(/\/+$/, ""); } catch (e) {}
+  if (custom) return probe(custom + "/health");   // a chosen server (tests, development): that one only
+  return (await probe("https://mp.onlinequiz.net/health")) || (await probe("https://offlinequiz-mp-relay.warren2028045.workers.dev/"));
+}
+function setMpAvailable(ok) {
+  document.querySelectorAll('[data-go="multiplayer"]').forEach((b) => {
+    b.disabled = !ok; b.classList.toggle("mp-offline", !ok);
+    b.setAttribute("aria-description", ok ? "" : "Multiplayer needs an internet connection");
+  });
+}
+async function checkMpReachable() { if (IS_WEB) return; setMpAvailable(await mpReachable()); }
+if (!IS_WEB) {
+  window.addEventListener("online", () => checkMpReachable());
+  window.addEventListener("offline", () => setMpAvailable(false));
+  setInterval(() => { if (document.querySelector("#title-screen.active")) checkMpReachable(); }, 30000);
+}
+
+// ── Tips ──
+// A "Tip" box above a feature the first time someone opens it (old users
+// trying something new included). It stays — across visits — until its × is
+// pressed; then it never comes back on this device (localStorage "qb-tips").
+const TOUCH = matchMedia("(hover: none) and (pointer: coarse)").matches;
+const TIPS = {
+  "search-tags": "Narrow a search with tags: type \\ in the search box (or press the tag button) and pick an era, a place, a kind of answer… Click a tag to switch it between required and skipped.",
+  "freq": "Click any answer to see every question that answers it. Categories and Tossups / Bonuses / Both change the list.",
+  "sets": "Open a set to read its packets in order — or play a whole set from Setup → Mode.",
+  "setup": "Your setup is remembered. Tags narrow the questions further (an era, a place…), and Categories can be weighted.",
+  "practice-keys": TOUCH ? "Use the buttons under the question to buzz, skip and pause." : "Space buzzes, S skips, P pauses and N moves on — or click the buttons under the question.",
+  "stats": "Click a session to see every question in it. Categories narrows all of these numbers.",
+  "mp-lobby": IS_WEB ? "Type a room code to join, or leave it empty for a new room. In a room, the copy button copies its link — friends open it to join." : "Type a room code to join, or leave it empty for a new room — then share the code with friends.",
+  "store": "Get adds a plugin and turns it on; switch it off or on any time, here or under Manage.",
+  "friends": "Share your username — friends add you by it. The board shows everyone's last 7 days.",
+  "leaderboards": "Make your own leaderboard with + New leaderboard and invite friends to race each week.",
+  "cat-presets": "Save the categories you picked as a preset (the bookmark row at the bottom) to switch back in one click.",
+};
+const _TIPS_LS = "qb-tips";
+function _tipsMap() { try { return JSON.parse(localStorage.getItem(_TIPS_LS) || "{}") || {}; } catch (e) { return {}; } }
+function tipSeen(id) { return !!_tipsMap()[id]; }
+function tipDone(id) { const m = _tipsMap(); m[id] = Date.now(); try { localStorage.setItem(_TIPS_LS, JSON.stringify(m)); } catch (e) {} }
+// put tip `id` into `container` before `ref` (default: at the top), once
+function tipInto(container, id, text, ref) {
+  if (!container || !(id in TIPS || text) || tipSeen(id)) return null;
+  if (container.querySelector(`:scope > .qb-tip[data-tip-id="${id}"]`)) return null;
+  const el = document.createElement("div");
+  el.className = "qb-tip"; el.dataset.tipId = id; el.setAttribute("role", "note");
+  el.innerHTML = `<span class="qb-tip-ico">${ic("bulb", 18)}</span><div class="qb-tip-body"><b>Tip</b><p>${escapeHtml(text || TIPS[id])}</p></div><button type="button" class="qb-tip-x" aria-label="Close tip" title="Close">×</button>`;
+  el.querySelector(".qb-tip-x").addEventListener("click", (e) => { e.stopPropagation(); tipDone(id); animateRemove(el); });
+  container.insertBefore(el, ref && ref.parentNode === container ? ref : container.firstChild);
+  return el;
+}
+
+// ── Leaderboards ──
+// Global: everyone with an account who shows on it (Account → "Show me on the
+// global leaderboard"), ranked by points. Your own leaderboards: make one, invite
+// friends (they accept), and race them. Periods: the last 7 days, 30 days, all
+// time. The numbers come from each account's synced practice (server lb_stats).
+const _lb = { tab: "global", period: "week", friends: null };
+async function renderLeaderboards(note) {
+  const c = document.getElementById("lb-container"); if (!c) return;
+  if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need onlinequiz accounts, which aren't open yet.</p></div>`; return; }
+  if (!c.querySelector(".lb-page")) c.innerHTML = loadingBarHtml("Loading leaderboards…");
+  if (_cloudOn) await cloudSyncNow();   // the app: your own numbers include what you just did
+  const per = "period=" + _lb.period;
+  let d, board = null;
+  try { d = await API.get("/api/leaderboards?" + per); } catch (e) { d = null; }
+  if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't reach onlinequiz.net — check your internet connection.")}</div>`; return; }
+  if (_lb.tab !== "global" && !(d.boards || []).some((b) => b.id === _lb.tab)) _lb.tab = "global";
+  if (_lb.tab !== "global") { try { board = await API.get("/api/leaderboards/board?id=" + encodeURIComponent(_lb.tab) + "&" + per); } catch (e) { board = null; } if (!board || board.error) { _lb.tab = "global"; board = null; } }
+  if (!document.querySelector("#leaderboards-screen.active") && !note) return;
+  const tabs = [["global", "Global"], ...(d.boards || []).map((b) => [b.id, b.name])].map(([k, l]) => `<button type="button" class="db-tab${_lb.tab === k ? " active" : ""}" data-lb-tab="${escapeHtml(k)}">${escapeHtml(l)}</button>`).join("") +
+    (d.signedIn ? '<button type="button" class="db-tab lb-new" data-lb-new>+ New leaderboard</button>' : "");
+  const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
+  const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
+  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}"><span class="lb-rank num">${r.rank}</span>${av(r.displayName || r.handle)}` +
+    `<span class="fr-name"><b>${escapeHtml(r.displayName || r.handle)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
+    `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>points</small></span>` +
+    `<span class="fr-stat"><b class="num">${Number(r.questions || 0).toLocaleString()}</b><small>questions</small></span>` +
+    `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small>powers</small></span>` +
+    `<span class="fr-stat"><b class="num">${r.accuracy == null ? "—" : r.accuracy + "%"}</b><small>accuracy</small></span>` +
+    `<span class="fr-act">${removable && !r.you ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-lb-remove="${escapeHtml(r.handle)}" title="Remove from this leaderboard" aria-label="Remove @${escapeHtml(r.handle)}">${ic("trash", 15)}</button>` : ""}</span></div>`;
+  const invites = (d.invites || []).map((i) => `<div class="fr-req">${av(i.name)}<span class="fr-name"><b>${escapeHtml(i.name)}</b><small>${i.from ? escapeHtml(i.from.displayName) + " invited you · " : ""}${i.members} ${i.members === 1 ? "member" : "members"}</small></span><button type="button" class="btn btn-sm" data-lb-decline="${escapeHtml(i.id)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-lb-join="${escapeHtml(i.id)}">Join</button></div>`).join("");
+  let body;
+  if (!board) {
+    const rows = d.global || [], me = d.me && !rows.some((r) => r.you) ? d.me : null;
+    body = (rows.length ? `<div class="fr-list lb-board">${rows.map((r) => row(r, false)).join("")}${me ? '<div class="lb-gap">…</div>' + row(me, false) : ""}</div>` : '<div class="db-empty">No one is on the leaderboard yet — practice to be the first.</div>') +
+      (d.signedIn ? "" : `<p class="fr-empty">${ic("user", 14)} <button type="button" class="acct-link" data-acct="signin">Sign in</button> to appear here and to make leaderboards with your friends.</p>`);
+  } else {
+    const b = board.board;
+    if (!_lb.friends) { try { const f = await API.get("/api/friends"); _lb.friends = (f && f.friends) || []; } catch (e) { _lb.friends = []; } }
+    const onBoard = new Set([...board.rows.map((r) => r.handle), ...(board.invited || []).map((r) => r.handle)]);
+    const canInvite = _lb.friends.filter((f) => !onBoard.has(f.handle));
+    body = `<div class="lb-head"><div class="lb-title"><b>${escapeHtml(b.name)}</b><small>${b.owner ? "Made by " + escapeHtml(b.owner.displayName) : ""} · ${board.rows.length} ${board.rows.length === 1 ? "member" : "members"}</small></div>` +
+      (b.mine ? `<button type="button" class="btn btn-sm" data-lb-rename>Rename</button><button type="button" class="btn btn-sm" data-lb-delete>Delete</button>` : `<button type="button" class="btn btn-sm" data-lb-leave>Leave</button>`) + `</div>` +
+      `<div class="fr-list lb-board">${board.rows.map((r) => row(r, b.mine)).join("")}</div>` +
+      `<section class="fr-card lb-invite"><h2 class="eyebrow">Invite friends</h2>` +
+        (canInvite.length ? `<div class="lb-invite-row"><select id="lb-invite-who" class="mode-input">${canInvite.map((f) => `<option value="${escapeHtml(f.handle)}">${escapeHtml(f.displayName || f.handle)} (@${escapeHtml(f.handle)})</option>`).join("")}</select><button type="button" class="btn btn-primary" data-lb-invite>Invite</button></div>`
+          : `<p class="fr-empty" style="margin:0">${(_lb.friends || []).length ? "All your friends are on it or invited." : 'Add friends first — <button type="button" class="acct-link" data-go="friends">Friends</button>.'}</p>`) +
+        ((board.invited || []).length ? `<p class="fr-empty">Invited: ${board.invited.map((x) => "@" + escapeHtml(x.handle)).join(", ")}</p>` : "") +
+      `</section>`;
+  }
+  c.innerHTML = `<div class="lb-page">` +
+    (invites ? `<section class="fr-sec"><h2 class="eyebrow">Invites</h2><div class="fr-list">${invites}</div></section>` : "") +
+    `<div class="lb-bar"><div class="db-tabs lb-tabs">${tabs}</div><div class="seg lb-periods" role="group" aria-label="Period">${periods}</div></div>` +
+    `<div class="fr-msg" id="lb-msg" role="status">${note ? escapeHtml(note) : ""}</div>` + body + `</div>`;
+  if (d.signedIn) tipInto(c.querySelector(".lb-page"), "leaderboards");
+  const msg = (t, err) => { const m = document.getElementById("lb-msg"); if (m) { m.textContent = t; m.classList.toggle("err", !!err); } };
+  const act = async (path, bodyObj, okNote) => {
+    const r = await API.post(path, bodyObj).catch(() => ({ error: "Couldn't reach onlinequiz.net." }));
+    if (r && r.error) { msg(r.error, true); return null; }
+    _lb.friends = null; renderLeaderboards(okNote || ""); return r;
+  };
+  c.querySelectorAll("[data-lb-tab]").forEach((b) => b.onclick = () => { _lb.tab = b.dataset.lbTab; renderLeaderboards(); });
+  c.querySelectorAll("[data-lb-period]").forEach((b) => b.onclick = () => { _lb.period = b.dataset.lbPeriod; renderLeaderboards(); });
+  c.querySelectorAll("[data-lb-join]").forEach((b) => b.onclick = async () => { const r = await act("/api/leaderboards/respond", { id: b.dataset.lbJoin, accept: true }, "Joined."); if (r) { _lb.tab = b.dataset.lbJoin; renderLeaderboards("Joined."); } });
+  c.querySelectorAll("[data-lb-decline]").forEach((b) => b.onclick = () => act("/api/leaderboards/respond", { id: b.dataset.lbDecline, accept: false }));
+  c.querySelector("[data-lb-new]")?.addEventListener("click", () => promptDialog("Name your leaderboard", "", async (name) => { const r = await act("/api/leaderboards/create", { name }, "Made it — now invite your friends."); if (r && r.id) { _lb.tab = r.id; renderLeaderboards("Made it — now invite your friends."); } }, { placeholder: "e.g. Varsity practice", yes: "Create" }));
+  c.querySelector("[data-lb-rename]")?.addEventListener("click", () => promptDialog("Rename the leaderboard", board.board.name, (name) => act("/api/leaderboards/rename", { id: _lb.tab, name }, "Renamed."), { yes: "Save" }));
+  c.querySelector("[data-lb-delete]")?.addEventListener("click", () => confirmDialog("Delete " + board.board.name + " for everyone on it?", async () => { const r = await act("/api/leaderboards/delete", { id: _lb.tab }); if (r) { _lb.tab = "global"; renderLeaderboards(); } }, { yes: "Delete" }));
+  c.querySelector("[data-lb-leave]")?.addEventListener("click", () => confirmDialog("Leave " + board.board.name + "?", async () => { const r = await act("/api/leaderboards/leave", { id: _lb.tab }); if (r) { _lb.tab = "global"; renderLeaderboards(); } }, { yes: "Leave" }));
+  c.querySelector("[data-lb-invite]")?.addEventListener("click", () => { const h = document.getElementById("lb-invite-who")?.value; if (h) act("/api/leaderboards/invite", { id: _lb.tab, handle: h }, "Invited @" + h + " — they'll see it under Leaderboards."); });
+  c.querySelectorAll("[data-lb-remove]").forEach((b) => b.onclick = () => confirmDialog("Remove @" + b.dataset.lbRemove + " from this leaderboard?", () => act("/api/leaderboards/remove", { id: _lb.tab, handle: b.dataset.lbRemove }), { yes: "Remove" }));
+}
+
 // ── Friends ──
 // Add friends by username; the list is this week's leaderboard (you included):
 // questions in the last 7 days, tossup accuracy, today's count and the day
@@ -10555,15 +10996,16 @@ async function renderFriends(note) {
   const num = (v) => (v == null ? "—" : Number(v).toLocaleString());
   const board = rows.map((f, i) => {
     const s = f.summary || {}, w = s.week || {};
-    return `<div class="fr-row${f.you ? " fr-you" : ""}"><span class="fr-rank num">${i + 1}</span>${av(f.handle)}<span class="fr-name"><b>@${escapeHtml(f.handle || "")}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>${s.lastActive ? "Active " + escapeHtml(relTime(s.lastActive)) : "No practice yet"}</small></span>` +
+    const nm = f.you ? (Account.user && Account.user.displayName) || f.handle : f.displayName || f.handle;
+    return `<div class="fr-row${f.you ? " fr-you" : ""}"><span class="fr-rank num">${i + 1}</span>${av(nm)}<span class="fr-name"><b>${escapeHtml(nm || "")}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
       `<span class="fr-stat"><b class="num">${num(w.questions)}</b><small>this week</small></span>` +
       `<span class="fr-stat"><b class="num">${w.accuracy == null ? "—" : w.accuracy + "%"}</b><small>accuracy</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.today)}</b><small>today</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.streak)}</b><small>day streak</small></span>` +
       (f.you ? '<span class="fr-act"></span>' : `<span class="fr-act"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fr-remove="${escapeHtml(f.handle)}" title="Remove friend" aria-label="Remove @${escapeHtml(f.handle)}">${ic("trash", 15)}</button></span>`) + "</div>";
   }).join("");
-  const reqs = (d.incoming || []).map((f) => `<div class="fr-req">${av(f.handle)}<span class="fr-name"><b>@${escapeHtml(f.handle)}</b><small>wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
-  const sent = (d.outgoing || []).map((f) => `<div class="fr-req">${av(f.handle)}<span class="fr-name"><b>@${escapeHtml(f.handle)}</b><small>request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
+  const reqs = (d.incoming || []).map((f) => `<div class="fr-req">${av(f.displayName || f.handle)}<span class="fr-name"><b>${escapeHtml(f.displayName || f.handle)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
+  const sent = (d.outgoing || []).map((f) => `<div class="fr-req">${av(f.displayName || f.handle)}<span class="fr-name"><b>${escapeHtml(f.displayName || f.handle)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
   c.innerHTML = `<div class="fr-page">` +
     `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button></div>` +
       `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Friend's username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +
@@ -10573,6 +11015,7 @@ async function renderFriends(note) {
       (d.friends && d.friends.length ? "" : '<p class="fr-empty">No friends yet — add one by their username above.</p>') + `</section>` +
     (sent ? `<section class="fr-sec"><h2 class="eyebrow">Sent</h2><div class="fr-list">${sent}</div></section>` : "") +
   `</div>`;
+  tipInto(c.querySelector(".fr-page"), "friends");
   const badge = document.getElementById("tbm-friends-n");
   if (badge) { const n = (d.incoming || []).length; badge.hidden = !n; badge.textContent = String(n); }
   const act = async (path, body, okNote) => {

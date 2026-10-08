@@ -7,6 +7,7 @@ import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
 import * as updater from "./updater.js";
 import { randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -928,14 +929,14 @@ export class App {
       if (!c) {
         // signed out: are accounts open on the server yet? (unreachable: let them try)
         const r = await this._cloudFetch("GET", "/api/account/me");
-        return { available: r.error ? true : r.available !== false, app: true, user: null, required: false, ...(r.error ? { offline: true } : {}) };
+        return { available: r.error ? true : r.available !== false, app: true, google: !!r.google, user: null, required: false, ...(r.error ? { offline: true } : {}) };
       }
       const r = await this._cloudFetch("GET", "/api/account/me", null, c.token);
       if (r.signedOut) return { available: true, app: true, user: null, required: false, signedOutNote: r.error };
       if (r.error) return { available: true, app: true, user: c.user || null, required: false, offline: true, lastSync: c.lastSync || null, syncError: c.syncError || null };
       const now = this._cloud();
       if (now && r.user) { now.user = r.user; this._setCloud(now); }
-      return { available: r.available !== false, app: true, user: r.user || null, required: false, lastSync: (now && now.lastSync) || null, syncError: (now && now.syncError) || null };
+      return { available: r.available !== false, app: true, google: !!r.google, user: r.user || null, required: false, lastSync: (now && now.lastSync) || null, syncError: (now && now.syncError) || null };
     }
     if (key === "POST /api/account/login") {
       const r = await this._cloudFetch("POST", "/api/account/login", { email: body.email, password: body.password, client: "app" });
@@ -952,12 +953,47 @@ export class App {
     }
     if (["POST /api/account/signup", "POST /api/account/resend", "POST /api/account/forgot"].includes(key)) return this._cloudFetch("POST", path, body);
     if (key === "POST /api/cloud/sync") return this.syncNow();
-    if (key === "POST /api/account/profile" || key === "GET /api/friends" || /^POST \/api\/friends\/(request|respond|remove)$/.test(key)) {
+    // Sign in through the browser (Continue with Google): the server gives a code
+    // and a poll secret (kept here), the browser page approves the code, and the
+    // poll returns this app's token.
+    if (key === "POST /api/account/app-link/start") {
+      const r = await this._cloudFetch("POST", "/api/account/app-link/start", {});
+      if (!r.ok) return r;
+      this._appLink = { code: r.code, poll: r.poll, at: Date.now() };
+      const url = r.url + (body.google ? "&google=1" : "");
+      this._openExternal(url);
+      return { ok: true, code: r.code, url };
+    }
+    if (key === "POST /api/account/app-link/poll") {
+      const l = this._appLink;
+      if (!l || Date.now() - l.at > 10 * 60e3) return { error: "This sign-in expired — try again.", expired: true };
+      const r = await this._cloudFetch("POST", "/api/account/app-link/poll", { code: l.code, poll: l.poll });
+      if (!r.ok || !r.token) return r.error ? r : { pending: true };
+      this._appLink = null;
+      const same = c && c.user && r.user && c.user.email === r.user.email;
+      this._setCloud({ token: r.token, user: r.user, pulled: same ? c.pulled || 0 : 0, pushed: same ? c.pushed || 0 : 0, lastSync: same ? c.lastSync || null : null });
+      this._cloudFetch("POST", "/api/account/profile", { tz: body.tz }, r.token).catch(() => {});
+      return { ok: true, user: r.user };
+    }
+    if (key === "POST /api/cloud/open") { this._openExternal(String(body.url || "")); return { ok: true }; }
+    // the global leaderboard is public; the rest needs the account
+    if (key === "GET /api/leaderboards") return this._cloudFetch("GET", path + (body.qs ? "?" + body.qs : ""), null, c && c.token);
+    if (key === "POST /api/account/profile" || key === "GET /api/friends" || /^POST \/api\/friends\/(request|respond|remove)$/.test(key)
+      || key === "GET /api/leaderboards/board" || /^POST \/api\/leaderboards\/(create|invite|respond|leave|remove|rename|delete)$/.test(key)) {
       if (!c) return { error: "Sign in first.", authRequired: true };
-      return this._cloudFetch(method, path, method === "GET" ? null : body, c.token);
+      return this._cloudFetch(method, path + (method === "GET" && body.qs ? "?" + body.qs : ""), method === "GET" ? null : body, c.token);
     }
     return { error: "Not available in the app" };
   }
+  // Open an onlinequiz.net page in the person's own browser (Google won't sign
+  // in inside an app window). Only the account server's own pages.
+  _openExternal(url) {
+    if (typeof url !== "string" || !url.startsWith(CLOUD_URL + "/")) return false;
+    if (process.env.QB_NO_EXTERNAL_OPEN === "1") { this._lastOpened = url; return true; }   // tests
+    const cmd = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url.replace(/&/g, "^&")]] : ["xdg-open", [url]];
+    try { execFile(cmd[0], cmd[1], { windowsHide: true }, () => {}); return true; } catch { return false; }
+  }
+
   // Two-way sync of the active profile with its account: push what changed
   // here, apply what changed there, in batches until both sides are done. One
   // run at a time; a change made meanwhile goes in the next run.

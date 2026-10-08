@@ -307,6 +307,23 @@ export class UserData {
     return { applied };
   }
 
+  // Leaderboard totals for the active profile: the last 7 days, the last 30
+  // days and all time — q questions, pts points, pw powers, tu tossups, cor
+  // correct tossups.
+  leaderboardStats(now = Date.now()) {
+    const pid = this.getActiveProfileId(), DAY = 864e5;
+    const sum = (since) => {
+      const o = { q: 0, pts: 0, pw: 0, tu: 0, cor: 0 };
+      for (const r of this.db.prepare(`SELECT type, COUNT(*) AS n, SUM(points) AS pts, SUM(correct) AS c, SUM(CASE WHEN points >= 15 AND correct = 1 THEN 1 ELSE 0 END) AS pw
+          FROM sessions WHERE profile_id = ? AND timestamp >= ? GROUP BY type`).all(pid, since)) {
+        o.q += r.n; o.pts += r.pts || 0;
+        if (r.type === "tossup") { o.tu = r.n; o.cor = r.c || 0; o.pw = r.pw || 0; }
+      }
+      return o;
+    };
+    return { week: sum(now - 7 * DAY), month: sum(now - 30 * DAY), all: sum(0) };
+  }
+
   // A friend-list summary of the active profile's practice: today, the last 7
   // days, the day streak (in the owner's time zone, tz = minutes east of UTC).
   activitySummary(tz = 0, now = Date.now()) {

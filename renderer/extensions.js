@@ -775,6 +775,7 @@
   QB.enablePlugin = (id) => {
     const p = QB._plugins.find((x) => x.id === id);
     if (!p || p._enabledRuntime) return;
+    if (QB._pluginsHeld && !p._builtin) { p.enabled = true; savePlugins(); return; }   // runs once the account allows it
     try {
       if (!p._manifest) p._manifest = runEntry(p.code).plugin;
       const ctx = makeCtx(p); p._ctx = ctx;
@@ -1166,7 +1167,27 @@
     QB._themes.forEach((x) => { x._enabledRuntime = false; });
     if (t && t.code) QB.enableTheme(t.id);
     QB.syncBaseTheme();
-    QB._plugins.forEach((p) => { p._enabledRuntime = false; if (p.enabled) QB.enablePlugin(p.id); });
+    // The website runs installed plugins only for a signed-in account (when
+    // accounts are required): app.js calls setPluginsAllowed once it knows.
+    QB._plugins.forEach((p) => { p._enabledRuntime = false; if (p.enabled && (p._builtin || !QB._pluginsHeld)) QB.enablePlugin(p.id); });
+  };
+  QB._pluginsHeld = !window.qbreader && !!window.QB_WEB;
+  // Stand installed plugins down (signed out) or bring them back, without
+  // touching their saved on/off.
+  QB.setPluginsAllowed = (ok) => {
+    if (window.qbreader || !window.QB_WEB) return;
+    QB._pluginsHeld = !ok;
+    let changed = false;
+    QB._plugins.forEach((p) => {
+      if (p._builtin) return;
+      if (ok && p.enabled && !p._enabledRuntime) { QB.enablePlugin(p.id); changed = true; }
+      if (!ok && p._enabledRuntime) {
+        try { if (p._manifest && typeof p._manifest.onDisable === "function" && p._ctx) p._manifest.onDisable(p._ctx); } catch (e) { console.error(e); }
+        if (p._ctx) p._ctx._unsub.forEach((u) => { try { u(); } catch {} });
+        p._ctx = null; p._enabledRuntime = false; changed = true;
+      }
+    });
+    if (changed) QB._emit("plugins:changed");
   };
 
   function readArrayBuffer(file) {
@@ -1665,6 +1686,11 @@ QB.registerTheme({
   QB._extTab = "open";
   QB.renderScreen = () => {
     const container = document.getElementById("extensions-container");
+    // website, accounts required, signed out: the Store and plugins need an account
+    if (container && WEBSITE && QB._host && QB._host.needsAccount && QB._host.needsAccount()) {
+      container.innerHTML = QB._host.accountPanelHtml("Sign in to get plugins from the Store and use them.");
+      return;
+    }
     if (!container) return;
     if (WEBSITE && QB._extTab === "themes") QB._extTab = "store";
     const tab = QB._extTab || "open";
@@ -1716,6 +1742,7 @@ QB.registerTheme({
     }
     container.innerHTML = '<div class="ext-tabs" role="tablist" aria-label="Plugins">' + tabs + bulk + "</div>" + body;
     wireScreen();
+    if (tab === "store" && QB._host && QB._host.tip) QB._host.tip(container, "store", null, container.querySelector(".ext-tabs")?.nextElementSibling);
   };
 
   // ── Plugin Store (website): /api/plugin-store lists the plugins the server
@@ -1798,7 +1825,7 @@ QB.registerTheme({
     wireDropzone("ext-drop-theme", "ext-file-theme", "ext-browse-theme");
     wireDropzone("ext-drop-plugin", "ext-file-plugin", "ext-browse-plugin");
     wireSettingControls(root);
-    root.querySelectorAll("[data-ext-tab]").forEach((b) => b.addEventListener("click", () => { QB._extTab = b.dataset.extTab; QB.renderScreen(); }));
+    root.querySelectorAll("[data-ext-tab]").forEach((b) => b.addEventListener("click", () => { QB._extTab = b.dataset.extTab; QB.renderScreen(); if (window.qbWebPathSync) window.qbWebPathSync(); }));
     root.querySelectorAll("[data-store-get]").forEach((b) => b.addEventListener("click", () => storeGet(b.dataset.storeGet)));
     root.querySelector("[data-store-reload]")?.addEventListener("click", () => { QB._store.err = false; QB.renderScreen(); });
     root.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => QB.showPage(b.dataset.page)));
@@ -3075,17 +3102,29 @@ function __qbMain(ctx) {
     }
 
     // ── rendering ──
-    function render() { if (!body) return; if (!lobby) renderForm(); else renderRoom(); updateTopBar(); }
+    function render() {
+      if (!body) return;
+      if (!lobby) renderForm(); else renderRoom();
+      updateTopBar();
+      try { if (window.qbWebPathSync) window.qbWebPathSync(); } catch (e) {}   // the website's address: /multiplayer/<room>
+    }
     function setStatus(m) { var s = body && body.querySelector("#mp-status"); if (s) s.textContent = m; }
 
     function renderForm() {
-      myName = ctx.getSetting("name") || ((ctx.host && ctx.host.getState && ctx.host.getState().username) || "") || ("Player" + Math.floor(Math.random() * 1000));
+      // The website: an account plays under its display name; a signed-out
+      // player is "unregistered" + digits (new each time). The app: the name
+      // last used here, else the account's display name, else the profile's.
+      var st = (ctx.host && ctx.host.getState && ctx.host.getState()) || {};
+      var acct = st.account || null, fixedName = !!st.web;
+      if (st.web) myName = acct ? (acct.displayName || acct.handle) : "unregistered" + (10000 + Math.floor(Math.random() * 90000));
+      else myName = ctx.getSetting("name") || (acct && acct.displayName) || st.username || ("Player" + Math.floor(Math.random() * 1000));
       var initial = (String(myName).trim()[0] || "?").toUpperCase();
       var recent = recentRooms();
       body.innerHTML =
         '<div class="mp-lobby">' +
           '<label class="mp-who"><span class="avatar">' + esc(initial) + '</span><span class="mp-who-txt"><span class="eyebrow">Playing as</span>' +
-            '<input id="mp-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name"></span></label>' +
+            '<input id="mp-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name"' + (fixedName ? " readonly" : "") + '></span>' +
+            (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name — change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
           '<section class="mp-card mp-join-card">' +
             '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="Type a code to join that room, or leave it empty for a new one. Share the code so others can join.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code"></label>' +
             '<label class="checkbox-row"><input type="checkbox" id="mp-spectate"> Join as spectator</label>' +
@@ -3104,13 +3143,14 @@ function __qbMain(ctx) {
       nameEl.addEventListener("change", function () { var v = nameEl.value.trim(); if (v) { myName = v; ctx.setSetting("name", v); var av = body.querySelector(".mp-who .avatar"); if (av) av.textContent = (v[0] || "?").toUpperCase(); } });
       var go = function (code) {
         myName = (nameEl.value.trim()) || myName;
-        ctx.setSetting("name", myName); // remember for next time
+        if (!fixedName) ctx.setSetting("name", myName); // remember for next time (the app)
         lobby = String(code || "").trim();
         mySpec = !!body.querySelector("#mp-spectate").checked;
         if (!lobby) { setStatus("Enter a room code."); return; }
         join();
       };
       joinBtn.onclick = goTyped;
+      try { if (ctx.host && ctx.host.tip) ctx.host.tip(body.querySelector(".mp-lobby"), "mp-lobby"); } catch (e) {}
       body.querySelectorAll(".mp-recent-row").forEach(function (r) { r.onclick = function () { go(r.dataset.code); }; });
     }
     // Room codes: four characters, no look-alikes (0/O, 1/I/L).
@@ -3236,7 +3276,12 @@ function __qbMain(ctx) {
 
       body.querySelectorAll("[data-mptab]").forEach(function (b) { b.onclick = function () { showPanelTab(b.dataset.mptab); }; });
       body.querySelector("#mp-leave").onclick = confirmLeave;
-      body.querySelector("#mp-copy").onclick = function () { try { navigator.clipboard.writeText(String(lobby).toUpperCase()); } catch (e) {} };
+      // the website copies the room's link (onlinequiz.net/multiplayer/<room>); the app, its code
+      var webLink = !window.qbreader && window.QB_WEB;
+      if (webLink) { var cb = body.querySelector("#mp-copy"); cb.title = "Copy room link"; cb.setAttribute("aria-label", "Copy room link"); }
+      body.querySelector("#mp-copy").onclick = function () {
+        try { navigator.clipboard.writeText(webLink ? location.origin + "/multiplayer/" + encodeURIComponent(lobby) : String(lobby).toUpperCase()); } catch (e) {}
+      };
       body.querySelector("#mp-roomset").onclick = function () { toggleRoomSettings(); };
       body.querySelector("#mp-buzz-btn").onclick = function () { requestBuzz(); };
       body.querySelector("#mp-next-btn").onclick = function () { requestNext(); };
@@ -3926,6 +3971,19 @@ function __qbMain(ctx) {
       players = {}; order = []; lobby = ""; qCount = 0; sessionLog = [];
       render();
     }
+
+    // The website's addresses (app.js webRoute / webPathNow): /multiplayer/<room>
+    // opens the lobby and joins that room; leaving the address leaves the room.
+    window.QB.mpRoom = function () { return lobby || ""; };
+    window.QB.mpLeave = function () { if (lobby) leave(); };
+    window.QB.mpJoin = function (code) {
+      code = String(code || "").trim().slice(0, 32);
+      window.QB.showPage("multiplayer::lobby");
+      if (!code || (lobby && lobby.toLowerCase() === code.toLowerCase())) return;
+      if (lobby) leave();
+      var codeEl = body && body.querySelector("#mp-lobby"), joinBtn = body && body.querySelector("#mp-join");
+      if (codeEl && joinBtn) { codeEl.value = code; joinBtn.click(); }
+    };
 
 
   }
