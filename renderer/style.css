@@ -3543,8 +3543,10 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   #practice-screen .practice-side { flex-direction: column; overflow: visible; padding: 0; border: 0; }
   #practice-screen .practice-layout { padding: 0 16px 0; gap: 24px; }
   #practice-screen > .top-bar { padding-left: 16px; padding-right: 16px; }
-  #practice-screen .question-area { min-height: 46vh; }
+  #practice-screen .question-area { min-height: 0; }   /* no gap between the question and the answer box (buzzing scrolled the question away) */
   #practice-screen .question-placeholder { min-height: 34vh; }
+  /* the unread rest of the question isn't laid out (invisible, it pushed the answer box a screen below what was read) */
+  :is(#practice-screen, .mp-room) .question-text .unrevealed { display: none; }
   #practice-screen .question-text { font-size: 16.5px; line-height: 1.8; }
   .side-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
   .practice-side .stat-item { min-height: 54px; padding: 8px 4px; }
@@ -3552,6 +3554,9 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .practice-actions { position: sticky; bottom: 0; z-index: 6; margin: 8px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
   .practice-actions .btn { flex: 1 1 0; height: 52px; padding: 0 10px; font-size: 15px; justify-content: center; }
+  #practice-screen .question-area > .practice-actions { order: 99; }   /* below the bonus parts too, so it stays pinned to the bottom */
+  #practice-screen .result-actions { display: none; }
+  #practice-screen .result-area { scroll-margin: 12px 0 96px; }   /* clear of the bottom bar when scrolled to */
   .mp-actions { position: sticky; bottom: 0; z-index: 6; margin: 8px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
   .mp-actions .btn { flex: 1 1 0; height: 52px; padding: 0 10px; font-size: 15px; justify-content: center; }
@@ -3560,6 +3565,36 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .page-head { flex-wrap: wrap; row-gap: 8px; }
   .page-head .top-bar-right { flex-wrap: wrap; }
 }
+/* phones: the top bar fits (it pushed the account avatar off the edge) */
+@media (max-width: 560px) {
+  .app-topbar { padding: 0 10px; gap: 4px; }
+  .app-topbar .brand { font-size: 15px; padding-right: 2px; }
+  .tb-right { gap: 0; }
+  .tb-link, .tb-scheme, .tb-link.btn-icon { width: 34px; height: 34px; min-height: 34px; }
+  .tb-pill { height: 30px; padding: 0 8px; gap: 4px; }
+  .tb-profile .avatar { width: 30px; height: 30px; }
+}
+@media (max-width: 760px) {
+  /* Settings: a row's wide control (slider, dropdown, text box) goes under its label */
+  .set-pane .setting-row { flex-wrap: wrap; }
+  .set-pane .setting-label { flex: 1 1 0; min-width: 0; }
+  .set-pane .setting-row > :is(.slider-group, .qb-select, select, .mode-input, .seg, .diff-toggles, .set-name-input) { flex: 1 1 100%; min-width: 0 !important; width: 100%; }
+  .set-pane .setting-row:has(> :is(.slider-group, .qb-select, select, .mode-input, .seg)) .setting-label { flex-basis: 100%; }
+  /* Question database: tabs on one sideways-scrolling row; no Compact / Expand all */
+  #btn-db-compact, #btn-db-expand { display: none; }
+  .db-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .db-tabs::-webkit-scrollbar { display: none; }
+  .db-tabs .db-tab { flex: none; }
+  /* lists: names wrap instead of being cut; the standard / non-standard pill goes */
+  .list-row .lr-name { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.35; }
+  .db-browse .list-row .lr-std { display: none; }
+  .store-main b, .store-main small { white-space: normal; overflow: visible; }
+  /* Stats: charts fit the screen; the sessions table drops its Started column */
+  .chart-canvas { max-width: 100% !important; min-width: 0 !important; height: auto !important; }
+  .stats-sessions-table th:nth-child(4), .stats-sessions-table td:nth-child(4) { display: none; }
+  .stats-sessions-table { width: 100%; table-layout: auto; }
+}
+
 /* no keyboard (a phone, a tablet): the buttons say it; key hints go */
 @media (hover: none) and (pointer: coarse) {
   #practice-screen .question-placeholder p, #bonus-next-hint, #mp-placeholder p { display: none !important; }
@@ -3590,6 +3625,8 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .practice-actions:not(:has(> :not([hidden]))) { display: none; }
 .practice-actions [hidden] { display: none !important; }
 .practice-actions .btn { height: 44px; padding: 0 22px; }
+/* wide screens answer with the result's own Next button; the bar's Next is for phones */
+@media (min-width: 761px) { .practice-actions .pa-next { display: none !important; } .practice-actions:not(:has(> :not([hidden]):not(.pa-next))) { display: none; } }
 .practice-actions kbd, .mp-buzz-btn kbd { margin-left: 4px; padding: 1px 6px; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 4px; background: transparent; color: inherit; font-size: 11px; font-weight: 500; opacity: 0.8; }
 @media (hover: none) { .practice-actions kbd, .mp-buzz-btn kbd { display: none; } }
 /* the room's buttons are the practice page's: Next-sized, the key inside Buzz */
@@ -3949,7 +3986,10 @@ html.web .set-nav-btn[data-sec="updates"], html.web #ovl-updates, html.web .set-
 .acct-row > svg, .acct-at { flex: 0 0 auto; width: 16px; text-align: center; color: var(--muted); font-weight: 700; }
 .acct-v { flex: 1 1 auto; min-width: 0; word-break: break-all; }
 .acct-row .btn { flex: 0 0 auto; }
-.acct-field .qb-info { margin-left: 4px; vertical-align: -3px; }
+.acct-field > span:first-child { display: inline-flex; align-items: center; gap: 6px; }
+.acct-field > span:first-child .qb-info { margin: 0; vertical-align: 0; }
+html.web .set-name-row { display: none; }   /* the website's name is the account's display name (Account → Edit) */
+#row-lb-public[hidden] { display: none; }
 .tbm-badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 9px; background: var(--accent-strong); color: var(--on-accent); font-size: 11px; display: inline-grid; place-items: center; }
 /* account window extras */
 .acct-google { width: 100%; justify-content: center; gap: 10px; background: var(--surface); }

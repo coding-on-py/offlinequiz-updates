@@ -4744,6 +4744,8 @@ function practiceMain() {
   if (!state.sessionActive) return { label: "Start", key: "start-skip", run: () => startSession() };
   if (state.mode === "bonuses" && state.bonusAwait != null) return { label: "Next part", key: "next-question", run: () => advanceBonusPart() };
   if (!state.resultAreaVisible && state.settings.allowSkips && state.currentQuestion && !state.isBuzzed && !state._loadingQuestion) return { label: "Skip", key: "start-skip", run: () => skipQuestion() };
+  // phones: Next rides the bottom bar (the result's own Next button is hidden there, below a long question)
+  if (state.resultAreaVisible && state.currentQuestion) return { label: "Next", key: "next-question", next: true, run: () => nextQuestion() };
   return null;
 }
 function syncPracticeActions() {
@@ -4752,9 +4754,14 @@ function syncPracticeActions() {
   const reading = state.sessionActive && !!state.currentQuestion && !state.resultAreaVisible && !state._loadingQuestion;
   const m = practiceMain();
   set(document.getElementById("pa-main"), !!m, m ? m.label : null);
+  document.getElementById("pa-main")?.classList.toggle("pa-next", !!(m && m.next));
   const mk = document.querySelector("#pa-main kbd"); if (m && mk) mk.textContent = keyDisplay(m.key);
   set(document.getElementById("pa-buzz"), state.mode === "tossups" && reading && !state.isBuzzed);
   set(document.getElementById("pa-pause"), reading && !state.isBuzzed && state.bonusAwait == null, state.isPaused ? "Resume" : "Pause");
+  // phones: the verdict and answer come into view once (they sit below a long question)
+  const ra = document.getElementById("result-area"), shown = !!(state.resultAreaVisible && ra && !ra.classList.contains("hidden"));
+  if (shown && !syncPracticeActions._shown && matchMedia("(max-width: 760px)").matches) ra.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  syncPracticeActions._shown = shown;
 }
 (function wirePracticeActions() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener("click", (e) => { e.preventDefault(); e.currentTarget.blur(); fn(); syncPracticeActions(); });
@@ -9203,6 +9210,9 @@ function loadDatabase() {
 function renderDbTab() {
   const tab = state.dbTab || "search";
   if (IS_WEB) window.qbWebPathSync();   // /search, /sets, /frequency, /starred
+  // another tab starts at its top (Frequency used to open scrolled down to where Search was)
+  if (renderDbTab._last !== tab) { const sc = document.getElementById("db-content"); if (sc) sc.scrollTop = 0; }
+  renderDbTab._last = tab;
   if (tab.startsWith("prov:")) return renderProviderTab(tab.slice(5));
   if (tab === "search") renderSearchTab();
   else if (tab === "sets") renderSetsTab();
@@ -10506,7 +10516,8 @@ function accountPanelHtml(reason) {
     '<div class="acct-panel-btns"><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button><button type="button" class="btn" data-acct="signup">Create account</button></div></div>';
 }
 document.addEventListener("click", (e) => { const b = e.target.closest("[data-acct]"); if (b) { e.preventDefault(); openAccount(b.dataset.acct); } });
-async function refreshAccount() {
+async function refreshAccount(opts) {
+  opts = opts || {};
   try {
     const d = await API.get("/api/account/me");
     Account.available = !!(d && d.available); Account.user = (d && d.user) || null; Account.required = !!(d && d.required);
@@ -10521,7 +10532,8 @@ async function refreshAccount() {
   try { window.QB?.setPluginsAllowed?.(!needsAccount()); } catch (e) {}
   if (document.querySelector("#extensions-screen.active")) window.QB?.renderScreen?.();
   // signed in (e.g. with Google) without a username yet: finish setting up
-  if (Account.user && !Account.user.handle && !document.getElementById("account-ovl") && !refreshAccount._asked) { refreshAccount._asked = true; openAccount("profile"); }
+  if (!opts.noPrompt && Account.user && !Account.user.handle && !document.getElementById("account-ovl") && !refreshAccount._asked) { refreshAccount._asked = true; openAccount("profile"); }
+  syncLbPublicRow();
   // the account's time zone dates its day streak for friends
   if (Account.user && !Account.offline && Account.user.tz !== myTz()) API.post("/api/account/profile", { tz: myTz() }).then((r) => { if (r && r.user) Account.user = r.user; }).catch(() => {});
   if (_cloudOn) cloudSyncSoon(1500);
@@ -10578,10 +10590,12 @@ async function handleAccountLinks() {
   if (q.get("welcome")) clean("welcome");
   if (q.get("applink")) {
     const code = q.get("applink");
-    await refreshAccount();
+    await refreshAccount({ noPrompt: true });
     // the app's "Continue with Google": signed out here → straight to Google, then back to connect
     if (!Account.user && q.get("google") === "1" && Account.google) { location.href = "/auth/google?next=" + encodeURIComponent("/?applink=" + code); return; }
-    openAccount("applink", { code });
+    // a brand-new account (Google) picks its username first, then connects the app
+    if (Account.user && !Account.user.handle) openAccount("profile", { then: () => openAccount("applink", { code }) });
+    else openAccount("applink", { code });
     return;
   }
   if (note === "confirmed") { await refreshAccount(); openAccount("account", { note: "Your email is confirmed — you're signed in." }); }
@@ -10654,7 +10668,6 @@ function openAccount(mode, opts) {
     else if (m === "account") html = head("Account") + okLine + err +
       `<div class="acct-rows"><div class="acct-row"><span class="fr-av">${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${escapeHtml(u.displayName || u.handle || "")}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
       `<div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}${u.google ? '<small>Signs in with Google</small>' : ""}</span></div>` +
-      `<label class="acct-row checkbox-row"><input type="checkbox" id="acct-lb"${u.onLeaderboard !== false ? " checked" : ""}><span class="acct-v">Show me on the global leaderboard</span></label>` +
       (Account.app ? `<div class="acct-row">${ic("review", 16)}<span class="acct-v" id="acct-sync-line">${escapeHtml(syncLineText())}</span><button type="button" class="btn btn-sm" id="acct-sync-now">Sync now</button></div>` : "") +
       `</div><div class="acct-actions"><button type="button" class="btn" id="acct-logout">Sign out</button><button type="button" class="btn" data-to="leaderboards">Leaderboards</button><button type="button" class="btn" data-to="friends">Friends</button><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
     el.innerHTML = `<div class="confirm-box acct-box">${html}</div>`;
@@ -10666,8 +10679,6 @@ function openAccount(mode, opts) {
     if (lo) lo.onclick = async () => { lo.disabled = true; await API.post("/api/account/logout", {}).catch(() => {}); location.reload(); };
     const sn = el.querySelector("#acct-sync-now");
     if (sn) sn.onclick = async () => { sn.disabled = true; await cloudSyncNow(); sn.disabled = false; };
-    const lb = el.querySelector("#acct-lb");
-    if (lb) lb.onchange = async () => { const r = await API.post("/api/account/profile", { onLeaderboard: lb.checked }).catch(() => null); if (r && r.user) Account.user = r.user; };
     const hIn = el.querySelector("#acct-handle");
     if (hIn) hIn.addEventListener("input", () => { const v = hIn.value.toLowerCase().replace(/[^a-z0-9]/g, ""); if (v !== hIn.value) hIn.value = v; });
     const first = el.querySelector("input:not([value]), input[value='']") || el.querySelector("input") || el.querySelector(".btn-primary");
@@ -10766,6 +10777,7 @@ function openAccount(mode, opts) {
         Account.user = r.user; renderAccountMenu(); applyAccountName();
         if (document.querySelector("#friends-screen.active")) renderFriends();
         if (document.querySelector("#leaderboards-screen.active")) renderLeaderboards();
+        if (typeof opts.then === "function") { close(); opts.then(); return; }
         render("account", { note: "Saved." }); return;
       }
       render("profile", { error: r && r.error, keepHandle: handle, keepDisplay: display });
@@ -10780,6 +10792,28 @@ function applyAccountName() {
   state.username = Account.user ? (Account.user.displayName || Account.user.handle || "") : "";
   renderGreeting(); renderTopbarProfile();
 }
+// The account as the server has it now — a username or name set in the app or
+// another tab shows up here without a reload (Friends, Leaderboards, tab focus).
+async function accountFresh() {
+  try {
+    const d = await API.get("/api/account/me");
+    if (!d || d.available === false) return;
+    Account.user = d.user || null; Account.google = !!d.google;
+    renderAccountMenu(); applyAccountName(); syncLbPublicRow();
+  } catch (e) {}
+}
+if (IS_WEB) document.addEventListener("visibilitychange", () => { if (!document.hidden && Account.known) accountFresh(); });
+// Settings → Profile: "Show me on the global leaderboard" (signed in only)
+function syncLbPublicRow() {
+  const row = document.getElementById("row-lb-public"), sw = document.getElementById("opt-lb-public");
+  if (row) row.hidden = !Account.user;
+  if (sw && Account.user) sw.checked = Account.user.onLeaderboard !== false;
+}
+document.getElementById("opt-lb-public")?.addEventListener("change", async (e) => {
+  const r = await API.post("/api/account/profile", { onLeaderboard: e.target.checked }).catch(() => null);
+  if (r && r.user) Account.user = r.user; else e.target.checked = !e.target.checked;
+});
+
 // Every password box gets a show/hide eye (the account window, plugins…).
 (function passwordEyes() {
   const EYE = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="M4 4l16 16"/></svg>';
@@ -10900,13 +10934,14 @@ function tipInto(container, id, text, ref) {
 }
 
 // ── Leaderboards ──
-// Global: everyone with an account who shows on it (Account → "Show me on the
-// global leaderboard"), ranked by points. Your own leaderboards: make one, invite
+// Global: everyone with an account who shows on it (Settings → Profile → "Show me
+// on the global leaderboard"), ranked by points. Your own leaderboards: make one, invite
 // friends (they accept), and race them. Periods: the last 7 days, 30 days, all
 // time. The numbers come from each account's synced practice (server lb_stats).
 const _lb = { tab: "global", period: "week", friends: null };
 async function renderLeaderboards(note) {
   const c = document.getElementById("lb-container"); if (!c) return;
+  if (!note) await accountFresh();
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need onlinequiz accounts, which aren't open yet.</p></div>`; return; }
   if (!c.querySelector(".lb-page")) c.innerHTML = loadingBarHtml("Loading leaderboards…");
   if (_cloudOn) await cloudSyncNow();   // the app: your own numbers include what you just did
@@ -10936,7 +10971,8 @@ async function renderLeaderboards(note) {
       (d.signedIn ? "" : `<p class="fr-empty">${ic("user", 14)} <button type="button" class="acct-link" data-acct="signin">Sign in</button> to appear here and to make leaderboards with your friends.</p>`);
   } else {
     const b = board.board;
-    if (!_lb.friends) { try { const f = await API.get("/api/friends"); _lb.friends = (f && f.friends) || []; } catch (e) { _lb.friends = []; } }
+    // friends as they are now (one made since the page opened must be invitable)
+    try { const f = await API.get("/api/friends"); _lb.friends = (f && Array.isArray(f.friends)) ? f.friends : (_lb.friends || []); } catch (e) { _lb.friends = _lb.friends || []; }
     const onBoard = new Set([...board.rows.map((r) => r.handle), ...(board.invited || []).map((r) => r.handle)]);
     const canInvite = _lb.friends.filter((f) => !onBoard.has(f.handle));
     body = `<div class="lb-head"><div class="lb-title"><b>${escapeHtml(b.name)}</b><small>${b.owner ? "Made by " + escapeHtml(b.owner.displayName) : ""} · ${board.rows.length} ${board.rows.length === 1 ? "member" : "members"}</small></div>` +
@@ -10977,6 +11013,7 @@ async function renderLeaderboards(note) {
 // streak, from each account's synced practice (server: activitySummary).
 async function renderFriends(note) {
   const c = document.getElementById("friends-container"); if (!c) return;
+  if (!note) await accountFresh();
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Friends need an onlinequiz account. Accounts aren't open yet.</p></div>`; return; }
   if (!Account.user) { c.innerHTML = accountPanelHtml("Sign in to add friends and see how they're practicing."); return; }
   if (!Account.user.handle) {

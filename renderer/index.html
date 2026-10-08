@@ -642,9 +642,13 @@
 
             <section class="set-pane" data-pane="profile" id="ovl-profile">
               <h3>Profile</h3>
-              <div class="setting-row">
+              <div class="setting-row set-name-row">
                 <span class="setting-label">Name</span>
                 <input type="text" class="mode-input set-name-input" id="set-username" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Name">
+              </div>
+              <div class="setting-row" id="row-lb-public" hidden>
+                <span class="setting-label">Show me on the global leaderboard<span class="qb-info" data-tip="Your display name, points and questions appear on the Global leaderboard. Off: only the leaderboards you join, and your friends, see them.">i</span></span>
+                <input type="checkbox" class="switch" id="opt-lb-public">
               </div>
               <div class="setting-row">
                 <span class="setting-label">Profile and achievements</span>

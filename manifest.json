@@ -1,5 +1,5 @@
 {
-  "version": "14.35",
+  "version": "14.36",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Leaderboards now has a trophy icon.",
+  "notes": "Phones: the answer box sits right under what was read, a Next button in the bottom bar, settings and lists that fit. The leaderboard switch moved to Settings → Profile. Friends you just added can be invited to your leaderboards. Usernames show right after signing in with Google.",
   "files": {
-    "renderer/index.html": "89b7a65bcf7422ed8e54fe9fd0db53e309790e2e59878ca1b44dadd81aeeef13",
-    "renderer/style.css": "97c60de9a0b90949b2e19d2186ee4c000a93f6a20063ed2718462ce88babb811",
+    "renderer/index.html": "4036ca1f9e9eebcf5da643f20d1e9b83262e355b1fc77160d4e0f1613a20ce0c",
+    "renderer/style.css": "905f7f947a6ed8a598b97563bc2a3cf055d73610e32e2659b00c2057e9efea7e",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "d13a41f2dc295127efef68beb4097a8c79be8a729a1e5fc5d27170c5e7fd41ef",
-    "renderer/app.js": "f8946f7e09354441298cc4b4438e1e68db69dc60b2b86e06bab8c3e5161292e8",
+    "renderer/app.js": "8c92ff44523e38336f48b908713e1e42c12fe58d337855c65de477cd57810f5f",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "KUX27yrPdXPnLFhOEZ/ErNKxpsfqr1+87RRPTDb5Muk5b6cYZjQBDga2jjnmPc76YXpLcyJQfnVVgW1M+AC5AQ=="
+  "signature": "WiBtf2bJ66dmyQzEkl+mEv5tpt9SeTrBii4DrZJlNhguGgPCGh81LwURq6mFYbK+XAhu+abnIU+ObsdkCoqQAg=="
 }
