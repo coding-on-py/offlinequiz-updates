@@ -1,5 +1,5 @@
 {
-  "version": "14.34",
+  "version": "14.35",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,9 +100,9 @@
     }
   ],
   "main": true,
-  "notes": "Leaderboards (global and your own, with friends), display names, and sign-in with Google through your browser. On-screen Start/Buzz/Pause buttons, tips for new features, nicer collapsible arrows and on/off switches. Multiplayer greys out when you're offline. Fixed the dull Multiplayer button.",
+  "notes": "Leaderboards now has a trophy icon.",
   "files": {
-    "renderer/index.html": "f93918e9557d670eec06b24e9c919fa336ec1e3fe2de7ee95c72cf0eb3678934",
+    "renderer/index.html": "89b7a65bcf7422ed8e54fe9fd0db53e309790e2e59878ca1b44dadd81aeeef13",
     "renderer/style.css": "97c60de9a0b90949b2e19d2186ee4c000a93f6a20063ed2718462ce88babb811",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "d13a41f2dc295127efef68beb4097a8c79be8a729a1e5fc5d27170c5e7fd41ef",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "K8GHaPBG+zuubMl46J3F0REuZ2/zYE4eomaSnnNnE53aqC95sGnKjkWLLIR4+xPuT4DO0pxaudGT6JEDBR5qDA=="
+  "signature": "KUX27yrPdXPnLFhOEZ/ErNKxpsfqr1+87RRPTDb5Muk5b6cYZjQBDga2jjnmPc76YXpLcyJQfnVVgW1M+AC5AQ=="
 }
