@@ -6,8 +6,17 @@ import { checkAnswer, checkBonus, evaluateAnswer, parseDirectives, frequencyKey,
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
 import * as updater from "./updater.js";
+import { randomBytes } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// The account server (the website). The desktop app signs in there, keeps the
+// token in this profile's config ("cloud:<profile>") and syncs the profile into
+// the account (POST /api/sync, see userData.js). QB_CLOUD_URL points tests at a
+// local website server.
+const CLOUD_URL = String(process.env.QB_CLOUD_URL || "https://www.onlinequiz.net").replace(/\/+$/, "");
+const CLOUD_OFFLINE = "Couldn't reach onlinequiz.net — check your internet connection.";
 
 const DEFAULT_DB_PATH = join(__dirname, "..", "..", "data", "questions.db");
 // Frequency lists keep at most this many merged answers (~90 pages of 50).
@@ -50,6 +59,9 @@ export class App {
     this.dbInstallPath = opts.dbInstallPath || this.dbPath;
     this._dbUpd = { state: "idle" };   // background question-database update
     this._dbJob = null;
+    // Where the default frequency lists are kept between launches (the app's
+    // userData); unset = memory only (the website, tests).
+    this.freqCacheDir = opts.freqCacheDir || null;
 
     this.questionDb = null;
     this.userData = null;
@@ -229,12 +241,34 @@ export class App {
     let list = cache.get(key);
     if (list) { cache.delete(key); cache.set(key, list); }
     else {
-      list = this._frequencyRows(null, null, null, qtype, ids.length ? ids : null, FREQ_MAX);
+      // the three whole-database lists (what Frequency opens on) take 1–3 s
+      // each to build, so the app keeps them on disk per database build
+      list = ids.length ? null : this._freqDisk(qtype);
+      if (!list) {
+        list = this._frequencyRows(null, null, null, qtype, ids.length ? ids : null, FREQ_MAX);
+        if (!ids.length) this._freqDisk(qtype, list);
+      }
       cache.set(key, list);
       while (cache.size > 12) cache.delete(cache.keys().next().value);
     }
     const off = Math.max(0, offset | 0);
     return { answers: list.slice(off, off + limit), total: list.length, max: list.length ? list[0].count : 0 };
+  }
+
+  // read (list omitted) or write the on-disk copy of a whole-database list
+  _freqDisk(qtype, list) {
+    if (!this.freqCacheDir) return null;
+    const FREQ_VERSION = 1;   // bump when the list-building rules change
+    const dir = join(this.freqCacheDir, "freq-cache");
+    const build = String(this.getDbInfo().built || "v1").replace(/[^A-Za-z0-9_.-]/g, "_");
+    const name = `${FREQ_VERSION}-${build}-${qtype}.json`;
+    try {
+      if (!list) { const l = JSON.parse(readFileSync(join(dir, name), "utf8")); return Array.isArray(l) ? l : null; }
+      mkdirSync(dir, { recursive: true });
+      for (const f of readdirSync(dir)) if (f.endsWith("-" + qtype + ".json") && f !== name) { try { unlinkSync(join(dir, f)); } catch {} }
+      writeFileSync(join(dir, name), JSON.stringify(list));
+    } catch { return null; }
+    return null;
   }
 
   getFrequentAnswers(category, subcategory, alternateSubcategory, limit = 50, qtype = "tossup", nodeId = null) {
@@ -849,6 +883,113 @@ export class App {
     const c = this.commitDbUpdate();
     if (!c.ok) throw new Error(c.error);
     return c.result;
+  }
+
+  // ── account + sync (desktop app) ──
+  // The renderer calls the same /api/account/*, /api/friends* paths as on the
+  // website; here they are forwarded to the account server with this profile's
+  // token (which never reaches the renderer or its plugins). runtime.js sets
+  // this.cloudFetch to Electron's net.fetch (the system's certificates, so it
+  // works behind school filters that inspect HTTPS); plain fetch otherwise.
+  _cloudKey() { return "cloud:" + this.userData.getActiveProfileId(); }
+  _cloud() { try { return JSON.parse(this.userData.getConfig(this._cloudKey()) || "null"); } catch { return null; } }
+  _setCloud(c) { if (c) this.userData.setConfig(this._cloudKey(), JSON.stringify(c)); else this.userData.deleteConfig(this._cloudKey()); }
+  _deviceId() {
+    let d = this.userData.getConfig("cloud_device");
+    if (!d) { d = randomBytes(16).toString("base64url"); this.userData.setConfig("cloud_device", d); }
+    return d;
+  }
+  async _cloudFetch(method, path, body, token) {
+    const f = this.cloudFetch || fetch;
+    let r;
+    try {
+      r = await f(CLOUD_URL + path, {
+        method,
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+        body: method === "GET" ? undefined : JSON.stringify(body || {}),
+        signal: AbortSignal.timeout(path === "/api/sync" ? 90000 : 20000),
+      });
+    } catch (e) { return { error: CLOUD_OFFLINE, offline: true }; }
+    let data = null;
+    try { data = await r.json(); } catch {}
+    if (r.status === 401 && token) {
+      // the sign-in ended (signed out elsewhere, password reset, expired)
+      const c = this._cloud(); if (c && c.token === token) this._setCloud(null);
+      return { error: "You were signed out — sign in again.", signedOut: true };
+    }
+    if (!data) return { error: CLOUD_OFFLINE, offline: true };
+    return data;
+  }
+  async cloudRoute(method, path, body) {
+    body = body || {};
+    const c = this._cloud();
+    const key = method + " " + path;
+    if (key === "GET /api/account/me") {
+      if (!c) {
+        // signed out: are accounts open on the server yet? (unreachable: let them try)
+        const r = await this._cloudFetch("GET", "/api/account/me");
+        return { available: r.error ? true : r.available !== false, app: true, user: null, required: false, ...(r.error ? { offline: true } : {}) };
+      }
+      const r = await this._cloudFetch("GET", "/api/account/me", null, c.token);
+      if (r.signedOut) return { available: true, app: true, user: null, required: false, signedOutNote: r.error };
+      if (r.error) return { available: true, app: true, user: c.user || null, required: false, offline: true, lastSync: c.lastSync || null, syncError: c.syncError || null };
+      const now = this._cloud();
+      if (now && r.user) { now.user = r.user; this._setCloud(now); }
+      return { available: r.available !== false, app: true, user: r.user || null, required: false, lastSync: (now && now.lastSync) || null, syncError: (now && now.syncError) || null };
+    }
+    if (key === "POST /api/account/login") {
+      const r = await this._cloudFetch("POST", "/api/account/login", { email: body.email, password: body.password, client: "app" });
+      if (!r.ok || !r.token) return r.ok ? { error: "The server didn't sign this app in — try again." } : r;
+      // another account on this profile before: start its sync from scratch
+      const same = c && c.user && r.user && c.user.email === r.user.email;
+      this._setCloud({ token: r.token, user: r.user, pulled: same ? c.pulled || 0 : 0, pushed: same ? c.pushed || 0 : 0, lastSync: same ? c.lastSync || null : null });
+      this._cloudFetch("POST", "/api/account/profile", { tz: body.tz, avatar: body.avatar }, r.token).catch(() => {});
+      return { ok: true, user: r.user };
+    }
+    if (key === "POST /api/account/logout") {
+      if (c) { await this._cloudFetch("POST", "/api/account/logout", {}, c.token).catch(() => {}); this._setCloud(null); }
+      return { ok: true };
+    }
+    if (["POST /api/account/signup", "POST /api/account/resend", "POST /api/account/forgot"].includes(key)) return this._cloudFetch("POST", path, body);
+    if (key === "POST /api/cloud/sync") return this.syncNow();
+    if (key === "POST /api/account/profile" || key === "GET /api/friends" || /^POST \/api\/friends\/(request|respond|remove)$/.test(key)) {
+      if (!c) return { error: "Sign in first.", authRequired: true };
+      return this._cloudFetch(method, path, method === "GET" ? null : body, c.token);
+    }
+    return { error: "Not available in the app" };
+  }
+  // Two-way sync of the active profile with its account: push what changed
+  // here, apply what changed there, in batches until both sides are done. One
+  // run at a time; a change made meanwhile goes in the next run.
+  syncNow() {
+    if (!this._syncP) this._syncP = this._syncRun().finally(() => { this._syncP = null; });
+    return this._syncP;
+  }
+  async _syncRun() {
+    const pid = this.userData.getActiveProfileId();
+    let c = this._cloud();
+    if (!c) return { ok: false, signedOut: true };
+    const device = this._deviceId(), t0 = Date.now();
+    let pushed = 0, pulled = 0;
+    for (let round = 0; round < 1000; round++) {
+      const out = this.userData.exportChanges(c.pushed || 0, 1500);
+      const r = await this._cloudFetch("POST", "/api/sync", { device, since: c.pulled || 0, changes: out.changes, limit: 2000 }, c.token);
+      const cur = this._cloud();
+      if (this.userData.getActiveProfileId() !== pid || !cur || cur.token !== c.token) return { ok: false, error: "The profile or account changed during the sync." };
+      if (!r || !r.ok) {
+        cur.syncError = (r && r.error) || "The sync didn't finish.";
+        this._setCloud(cur);
+        return { ok: false, error: cur.syncError, offline: !!(r && r.offline), signedOut: !!(r && r.signedOut) };
+      }
+      this.userData.applyChanges(r.changes, { assignSeq: false });
+      c = { ...cur, pushed: out.cursor, pulled: r.cursor };
+      this._setCloud(c);
+      pushed += out.changes.length; pulled += (r.changes || []).length;
+      if (!out.more && !r.more) break;
+    }
+    c.lastSync = Date.now(); c.syncError = null;
+    this._setCloud(c);
+    return { ok: true, pushed, pulled, lastSync: c.lastSync, ms: Date.now() - t0 };
   }
 
   async importQuestions(setsData, tossupsData, bonusesData) {

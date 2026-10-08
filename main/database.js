@@ -406,6 +406,7 @@ export class QuestionDatabase {
     if (!filters.random && (offset >= DEEP_PAGE_OFFSET || this._hasOrderedIds("tossups", where, params, orderBy))) {
       return this._orderedPage("tossups", where, params, orderBy, offset, limit);
     }
+    if (filters.random) return this._randomRows("tossups", where, params, limit);
 
     const countSql = `SELECT COUNT(*) as count FROM tossups ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -427,6 +428,7 @@ export class QuestionDatabase {
     if (!filters.random && (offset >= DEEP_PAGE_OFFSET || this._hasOrderedIds("bonuses", where, params, orderBy))) {
       return this._orderedPage("bonuses", where, params, orderBy, offset, limit);
     }
+    if (filters.random) return this._randomRows("bonuses", where, params, limit);
 
     const countSql = `SELECT COUNT(*) as count FROM bonuses ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -436,6 +438,39 @@ export class QuestionDatabase {
     const rows = this.db.prepare(sql).all({ ...params, limit, offset });
 
     return { rows, total };
+  }
+
+  // A random row from a FILTERED set. The matching rowids are listed once per
+  // filter and kept (one scan: ~0.5 s on the website's server for powermarked
+  // difficulty 2–5 since 2010, since that filter reads every question's text);
+  // every later pick is a rowid lookup. The file is read-only, so a list never
+  // goes stale. Uniform over the matching rows, like the COUNT + OFFSET it replaces.
+  _randomIds(table, where, params) {
+    const key = table + "|" + where + "|" + JSON.stringify(params);
+    const cache = this._randCache || (this._randCache = new Map());
+    let ids = cache.get(key);
+    if (ids) { cache.delete(key); cache.set(key, ids); }
+    else {
+      ids = Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${where}`).all(params), (x) => x.r);
+      cache.set(key, ids);
+      while (cache.size > 24) cache.delete(cache.keys().next().value);
+    }
+    return ids;
+  }
+  _randomRow(table, where, params) {
+    const ids = this._randomIds(table, where, params);
+    if (!ids.length) return undefined;
+    return this.db.prepare(`SELECT * FROM ${table} WHERE rowid = ?`).get(ids[Math.floor(Math.random() * ids.length)]);
+  }
+  // `limit` distinct random rows (query?random=1, e.g. the home background), in random order.
+  _randomRows(table, where, params, limit) {
+    const ids = this._randomIds(table, where, params);
+    const n = Math.min(limit, ids.length), pick = new Set();
+    while (pick.size < n) pick.add(ids[Math.floor(Math.random() * ids.length)]);
+    const order = [...pick];
+    const rows = order.length ? this.db.prepare(`SELECT rowid AS __rid, * FROM ${table} WHERE rowid IN (${order.join(",")})`).all() : [];
+    const byId = new Map(rows.map((r) => [r.__rid, r]));
+    return { rows: order.map((id) => { const r = byId.get(id); if (r) delete r.__rid; return r; }).filter(Boolean), total: ids.length };
   }
 
   // Deep pages of a browse (no search text) re-sorted the whole table on every
@@ -476,13 +511,7 @@ export class QuestionDatabase {
       return this.db.prepare(`SELECT * FROM tossups WHERE rowid >= ? ${where ? "AND playable = 1" : ""} LIMIT 1`).get(randomId)
         || this.db.prepare(`SELECT * FROM tossups ${where} LIMIT 1`).get();
     }
-    const countSql = `SELECT COUNT(*) as count FROM tossups ${where}`;
-    const countRow = this.db.prepare(countSql).get(params);
-    const total = countRow ? countRow.count : 0;
-    if (total === 0) return undefined;
-    const randomOffset = Math.floor(Math.random() * total);
-    const sql = `SELECT * FROM tossups ${where} LIMIT 1 OFFSET :__offset`;
-    return this.db.prepare(sql).get({ ...params, __offset: randomOffset });
+    return this._randomRow("tossups", where, params);
   }
 
   getRandomBonus(filters = {}) {
@@ -496,13 +525,7 @@ export class QuestionDatabase {
       return this.db.prepare(`SELECT * FROM bonuses WHERE rowid >= ? ${where ? "AND playable = 1" : ""} LIMIT 1`).get(randomId)
         || this.db.prepare(`SELECT * FROM bonuses ${where} LIMIT 1`).get();
     }
-    const countSql = `SELECT COUNT(*) as count FROM bonuses ${where}`;
-    const countRow = this.db.prepare(countSql).get(params);
-    const total = countRow ? countRow.count : 0;
-    if (total === 0) return undefined;
-    const randomOffset = Math.floor(Math.random() * total);
-    const sql = `SELECT * FROM bonuses ${where} LIMIT 1 OFFSET :__offset`;
-    return this.db.prepare(sql).get({ ...params, __offset: randomOffset });
+    return this._randomRow("bonuses", where, params);
   }
 
   searchTossups(query, filters = {}) {

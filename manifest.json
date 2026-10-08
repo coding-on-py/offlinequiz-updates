@@ -1,5 +1,5 @@
 {
-  "version": "14.31",
+  "version": "14.33",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,5 +100,31 @@
     }
   ],
   "main": true,
-  "notes": "Fixes the Default theme turning white, and unreadable headings on light themes. Stats → Session Breakdown filters by difficulty with the square 0–10 selector. Includes the 14.30 redesign. This version needs the new question database: it downloads on first launch and the app stays on Settings → Updates until it is ready."
+  "notes": "Light/dark switch in the top bar. Options are on/off switches. Multiplayer room tidied up (no Log tab). Search and Frequency load ahead, so pages open instantly. Accounts with sync between the app and onlinequiz.net, plus Friends (they appear once accounts open). Rounded app icon.",
+  "files": {
+    "renderer/index.html": "9fb76774ad11eb5998327aeecf82c2ef4a7a1fef7939b99a0a1f53a4e1ee063e",
+    "renderer/style.css": "f7d835f1c29f3dca1b9b3e551700d77070043e9582f717049628b9572142d794",
+    "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
+    "renderer/extensions.js": "d4263f65d93064de589a1af4e37da7f07d5cf7ddd2ad55a86d7b9e887ce58f43",
+    "renderer/app.js": "4d1556a686842819f548f13d1fd544cf6a3ee26d54f829228af20ee5e1139315",
+    "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
+    "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
+    "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
+    "plugins/answer-rules.zip": "8e90747e6e97112cbff8afcf9fcb35062b00b5d3142370e7bfb2f14a0886259f",
+    "plugins/answerline-lab.zip": "c3838e571003ce07b2208c20fb91d0fa4c868659a616d70d5a33e2d7b30b2a1c",
+    "plugins/buzz-trainer.zip": "d250c71340829b884ca0d61889c7e9acecd794cea7718b389d42252f918f1b2e",
+    "plugins/buzz-words.zip": "6b85fd16067d3fb76279f3967c127534a6dbd59d0a292d02314b8503ebe364ac",
+    "plugins/canon-tracker.zip": "4c84564f6a63727692ba30a999d72896e94d98068a9868f193b418058c78b193",
+    "plugins/class-admin.zip": "e7197a2a2ccb3aa2a40f03443ce0e7ad089a3f1c05d73639fc63d86547032838",
+    "plugins/class-sync.zip": "3905933b6eba20ac3dade861f994b3e872930cf56fe68ec94a9f206bde552c29",
+    "plugins/clue-recall.zip": "47e76915b554f9e8fb6607b9ba8d1d0b30362c1056a10b687444f5652b562a9f",
+    "plugins/coach-mode.zip": "21523ec8e518a08b3818f0533117e7073eafe9f2477d3f6b1efb2c21a3b1917d",
+    "plugins/fact-sheet.zip": "ae737e8d38fc435fb58572a21dead66c3163b646f4110ff7980195cca44ad5c1",
+    "plugins/flashcards.zip": "2b1f78ebfe1b48a269692191a0b47ac983ffb47792b47af4c24a8ec3180d9ed9",
+    "plugins/folders.zip": "093a56caa9f9f18ecdfb1dac8ccec94fe557199daf18ded198a44fcb2fa0786a",
+    "plugins/keyword-freq.zip": "0b992856d1a83942bc5776b77e9821525ab47244d2500e4da9d0fd88967fad1f",
+    "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
+    "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
+  },
+  "signature": "FPzha990GpC6G5s9kvdLj+dlrvBaD0ZI0Qiefh/D1eRO9Zwy6xUnwoCptITyF2YrX3+L/CycSdMey8icTKbcCA=="
 }

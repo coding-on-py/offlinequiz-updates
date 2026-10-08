@@ -27,6 +27,16 @@ import { createBrotliDecompress } from "node:zlib";
 // ── Configuration ──────────────────────────────────────────
 const UPDATE_BASE_URL = "https://raw.githubusercontent.com/coding-on-py/offlinequiz-updates/main";
 const MANIFEST_URL = process.env.QB_DB_MANIFEST_URL || UPDATE_BASE_URL + "/db/db-manifest.json";
+// Our own mirror (scripts/publish-mirror.mjs): the same manifest and parts at
+// <mirror>/db/db-manifest.json and <mirror>/db/<version>/<part>. Tried whenever
+// GitHub fails (it is blocked or throttled in mainland China). Safe because the
+// signature covers WHAT is installed, never the URLs. QB_DB_MIRROR_URL overrides
+// it ("" = off); a test that points QB_DB_MANIFEST_URL elsewhere gets no mirror
+// unless it asks for one, so it never downloads the real database by accident.
+const MIRROR_BASE_URL = String(process.env.QB_DB_MIRROR_URL != null ? process.env.QB_DB_MIRROR_URL
+  : process.env.QB_DB_MANIFEST_URL ? "" : "https://updates.onlinequiz.net").replace(/\/+$/, "");
+const MIRROR_MANIFEST_URL = MIRROR_BASE_URL ? MIRROR_BASE_URL + "/db/db-manifest.json" : "";
+const mirrorPartUrl = (m, p) => (MIRROR_BASE_URL ? MIRROR_BASE_URL + "/db/" + encodeURIComponent(String(m.version)) + "/" + encodeURIComponent(p.name) : "");
 // Newest questions.db schema this build can read. A manifest for a newer schema
 // is ignored (the app update that understands it has to land first).
 export const DB_SCHEMA_MAX = 2;
@@ -91,11 +101,21 @@ export function pickDbPath(bundledPath, downloadedPath) {
 }
 
 // null = nothing published yet (404)
-async function fetchManifest(url = MANIFEST_URL) {
-  const r = await fetch(url, { cache: "no-store" });
+async function fetchManifestFrom(url) {
+  const r = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(20000) });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`update manifest → ${r.status}`);
   return r.json();
+}
+// GitHub first; the mirror when GitHub can't be reached (not when it answers
+// "nothing published"). An explicit url (tests, callers) is used alone.
+async function fetchManifest(url) {
+  if (url) return fetchManifestFrom(url);
+  try { return await fetchManifestFrom(MANIFEST_URL); }
+  catch (e) {
+    if (!MIRROR_MANIFEST_URL) throw e;
+    return fetchManifestFrom(MIRROR_MANIFEST_URL);
+  }
 }
 
 function latestOf(m) {
@@ -133,22 +153,28 @@ async function sha256File(path) {
 }
 
 // One part → disk, verified. An existing file with the right size + hash is
-// kept (resume). Retries with back-off; a stalled transfer is aborted.
-async function downloadPart(part, file, onBytes) {
+// kept (resume). `urls` are its sources (the manifest's, then the mirror's):
+// attempts alternate between them, a source that answers nothing within 20 s
+// or stalls for 60 s is dropped for that attempt, and the index of the source
+// that worked is returned so the next part starts there.
+async function downloadPart(part, file, onBytes, urls = [part.url], start = 0) {
   if (existsSync(file) && statSync(file).size === part.size && (await sha256File(file)) === part.sha256) {
     onBytes(part.size);
-    return;
+    return start;
   }
   let lastErr = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (attempt) await sleep(1500 * attempt);
+  const n = urls.length;
+  for (let attempt = 0; attempt < 4 * n; attempt++) {
+    if (attempt && attempt % n === 0) await sleep(1500 * (attempt / n));
+    const src = (start + attempt) % n;
     const ac = new AbortController();
-    let idle = setTimeout(() => ac.abort(), 60000);
+    let idle = setTimeout(() => ac.abort(), 20000);   // until the response starts
     let got = 0;
     try {
-      const r = await fetch(part.url, { signal: ac.signal, redirect: "follow" });
+      const r = await fetch(urls[src], { signal: ac.signal, redirect: "follow" });
       if (!r.ok || !r.body) throw new Error(`download → ${r.status}`);
       const h = createHash("sha256");
+      clearTimeout(idle); idle = setTimeout(() => ac.abort(), 60000);
       const meter = new Transform({
         transform(chunk, _e, cb) {
           clearTimeout(idle); idle = setTimeout(() => ac.abort(), 60000);
@@ -160,7 +186,7 @@ async function downloadPart(part, file, onBytes) {
       clearTimeout(idle);
       if (got !== part.size || h.digest("hex") !== part.sha256) throw new Error("a downloaded piece was corrupted");
       renameSync(file + ".tmp", file);
-      return;
+      return src;
     } catch (e) {
       clearTimeout(idle);
       onBytes(-got);
@@ -214,7 +240,11 @@ export async function prepareUpdate(version, targetPath, onProgress = () => {}, 
     const pct = Math.round(2 + (78 * done) / total);
     if (pct !== lastPct) { lastPct = pct; onProgress({ label: `Downloading… ${Math.round(done / MB)} / ${Math.round(total / MB)} MB`, pct }); }
   };
-  for (const p of m.parts) await downloadPart(p, join(work, p.name), onBytes);
+  let src = 0;
+  for (const p of m.parts) {
+    const urls = [...new Set([p.url, mirrorPartUrl(m, p)].filter(Boolean))];
+    src = await downloadPart(p, join(work, p.name), onBytes, urls, Math.min(src, urls.length - 1));
+  }
 
   // Decompress the pieces in order into a temp file next to the target.
   onProgress({ label: "Unpacking…", pct: 82 });

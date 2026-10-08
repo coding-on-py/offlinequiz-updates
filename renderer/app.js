@@ -4,6 +4,14 @@
 
 
 const isElectron = !!(window.qbreader);
+// onlinequiz.net: server.js (QB_WEB=1) serves this renderer with window.QB_WEB set.
+// The website differs from the app only where it must: a Download page and home
+// box, no drag-and-drop plugin install, no app / database updates.
+const IS_WEB = !isElectron && !!window.QB_WEB;
+
+// Writes to the profile's own data schedule an account sync in the app
+// (cloudDirty, defined with the account code below).
+const SYNC_WRITES = /^\/api\/(check-tossup|check-bonus|starred\/toggle|review\/(dismiss|manual|clear)|profile-settings|plugin-data|sessions\/prune)/;
 
 function qbEmit(ev, data) {
   try { if (window.QB) window.QB._emit(ev, data); } catch {}
@@ -86,6 +94,7 @@ const API = isElectron
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
+        if (/^\/api\/(account\/|friends$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, null) : { available: false };
         throw new Error("Unknown API route: " + path);
       },
       post(url, data) {
@@ -111,6 +120,7 @@ const API = isElectron
         if (path === "/api/import-questions") return window.qbreader.importQuestions(data.sets, data.tossups, data.bonuses);
         if (path === "/api/apply-update") return window.qbreader.applyUpdate(data.folderId);
         if (path === "/api/app-update-check") return window.qbreader.appUpdateCheck ? window.qbreader.appUpdateCheck() : { configured: false, updated: false, dev: true };
+        if (/^\/api\/(account\/|friends\/|cloud\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
         throw new Error("Unknown API route: " + path);
       },
       delete(url) {
@@ -151,6 +161,11 @@ const API = isElectron
         return r.json();
       },
     };
+{
+  const post = API.post.bind(API), del = API.delete.bind(API);
+  API.post = (url, data, timeoutMs) => { const r = post(url, data, timeoutMs); if (SYNC_WRITES.test(url)) cloudDirty(); return r; };
+  API.delete = (url) => { const r = del(url); if (/^\/api\/sessions\//.test(url)) cloudDirty(); return r; };
+}
 
 let _profileSyncTimer = null;
 function lsGet(key) {
@@ -453,7 +468,7 @@ function updateKeyLabels() {
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
   if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
-  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"]]
+  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"]]
     .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
@@ -478,6 +493,9 @@ const ICON = {
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   down: '<path d="M6 9l6 6 6-6"/>',
   left: '<path d="M15 6l-6 6 6 6"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M4 20h16"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-4 4.2-6 8-6s6.8 2 8 6"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/>',
   right: '<path d="M9 6l6 6-6 6"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
   sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
@@ -793,16 +811,19 @@ function goTo(target) {
     case "practice-tossups": showScreen("practice-tossups"); setMode("tossups"); break;
     case "practice-bonuses": showScreen("practice-bonuses"); setMode("bonuses"); break;
     case "multiplayer": window.QB?.showPage?.("multiplayer::lobby"); break;
-    case "review": openReviewMenu(_reviewItems); break;
+    case "review": if (!accountGate("Sign in to review the questions you missed.")) openReviewMenu(_reviewItems); break;
     case "stats": showScreen("stats"); state.statsSessionId = null; loadStats(); break;
     case "db-search": case "db-sets": case "db-frequency": case "db-starred":
       state.dbTab = { "db-search": "search", "db-sets": "sets", "db-frequency": "frequency", "db-starred": "starred" }[target];
       showScreen("database"); loadDatabase(); break;
     case "plugins": case "plugins-themes": case "plugins-manage":
-      if (window.QB) window.QB._extTab = target === "plugins-themes" ? "themes" : target === "plugins-manage" ? "manage" : (window.QB._extTab || "open");
+      // Plugins always opens on Open (the plugin pages); Themes / Manage only when asked for.
+      if (window.QB) window.QB._extTab = target === "plugins-themes" ? "themes" : target === "plugins-manage" ? "manage" : "open";
       showScreen("extensions"); window.QB?.renderScreen(); break;
     case "settings": toggleSettings(); break;
     case "player": showScreen("player"); loadPlayer(); break;
+    case "download": showScreen("download"); renderDownload(); break;
+    case "friends": showScreen("friends"); renderFriends(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -816,6 +837,8 @@ document.addEventListener("click", (e) => {
   on("tb-brand", () => { closeSetupDrawer(); if (!document.querySelector("#title-screen.active")) goHome(); });
   on("tb-streak", () => goTo("stats"));
   on("tb-plugins", () => goTo("plugins"));
+  on("tb-scheme", () => toggleScheme());
+  document.getElementById("opt-light-mode")?.addEventListener("change", (e) => { if (e.target.checked !== (uiScheme() === "light")) toggleScheme(); });
   on("tb-settings", () => toggleSettings());
   // the avatar opens a small menu: Profile (achievements) and, later, Account
   on("tb-profile", (e) => {
@@ -850,6 +873,7 @@ function renderTopbarProfile() {
   const initial = (String(state.username || "").trim()[0] || "?").toUpperCase();
   ["tb-avatar", "tbm-avatar"].forEach((id) => { const av = document.getElementById(id); if (av) av.textContent = initial; });
   const nm = document.getElementById("tbm-name"); if (nm) nm.textContent = state.username || "Player";
+  renderAccountMenu();
   const prof = document.getElementById("tb-profile");
   if (prof) prof.title = state.username || "Profile";
 }
@@ -1312,6 +1336,7 @@ function buildScreen(name) {
   else if (name === "settings") initSettings();
   else if (name === "player") loadPlayer();
   else if (name === "extensions") window.QB?.renderScreen();
+  else if (name === "friends") renderFriends();
 }
 function reviveScreen(name) {
   if (name === "database") {
@@ -1637,13 +1662,32 @@ document.addEventListener("keydown", (e) => {
 });
 
 
-// The app's own look is dark; light looks are themes (Plugins → Themes). A
-// "light" saved by the old light/dark switch (no control sets it any more)
-// turned only the base colors light — white page, unreadable headings — so the
-// saved value is ignored.
+// The default look comes in dark and light: the top-bar sun/moon switches it
+// and "qb-scheme" remembers it. (The old switch's "qb-theme" is not read: its
+// light turned only the base colors light.) An installed theme paints its own
+// colors over the dark base, so the toggle hides while one is on.
+function uiScheme() { try { return localStorage.getItem("qb-scheme") === "light" ? "light" : "dark"; } catch (e) { return "dark"; } }
 function applyTheme() {
-  document.documentElement.setAttribute("data-theme", "dark");
+  const themed = !!activeTheme();
+  document.documentElement.setAttribute("data-theme", themed ? "dark" : uiScheme());
   document.documentElement.setAttribute("data-accent", state.settings.accent);
+  const b = document.getElementById("tb-scheme");
+  if (b) {
+    b.hidden = themed;
+    const light = uiScheme() === "light";
+    b.setAttribute("aria-label", light ? "Switch to dark mode" : "Switch to light mode");
+    b.title = light ? "Dark mode" : "Light mode";
+    b.querySelector(".ic-sun")?.toggleAttribute("hidden", light);
+    b.querySelector(".ic-moon")?.toggleAttribute("hidden", !light);
+  }
+  const row = document.getElementById("row-light-mode"), sw = document.getElementById("opt-light-mode");
+  if (row) row.hidden = themed;
+  if (sw) sw.checked = uiScheme() === "light";
+}
+function toggleScheme() {
+  lsSet("qb-scheme", uiScheme() === "light" ? "dark" : "light");
+  applyTheme();
+  applyDefaultAppearance();
 }
 
 applyTheme();
@@ -4007,6 +4051,16 @@ async function nextQuestion() {
     if (servable(cand)) question = cand;
   }
 
+  // The website: a refill already on its way beats a fresh request queued
+  // behind it (each is a round trip to the server).
+  if (!question && IS_WEB && _prefetch.filling) {
+    for (let i = 0; i < 160 && _prefetch.filling && !_plist.length; i++) await new Promise((r) => setTimeout(r, 25));
+    while (_plist.length && !question) {
+      const cand = _plist.shift();
+      if (servable(cand)) question = cand;
+    }
+  }
+
   if (!question) {
     let data;
     try {
@@ -4051,7 +4105,10 @@ async function nextQuestion() {
 // query (~150ms). Any filter-panel change empties the queue (a capture-phase
 // listener below), and hidden/plugin-filtered questions are re-checked at
 // serve time, so a stale entry can never be served.
-const _PREFETCH_TARGET = 3;
+// The website keeps more in hand and fetches them side by side: each request
+// there is a round trip to the server, so a quick run of Nexts would empty a
+// queue of 3 refilled one at a time.
+const _PREFETCH_TARGET = IS_WEB ? 6 : 3;
 const _prefetch = { tossups: [], bonuses: [], gen: 0, filling: false };
 function clearPrefetch() {
   _prefetch.tossups.length = 0;
@@ -4099,20 +4156,29 @@ async function refillPrefetch() {
   const endpoint = mode === "tossups" ? "/api/tossups/random" : "/api/bonuses/random";
   try {
     let attempts = 0;
-    while (list.length < _PREFETCH_TARGET && attempts++ < _PREFETCH_TARGET * 3) {
+    while (list.length < _PREFETCH_TARGET && attempts < _PREFETCH_TARGET * 3) {
       // Fresh filters per fetch: in weighted mode every question is its own
-      // category roll, exactly as if it had been fetched on demand.
-      const filters = getFilters();
-      if (filters.starredOnly) break;
-      let q = null;
-      try {
-        const d = await API.get(`${endpoint}?${_randomQuestionParams(filters)}`);
-        q = mode === "tossups" ? d.tossup : d.bonus;
-      } catch { break; }
+      // category roll, exactly as if it had been fetched on demand. The whole
+      // shortfall is fetched at once (the website), one at a time otherwise.
+      const n = IS_WEB ? _PREFETCH_TARGET - list.length : 1;
+      attempts += n;
+      // each question joins the queue the moment it arrives (a Next waiting on
+      // the refill gets the first one, not the slowest)
+      const keep = (q) => {
+        if (!q || gen !== _prefetch.gen || mode !== state.mode) return;
+        const dup = list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id);
+        if (!dup) list.push(q);
+      };
+      const batch = [];
+      for (let i = 0; i < n; i++) {
+        const filters = getFilters();
+        if (filters.starredOnly) break;
+        batch.push(API.get(`${endpoint}?${_randomQuestionParams(filters)}`).then((d) => { const q = mode === "tossups" ? d.tossup : d.bonus; keep(q); return q; }, () => null));
+      }
+      if (!batch.length) break;
+      const got = await Promise.all(batch);
       if (gen !== _prefetch.gen || mode !== state.mode) return;   // filters/mode moved on
-      if (!q) break;
-      const dup = list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id);
-      if (!dup) list.push(q);
+      if (!got.some(Boolean)) break;
     }
   } finally {
     _prefetch.filling = false;
@@ -5344,6 +5410,16 @@ const DEFAULT_APPEARANCE = {
     amber: ["#d2991d", "#9e6a0333"],
     red: ["#f85149", "#da363333"],
   },
+  // the same accents for the light look: dark enough to read on white
+  lightAccent: {
+    blue: ["#0969da", "#0969da22"],
+    gold: ["#9a6a00", "#9a6a0022"],
+    green: ["#1a7f37", "#1a7f3722"],
+    cyan: ["#0b7d74", "#0b7d7422"],
+    magenta: ["#a432a4", "#a432a422"],
+    amber: ["#9a6700", "#9a670022"],
+    red: ["#cf222e", "#cf222e22"],
+  },
   radius: { default: null, sharp: "2px", round: "12px" },
   gap: { default: null, compact: "4px", spacious: "16px" },
   fonts: {
@@ -5355,6 +5431,15 @@ const DEFAULT_APPEARANCE = {
   },
 };
 
+// A plugin-added accent has no light variant: darken it until it reads on white.
+function lightAccentFor(light, acc) {
+  if (!light || !acc || !/^#[0-9a-fA-F]{6}$/.test(acc[0])) return acc;
+  let [r, g, b] = [1, 3, 5].map((i) => parseInt(acc[0].slice(i, i + 2), 16));
+  for (let k = 0; k < 12 && 0.2126 * r + 0.7152 * g + 0.0722 * b > 115; k++) { r *= 0.88; g *= 0.88; b *= 0.88; }
+  const hex = "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+  return [hex, hex + "22"];
+}
+
 function hexToDim(hex) {
   const h = String(hex || "").trim();
   if (/^#[0-9a-fA-F]{6}$/.test(h)) return h + "33";
@@ -5363,6 +5448,7 @@ function hexToDim(hex) {
 }
 
 function activeTheme() {
+  if (IS_WEB) return null;   // the website has no themes (extensions.js never enables one)
   return ((window.QB && window.QB._themes) || []).find((t) => t.enabled) || null;
 }
 function themeAppearanceMode(theme) {
@@ -5408,7 +5494,8 @@ function applyDefaultAppearanceVars() {
   if (gap) root.setProperty("--btn-gap", gap); else root.removeProperty("--btn-gap");
 
   if (mode === "preset") {
-    const acc = DEFAULT_APPEARANCE.accent[state.settings.appAccent];
+    const light = !theme && uiScheme() === "light";
+    const acc = (light && DEFAULT_APPEARANCE.lightAccent[state.settings.appAccent]) || lightAccentFor(light, DEFAULT_APPEARANCE.accent[state.settings.appAccent]);
     if (acc) { root.setProperty("--accent", acc[0]); root.setProperty("--accent-dim", acc[1]); }
     else { root.removeProperty("--accent"); root.removeProperty("--accent-dim"); }
     if (!theme) root.removeProperty("--font");
@@ -5446,7 +5533,7 @@ function addAppearanceOptions(opts) {
   rebuildAppearanceOptions();
   return () => { addedAcc.forEach((k) => delete DEFAULT_APPEARANCE.accent[k]); addedFont.forEach((k) => delete DEFAULT_APPEARANCE.fonts[k]); rebuildAppearanceOptions(); applyDefaultAppearance(); };
 }
-window.QB?.on?.("theme:change", () => applyDefaultAppearance());
+window.QB?.on?.("theme:change", () => { applyTheme(); applyDefaultAppearance(); });
 rebuildAppearanceOptions();
 applyDefaultAppearance();
 
@@ -5535,6 +5622,7 @@ function openSaveMenu(question, type, anchor) {
   items.push({
     label: "Add to Review",
     fn: async () => {
+      if (accountGate("Sign in to keep a review list.")) return;
       await API.post("/api/review/manual", { questionId: question.id, add: true, type });
       refreshReviewBadge();
     },
@@ -5953,6 +6041,7 @@ document.addEventListener("click", async (e) => {
   if (!star) return;
   e.preventDefault();
   e.stopPropagation();
+  if (accountGate("Sign in to star questions.")) return;
   const qId = star.dataset.qid, type = star.dataset.type || "tossup";
   if (!qId) return;
   try {
@@ -5983,6 +6072,7 @@ document.addEventListener("click", async (e) => {
 });
 
 async function toggleStarInHistory(qId, type, el) {
+  if (accountGate("Sign in to star questions.")) return;
   try {
     const result = await API.post("/api/starred/toggle", { questionId: qId, type });
     setStarredLocal(qId, type, result.starred);
@@ -6658,6 +6748,8 @@ $("#stats-period")?.addEventListener("change", (e) => { _statsPeriod = e.target.
 $("#btn-settings-home")?.addEventListener("click", goBack);
 $("#btn-player-home")?.addEventListener("click", goBack);
 $("#btn-ext-home")?.addEventListener("click", goBack);
+$("#btn-download-home")?.addEventListener("click", goBack);
+$("#btn-friends-home")?.addEventListener("click", goBack);
 
 function renderResultPanels(resultCtx) {
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
@@ -6696,6 +6788,7 @@ function showError(msg) {
 async function toggleStar() {
   const q = state.currentQuestion;
   if (!q) return;
+  if (accountGate("Sign in to star questions.")) return;
   Sound.star();
 
   const type = state.mode === "tossups" ? "tossup" : "bonus";
@@ -6721,6 +6814,9 @@ function updateStarIndicator(questionId, type, starred) {
 }
 
 async function checkStarStatus(questionId, type) {
+  // the starred list is loaded at startup and kept current (setStarredLocal),
+  // so no round trip per question — one per Next on the website
+  if (state.starredIds) { updateStarIndicator(questionId, type, state.starredIds.has((type || "tossup") + ":" + questionId)); return; }
   try {
     const data = await API.get(`/api/starred/check?questionId=${questionId}&type=${type}`);
     updateStarIndicator(questionId, type, data.starred);
@@ -7115,6 +7211,7 @@ async function loadStats(preserveScroll = false) {
   const screen = document.getElementById("stats-screen");
   const keepScroll = preserveScroll && screen ? screen.scrollTop : 0;
   const container = $("#stats-container");
+  if (needsAccount()) { container.innerHTML = accountPanelHtml("Sign in to save your stats and see them here."); return; }
   if (!preserveScroll) container.innerHTML = '<div class="text-muted">Loading stats...</div>';
 
   const sid = state.statsSessionId || null;
@@ -8140,6 +8237,7 @@ async function loadPlayer() {
   _screenBuilt.add("player");
   const container = $("#player-container");
   if (!container) return;
+  if (needsAccount()) { container.innerHTML = accountPanelHtml("Sign in to earn achievements and see your profile."); return; }
   container.innerHTML = '<div class="text-muted">Loading player data...</div>';
 
   try {
@@ -9252,14 +9350,11 @@ function dbFetchPage(key, urls) {
   return entry;
 }
 let _dbSearchSeq = 0;
-async function performDbSearch(opts) {
-  // Sequence token: only the LATEST invocation may write results — kills the
-  // race where an earlier (e.g. empty-input) query resolves last and clobbers.
-  const seq = ++_dbSearchSeq;
-  const g = (id) => document.getElementById(id);
-  const q = _dbq;
-  const container = g("db-results");
-  if (!container) return;
+// The request a search makes for query q: its signature, every page's URLs and
+// the page-cache key (null for starred-only, whose results change as you star).
+// performDbSearch and the start-up prefetch share it, so a prefetched page is
+// exactly the page the Search tab asks for.
+function dbSearchPlan(q, sets, pkt) {
   const query = String(q.text || "").trim();
   const qtype = q.qtype || "all";
   const textType = q.field || "all";
@@ -9273,37 +9368,15 @@ async function performDbSearch(opts) {
   const starred = !!q.starred;
   const setRaw = q.set || "";
   const tagsQ = (q.tags || []).length ? JSON.stringify(q.tags.map((t) => (t.id ? { f: t.f, v: t.v, x: t.x ? 1 : 0, id: t.id } : { f: t.f, v: t.v, x: t.x ? 1 : 0 }))) : "";
-  container.classList.toggle("db-hide-ans", !!q.hideAns);
-
   const tokens = query ? (query.match(/[\p{L}\p{N}]+/gu) || []) : [];   // phrase mode + highlighting
   const qWords = dbFtsWords(query);
   const exclRaw = String(q.exclude || "").trim();
   const excl = dbFtsWords(exclRaw);
-
-  const sets = await dbResolveSets();
-  if (seq !== _dbSearchSeq) return;
-  dbSyncPackets(sets.single);   // not awaited: fills the packet list when exactly one set matches
-  const pkt = q.packet && g("db-packet-filter") && !g("db-packet-filter").disabled ? q.packet : "";
-
-  // Page rule: an explicit page wins; otherwise only a CHANGED search resets to
-  // page 1. Late debounced calls after a Back restore used to reset the page.
   const sig = JSON.stringify([query, qtype, textType, match, prefix, excl, _dbCatUnits, tagsQ, diffs, yearMin, yearMax, setRaw, pkt, sort, std, pm, starred]);
-  if (opts && opts.page != null) _dbPage = Math.max(0, opts.page);
-  else if (sig !== _dbLastSig) _dbPage = 0;
-  _dbLastSig = sig;
-  dbMoreCount();
-
   const setsOn = !!setRaw && sets.n > 0;
-  const total = g("db-total"), pt = g("db-pager-top"), pb = g("db-pager-bottom");
-  if (setRaw && sets.n === 0) {
-    container.innerHTML = '<div class="db-empty">No set matches "' + escapeHtml(setRaw) + '"</div>';
-    if (total) total.textContent = ""; if (pt) pt.innerHTML = ""; if (pb) pb.innerHTML = "";
-    return;
-  }
-
   // Search shows every record, the unplayable ones too (marked on the card).
   const common =
-    `limit=${DB_PAGE_SIZE}&offset=${_dbPage * DB_PAGE_SIZE}&includeUnplayable=1` +
+    `limit=${DB_PAGE_SIZE}&offset=0&includeUnplayable=1` +
     (_dbCatUnits.length ? `&categoryIds=${encodeURIComponent(_dbCatUnits.join(","))}` : "") +
     (diffs.length ? `&difficulties=${diffs.join(",")}` : "") +
     (yearMin > 2000 ? `&yearMin=${yearMin}` : "") +
@@ -9320,7 +9393,6 @@ async function performDbSearch(opts) {
   // With search text the exclusion rides inside the FTS query (NOT); without it
   // FTS has nothing to NOT against, so the backend applies it as its own filter.
   const exclQS = excl.length ? `&exclude=${encodeURIComponent(exclRaw)}&excludeIn=${encodeURIComponent(textType)}` : "";
-
   const wantT = qtype !== "bonus", wantB = qtype !== "tossup" && !pm;
   const expr = tokens.length ? dbFtsExpr(tokens, qWords, excl, match, prefix) : "";
   const urlsFor = (page) => {
@@ -9330,6 +9402,49 @@ async function performDbSearch(opts) {
       : { t: wantT ? `/api/tossups/query?${cq}${exclQS}` : null, b: wantB ? `/api/bonuses/query?${cq}${exclQS}` : null };
   };
   const keyFor = (page) => (starred ? null : sig + "|" + page);
+  return { sig, tokens, match, prefix, sort, wantT, wantB, setRaw, urlsFor, keyFor };
+}
+// Pages already known for a search signature, so a page change can show its
+// number in the pager at once (the rows follow when they land).
+let _dbPagesKnown = { sig: null, pages: 0 };
+async function performDbSearch(opts) {
+  // Sequence token: only the LATEST invocation may write results — kills the
+  // race where an earlier (e.g. empty-input) query resolves last and clobbers.
+  const seq = ++_dbSearchSeq;
+  const g = (id) => document.getElementById(id);
+  const q = _dbq;
+  const container = g("db-results");
+  if (!container) return;
+  container.classList.toggle("db-hide-ans", !!q.hideAns);
+
+  const sets = await dbResolveSets();
+  if (seq !== _dbSearchSeq) return;
+  dbSyncPackets(sets.single);   // not awaited: fills the packet list when exactly one set matches
+  const pkt = q.packet && g("db-packet-filter") && !g("db-packet-filter").disabled ? q.packet : "";
+  const plan = dbSearchPlan(q, sets, pkt);
+  const { sig, tokens, match, prefix, sort, wantT, wantB, setRaw, urlsFor, keyFor } = plan;
+
+  // Page rule: an explicit page wins; otherwise only a CHANGED search resets to
+  // page 1. Late debounced calls after a Back restore used to reset the page.
+  if (opts && opts.page != null) _dbPage = Math.max(0, opts.page);
+  else if (sig !== _dbLastSig) _dbPage = 0;
+  _dbLastSig = sig;
+  dbMoreCount();
+
+  const total = g("db-total"), pt = g("db-pager-top"), pb = g("db-pager-bottom");
+  if (setRaw && sets.n === 0) {
+    container.innerHTML = '<div class="db-empty">No set matches "' + escapeHtml(setRaw) + '"</div>';
+    if (total) total.textContent = ""; if (pt) pt.innerHTML = ""; if (pb) pb.innerHTML = "";
+    return;
+  }
+  // Same search, another page: the pager shows the new page number right away
+  // (it used to wait for BOTH tossups and bonuses, so it lagged behind the rows).
+  if (_dbPagesKnown.sig === sig && _dbPagesKnown.pages > 1) {
+    if (pt) pt.innerHTML = dbPagerHtml("top", _dbPage, _dbPagesKnown.pages);
+    if (pb && pb.innerHTML) pb.innerHTML = dbPagerHtml("bottom", _dbPage, _dbPagesKnown.pages);
+    positionPagerStrips();
+  }
+
   const entry = dbFetchPage(keyFor(_dbPage), urlsFor(_dbPage));
   // A cached page renders at once; otherwise show the bar only if it takes a moment.
   const barT = entry.ms != null ? null : setTimeout(() => { if (seq === _dbSearchSeq) container.innerHTML = loadingBarHtml(tokens.length ? "Searching…" : "Loading questions…"); }, 90);
@@ -9362,6 +9477,7 @@ async function performDbSearch(opts) {
     const totT = wantT ? (t.total || 0) : 0, totB = wantB ? (b.total || 0) : 0;
     const pages = Math.max(1, Math.ceil(Math.max(totT, totB) / DB_PAGE_SIZE));
     if (_dbPage > pages - 1 && (totT || totB)) { early = null; performDbSearch({ page: pages - 1 }); return; }
+    _dbPagesKnown = { sig, pages };
     const sum = totT + totB;
     if (total) {
       total.textContent = sum.toLocaleString() + (sum === 1 ? " result" : " results");
@@ -9380,11 +9496,11 @@ async function performDbSearch(opts) {
       hl(container);
     }
     early = null;
-    // Quick searches prefetch the next page so Next is instant (slow ones
-    // don't: the backend is single-threaded and the next click would wait).
-    if (_dbPage + 1 < pages && keyFor(_dbPage + 1) && entry.ms != null && entry.ms < 450) {
+    // The next page is fetched as soon as this one shows, so Next is instant
+    // (clicking it while it is still on its way waits for that same request).
+    if (_dbPage + 1 < pages && keyFor(_dbPage + 1)) {
       const next = _dbPage + 1;
-      setTimeout(() => { if (seq === _dbSearchSeq) dbFetchPage(keyFor(next), urlsFor(next)); }, 200);
+      setTimeout(() => { if (seq === _dbSearchSeq) dbFetchPage(keyFor(next), urlsFor(next)); }, 50);
     }
   } catch (e) {
     clearTimeout(barT);
@@ -9735,6 +9851,22 @@ function renderFrequencyTab(restore) {
   runFrequency();
 }
 
+// Frequency pages come from the read-only question database, so each URL is
+// fetched once per launch (LRU): a revisited page, the prefetched next page and
+// the start-up prefetch of the default lists (prefetchDefaults) render at once.
+const _freqPageCache = new Map();
+function freqUrl(qtype, page, units) {
+  return `/api/frequent-answers?limit=${FREQ_PAGE}&offset=${page * FREQ_PAGE}&qtype=${qtype}` + (units.length ? `&nodeIds=${encodeURIComponent(units.join(","))}` : "");
+}
+function freqFetch(url) {
+  let p = _freqPageCache.get(url);
+  if (p) { _freqPageCache.delete(url); _freqPageCache.set(url, p); return p; }
+  p = API.get(url);
+  _freqPageCache.set(url, p);
+  p.catch(() => { if (_freqPageCache.get(url) === p) _freqPageCache.delete(url); });
+  while (_freqPageCache.size > 40) _freqPageCache.delete(_freqPageCache.keys().next().value);
+  return p;
+}
 async function runFrequency(page) {
   if (page != null) _freqPage = Math.max(0, page);
   const el = document.getElementById("freq-results"); if (!el) return;
@@ -9742,14 +9874,15 @@ async function runFrequency(page) {
   const qtype = _freqType;
   const bar = setTimeout(() => { if (seq === _freqSeq) el.innerHTML = loadingBarHtml(_freqPage ? "Loading…" : "Building frequency list…"); }, 90);
   try {
-    const data = await API.get(`/api/frequent-answers?limit=${FREQ_PAGE}&offset=${_freqPage * FREQ_PAGE}&qtype=${qtype}` +
-      (_freqUnits.length ? `&nodeIds=${encodeURIComponent(_freqUnits.join(","))}` : ""));
+    const units = _freqUnits.slice();
+    const data = await freqFetch(freqUrl(qtype, _freqPage, units));
     clearTimeout(bar);
     if (seq !== _freqSeq) return;
     const rows = (data && data.answers) || [];
     const totalN = data && typeof data.total === "number" ? data.total : rows.length;
     const pages = Math.max(1, Math.ceil(totalN / FREQ_PAGE));
     if (_freqPage > pages - 1 && totalN) return runFrequency(pages - 1);
+    if (_freqPage + 1 < pages) { const next = _freqPage + 1; setTimeout(() => freqFetch(freqUrl(qtype, next, units)), 50); }
     const t = document.getElementById("freq-total"); if (t) t.textContent = totalN ? totalN.toLocaleString() + (totalN === 1 ? " answer" : " answers") : "";
     const pt = document.getElementById("freq-pager-top"), pb = document.getElementById("freq-pager-bottom");
     if (pt) pt.innerHTML = dbPagerHtml("top", _freqPage, pages);
@@ -9766,6 +9899,30 @@ async function runFrequency(page) {
     clearTimeout(bar);
     if (seq === _freqSeq) el.innerHTML = '<div class="db-empty">Failed to load: ' + escapeHtml(e.message || String(e)) + "</div>";
   }
+}
+
+// Start-up: what the Database tabs open on first — Search's results as they
+// stand (pages 1 and 2) and the default frequency lists for tossups, bonuses and
+// both (pages 1 and 2) — is fetched while the app sits idle, one request at a
+// time, so opening any of them is instant. In the app each request runs in the
+// main process, so it pauses while a practice session is running.
+async function prefetchDefaults() {
+  const settle = (p) => Promise.resolve(p).then(() => {}, () => {});
+  const calm = async () => {
+    for (let i = 0; i < 600 && state.sessionActive && !IS_WEB; i++) await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 1500 }) : setTimeout(r, 200)));
+  };
+  const search = (page) => {
+    if (_dbq.set || _dbq.starred) return null;
+    const plan = dbSearchPlan(_dbq, { ids: [], n: 0 }, "");
+    const e = dbFetchPage(plan.keyFor(page), plan.urlsFor(page));
+    return Promise.all([e.t, e.b]);
+  };
+  const freq = (qtype, page) => (_freqUnits.length ? null : freqFetch(freqUrl(qtype, page, [])));
+  const steps = [() => search(0), () => freq("tossup", 0), () => freq("bonus", 0), () => freq("both", 0),
+    () => search(1), () => freq("tossup", 1), () => freq("bonus", 1), () => freq("both", 1)];
+  for (const step of steps) { await calm(); await settle(step()); }
+  window.__qbPrefetched = true;   // (tests wait for it)
 }
 
 // Jump to Database → Search pre-filled and run it. Usable from anywhere in the
@@ -9821,6 +9978,7 @@ function searchFromFrequency(answer, qtype) {
 
 async function renderStarredTab() {
   const c = document.getElementById("db-content"); if (!c) return;
+  if (needsAccount()) { c.innerHTML = '<div class="db-page">' + accountPanelHtml("Sign in to star questions and find them here.") + "</div>"; return; }
   c.innerHTML = '<div class="db-page"><div class="search-results">' + loadingBarHtml("Loading starred…") + "</div></div>";
   let items = [];
   try { items = (await API.get("/api/starred")).starred || []; } catch {}
@@ -9962,6 +10120,7 @@ function initApp() {
   showScreen("title");
   loadStarredIds();
   loadProfileSettings().then(pruneOldSessions);
+  setTimeout(() => prefetchDefaults().catch(() => {}), IS_WEB ? 600 : 2500);
   if (!localStorage.getItem("qb-setup-done") && !state.username) {
     showSetupOverlay();
   }
@@ -10002,6 +10161,10 @@ function init() {
         totalPoints: state.totalPoints,
         avatar: state.avatar,
         username: state.username,
+        // how this player reads questions (a server-run multiplayer room reads
+        // its questions the way its first player does)
+        hideNotes: !!state.settings.hideNotes,
+        hidePronunciations: !!state.settings.hidePronunciations,
       }),
       showScreen,
       goHome,
@@ -10131,9 +10294,375 @@ function init() {
       extractPrimaryAnswer: (raw, sani) => { try { return apPrimary(raw, sani); } catch (e) { return ""; } },
     });
   }
-  enforceRequiredDb();
-  applyStagedPluginUpdates().then(maybeAutoCheckAppUpdate).then(() => { if (!_dbLocked) maybeAutoDbUpdate(); });
+  if (IS_WEB) handleAccountLinks().then(refreshAccount); else refreshAccount();
+  // the website runs on the server's (current) question database and has no app to update
+  if (!IS_WEB) {
+    enforceRequiredDb();
+    applyStagedPluginUpdates().then(maybeAutoCheckAppUpdate).then(() => { if (!_dbLocked) maybeAutoDbUpdate(); });
+  }
   startSplash();
+}
+
+// ── Accounts (web/accounts.mjs on the server) ──
+// One onlinequiz account for the website and the app. On the website the
+// account's data IS the server copy (cookie sign-in). In the app, index.js
+// forwards these same /api/account/* and /api/friends* calls to the server with
+// the profile's token, and keeps the profile synced into the account
+// (/api/cloud/sync → userData.js exportChanges / applyChanges).
+// With accounts required (website, /api/account/me says so), stars, stats,
+// achievements and review need a signed-in account: a signed-out visitor gets
+// the account window, or a sign-in panel where the screen would be. Signing in
+// or out reloads the page — every user-scoped list comes from the new account.
+const Account = { available: false, user: null, required: false, app: false, lastSync: null, syncError: null, offline: false };
+const needsAccount = () => IS_WEB && Account.required && !Account.user;
+const myTz = () => -new Date().getTimezoneOffset();
+function accountGate(reason) {
+  if (!needsAccount()) return false;
+  openAccount("signin", { reason });
+  return true;
+}
+function accountPanelHtml(reason) {
+  return `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>${escapeHtml(reason)}</p>` +
+    '<div class="acct-panel-btns"><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button><button type="button" class="btn" data-acct="signup">Create account</button></div></div>';
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-acct]"); if (b) { e.preventDefault(); openAccount(b.dataset.acct); } });
+async function refreshAccount() {
+  try {
+    const d = await API.get("/api/account/me");
+    Account.available = !!(d && d.available); Account.user = (d && d.user) || null; Account.required = !!(d && d.required);
+    Account.app = !!(d && d.app); Account.lastSync = (d && d.lastSync) || null; Account.syncError = (d && d.syncError) || null; Account.offline = !!(d && d.offline);
+  } catch (e) {}
+  _cloudOn = Account.app && !!Account.user;
+  renderAccountMenu();
+  // the account's time zone dates its day streak for friends
+  if (Account.user && !Account.offline && Account.user.tz !== myTz()) API.post("/api/account/profile", { tz: myTz() }).then((r) => { if (r && r.user) Account.user = r.user; }).catch(() => {});
+  if (_cloudOn) cloudSyncSoon(1500);
+  // screens drawn before we knew: redraw the gated ones
+  if (needsAccount()) {
+    if (document.querySelector("#stats-screen.active")) loadStats();
+    if (document.querySelector("#player-screen.active")) loadPlayer();
+    if (document.querySelector("#database-screen.active") && state.dbTab === "starred") renderStarredTab();
+  }
+  if (document.querySelector("#friends-screen.active")) renderFriends();
+}
+function renderAccountMenu() {
+  if (!Account.available) return;   // accounts not open yet: the menu keeps "Account · Soon"
+  const b = document.getElementById("tbm-account");
+  if (b) {
+    b.disabled = false; b.removeAttribute("aria-disabled");
+    b.innerHTML = ic("user", 17) + (Account.user ? "Account" : "Sign in");
+    b.onclick = () => openAccount(Account.user ? "account" : "signin");
+  }
+  const fr = document.getElementById("tbm-friends"); if (fr) fr.hidden = false;
+  const head = document.querySelector("#tb-profile-menu .tbm-who");
+  if (head) {
+    let em = head.querySelector(".tbm-email");
+    if (!em) { em = document.createElement("small"); em.className = "tbm-email"; head.appendChild(em); }
+    em.textContent = Account.user ? (Account.user.handle ? "@" + Account.user.handle : Account.user.email) : "";
+    em.hidden = !Account.user;
+  }
+}
+// ?verify=… (the confirm email) and ?reset=… (the password email)
+async function handleAccountLinks() {
+  const q = new URLSearchParams(location.search);
+  const clean = () => history.replaceState(null, "", location.pathname + location.hash);
+  let note = "";
+  try { note = sessionStorage.getItem("qb-acct-note") || ""; sessionStorage.removeItem("qb-acct-note"); } catch (e) {}
+  if (q.get("verify")) {
+    const r = await API.post("/api/account/verify", { token: q.get("verify") }).catch(() => ({ error: "Couldn't reach the server — try the link again." }));
+    clean();
+    if (r && r.ok) { try { sessionStorage.setItem("qb-acct-note", "confirmed"); } catch (e) {} location.reload(); return; }
+    openAccount("signin", { error: (r && r.error) || "This link has expired or was already used.", offerResend: true });
+    return;
+  }
+  if (q.get("reset")) { const token = q.get("reset"); clean(); openAccount("reset", { token }); return; }
+  if (note === "confirmed") { await refreshAccount(); openAccount("account", { note: "Your email is confirmed — you're signed in." }); }
+}
+const relTime = (t) => {
+  if (!t) return "never";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  const d = Math.round(s / 86400);
+  return d === 1 ? "yesterday" : d + " days ago";
+};
+function syncLineText() {
+  if (_syncBusy) return "Syncing…";
+  if (Account.syncError) return Account.syncError;
+  return Account.lastSync ? "Synced " + relTime(Account.lastSync) : "Not synced yet";
+}
+function openAccount(mode, opts) {
+  opts = opts || {};
+  document.getElementById("account-ovl")?.remove();
+  try { closeAllPops(); } catch (e) {}
+  const el = document.createElement("div");
+  el.id = "account-ovl";
+  el.className = "qb-overlay confirm-overlay account-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "acct-h");
+  document.body.appendChild(el);
+  const close = () => animateRemove(el);
+  el.addEventListener("click", (e) => { if (e.target === el) close(); });
+  el.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } });
+  let email = opts.email || "", handle = "";
+  const field = (id, type, label, auto, value, extra) => `<label class="acct-field"><span>${label}</span><input id="${id}" class="mode-input" type="${type}" autocomplete="${auto}" spellcheck="false" autocapitalize="off" value="${escapeHtml(value || "")}"${extra || ""}></label>`;
+  const link = (to, text) => `<button type="button" class="acct-link" data-to="${to}">${text}</button>`;
+  const handleField = (v) => field("acct-handle", "text", 'Username <span class="qb-info" data-tip="Friends add you by it. 3–20 letters, numbers, _ or .">i</span>', "username", v, ' maxlength="20"');
+  const render = (m, o) => {
+    o = o || {};
+    const head = (title, sub) => `<div class="acct-head"><div class="acct-ico">${ic("user", 22)}</div><h2 id="acct-h">${title}</h2></div>` + (sub ? `<p class="acct-sub">${sub}</p>` : "");
+    const err = o.error ? `<div class="acct-err" role="alert">${escapeHtml(o.error)}${o.offerResend ? " " + link("resend", "Send a new link") : ""}</div>` : "";
+    const okLine = o.note ? `<div class="acct-ok">${escapeHtml(o.note)}</div>` : "";
+    const u = Account.user || {};
+    let html = "";
+    if (m === "signin") html = head("Sign in", o.reason ? escapeHtml(o.reason) : (Account.app ? "Your onlinequiz account: your stats and stars sync between this app and the website." : "")) + okLine + `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${field("acct-pass", "password", "Password", "current-password")}${err}<button type="submit" class="btn btn-primary btn-md">Sign in</button></form>` +
+      `<div class="acct-links">${link("forgot", "Forgot password?")}${link("signup", "Create an account")}</div>`;
+    else if (m === "syncing") html = head("Signing in", "Syncing your stats and stars…") + `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div></div>`;
+    else if (m === "signup") html = head("Create an account", o.reason ? escapeHtml(o.reason) : "") + `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${handleField(handle)}${field("acct-pass", "password", "Password (8+ characters)", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Create account</button></form>` +
+      `<div class="acct-links">${link("signin", "Already have an account? Sign in")}</div>`;
+    else if (m === "sent") html = head("Check your email", `We sent a link to <b>${escapeHtml(email)}</b>. Open it to confirm your account${Account.app ? ", then sign in here" : ""}.`) + okLine + err + `<div class="acct-actions"><button type="button" class="btn" data-to="resend">Resend email</button><button type="button" class="btn btn-primary" data-to="signin">Sign in</button></div>`;
+    else if (m === "forgot") html = head("Reset your password") + `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${err}<button type="submit" class="btn btn-primary btn-md">Send reset link</button></form><div class="acct-links">${link("signin", "Back to sign in")}</div>`;
+    else if (m === "forgot-sent") html = head("Check your email", `If there's an account for <b>${escapeHtml(email)}</b>, we sent it a link to set a new password.`) + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="signin">Back to sign in</button></div>`;
+    else if (m === "reset") html = head("Set a new password") + `<form class="acct-form">${field("acct-pass", "password", "New password (8+ characters)", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Save password</button></form>` + (o.expired ? `<div class="acct-links">${link("forgot", "Send a new link")}</div>` : "");
+    else if (m === "handle") html = head(u.handle ? "Change your username" : "Choose a username", "Friends find you by it.") + `<form class="acct-form">${handleField(u.handle || "")}${err}<button type="submit" class="btn btn-primary btn-md">Save</button></form><div class="acct-links">${link("account", "Back")}</div>`;
+    else if (m === "account") html = head("Account") + okLine + err +
+      `<div class="acct-rows"><div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}</span></div>` +
+      `<div class="acct-row"><span class="acct-at">@</span><span class="acct-v">${u.handle ? escapeHtml(u.handle) : '<span class="text-muted">No username yet</span>'}</span><button type="button" class="btn btn-sm" data-to="handle">${u.handle ? "Change" : "Choose"}</button></div>` +
+      (Account.app ? `<div class="acct-row">${ic("review", 16)}<span class="acct-v" id="acct-sync-line">${escapeHtml(syncLineText())}</span><button type="button" class="btn btn-sm" id="acct-sync-now">Sync now</button></div>` : "") +
+      `</div><div class="acct-actions"><button type="button" class="btn" id="acct-logout">Sign out</button><button type="button" class="btn" data-to="friends">Friends</button><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
+    el.innerHTML = `<div class="confirm-box acct-box">${html}</div>`;
+    mode = m;
+    el.querySelectorAll("[data-to]").forEach((b) => b.addEventListener("click", () => go(b.dataset.to)));
+    const form = el.querySelector("form");
+    if (form) form.addEventListener("submit", (e) => { e.preventDefault(); submit(form); });
+    const lo = el.querySelector("#acct-logout");
+    if (lo) lo.onclick = async () => { lo.disabled = true; await API.post("/api/account/logout", {}).catch(() => {}); location.reload(); };
+    const sn = el.querySelector("#acct-sync-now");
+    if (sn) sn.onclick = async () => { sn.disabled = true; await cloudSyncNow(); sn.disabled = false; };
+    const first = el.querySelector("input:not([value]), input[value='']") || el.querySelector("input") || el.querySelector(".btn-primary");
+    setTimeout(() => first && first.focus(), 30);
+  };
+  const go = async (to) => {
+    if (to === "close") { close(); return; }
+    if (to === "friends") { close(); goTo("friends"); return; }
+    if (to === "resend") {
+      const e2 = (el.querySelector("#acct-email") || {}).value || email;
+      if (!e2) { render("signin", { error: "Enter your email above, then send a new link." }); return; }
+      email = e2.trim();
+      const r = await API.post("/api/account/resend", { email }).catch(() => ({ error: "Couldn't reach the server." }));
+      render("sent", r && r.error ? { error: r.error } : { note: "Sent a new link." });
+      return;
+    }
+    const e3 = el.querySelector("#acct-email"); if (e3) email = e3.value.trim();
+    const h3 = el.querySelector("#acct-handle"); if (h3) handle = h3.value.trim();
+    render(to, {});
+  };
+  const submit = async (form) => {
+    const btn = form.querySelector("button[type=submit]");
+    const v = (id) => ((form.querySelector("#" + id) || {}).value || "");
+    email = v("acct-email").trim() || email;
+    handle = v("acct-handle").trim() || handle;
+    btn.disabled = true;
+    const post = (path, body) => API.post(path, body).catch(() => ({ error: "Couldn't reach the server — try again." }));
+    let r;
+    if (mode === "signin") {
+      r = await post("/api/account/login", { email, password: v("acct-pass"), tz: myTz(), avatar: state.avatar || null });
+      if (r && r.ok) {
+        if (Account.app) {   // merge this profile into the account before showing it
+          render("syncing", {});
+          _cloudOn = true;
+          await API.post("/api/cloud/sync", {}, 600000).catch(() => {});
+        }
+        location.reload(); return;
+      }
+      render("signin", { error: r && r.error, offerResend: !!(r && r.unverified), reason: opts.reason });
+    } else if (mode === "signup") {
+      r = await post("/api/account/signup", { email, password: v("acct-pass"), handle });
+      if (r && r.ok) { render("sent", {}); return; }
+      if (r && r.exists) { render("signin", { error: r.error }); return; }
+      render("signup", { error: r && r.error, reason: opts.reason });
+    } else if (mode === "forgot") {
+      r = await post("/api/account/forgot", { email });
+      if (r && r.ok) { render("forgot-sent", {}); return; }
+      render("forgot", { error: r && r.error });
+    } else if (mode === "reset") {
+      r = await post("/api/account/reset", { token: opts.token, password: v("acct-pass") });
+      if (r && r.ok) { location.reload(); return; }
+      render("reset", { error: r && r.error, expired: !!(r && r.expired) });
+    } else if (mode === "handle") {
+      r = await post("/api/account/profile", { handle });
+      if (r && r.ok) { Account.user = r.user; renderAccountMenu(); if (document.querySelector("#friends-screen.active")) renderFriends(); render("account", { note: "Saved." }); return; }
+      render("handle", { error: r && r.error });
+    }
+  };
+  render(mode, opts);
+}
+
+// ── App: keep this profile synced with its account ──
+// After any write to the profile's data (an answer, a star, review, settings,
+// plugin data) a sync runs half a minute later; also at start, every 5 minutes
+// and from Account → Sync now. What another device or the website changed shows
+// up here as it arrives (stars, stats).
+var _cloudOn = false, _syncTimer = null, _syncBusy = false;   // var: API.post's hook may run before this line
+function cloudDirty() { if (_cloudOn) cloudSyncSoon(30000); }
+function cloudSyncSoon(ms) { if (!_cloudOn) return; clearTimeout(_syncTimer); _syncTimer = setTimeout(cloudSyncNow, ms); }
+async function cloudSyncNow() {
+  if (!_cloudOn || _syncBusy) return;
+  _syncBusy = true; clearTimeout(_syncTimer);
+  const line = () => { const l = document.getElementById("acct-sync-line"); if (l) l.textContent = syncLineText(); };
+  line();
+  try {
+    const r = await API.post("/api/cloud/sync", {}, 600000);
+    if (r && r.ok) {
+      Account.lastSync = r.lastSync; Account.syncError = null;
+      if (r.pulled) {
+        loadStarredIds();
+        if (document.querySelector("#stats-screen.active")) loadStats();
+        if (document.querySelector("#player-screen.active")) loadPlayer();
+      }
+    } else if (r) {
+      Account.syncError = r.offline ? "Offline — it syncs when you're back online." : (r.error || "The sync didn't finish.");
+      if (r.signedOut) { Account.user = null; _cloudOn = false; renderAccountMenu(); }
+    }
+  } catch (e) {}
+  _syncBusy = false;
+  line();
+}
+setInterval(() => { if (_cloudOn && !document.hidden) cloudSyncNow(); }, 5 * 60e3);
+
+// ── Friends ──
+// Add friends by username; the list is this week's leaderboard (you included):
+// questions in the last 7 days, tossup accuracy, today's count and the day
+// streak, from each account's synced practice (server: activitySummary).
+async function renderFriends(note) {
+  const c = document.getElementById("friends-container"); if (!c) return;
+  if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Friends need an onlinequiz account. Accounts aren't open yet.</p></div>`; return; }
+  if (!Account.user) { c.innerHTML = accountPanelHtml("Sign in to add friends and see how they're practicing."); return; }
+  if (!Account.user.handle) {
+    c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Choose a username first — friends add you by it.</p><div class="acct-panel-btns"><button type="button" class="btn btn-primary" id="fr-choose">Choose a username</button></div></div>`;
+    document.getElementById("fr-choose").onclick = () => openAccount("handle");
+    return;
+  }
+  if (!c.querySelector(".fr-page")) c.innerHTML = loadingBarHtml("Loading friends…");
+  if (_cloudOn) await cloudSyncNow();   // the app: your own numbers include what you just did
+  let d;
+  try { d = await API.get("/api/friends"); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
+  if (!document.querySelector("#friends-screen.active") && !note) return;
+  if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't load friends.")}</div>`; return; }
+  const me = d.me || {};
+  const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
+  const rows = [{ ...me, you: true }, ...(d.friends || [])].sort((a, b) => ((b.summary || {}).week || {}).questions - ((a.summary || {}).week || {}).questions || String(a.handle).localeCompare(String(b.handle)));
+  const num = (v) => (v == null ? "—" : Number(v).toLocaleString());
+  const board = rows.map((f, i) => {
+    const s = f.summary || {}, w = s.week || {};
+    return `<div class="fr-row${f.you ? " fr-you" : ""}"><span class="fr-rank num">${i + 1}</span>${av(f.handle)}<span class="fr-name"><b>@${escapeHtml(f.handle || "")}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>${s.lastActive ? "Active " + escapeHtml(relTime(s.lastActive)) : "No practice yet"}</small></span>` +
+      `<span class="fr-stat"><b class="num">${num(w.questions)}</b><small>this week</small></span>` +
+      `<span class="fr-stat"><b class="num">${w.accuracy == null ? "—" : w.accuracy + "%"}</b><small>accuracy</small></span>` +
+      `<span class="fr-stat"><b class="num">${num(s.today)}</b><small>today</small></span>` +
+      `<span class="fr-stat"><b class="num">${num(s.streak)}</b><small>day streak</small></span>` +
+      (f.you ? '<span class="fr-act"></span>' : `<span class="fr-act"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fr-remove="${escapeHtml(f.handle)}" title="Remove friend" aria-label="Remove @${escapeHtml(f.handle)}">${ic("trash", 15)}</button></span>`) + "</div>";
+  }).join("");
+  const reqs = (d.incoming || []).map((f) => `<div class="fr-req">${av(f.handle)}<span class="fr-name"><b>@${escapeHtml(f.handle)}</b><small>wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
+  const sent = (d.outgoing || []).map((f) => `<div class="fr-req">${av(f.handle)}<span class="fr-name"><b>@${escapeHtml(f.handle)}</b><small>request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
+  c.innerHTML = `<div class="fr-page">` +
+    `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button></div>` +
+      `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Friend's username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +
+      `<div class="fr-msg" id="fr-msg" role="status">${note ? escapeHtml(note) : ""}</div></section>` +
+    (reqs ? `<section class="fr-sec"><h2 class="eyebrow">Requests</h2><div class="fr-list">${reqs}</div></section>` : "") +
+    `<section class="fr-sec"><h2 class="eyebrow">This week</h2><div class="fr-list fr-board">${board}</div>` +
+      (d.friends && d.friends.length ? "" : '<p class="fr-empty">No friends yet — add one by their username above.</p>') + `</section>` +
+    (sent ? `<section class="fr-sec"><h2 class="eyebrow">Sent</h2><div class="fr-list">${sent}</div></section>` : "") +
+  `</div>`;
+  const badge = document.getElementById("tbm-friends-n");
+  if (badge) { const n = (d.incoming || []).length; badge.hidden = !n; badge.textContent = String(n); }
+  const act = async (path, body, okNote) => {
+    const r = await API.post(path, body).catch(() => ({ error: "Couldn't reach onlinequiz.net." }));
+    if (r && r.error) { const m = document.getElementById("fr-msg"); if (m) { m.textContent = r.error; m.classList.add("err"); } return; }
+    renderFriends(okNote || "");
+  };
+  document.getElementById("fr-add").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const h = document.getElementById("fr-handle").value.trim().replace(/^@/, "");
+    if (!h) return;
+    act("/api/friends/request", { handle: h }, "Request sent to @" + h + ".");
+  });
+  document.getElementById("fr-copy").onclick = () => { try { navigator.clipboard.writeText(me.handle || ""); } catch (e) {} };
+  c.querySelectorAll("[data-fr-accept]").forEach((b) => b.onclick = () => act("/api/friends/respond", { handle: b.dataset.frAccept, accept: true }, "You and @" + b.dataset.frAccept + " are friends."));
+  c.querySelectorAll("[data-fr-decline]").forEach((b) => b.onclick = () => act("/api/friends/respond", { handle: b.dataset.frDecline, accept: false }));
+  c.querySelectorAll("[data-fr-remove]").forEach((b) => b.onclick = () => {
+    const h = b.dataset.frRemove, pending = !!b.closest(".fr-req");
+    if (pending) { act("/api/friends/remove", { handle: h }); return; }
+    confirmDialog("Remove @" + h + " from your friends?", () => act("/api/friends/remove", { handle: h }), { yes: "Remove" });
+  });
+}
+
+// ── Download page (website only) ──
+// /download/latest.json sits next to the installers on the server
+// (scripts/publish-mirror.mjs --installers):
+//   { name, version, minMacOS, builds: [{ os: mac|windows|linux, arch, kind, file, size }] }
+// The visitor's own system comes first; the rest are listed under it.
+const DL_OS = { mac: "Mac", windows: "Windows", linux: "Linux" };
+function dlVisitorOs() {
+  const p = String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || "").toLowerCase();
+  if (/android|iphone|ipad|cros/.test(navigator.userAgent.toLowerCase())) return "other";
+  return /mac/.test(p) ? "mac" : /win/.test(p) ? "windows" : /linux/.test(p) ? "linux" : "other";
+}
+function dlLabel(b) {
+  if (b.os === "mac") return b.arch === "x64" ? "Mac (Intel)" : "Mac (Apple silicon)";
+  if (b.os === "windows") return "Windows";
+  return b.kind === "deb" ? "Linux (.deb)" : "Linux (AppImage)";
+}
+function dlSteps(os, info) {
+  if (os === "mac") return [
+    "Open the downloaded <b>.dmg</b> and drag <b>OfflineQuiz</b> into <b>Applications</b>.",
+    "Open OfflineQuiz. The first time, macOS stops it because it isn't from the App Store.",
+    "Open <b>System Settings → Privacy &amp; Security</b>, scroll down and click <b>Open Anyway</b>.",
+  ];
+  if (os === "windows") return [
+    "Run the downloaded <b>.exe</b> and follow the installer.",
+    "If Windows shows <b>Windows protected your PC</b>, click <b>More info → Run anyway</b>.",
+  ];
+  if (os === "linux") return [
+    "<b>AppImage</b>: make it executable (<b>chmod +x</b>) and open it.",
+    "<b>.deb</b> (Ubuntu, Debian, ChromeOS Linux): open it with Software Install, or <b>sudo apt install ./</b>file.",
+  ];
+  return [];
+}
+async function renderDownload() {
+  const host = $("#download-container");
+  if (!host) return;
+  let info = null;
+  try { const r = await fetch("/download/latest.json", { cache: "no-store" }); if (r.ok) info = await r.json(); } catch (e) {}
+  // older latest.json: a single Apple-silicon installer
+  const builds = info ? (Array.isArray(info.builds) ? info.builds : info.file ? [{ os: "mac", arch: "arm64", kind: "dmg", file: info.file, size: info.size }] : []) : [];
+  const mine = dlVisitorOs();
+  const order = ["mac", "windows", "linux"].sort((a, b) => (b === mine) - (a === mine));
+  const mb = (n) => (n ? Math.round(n / 1048576) + " MB" : "");
+  const btn = (b, primary) => `<a class="btn ${primary ? "btn-lg btn-primary" : "btn-md"} dl-btn" href="/download/${encodeURIComponent(b.file)}" download>${ic("download", primary ? 18 : 16)}${escapeHtml(dlLabel(b))}<span class="dl-size">${escapeHtml(mb(b.size))}</span></a>`;
+  const card = (os, primary) => {
+    const list = builds.filter((b) => b.os === os);
+    if (!list.length) return "";
+    const req = os === "mac" ? (info && info.minMacOS ? "macOS " + info.minMacOS + " or later" : "") : os === "windows" ? "Windows 10 or later, 64-bit" : "64-bit";
+    return `
+      <section class="dl-card${primary ? " dl-mine" : ""}">
+        <div class="dl-ico" aria-hidden="true">${ic("monitor", 28)}</div>
+        <div class="dl-main">
+          <h2>OfflineQuiz for ${escapeHtml(DL_OS[os])}</h2>
+          <div class="dl-meta">${[info && info.version ? "Version " + info.version : "", req].filter(Boolean).map(escapeHtml).join('<span class="dot-sep">·</span>')}</div>
+        </div>
+        <div class="dl-btns">${list.map((b, i) => btn(b, primary && i === 0)).join("")}</div>
+      </section>`;
+  };
+  const steps = dlSteps(mine === "other" ? "mac" : mine, info);
+  host.innerHTML = `
+    <div class="dl-page">
+      ${builds.length ? order.map((os, i) => card(os, i === 0 && os === mine)).join("") : '<section class="dl-card"><div class="dl-main"><h2>OfflineQuiz</h2><div class="dl-meta">Not available right now</div></div></section>'}
+      ${mine !== "other" && steps.length && builds.some((b) => b.os === mine) ? `
+      <section class="dl-steps">
+        <h3>Opening it the first time</h3>
+        <ol>${steps.map((t) => "<li>" + t + "</li>").join("")}</ol>
+      </section>` : ""}
+    </div>`;
 }
 
 async function applyStagedPluginUpdates() {

@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld("qbreader", {
   getCategoryTree: (type) => ipcRenderer.invoke("get-category-tree", { type }),
 
   getDbInfo: () => ipcRenderer.invoke("get-db-info"),
+  cloud: (method, path, body) => ipcRenderer.invoke("cloud", { method, path, body }),
   getTagVocab: () => ipcRenderer.invoke("get-tag-vocab"),
   getTagFacets: (type, query, filters) => ipcRenderer.invoke("get-tag-facets", { type, query, filters }),
 

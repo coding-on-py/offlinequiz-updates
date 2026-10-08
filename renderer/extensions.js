@@ -1155,7 +1155,14 @@
         if (i >= 0) { QB._themes.splice(i, 1); saveThemes(); }
       }
     } catch (e) {}
-    const t = QB._themes.find((x) => x.enabled);
+    // Daylight Cards Studio is withdrawn for now (its layout predates the
+    // redesign and no longer lines up): drop an installed copy, back to Default.
+    {
+      const i = QB._themes.findIndex((x) => x.id === "daylight-cards-studio");
+      if (i >= 0) { QB._themes.splice(i, 1); saveThemes(); }
+    }
+    // The website has no themes, only the default dark/light.
+    const t = WEBSITE ? null : QB._themes.find((x) => x.enabled);
     QB._themes.forEach((x) => { x._enabledRuntime = false; });
     if (t && t.code) QB.enableTheme(t.id);
     QB.syncBaseTheme();
@@ -1652,21 +1659,27 @@ QB.registerTheme({
         (removable ? '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-remove-theme="' + esc(key) + '" title="Remove" aria-label="Remove ' + esc(name) + '">' + ICO.trash + "</button>" : "") +
         '<button type="button" class="btn btn-sm' + (active ? " in-use" : "") + '" data-use-theme="' + esc(key) + '"' + (active ? " disabled" : "") + ">" + (active ? "In use" : "Use") + "</button></div></div>";
   }
+  // The website: plugins come from the Store tab (no importing, no themes —
+  // its looks are the default dark/light).
+  const WEBSITE = !window.qbreader && !!window.QB_WEB;
   QB._extTab = "open";
   QB.renderScreen = () => {
     const container = document.getElementById("extensions-container");
     if (!container) return;
+    if (WEBSITE && QB._extTab === "themes") QB._extTab = "store";
     const tab = QB._extTab || "open";
     const visible = QB._plugins.filter((p) => !p._builtin);
-    const tabs = [["open", "Open"], ["manage", "Manage"], ["themes", "Themes"]].map(([k, l]) =>
+    const tabs = (WEBSITE ? [["open", "Open"], ["manage", "Manage"], ["store", "Store"]] : [["open", "Open"], ["manage", "Manage"], ["themes", "Themes"]]).map(([k, l]) =>
       '<button type="button" class="db-tab' + (tab === k ? " active" : "") + '" role="tab" aria-selected="' + (tab === k) + '" data-ext-tab="' + k + '">' + l + "</button>").join("");
     const bulk = tab === "manage" && visible.length
       ? '<span class="ext-bulk"><button class="btn btn-sm" id="ext-enable-all">Enable all</button><button class="btn btn-sm" id="ext-disable-all">Disable all</button></span>' : "";
     let body = "";
-    if (tab === "open") {
+    if (tab === "store") {
+      body = storeHtml();
+    } else if (tab === "open") {
       const pages = QB._pages.filter((pg) => !(QB._plugins.find((x) => x.id === pg.pluginId) || {})._builtin);
       if (!pages.length) {
-        body = '<div class="ext-empty-state">No plugin pages yet</div>';
+        body = WEBSITE ? '<div class="ext-empty-state">No plugin pages yet <button type="button" class="btn btn-sm" data-ext-tab="store">Open the Store</button></div>' : '<div class="ext-empty-state">No plugin pages yet</div>';
       } else {
         const groups = {};
         pages.forEach((pg) => { (groups[groupOf(pg.pluginId)] = groups[groupOf(pg.pluginId)] || []).push(pg); });
@@ -1693,24 +1706,77 @@ QB.registerTheme({
           '<button class="ext-remove" data-remove-plugin="' + esc(p.id) + '" title="Remove" aria-label="Remove ' + esc(p.name) + '">' + ICO.trash + "</button>" +
           "</div>" + (set ? '<div class="ext-row-settings ext-settings">' + set + "</div>" : "");
       }).join("");
-      body = '<div class="ext-dropzone" id="ext-drop-plugin">' + ICO.upload + "<span>Drop a plugin <strong>.zip</strong> here, or</span>" +
-          '<button type="button" class="btn btn-sm" id="ext-browse-plugin">Choose a file</button>' + dropError("ext-drop-plugin") +
-          '<input type="file" id="ext-file-plugin" accept=".zip" multiple hidden></div>' +
-        (rows ? '<div class="list ext-list">' + rows + "</div>" : '<div class="ext-empty-state" style="margin-top:16px">No plugins installed yet</div>');
+      body = (WEBSITE ? "" : importZone("plugin", "")) +
+        (rows ? '<div class="list ext-list">' + rows + "</div>" : (WEBSITE ? '<div class="ext-empty-state">No plugins yet <button type="button" class="btn btn-sm" data-ext-tab="store">Open the Store</button></div>' : '<div class="ext-empty-state" style="margin-top:16px">No plugins installed yet</div>'));
     } else {
       const active = QB._themes.find((t) => t.enabled);
-      const hasDaylight = QB._themes.some((t) => t.id === "daylight-cards-studio");
       let cards = themeCardHtml("", "Default", ["#0d1117", "#161b22", "#58a6ff", "#c9d1d9"], !active, "", false);
-      if (!hasDaylight) cards += themeCardHtml("@daylight-cards-studio", "Daylight Cards Studio", KNOWN_THEME_COLORS["daylight-cards-studio"], false, "A light, card-based look with its own Appearance panel.", false);
       cards += QB._themes.map((t) => themeCardHtml(t.id, t.name, themeColors(t), !!t.enabled, t.description || "", true)).join("");
-      body = '<div class="theme-grid">' + cards + "</div>" +
-        '<div class="ext-dropzone" id="ext-drop-theme" style="margin-top:16px">' + ICO.upload + "<span>Drop a theme <strong>.zip</strong> here, or</span>" +
-          '<button type="button" class="btn btn-sm" id="ext-browse-theme">Choose a file</button>' + dropError("ext-drop-theme") +
-          '<input type="file" id="ext-file-theme" accept=".zip" multiple hidden></div>';
+      body = '<div class="theme-grid">' + cards + "</div>" + importZone("theme", ' style="margin-top:16px"');
     }
     container.innerHTML = '<div class="ext-tabs" role="tablist" aria-label="Plugins">' + tabs + bulk + "</div>" + body;
     wireScreen();
   };
+
+  // ── Plugin Store (website): /api/plugin-store lists the plugins the server
+  // hosts (scripts/build-store.mjs); Get installs one into this browser and
+  // turns it on, after which Manage switches it on and off like any plugin.
+  QB._store = { list: null, loading: false, busy: {}, failed: {} };
+  const verNewer = (a, b) => { const x = String(a || "0").split("."), y = String(b || "0").split("."); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0); if (d) return d > 0; } return false; };
+  function storeHtml() {
+    const st = QB._store;
+    if (!st.list) {
+      if (st.err) return '<div class="ext-empty-state">Couldn\'t reach the Store <button type="button" class="btn btn-sm" data-store-reload>Try again</button></div>';
+      if (!st.loading) {
+        st.loading = true;
+        fetch("/api/plugin-store", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then((d) => { st.list = (d && d.plugins) || []; }).catch(() => { st.err = true; })
+          .then(() => { st.loading = false; if (QB._extTab === "store") QB.renderScreen(); });
+      }
+      return '<div class="ext-empty-state">Loading…</div>';
+    }
+    if (!st.list.length) return '<div class="ext-empty-state">The Store is empty right now</div>';
+    const groups = {};
+    st.list.forEach((item) => { (groups[groupOf(item.id)] = groups[groupOf(item.id)] || []).push(item); });
+    return GROUP_ORDER.filter((g) => groups[g]).map((g) =>
+      '<section class="pgroup"><h2>' + esc(g) + '</h2><div class="store-grid">' + groups[g].map((item) => {
+        const have = QB._plugins.find((x) => x.id === item.id && !x._builtin);
+        const busy = st.busy[item.id];
+        const btn = busy ? '<button type="button" class="btn btn-sm" disabled>' + esc(busy) + "</button>"
+          : st.failed[item.id] ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '" title="Couldn\'t add it — try again">Retry</button>'
+          : !have ? '<button type="button" class="btn btn-sm btn-primary" data-store-get="' + esc(item.id) + '">Get</button>'
+          : verNewer(item.version, have.version) ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '">Update</button>'
+          : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
+        return '<div class="store-card"><span class="picon" style="--c:' + GROUP_COLOR[g] + '">' + esc(mono(item.name)) + "</span>" +
+          '<span class="store-main"><b>' + esc(item.name) + '</b><small>v' + esc(item.version) + (item.author ? " · " + esc(item.author) : "") + "</small></span>" +
+          (item.description ? '<span class="qb-info" data-tip="' + esc(item.description) + '">i</span>' : "") + btn + "</div>";
+      }).join("") + "</div></section>").join("");
+  }
+  async function storeGet(id) {
+    const st = QB._store, item = (st.list || []).find((x) => x.id === id);
+    if (!item || st.busy[id]) return;
+    const had = QB._plugins.find((x) => x.id === id);
+    st.busy[id] = had ? "Updating…" : "Adding…"; QB.renderScreen();
+    let ok = false;
+    try {
+      const r = await fetch("/store/" + encodeURIComponent(item.file));
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const p = await QB.installZipBytes(new Uint8Array(await r.arrayBuffer()));
+      if (p && p.id) { if (!had) QB.enablePlugin(p.id); ok = true; }
+    } catch (e) { console.error("store:", e); }
+    if (ok) delete st.failed[id]; else st.failed[id] = true;
+    delete st.busy[id];
+    QB.renderScreen();
+  }
+
+  // Desktop only: a drop zone (drag a .zip in, or choose one). The website
+  // installs plugins from the Store and has no import.
+  function importZone(kind, attrs) {
+    const id = "ext-drop-" + kind;
+    const input = '<input type="file" id="ext-file-' + kind + '" accept=".zip" multiple hidden>';
+    return '<div class="ext-dropzone" id="' + id + '"' + attrs + ">" + ICO.upload + "<span>Drop a " + kind + " <strong>.zip</strong> here, or</span>" +
+      '<button type="button" class="btn btn-sm" id="ext-browse-' + kind + '">Choose a file</button>' + dropError(id) + input + "</div>";
+  }
 
   function wireDropzone(zoneId, inputId, browseId) {
     const zone = document.getElementById(zoneId), input = document.getElementById(inputId), browse = document.getElementById(browseId);
@@ -1733,6 +1799,8 @@ QB.registerTheme({
     wireDropzone("ext-drop-plugin", "ext-file-plugin", "ext-browse-plugin");
     wireSettingControls(root);
     root.querySelectorAll("[data-ext-tab]").forEach((b) => b.addEventListener("click", () => { QB._extTab = b.dataset.extTab; QB.renderScreen(); }));
+    root.querySelectorAll("[data-store-get]").forEach((b) => b.addEventListener("click", () => storeGet(b.dataset.storeGet)));
+    root.querySelector("[data-store-reload]")?.addEventListener("click", () => { QB._store.err = false; QB.renderScreen(); });
     root.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => QB.showPage(b.dataset.page)));
     root.querySelectorAll("[data-plugin-id]").forEach((cb) => {
       cb.addEventListener("change", () => { QB.togglePlugin(cb.dataset.pluginId, cb.checked); QB.renderScreen(); });
@@ -1748,7 +1816,6 @@ QB.registerTheme({
       b.addEventListener("click", () => {
         const key = b.dataset.useTheme;
         if (!key) { QB._themes.filter((t) => t.enabled || t._enabledRuntime).forEach((t) => QB.disableTheme(t.id)); }
-        else if (key === "@daylight-cards-studio") { const t = QB.installTheme(DEFAULT_THEME_FILE, STARTER_THEME); if (t) QB.enableTheme(t.id); }
         else QB.enableTheme(key);
         QB.renderScreen();
       });
@@ -1789,9 +1856,16 @@ QB.registerTheme({
 function __qbMain(ctx) {
     var isHost = false, myId = "";
     var ws = null, _relayConns = {};
-    // Baked-in relay — every game goes through it; users configure nothing.
+    // Rooms are run by the game server (mpserver/, mp.onlinequiz.net): it plays
+    // the host's part of this same protocol, so in a server room every app is a
+    // client (isHost stays false) — serverMode. When the server can't be
+    // reached, the room falls back to the old Cloudflare relay, where the first
+    // player's app hosts. localStorage "qb-mp-server" points tests elsewhere.
+    var GAME_SERVER = "https://mp.onlinequiz.net";
     var DEFAULT_RELAY = "https://offlinequiz-mp-relay.warren2028045.workers.dev";
+    var serverMode = false;
     function relayUrl() { return DEFAULT_RELAY; }
+    function gameServerUrl() { try { return localStorage.getItem("qb-mp-server") || GAME_SERVER; } catch (e) { return GAME_SERVER; } }
     var lobby = "", myName = "", body = null, page = null;
     var mySpec = false;  // joined as spectator (watch + chat, no buzzing)
     function myAv() { try { return ((ctx.host && ctx.host.getState && ctx.host.getState()) || {}).avatar || ""; } catch (e) { return ""; } }
@@ -2101,24 +2175,37 @@ function __qbMain(ctx) {
       // Fresh log: on (re)join the host replays every entry, so keeping the old
       // list would duplicate the entire session history.
       sessionLog = []; logCollapsed = {}; chatHist = [];
-      joinRelay(relayUrl());
+      serverMode = false;
+      var srv = gameServerUrl();
+      if (srv && srv !== "off") joinRelay(srv, function () { joinRelay(relayUrl()); });
+      else joinRelay(relayUrl());
     }
     // ── relay transport: one outbound WebSocket per player ──
-    function joinRelay(relay) {
-      setStatus("Connecting to relay…");
+    // `fallback` runs instead of an error when this server never answers.
+    function joinRelay(relay, fallback) {
+      setStatus("Connecting…");
       var base = relay.replace(/\/+$/, "");
       if (/^https?:/i.test(base)) base = base.replace(/^http/i, "ws").replace(/^HTTPS/i, "wss");
       if (!/^wss?:/i.test(base)) base = "wss://" + base;
       var sock;
       try { sock = new WebSocket(base + "/lobby/" + encodeURIComponent(lobbyId(lobby))); }
-      catch (e) { setStatus("Bad relay URL."); return; }
+      catch (e) { if (fallback) { fallback(); return; } setStatus("Bad relay URL."); return; }
       ws = sock;
-      var opened = false;
+      var opened = false, fellBack = false;
+      var giveUp = function () {
+        if (opened || fellBack || ws !== sock) return;
+        fellBack = true;
+        try { sock.onclose = null; sock.onerror = null; sock.onmessage = null; sock.close(); } catch (e) {}
+        ws = null;
+        fallback();
+      };
+      if (fallback) setTimeout(giveUp, 6000);   // no welcome in 6 s: use the relay
       sock.onmessage = function (ev) {
         var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
         if (m.t === "welcome") {
           opened = true;
-          myId = m.id; isHost = !!m.host;
+          serverMode = !!m.server;
+          myId = m.id; isHost = !serverMode && !!m.host;
           setTimeout(rememberRoom, 1500);
           if (isHost) {
             try { if (ctx.host && ctx.host.resetPracticeFilters) ctx.host.resetPracticeFilters(); } catch (e) {}
@@ -2151,11 +2238,12 @@ function __qbMain(ctx) {
         if (m.t === "hostleft") { setStatus("Host left \u2014 lobby closed."); }
       };
       sock.onclose = function () {
+        if (!opened && fallback) { giveUp(); return; }
         if (!opened) setStatus("Couldn't reach the relay \u2014 check the URL (and that the worker is deployed).");
         else if (!leftIntentionally && lobby) showDisconnected();
         if (ws === sock) ws = null;
       };
-      sock.onerror = function () { if (!opened) setStatus("Couldn't reach the relay \u2014 check the URL."); };
+      sock.onerror = function () { if (!opened && fallback) { giveUp(); return; } if (!opened) setStatus("Couldn't reach the relay \u2014 check the URL."); };
     }
 
     // The relay promoted THIS client to host (the old host disconnected). The
@@ -2339,7 +2427,11 @@ function __qbMain(ctx) {
     // question it's a SKIP and only allowed when skips are on (host included).
     function requestNext() {
       if (isHost) { hostNext(); return; }
-      toHost({ t: "reqNext" });
+      // weighted categories: the server draws each question from the asker's
+      // fresh roll (every panel mirrors the room, so any roll is the same draw)
+      var roll = null;
+      if (serverMode && weightedOn()) { try { roll = ctx.host.getPracticeConfig().filters || null; } catch (e) {} }
+      toHost(roll ? { t: "reqNext", roll: roll } : { t: "reqNext" });
     }
     function skipsAllowed() { return settings.allowSkips !== false; }
     async function hostNext(byName) {
@@ -2571,7 +2663,8 @@ function __qbMain(ctx) {
       clientReadTimer = setInterval(function () {
         // While held, slide the baseline so a resume never leaks unread text.
         if (paused || ended || !current) { t0 = Date.now(); base = revealIdx; return; }
-        if (revealIdx >= current.text.length) { stopClientRead(); return; }
+        if (revealIdx >= (current.len || current.text.length)) { stopClientRead(); return; }
+        // text not here yet (server rooms send it just ahead): wait for it
         var want = Math.min(current.text.length, base + Math.floor((Date.now() - t0) / tickMs));
         if (want <= revealIdx) return;
         revealIdx = want;
@@ -2859,12 +2952,20 @@ function __qbMain(ctx) {
         renderScores(); renderSettings(); renderFilterSummary(); updateTopBar();
       }
       else if (d.t === "chat") { addChat(d.name, d.text, d.sys, d.chan === "team"); }
+      // server rooms: the question's text arrives a few seconds ahead of the
+      // reading ("more"); q.len is its full length
+      else if (d.t === "more") { if (current && typeof d.text === "string") current.text += d.text; }
+      else if (d.t === "status") { setStatus(d.text || ""); }
+      else if (d.t === "needConfig") { sendRoomConfig(true); }
       else if (d.t === "question") { stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
       else if (d.t === "read") { clientStartRead(d.from, d.speed); }
       else if (d.t === "reveal") { revealIdx = d.index; applyReveal(d.index); }  // legacy hosts
       else if (d.t === "buzz") { stopClientRead(); if (typeof d.index === "number") { revealIdx = d.index; applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyBuzz(d.id, d.name, d.index, answerDeadline); }
       else if (d.t === "buzzwin") { stopClientRead(); if (current) { revealIdx = current.text.length; applyReveal(revealIdx); } applyBuzzWindow(Date.now() + ((d.secs || settings.buzzWindow || 10) * 1000)); }
-      else if (d.t === "result") { stopClientRead(); if (typeof d.index === "number" && !d.ended) revealIdx = d.index; buzzHistory = d.history || buzzHistory; if (d.ended) ended = true; applyResult(d); renderBuzzes(); }
+      else if (d.t === "result") {
+        stopClientRead();
+        if (current && d.qid) current.id = d.qid;   // a server room names the question only now
+        if (current && d.fullText && d.fullText.length > current.text.length) current.text = d.fullText; if (typeof d.index === "number" && !d.ended) revealIdx = d.index; buzzHistory = d.history || buzzHistory; if (d.ended) ended = true; applyResult(d); renderBuzzes(); }
       else if (d.t === "reading") { /* the host's "read" message restarts the local ticker */ }
       else if (d.t === "pause") { paused = d.paused; if (typeof d.idx === "number") { revealIdx = d.idx; applyReveal(revealIdx); } applyPause(d.paused); }
       else if (d.t === "prompt") { answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyPrompt(d.id, d.name, d.ask, answerDeadline); }
@@ -2887,7 +2988,7 @@ function __qbMain(ctx) {
       if (!current || ended) return;
       if (players[myId] && players[myId].spec) { ctx.toast("You're spectating \u2014 no buzzing", "error"); return; }
       ctx.playSound("buzz");
-      if (isHost) hostHandleBuzz(myId); else toHost({ t: "buzz" });
+      if (isHost) hostHandleBuzz(myId); else toHost({ t: "buzz", idx: revealIdx });
     }
     function requestPause() { if (isHost) hostTogglePause(myId); else toHost({ t: "pause" }); }
     function submitAnswer(text) { if (isHost) hostHandleAnswer(myId, text); else toHost({ t: "answer", text: text }); }
@@ -3092,7 +3193,7 @@ function __qbMain(ctx) {
               "</div>" +
               '<div class="buzz-area hidden" id="mp-buzz"></div>' +
               '<div class="mp-actions" id="mp-actions">' +
-                '<button type="button" class="buzz-btn" id="mp-buzz-btn" hidden>BUZZ</button><span class="mp-actions-key" id="mp-buzz-key" hidden><kbd>Space</kbd></span>' +
+                '<button type="button" class="btn btn-go mp-buzz-btn" id="mp-buzz-btn" hidden>Buzz<kbd>Space</kbd></button>' +
                 '<button type="button" class="btn btn-primary mp-next-btn" id="mp-next-btn" hidden>Next<span aria-hidden="true">→</span></button>' +
                 '<button type="button" class="btn mp-pause-btn" id="mp-pause-btn" hidden>Pause</button>' +
               "</div>" +
@@ -3105,7 +3206,6 @@ function __qbMain(ctx) {
               '<div class="panel-tabs" role="tablist">' +
                 '<button type="button" role="tab" data-mptab="players" aria-selected="' + (panelTab === "players") + '">Players</button>' +
                 '<button type="button" role="tab" data-mptab="chat" aria-selected="' + (panelTab === "chat") + '">Chat<span class="unread" id="mp-unread"' + (unreadChat && panelTab !== "chat" ? "" : " hidden") + ' aria-label="New messages"></span></button>' +
-                '<button type="button" role="tab" data-mptab="log" aria-selected="' + (panelTab === "log") + '">Log</button>' +
               "</div>" +
               '<div class="panel-body" data-pane="players"' + (panelTab === "players" ? "" : " hidden") + '><div class="mp-scores" id="mp-scores"></div></div>' +
               '<div class="panel-body panel-chat" data-pane="chat"' + (panelTab === "chat" ? "" : " hidden") + '>' +
@@ -3115,7 +3215,6 @@ function __qbMain(ctx) {
                   '<input id="mp-chat-input" class="mode-input" placeholder="Message everyone…" autocomplete="off">' +
                 "</div>" +
               "</div>" +
-              '<div class="panel-body" data-pane="log"' + (panelTab === "log" ? "" : " hidden") + '><div class="history-list mp-log" id="mp-buzzes"></div></div>' +
             "</aside>" +
           "</div>" +
         "</div>";
@@ -3156,6 +3255,7 @@ function __qbMain(ctx) {
     }
     var panelTab = "players", unreadChat = 0;
     function showPanelTab(t) {
+      if (t !== "players" && t !== "chat") t = "players";
       panelTab = t;
       if (t === "chat") unreadChat = 0;
       if (!body) return;
@@ -3173,11 +3273,10 @@ function __qbMain(ctx) {
     // BUZZ while a tossup reads; Next once it is over (or before the first).
     function syncActions() {
       if (!body) return;
-      var b = body.querySelector("#mp-buzz-btn"), k = body.querySelector("#mp-buzz-key"), n = body.querySelector("#mp-next-btn"), p = body.querySelector("#mp-pause-btn");
+      var b = body.querySelector("#mp-buzz-btn"), n = body.querySelector("#mp-next-btn"), p = body.querySelector("#mp-pause-btn");
       var reading = !!current && !ended && !bonusView;
       var answering = !!(body.querySelector("#mp-ans-input") || body.querySelector(".mp-binput"));
       if (b) { b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer; }
-      if (k) k.hidden = !b || b.hidden;
       if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
       if (p) { p.hidden = !reading || mySpec || answering; p.textContent = paused ? "Resume" : "Pause"; }
       var qc = body.querySelector("#mp-qcount"); if (qc) qc.textContent = qCount ? "Question " + qCount : "";
@@ -3334,9 +3433,35 @@ function __qbMain(ctx) {
           if (msg) sysChat(myName + " " + msg);
           broadcast(stateMsg()); renderFilterSummary();
         } else {
-          toHost({ t: "setConfig", config: { filters: cfg.filters, strictness: cfg.strictness, revealSpeed: cfg.revealSpeed, hidePron: cfg.hidePron, filterSummary: cfg.filterSummary, sel: sel }, change: msg });
+          toHost({ t: "setConfig", config: roomConfigOf(cfg, sel), change: msg });
         }
       }, 400);
+    }
+    // What a room needs from this player's panel. Server rooms also get the
+    // mode, weighting, how questions are read, and an imported packet.
+    function roomConfigOf(cfg, sel) {
+      var c = { filters: cfg.filters, strictness: cfg.strictness, revealSpeed: cfg.revealSpeed, hidePron: cfg.hidePron, filterSummary: cfg.filterSummary, sel: sel };
+      if (serverMode) {
+        var st = {}; try { st = (ctx.host && ctx.host.getState && ctx.host.getState()) || {}; } catch (e) {}
+        c.mode = realMode();
+        c.weighted = weightedOn();
+        c.hideNotes = st.hideNotes !== false;
+        if (st.hidePronunciations) c.hidePron = true;
+        if (c.mode === "import") { try { c.importPacket = (ctx.host && ctx.host.getImportedPacket && ctx.host.getImportedPacket()) || null; } catch (e) { c.importPacket = null; } }
+      }
+      return c;
+    }
+    // The first player in a new server room hands it their (reset) practice setup.
+    function sendRoomConfig(fresh) {
+      if (!serverMode) return;
+      if (fresh) { try { if (ctx.host && ctx.host.resetPracticeFilters) ctx.host.resetPracticeFilters(); } catch (e) {} }
+      setTimeout(function () {
+        if (!serverMode || !lobby || !ctx.host || !ctx.host.getPracticeConfig) return;
+        var cfg; try { cfg = ctx.host.getPracticeConfig(); } catch (e) { return; }
+        var sel = null; try { sel = ctx.host.getFilterSelectionSnapshot ? ctx.host.getFilterSelectionSnapshot() : null; } catch (e) {}
+        if (sel) _lastSelJson = JSON.stringify(sel);
+        toHost({ t: "setConfig", config: roomConfigOf(cfg, sel), silent: true });
+      }, 150);
     }
     // Put the panel back where it belongs and strip the injected MP sections.
     function returnPanel() {
@@ -3440,9 +3565,14 @@ function __qbMain(ctx) {
       var qt = body && body.querySelector("#mp-qtext"); if (!qt || !current) return;
       var text = current.text;
       var out = renderWithMarks(text, idx, buzzCharMarks, ended && endedPowerEnd > 0 ? endedPowerEnd : -1);
-      // Mask the unread text so it can't be read by highlighting (monospace font
-      // + preserved whitespace keeps the wrapping identical).
-      var rest = esc(text.substring(idx).replace(/\S/g, "·"));
+      // The unread text stays invisible, exactly as in practice (it holds the
+      // layout; masked so highlighting can't read it). Server rooms send the
+      // text just ahead of the reading, so the part not here yet is held by an
+      // invisible stand-in of the question's full length (q.len) — the box
+      // doesn't grow as the question streams in.
+      var tail = text.substring(idx).replace(/\S/g, "·");
+      if (current.len && current.len > text.length) { var pad = ""; while (pad.length < current.len - text.length) pad += "······ "; tail += pad.slice(0, current.len - text.length); }
+      var rest = esc(tail);
       qt.innerHTML = '<span class="revealed">' + out + "</span>" + (rest ? '<span class="unrevealed" aria-hidden="true">' + rest + "</span>" : "");
     }
 
@@ -3690,8 +3820,10 @@ function __qbMain(ctx) {
         : (b.points < 0 ? '<span class="pill pill-red">' + b.points + "</span>" : '<span class="pill">' + b.points + "</span>");
     }
 
+    // (The per-question buzz Log tab is gone; renderBuzzes still keeps the
+    // action buttons in step wherever it used to run.)
     function renderBuzzes() {
-      var el = body && body.querySelector("#mp-buzzes"); if (!el) return;
+      var el = body && body.querySelector("#mp-buzzes"); if (!el) { syncActions(); return; }
       if (!buzzHistory.length) { el.innerHTML = '<div class="text-muted mp-log-empty">No buzzes yet this question</div>'; syncActions(); return; }
       el.innerHTML = buzzHistory.map(function (b) {
         var col = b.correct ? ((b.points || 0) >= 15 ? "var(--yellow)" : "var(--green)") : (b.points < 0 ? "var(--red)" : "var(--muted)");
@@ -3790,7 +3922,7 @@ function __qbMain(ctx) {
       bonusState = null; bonusView = null; bonusPending = false;
       try { if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); } } catch (e) {}
       ws = null; _relayConns = {};
-      isHost = false; current = null;
+      isHost = false; serverMode = false; current = null;
       players = {}; order = []; lobby = ""; qCount = 0; sessionLog = [];
       render();
     }
