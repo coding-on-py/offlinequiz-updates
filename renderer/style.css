@@ -2651,7 +2651,7 @@ body { font-family: var(--font); }
 *::-webkit-scrollbar-track { background: transparent; }
 
 /* ── App frame ── */
-#app { height: 100vh; }
+#app { height: 100vh; height: 100dvh; }   /* dvh: a phone browser's toolbars don't hide the bottom of the app */
 .screen { height: auto; flex: 1 1 auto; min-height: 0; }
 
 /* ── Buttons ── */
@@ -3543,7 +3543,9 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   #practice-screen .practice-side { flex-direction: column; overflow: visible; padding: 0; border: 0; }
   #practice-screen .practice-layout { padding: 0 16px 0; gap: 24px; }
   #practice-screen > .top-bar { padding-left: 16px; padding-right: 16px; }
-  #practice-screen .question-area { min-height: 0; }   /* no gap between the question and the answer box (buzzing scrolled the question away) */
+  /* the question area fills the screen and the controls are its last item (sticky): they sit on the
+     bottom edge while you read and dock above the stats once you scroll down to them */
+  #practice-screen .question-area { min-height: calc(100dvh - var(--topbar-h) - 70px); }
   #practice-screen .question-placeholder { min-height: 34vh; }
   /* the unread rest of the question isn't laid out (invisible, it pushed the answer box a screen below what was read) */
   :is(#practice-screen, .mp-room) .question-text .unrevealed { display: none; }
@@ -3554,13 +3556,17 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .practice-actions { position: sticky; bottom: 0; z-index: 6; margin: 8px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
   .practice-actions .btn { flex: 1 1 0; height: 52px; padding: 0 10px; font-size: 15px; justify-content: center; }
-  #practice-screen .question-area > .practice-actions { order: 99; }   /* below the bonus parts too, so it stays pinned to the bottom */
+  #practice-screen .question-area > .practice-actions { order: 99; margin-top: auto; }   /* below the bonus parts too */
   #practice-screen .result-actions { display: none; }
-  #practice-screen .result-area { scroll-margin: 12px 0 96px; }   /* clear of the bottom bar when scrolled to */
+  #practice-screen :is(.result-area, .bonus-part) { scroll-margin: 12px 0 96px; }   /* clear of the bottom bar when scrolled to */
   .mp-actions { position: sticky; bottom: 0; z-index: 6; margin: 8px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
   .mp-actions .btn { flex: 1 1 0; height: 52px; padding: 0 10px; font-size: 15px; justify-content: center; }
-  .mp-room .question-area { min-height: 0; }
+  .mp-room .question-area { min-height: calc(100dvh - var(--topbar-h) - 60px); }   /* the same for a room: the bar docks above Players / Chat */
+  .mp-room .question-area > .mp-actions { order: 98; margin-top: auto; }
+  .mp-room .question-area > .mp-history { order: 99; }
+  .ext-page-body.mp-flush:has(> .mp-room) { padding-bottom: 0; }   /* a scroller's padding keeps a sticky bar off the bottom edge */
+  .mp-room { padding-bottom: 32px; }
   .mp-room .question-placeholder { min-height: 30vh; }
   .page-head { flex-wrap: wrap; row-gap: 8px; }
   .page-head .top-bar-right { flex-wrap: wrap; }
@@ -4076,3 +4082,40 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
   .fr-rank { flex-basis: 16px; }
 }
 .tbm-who .tbm-email { display: block; font-size: 11px; color: var(--muted); font-weight: 400; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Phones, round 2: Setup and Settings as full-screen sheets with finger-sized controls ── */
+@media (max-width: 760px) {
+  :is(#practice-screen, .mp-room) .filters-panel { top: calc(var(--topbar-h) + 4px); right: 4px; bottom: 4px; width: calc(100vw - 8px) !important; border-radius: 14px; overscroll-behavior: contain; }
+  :is(#practice-screen, .mp-room) .filters-panel > .filter-section { padding: 0 16px; }
+  :is(#practice-screen, .mp-room) .filters-panel .fp-foot { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .fp-checks .checkbox-row, .fp-checks .checkbox-row-wrap { min-height: 44px; font-size: 14px; }
+  .fp-checks .checkbox-row-wrap { display: flex; align-items: center; gap: 8px; }
+  /* reading & timers: the name and value on one line, the slider full width under them */
+  #sec-timing .slider-group, .mp-borrowed .mp-injected .slider-group { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "l v" "s s"; row-gap: 4px; margin-top: 10px; }
+  #sec-timing .slider-group > .sg-label, .mp-borrowed .mp-injected .slider-group > .sg-label { grid-area: l; font-size: 13.5px; }
+  #sec-timing .slider-group > input[type="range"], .mp-borrowed .mp-injected .slider-group > input[type="range"] { grid-area: s; width: 100%; }
+  #sec-timing .slider-group > .slider-value, .mp-borrowed .mp-injected .slider-group > .slider-value { grid-area: v; text-align: right; }
+  #difficulty-filters.diff-checks, .diff-toggles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); width: 100%; gap: 4px; }
+  #difficulty-filters .diff-row, .diff-toggles label { width: auto; height: 40px; font-size: 14px; }
+  .diff-toggles .dt-lbl { grid-column: 1 / -1; padding: 2px 4px; }
+
+  /* Settings: the whole screen; every section visible as a chip (no sideways scrolling) */
+  .settings-ovl:has(> .set-modal) { padding: 0; align-items: stretch; justify-content: stretch; }
+  .set-modal { width: 100vw; height: 100vh; height: 100dvh; max-width: none; max-height: none; border: 0; border-radius: 0; }
+  .set-modal .modal-head { padding-top: env(safe-area-inset-top); }
+  .set-nav { flex-wrap: wrap; overflow: visible; gap: 6px; padding: 10px 12px; }
+  .set-nav-btn { height: 36px; padding: 0 14px; border: 1px solid var(--line-soft); border-radius: 999px; font-size: 13px; }
+  .set-nav-btn[aria-current="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--strong); }
+  .set-body { padding: 14px 16px calc(28px + env(safe-area-inset-bottom)); overscroll-behavior: contain; }
+  .set-pane h3 { display: none; }   /* the chip above already names it */
+  #hotkey-table th:nth-child(2), #hotkey-table td:nth-child(2) { display: none; }
+}
+/* touch screens: bigger slider knobs, and text boxes at 16 px (an iPhone zooms the page into any smaller one) */
+@media (pointer: coarse) {
+  input[type="range"]::-webkit-slider-thumb { width: 24px; height: 24px; margin-top: -10px; }
+  input[type="range"]::-moz-range-thumb { width: 24px; height: 24px; }
+  input[type="range"] { min-height: 28px; }
+  .dual-range, .dual-range input[type="range"], .dual-range input[type="range"]::-webkit-slider-runnable-track { height: 28px; }
+  .dual-range input[type="range"]::-webkit-slider-thumb { width: 24px; height: 24px; margin-top: 2px; }
+  input:is([type="text"], [type="search"], [type="email"], [type="password"], [type="number"], :not([type])), textarea, select, .composer-in { font-size: 16px !important; }
+}

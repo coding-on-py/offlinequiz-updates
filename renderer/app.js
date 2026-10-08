@@ -4586,6 +4586,10 @@ function renderQuestion(question) {
   });
 
   checkStarStatus(question.id, isTossup ? "tossup" : "bonus");
+  // a new question starts at the top, without the room a long one before it added (followReading)
+  const qa = document.getElementById("question-area");
+  if (qa) { qa.style.minHeight = ""; qa._followKey = null; }
+  if (matchMedia("(max-width: 760px)").matches) { const sc = document.getElementById("practice-screen"); if (sc) sc.scrollTop = 0; }
 
   if (isTossup) {
     renderTossup(question);
@@ -4748,6 +4752,35 @@ function practiceMain() {
   if (state.resultAreaVisible && state.currentQuestion) return { label: "Next", key: "next-question", next: true, run: () => nextQuestion() };
   return null;
 }
+// Long questions: keep the line being read on screen (above a bottom bar pinned
+// there) while the reader follows along; someone who scrolled away is left alone.
+// block: bring a whole box (a bonus part, the result) above the bar, top kept in view.
+function followReading(el, key, block) {
+  if (!el || !el.isConnected) return;
+  // a new question drops the room a previous one added (below)
+  const qa = el.closest(".question-area");
+  key = String(key != null ? key : el.textContent.slice(0, 40));
+  if (qa && qa._followKey !== key) { qa._followKey = key; qa.style.minHeight = ""; }
+  const rects = el.getClientRects(); if (!rects.length) return;
+  let sc = el.parentElement;
+  while (sc && sc !== document.body) { const o = getComputedStyle(sc).overflowY; if ((o === "auto" || o === "scroll") && sc.scrollHeight > sc.clientHeight) break; sc = sc.parentElement; }
+  if (!sc || sc === document.body) return;
+  const now = performance.now();
+  const box = sc.getBoundingClientRect(), first = rects[0], last = rects[rects.length - 1];
+  let limit = box.bottom - 8;
+  for (const bar of sc.querySelectorAll(".practice-actions, .mp-actions")) { const r = bar.getBoundingClientRect(); if (r.height && r.top < limit && r.bottom >= box.bottom - 2) limit = r.top - 8; }
+  const lh = parseFloat(getComputedStyle(el.parentElement).lineHeight) || last.height || 24;
+  const over = last.bottom - limit;
+  let d = 0;
+  if (block) { if (over > 0) d = Math.min(over + 16, first.top - box.top - 12); }
+  else if (now >= (followReading._until || 0) && over > 0 && over < lh * 4) { d = over + lh * 3; followReading._until = now + 400; }
+  if (d <= 0) return;
+  // the question area grows by as much, so a bar pinned to the bottom (sticky, its last
+  // item) stays pinned instead of docking mid-screen with the stats showing under it
+  if (qa) qa.style.minHeight = Math.ceil(qa.getBoundingClientRect().height + d) + "px";
+  sc.scrollBy({ top: d, behavior: "smooth" });
+}
+window.qbFollowReading = followReading;
 function syncPracticeActions() {
   const bar = document.getElementById("practice-actions"); if (!bar) return;
   const set = (el, show, text) => { if (!el) return; if (el.hidden === show) el.hidden = !show; if (text != null && el.firstChild && el.firstChild.nodeValue !== text) el.firstChild.nodeValue = text; };
@@ -4760,7 +4793,7 @@ function syncPracticeActions() {
   set(document.getElementById("pa-pause"), reading && !state.isBuzzed && state.bonusAwait == null, state.isPaused ? "Resume" : "Pause");
   // phones: the verdict and answer come into view once (they sit below a long question)
   const ra = document.getElementById("result-area"), shown = !!(state.resultAreaVisible && ra && !ra.classList.contains("hidden"));
-  if (shown && !syncPracticeActions._shown && matchMedia("(max-width: 760px)").matches) ra.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  if (shown && !syncPracticeActions._shown && matchMedia("(max-width: 760px)").matches) followReading(ra, state.currentQuestion && state.currentQuestion.id, true);
   syncPracticeActions._shown = shown;
 }
 (function wirePracticeActions() {
@@ -4784,6 +4817,7 @@ function advanceBonusPart() {
 
 function startBonusPart(idx) {
   $(`#bonus-part-${idx}`)?.classList.remove("hidden");
+  if (matchMedia("(max-width: 760px)").matches) followReading($(`#bonus-part-${idx}`), state.currentQuestion && state.currentQuestion.id, true);   // phones: the new part, above the bottom bar
   const inp = $(`#bonus-input-${idx}`);
   if (inp) { inp.disabled = false; setTimeout(() => inp.focus(), 60); }
   stopEventTimer();
@@ -4988,6 +5022,7 @@ function revealText(text) {
     state.revealIndex++;
     state.buzzPosition = state.revealIndex;
     $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
+    followReading($("#question-text .revealed"), state.currentQuestion && state.currentQuestion.id);
     if (state.settings.stopOnPower && state.prePowerEnd > 0 && state.revealIndex >= state.prePowerEnd && !state._stoppedAtPower) {
       state._stoppedAtPower = true;
       state.isPaused = true;

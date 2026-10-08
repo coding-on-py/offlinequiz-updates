@@ -3619,6 +3619,7 @@ function __qbMain(ctx) {
       if (current.len && current.len > text.length) { var pad = ""; while (pad.length < current.len - text.length) pad += "······ "; tail += pad.slice(0, current.len - text.length); }
       var rest = esc(tail);
       qt.innerHTML = '<span class="revealed">' + out + "</span>" + (rest ? '<span class="unrevealed" aria-hidden="true">' + rest + "</span>" : "");
+      if (!ended && window.qbFollowReading) window.qbFollowReading(qt.querySelector(".revealed"));   // long questions scroll along
     }
 
     function applyBuzz(id, name, idx, deadline) {
