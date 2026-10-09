@@ -360,13 +360,6 @@ const DEFAULT_HOTKEYS = {
   "mark-correct": "ArrowUp",
   "mark-incorrect": "ArrowDown",
   "home": "Escape",
-  "nav-tossups": "1",
-  "nav-bonuses": "2",
-  "nav-stats": "3",
-  "nav-starred": "4",
-  "nav-settings": "5",
-  "nav-player": "6",
-  "nav-extensions": "7",
   "text-bigger": IS_MAC ? "Meta+=" : "Ctrl+=",
   "text-smaller": IS_MAC ? "Meta+-" : "Ctrl+-",
   "text-reset": IS_MAC ? "Meta+0" : "Ctrl+0",
@@ -382,13 +375,6 @@ const HOTKEY_LABELS = {
   "mark-correct": "Mark answer correct",
   "mark-incorrect": "Mark answer incorrect",
   "home": "Back",
-  "nav-tossups": "Practice Tossups",
-  "nav-bonuses": "Practice Bonuses",
-  "nav-stats": "Statistics",
-  "nav-starred": "Database",
-  "nav-settings": "Settings",
-  "nav-player": "Player",
-  "nav-extensions": "Plugins & Themes",
   "text-bigger": "Bigger text",
   "text-smaller": "Smaller text",
   "text-reset": "Reset text size",
@@ -1315,6 +1301,7 @@ document.getElementById("set-username")?.addEventListener("change", (e) => {
   if (!v) { e.target.value = state.username || ""; return; }
   state.username = v; lsSet("qb-username", v);
   renderGreeting(); renderTopbarProfile();
+  pushAccountName(v);   // signed in: the account (website, other devices) gets it too
 });
 document.getElementById("btn-open-profile")?.addEventListener("click", () => { closeSettingsOverlays(); goTo("player"); });
 document.getElementById("btn-browse-themes")?.addEventListener("click", () => { closeSettingsOverlays(); goTo("plugins-themes"); });
@@ -1802,16 +1789,7 @@ document.addEventListener("keydown", (e) => {
   const activeScreen = document.querySelector(".screen.active");
   if (!activeScreen) return;
 
-  if (activeScreen.id === "title-screen") {
-    if (matchesHotkey(e, "nav-tossups")) { showScreen("practice-tossups"); setMode("tossups"); }
-    if (matchesHotkey(e, "nav-bonuses")) { showScreen("practice-bonuses"); setMode("bonuses"); }
-    if (matchesHotkey(e, "nav-stats")) { showScreen("stats"); state.statsSessionId = null; loadStats(); }
-    if (matchesHotkey(e, "nav-starred")) { showScreen("database"); loadDatabase(); }
-    if (matchesHotkey(e, "nav-settings")) toggleSettings();
-    if (matchesHotkey(e, "nav-player")) { showScreen("player"); loadPlayer(); }
-    if (matchesHotkey(e, "nav-extensions")) { showScreen("extensions"); window.QB?.renderScreen(); }
-    return;
-  }
+  if (activeScreen.id === "title-screen") return;   // the home's 1–7 page keys are gone (14.39)
 
   if (activeScreen.id === "practice-screen") {
     const isInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA";
@@ -5260,6 +5238,13 @@ function resumeReveal() {
   }
 }
 
+// The unread rest of a question as an invisible stand-in: every letter a "·", but
+// spaces and the characters a line may break at (hyphens, dashes, slashes) kept,
+// so it wraps exactly like the real text and nothing below moves while the
+// question reads. The game server sends rooms this shape (mpserver/qtext.mjs lifts it).
+function textShape(s) {
+  return String(s == null ? "" : s).replace(/[^\s\-\u2010-\u2015\/]/g, "\u00b7");
+}
 function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) {
   const buzzMarks = marks || state.buzzMarks || [];
   // Once the question is over (answered, or read out with nobody buzzing) the
@@ -5285,7 +5270,7 @@ function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) 
     return out;
   }
   const pre = withMarks(revealedUpTo);
-  const post = escapeHtml(text.substring(revealedUpTo).replace(/\S/g, "·"));
+  const post = escapeHtml(textShape(text.substring(revealedUpTo)));
   return `<span class="revealed">${pre}</span><span class="unrevealed" aria-hidden="true">${post}</span>`;
 }
 
@@ -6723,6 +6708,23 @@ document.addEventListener("click", (e) => {
 function copyToClipboard(t) {
   try { navigator.clipboard.writeText(t); } catch (e) {}
 }
+// A copy button that shows it worked: its icon turns into a checkmark with a small
+// "Copied" label for a moment. (The clipboard API can be missing — e.g. not https —
+// so an old-style copy is the fallback.)
+function copyWithCheck(btn, text) {
+  const fallback = () => { try { const ta = Object.assign(document.createElement("textarea"), { value: text }); ta.style.cssText = "position:fixed;opacity:0"; document.body.appendChild(ta); ta.select(); const ok = document.execCommand("copy"); ta.remove(); return ok; } catch (e) { return false; } };
+  const show = () => {
+    if (!btn) return;
+    if (!btn._qbIcon) btn._qbIcon = btn.innerHTML;
+    btn.innerHTML = ic("check", 15, ' style="stroke-width:2.6"');
+    btn.classList.add("copied"); btn.setAttribute("data-copied", "Copied");
+    clearTimeout(btn._qbCopyT);
+    btn._qbCopyT = setTimeout(() => { btn.innerHTML = btn._qbIcon; btn._qbIcon = null; btn.classList.remove("copied"); btn.removeAttribute("data-copied"); }, 1600);
+  };
+  try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(show, () => { if (fallback()) show(); }); return; } } catch (e) {}
+  if (fallback()) show();
+}
+window.qbCopyWithCheck = copyWithCheck;
 
 // ── Hidden questions ("this question is bad — never serve it again") ──
 function hiddenQs() { try { return JSON.parse(lsGet("qb-hidden-questions") || "{}") || {}; } catch (e) { return {}; } }
@@ -8403,9 +8405,6 @@ const HOTKEY_SCOPES = {
   "end-session": "practice", "star-question": "practice", "pause-reveal": "practice",
   "mark-correct": "practice", "mark-incorrect": "practice",
   "home": "global",
-  "nav-tossups": "title", "nav-bonuses": "title", "nav-stats": "title",
-  "nav-starred": "title", "nav-settings": "title", "nav-player": "title",
-  "nav-extensions": "title",
 };
 function hotkeyScope(action) {
   if (HOTKEY_SCOPES[action]) return HOTKEY_SCOPES[action];
@@ -8614,6 +8613,7 @@ async function loadPlayer() {
     $("#player-username-input")?.addEventListener("input", (e) => {
       state.username = e.target.value.trim();
       lsSet("qb-username", state.username);
+      pushAccountName(state.username);
       const w = container.querySelector(".player-welcome");
       if (w) w.textContent = state.username ? `Welcome, ${state.username}` : "Welcome";
     });
@@ -10677,6 +10677,7 @@ async function refreshAccount(opts) {
   // signed in (e.g. with Google) without a username yet: finish setting up
   if (!opts.noPrompt && Account.user && !Account.user.handle && !document.getElementById("account-ovl") && !refreshAccount._asked) { refreshAccount._asked = true; openAccount("profile"); }
   syncLbPublicRow();
+  friendPoll();
   // the account's time zone dates its day streak for friends
   if (Account.user && !Account.offline && Account.user.tz !== myTz()) API.post("/api/account/profile", { tz: myTz() }).then((r) => { if (r && r.user) Account.user = r.user; }).catch(() => {});
   if (_cloudOn) cloudSyncSoon(1500);
@@ -10930,13 +10931,54 @@ function openAccount(mode, opts) {
 }
 // The website shows the account's display name (greeting, avatar, multiplayer):
 // it has no name prompt of its own.
+// The shown name follows the account's display name: on the website always, in
+// the app while it's signed in — so a name set on the website, in the app or in
+// another tab shows everywhere (accountFresh: on focus and every minute). A name
+// typed in the app goes to the account (pushAccountName).
 function applyAccountName() {
-  if (!IS_WEB) return;
-  state.username = Account.user ? (Account.user.displayName || Account.user.handle || "") : "";
+  const dn = Account.user ? (Account.user.displayName || Account.user.handle || "") : "";
+  if (IS_WEB) state.username = dn;
+  else {
+    if (!dn || Account.offline || state.username === dn || pushAccountName._t) return;   // a typed name on its way wins
+    state.username = dn; lsSet("qb-username", dn);
+    try { pushProfileSettings(); } catch (e) {}
+    const inp = document.getElementById("set-username"); if (inp && document.activeElement !== inp) inp.value = dn;
+  }
   renderGreeting(); renderTopbarProfile();
+  try { if (document.querySelector("#player-screen.active")) { const w = document.querySelector(".player-welcome"); if (w) w.textContent = state.username ? `Welcome, ${state.username}` : "Welcome"; } } catch (e) {}
 }
+function pushAccountName(name) {
+  name = String(name || "").trim();
+  if (IS_WEB || !Account.user || Account.offline || !name || (Account.user.displayName || "") === name) return;
+  clearTimeout(pushAccountName._t);
+  pushAccountName._t = setTimeout(async () => {
+    try { const r = await API.post("/api/account/profile", { displayName: name }); if (r && r.user) { Account.user = r.user; renderAccountMenu(); } } catch (e) {}
+    pushAccountName._t = null;
+  }, 700);
+}
+// A friend request not looked at yet: a blue dot on the avatar and on Friends in
+// its menu, until Friends is opened (the requests seen: localStorage "qb-fr-seen").
+// Checked at sign-in, every minute and whenever the window comes back.
+const FR_SEEN = "qb-fr-seen";
+let _frIncoming = [];
+function friendDots() {
+  let seen = []; try { seen = JSON.parse(lsGet(FR_SEEN) || "[]") || []; } catch (e) {}
+  const unseen = _frIncoming.some((h) => !seen.includes(h));
+  document.getElementById("tb-profile")?.classList.toggle("has-dot", unseen);
+  document.getElementById("tbm-friends")?.classList.toggle("has-dot", unseen);
+  const badge = document.getElementById("tbm-friends-n");
+  if (badge) { badge.hidden = !_frIncoming.length; badge.textContent = String(_frIncoming.length); }
+}
+function friendsSeen() { lsSet(FR_SEEN, JSON.stringify(_frIncoming.slice(0, 200))); friendDots(); }
+async function friendPoll() {
+  if (!Account.user || !Account.user.handle || Account.offline) { _frIncoming = []; friendDots(); return; }
+  try { const d = await API.get("/api/friends"); if (d && Array.isArray(d.incoming)) { _frIncoming = d.incoming.map((f) => f.handle); friendDots(); } } catch (e) {}
+}
+setInterval(() => { if (!document.hidden && Account.user) friendPoll(); }, 60000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Account.user) friendPoll(); });
+
 // The account as the server has it now — a username or name set in the app or
-// another tab shows up here without a reload (Friends, Leaderboards, tab focus).
+// another tab shows up here without a reload (Friends, Leaderboards, focus, every minute).
 async function accountFresh() {
   try {
     const d = await API.get("/api/account/me");
@@ -10945,7 +10987,8 @@ async function accountFresh() {
     renderAccountMenu(); applyAccountName(); syncLbPublicRow();
   } catch (e) {}
 }
-if (IS_WEB) document.addEventListener("visibilitychange", () => { if (!document.hidden && Account.known) accountFresh(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Account.known && Account.user) accountFresh(); });
+setInterval(() => { if (!document.hidden && Account.known && Account.user) accountFresh(); }, 60000);
 // Settings → Profile: "Show me on the global leaderboard" (signed in only)
 function syncLbPublicRow() {
   const row = document.getElementById("row-lb-public"), sw = document.getElementById("opt-lb-public");
@@ -11344,8 +11387,7 @@ async function renderFriends(note) {
     (sent ? `<section class="fr-sec"><h2 class="eyebrow">Sent</h2><div class="fr-list">${sent}</div></section>` : "") +
   `</div>`;
   tipInto(c.querySelector(".fr-page"), "friends");
-  const badge = document.getElementById("tbm-friends-n");
-  if (badge) { const n = (d.incoming || []).length; badge.hidden = !n; badge.textContent = String(n); }
+  _frIncoming = (d.incoming || []).map((f) => f.handle); friendsSeen();   // looked at: the dots go
   const act = async (path, body, okNote) => {
     const r = await API.post(path, body).catch(() => ({ error: "Couldn't reach onlinequiz.net." }));
     if (r && r.error) { const m = document.getElementById("fr-msg"); if (m) { m.textContent = r.error; m.classList.add("err"); } return; }
@@ -11357,7 +11399,7 @@ async function renderFriends(note) {
     if (!h) return;
     act("/api/friends/request", { handle: h }, "Request sent to @" + h + ".");
   });
-  document.getElementById("fr-copy").onclick = () => { try { navigator.clipboard.writeText(me.handle || ""); } catch (e) {} };
+  document.getElementById("fr-copy").onclick = (e) => copyWithCheck(e.currentTarget, me.handle || "");
   c.querySelectorAll("[data-fr-accept]").forEach((b) => b.onclick = () => act("/api/friends/respond", { handle: b.dataset.frAccept, accept: true }, "You and @" + b.dataset.frAccept + " are friends."));
   c.querySelectorAll("[data-fr-decline]").forEach((b) => b.onclick = () => act("/api/friends/respond", { handle: b.dataset.frDecline, accept: false }));
   c.querySelectorAll("[data-fr-remove]").forEach((b) => b.onclick = () => {

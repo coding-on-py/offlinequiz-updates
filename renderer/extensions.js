@@ -3282,7 +3282,9 @@ function __qbMain(ctx) {
       var webLink = !window.qbreader && window.QB_WEB;
       if (webLink) { var cb = body.querySelector("#mp-copy"); cb.title = "Copy room link"; cb.setAttribute("aria-label", "Copy room link"); }
       body.querySelector("#mp-copy").onclick = function () {
-        try { navigator.clipboard.writeText(webLink ? location.origin + "/multiplayer/" + encodeURIComponent(lobby) : String(lobby).toUpperCase()); } catch (e) {}
+        var text = webLink ? location.origin + "/multiplayer/" + encodeURIComponent(lobby) : String(lobby).toUpperCase();
+        if (window.qbCopyWithCheck) window.qbCopyWithCheck(this, text);   // a checkmark shows it worked
+        else { try { navigator.clipboard.writeText(text); } catch (e) {} }
       };
       body.querySelector("#mp-roomset").onclick = function () { toggleRoomSettings(); };
       body.querySelector("#mp-buzz-btn").onclick = function () { requestBuzz(); };
@@ -3533,8 +3535,27 @@ function __qbMain(ctx) {
       el.textContent = filterSummary || "All categories";
     }
 
+    // Players tab: your own name and team are edited in place (click them); another
+    // team's row has Join. The list holds still while you type (scoresEditing).
+    var scoresEditing = false, scoresDirty = false;
+    function editInPlace(btn, value, max, placeholder, commit) {
+      scoresEditing = true;
+      var inp = document.createElement("input");
+      inp.className = "mode-input mp-edit-in"; inp.value = value || ""; inp.maxLength = max; inp.placeholder = placeholder || ""; inp.setAttribute("aria-label", placeholder || "Edit");
+      btn.replaceWith(inp); inp.focus(); inp.select();
+      var done = false;
+      var finish = function (save) {
+        if (done) return; done = true; scoresEditing = false;
+        var v = inp.value.trim();
+        if (save && v !== (value || "")) commit(v);
+        scoresDirty = false; renderScores();
+      };
+      inp.addEventListener("keydown", function (e) { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); } });
+      inp.addEventListener("blur", function () { finish(true); });
+    }
     function renderScores() {
       var el = body && body.querySelector("#mp-scores"); if (!el) return;
+      if (scoresEditing) { scoresDirty = true; return; }
       var teams = {}, specs = [];
       order.forEach(function (id) {
         var p = players[id];
@@ -3546,18 +3567,31 @@ function __qbMain(ctx) {
       var row = function (p) {
         var you = p.id === myId;
         var initial = (String(p.name || "?").trim()[0] || "?").toUpperCase();
+        var nameHtml = you ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + esc(p.name) + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + esc(p.name) + "</b>";
+        var subHtml = p.off ? "offline" : p.spec ? "spectating"
+          : you ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
+          : (p.team ? "team " + esc(p.team) : (p.avatar ? esc(p.avatar) : "&nbsp;"));
         return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
-          '<span class="nm"><b>' + esc(p.name) + (you ? " (you)" : "") + "</b><span>" + (p.off ? "offline" : p.spec ? "spectating" : (p.team ? "team " + esc(p.team) : (p.avatar ? esc(p.avatar) : "&nbsp;"))) + "</span></span>" +
+          '<span class="nm">' + nameHtml + "<span>" + subHtml + "</span></span>" +
           (p.spec ? "" : '<span class="sc num">' + (p.score || 0) + "</span>") + "</div>";
       };
       var html = "";
       Object.keys(teams).sort().forEach(function (tn) {
         var roster = teams[tn].sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
-        if (tn) { var tot = roster.reduce(function (s2, p) { return s2 + (p.score || 0); }, 0); html += '<div class="mp-team-row"><span>' + esc(tn) + "</span><strong class=\"num\">" + tot + "</strong></div>"; }
+        if (tn) {
+          var tot = roster.reduce(function (s2, p) { return s2 + (p.score || 0); }, 0);
+          var me = players[myId], canJoin = me && !me.spec && (me.team || "") !== tn;
+          html += '<div class="mp-team-row"><span>' + esc(tn) + '</span><span class="mp-team-r">' + (canJoin ? '<button type="button" class="btn btn-sm mp-join-team" data-team="' + esc(tn) + '">Join</button>' : "") + '<strong class="num">' + tot + "</strong></span></div>";
+        }
         roster.forEach(function (p) { html += row(p); });
       });
       if (specs.length) { html += '<div class="eyebrow" style="margin-top:8px">Spectators</div>'; specs.forEach(function (p) { html += row(p); }); }
       el.innerHTML = html || '<div class="text-muted">—</div>';
+      var nb = el.querySelector(".mp-edit-name");
+      if (nb) nb.onclick = function () { editInPlace(nb, (players[myId] || {}).name || myName, 24, "Your name", function (v) { if (v) { changeName(v); var mi = body.querySelector("#mp-myname"); if (mi) mi.value = v; } }); };
+      var tb = el.querySelector(".mp-edit-team");
+      if (tb) tb.onclick = function () { editInPlace(tb, (players[myId] || {}).team || "", 24, "Team name (empty: no team)", function (v) { changeTeam(v); var ti = body.querySelector("#mp-myteam"); if (ti) ti.value = v; }); };
+      el.querySelectorAll(".mp-join-team").forEach(function (b) { b.onclick = function () { changeTeam(b.dataset.team); var ti = body.querySelector("#mp-myteam"); if (ti) ti.value = b.dataset.team; }; });
       syncChatScope();   // team changes can invalidate the "Team" chat scope
     }
 
@@ -3580,6 +3614,9 @@ function __qbMain(ctx) {
       var ph = body && body.querySelector("#mp-placeholder"); if (ph) ph.classList.add("hidden");
       var content = body && body.querySelector("#mp-content"); if (content) content.classList.remove("hidden");
       var meta = body && body.querySelector("#mp-meta"); if (meta) meta.textContent = "";   // category stays hidden while reading
+      // a new question starts at the top, without the room a long one before it added (app.js followReading)
+      var qa = body && body.querySelector(".question-area"); if (qa) { qa.style.minHeight = ""; qa._followKey = null; }
+      if (body && matchMedia("(max-width: 760px)").matches) body.scrollTop = 0;
       applyReveal(revealIdx);
       var buzz = body && body.querySelector("#mp-buzz"); if (buzz) { buzz.className = "buzz-area hidden"; buzz.innerHTML = ""; }
       var res = body && body.querySelector("#mp-result"); if (res) { res.className = "result-area hidden"; res.innerHTML = ""; }
@@ -3619,8 +3656,14 @@ function __qbMain(ctx) {
       // text just ahead of the reading, so the part not here yet is held by an
       // invisible stand-in of the question's full length (q.len) — the box
       // doesn't grow as the question streams in.
-      var tail = text.substring(idx).replace(/\S/g, "·");
-      if (current.len && current.len > text.length) { var pad = ""; while (pad.length < current.len - text.length) pad += "······ "; tail += pad.slice(0, current.len - text.length); }
+      // the stand-in keeps spaces and line-break characters (hyphens, dashes, slashes) so it
+      // wraps like the real text; server rooms send the whole question's shape up front
+      var tail;
+      if (typeof current.shape === "string" && current.shape.length >= idx) tail = current.shape.substring(idx);
+      else {
+        tail = text.substring(idx).replace(/[^\s\-\u2010-\u2015\/]/g, "\u00b7");
+        if (current.len && current.len > text.length) { var pad = ""; while (pad.length < current.len - text.length) pad += "······ "; tail += pad.slice(0, current.len - text.length); }
+      }
       var rest = esc(tail);
       qt.innerHTML = '<span class="revealed">' + out + "</span>" + (rest ? '<span class="unrevealed" aria-hidden="true">' + rest + "</span>" : "");
       if (!ended && window.qbFollowReading) window.qbFollowReading(qt.querySelector(".revealed"));   // long questions scroll along

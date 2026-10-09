@@ -3566,7 +3566,7 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .mp-actions { position: sticky; bottom: 0; z-index: 6; margin: 8px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
   .mp-actions .btn { flex: 1 1 0; height: 52px; padding: 0 10px; font-size: 15px; justify-content: center; }
-  .mp-room .question-area { min-height: calc(100dvh - var(--topbar-h) - 60px); }   /* the same for a room: the bar docks above Players / Chat */
+  .mp-room .question-area { min-height: calc(100dvh - var(--topbar-h)); }   /* the same for a room (room for Session history below the bar too): the bar docks above Players / Chat */
   .mp-room .question-area > .mp-actions { order: 98; margin-top: auto; }
   .mp-room .question-area > .mp-history { order: 99; }
   .ext-page-body.mp-flush:has(> .mp-room) { padding-bottom: 0; }   /* a scroller's padding keeps a sticky bar off the bottom edge */
@@ -3698,7 +3698,8 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .mp-save { cursor: pointer; color: var(--muted); font-size: 18px; margin-left: 4px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; width: 20px; height: 20px; vertical-align: middle; }
 .mp-save:hover { color: var(--accent); }
 .mp-avatar { display: inline-block; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; font-size: 11px; opacity: 0.85; margin-right: 3px; }
-.mp-borrowed .filter-section:has(#panel-buzz-timer), .mp-borrowed #sec-timing .slider-group:has(#panel-buzz-timer), .mp-borrowed #sec-timing .slider-group:has(#panel-buzz-window), .mp-borrowed #sec-timing .slider-group:has(#panel-bonus-timer) { display: none; }
+/* a room has its own answer time / buzz window (Game rules); Reading speed and Strictness stay */
+.mp-borrowed #sec-timing .slider-group:has(#panel-buzz-timer), .mp-borrowed #sec-timing .slider-group:has(#panel-buzz-window), .mp-borrowed #sec-timing .slider-group:has(#panel-bonus-timer) { display: none; }
 .mp-borrowed label:has(#filter-starred), .mp-borrowed label:has(#opt-allow-rebuzzes), .mp-borrowed label:has(#opt-stop-on-power), .mp-borrowed label:has(#opt-allow-skips) { display: none; }
 .mp-borrowed #ext-practice-section { display: none; }
 .mp-borrowed .fp-count { visibility: hidden; }
@@ -4205,3 +4206,42 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
 
 /* Settings → Sound: volume and clicks dim while sound is off */
 #ovl-sound .sound-sub.is-off { opacity: 0.45; }
+
+/* a friend request not looked at yet (friendDots): a blue dot on the avatar and on Friends in its menu */
+.tb-profile { position: relative; }
+.tb-profile.has-dot::after { content: ""; position: absolute; top: 1px; right: 1px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
+.tb-menu .pop-item.has-dot { position: relative; }
+.tb-menu .pop-item.has-dot::after { content: ""; position: absolute; left: 22px; top: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
+
+/* a room's buttons hold still while a question reads: the buzz window's countdown and hints
+   (#mp-buzz) come BELOW them (they appeared above and pushed Buzz / Pause down, then up
+   again at the end), and the category line keeps its room before it's filled in */
+.mp-room .question-area > .mp-actions { order: 1; }
+.mp-room .question-area > #mp-buzz { order: 2; }
+.mp-room .question-area > #mp-result { order: 3; }
+.mp-room .question-area > .mp-history { order: 4; }
+.mp-room #mp-content:not(.hidden) #mp-meta { min-height: 19px; }
+.mp-room .question-content { flex: 0 0 auto; }   /* it stretched to fill the room's height, so anything appearing below (the buzz countdown, the result) shrank it and pulled the buttons up */
+@media (max-width: 760px) { .mp-room .question-area > .mp-actions { order: 98; } .mp-room .question-area > .mp-history { order: 99; } }
+
+/* Players tab: your name and team edit in place; another team's row has Join */
+.mp-player .nm .mp-edit { all: unset; box-sizing: border-box; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; border-radius: 4px; }
+.mp-player .nm .mp-edit-name { color: var(--strong); font-weight: 500; }
+.mp-player .nm .mp-edit-name small { color: var(--muted); font-weight: 400; }
+.mp-player .nm .mp-edit-team { font-size: 12px; color: var(--muted); }
+.mp-player .nm .mp-edit:hover, .mp-player .nm .mp-edit:focus-visible { color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.mp-player .nm .mp-pen { margin-left: 6px; font-size: 12px; color: var(--muted); opacity: 0; transition: opacity 120ms ease; }
+.mp-player .nm .mp-edit-name:hover .mp-pen { opacity: 1; }
+@media (hover: none) { .mp-player .nm .mp-pen { opacity: 0.8; } }
+.mp-player .nm .mp-edit-in { height: 30px; padding: 0 8px; font-size: 14px; width: 100%; max-width: 260px; }
+.mp-team-row { align-items: center; }
+.mp-team-r { display: inline-flex; align-items: center; gap: 10px; }
+.mp-join-team { height: 24px; padding: 0 10px; font-size: 11px; letter-spacing: 0.04em; }
+
+/* a copy button that just copied (copyWithCheck): a green check and a small "Copied" label */
+.copied { position: relative; color: var(--green) !important; }
+.copied::after { content: attr(data-copied); position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); padding: 3px 8px; border-radius: 6px; background: var(--raised); color: var(--strong); border: 1px solid var(--line); font-size: 11px; font-weight: 600; letter-spacing: 0; white-space: nowrap; pointer-events: none; animation: qb-copied 160ms var(--ease-out); z-index: 5; }
+@keyframes qb-copied { from { opacity: 0; transform: translate(-50%, 3px); } to { opacity: 1; transform: translate(-50%, 0); } }
+/* the moment a result shows, Buzz / Pause go (syncPracticeActions polls every 200 ms — for that
+   moment they were pushed below the result and jumped) */
+#practice-screen .question-area:has(> .result-area:not(.hidden)) :is(#pa-buzz, #pa-pause) { display: none !important; }
