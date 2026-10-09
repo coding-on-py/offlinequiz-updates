@@ -346,6 +346,31 @@ export class UserData {
     return { total: all.n, today: todayN, week: wk, streak, lastActive: all.last || null };
   }
 
+  // The Streaks page: the active profile's practice per day (tz = minutes east of
+  // UTC, the viewer's own days), the current day streak (today or yesterday back)
+  // and the longest one.
+  activityDays(tz = 0, now = Date.now()) {
+    const pid = this.getActiveProfileId();
+    const off = (Number(tz) || 0) * 60000, DAY = 864e5;
+    const today = Math.floor((now + off) / DAY);
+    const rows = this.db.prepare(`SELECT CAST((timestamp + ?) / 86400000 AS INTEGER) AS d, COUNT(*) AS q,
+        SUM(CASE WHEN type = 'tossup' THEN 1 ELSE 0 END) AS tu, SUM(CASE WHEN type = 'bonus' THEN 1 ELSE 0 END) AS bo,
+        SUM(points) AS pts, SUM(CASE WHEN type = 'tossup' AND correct = 1 THEN 1 ELSE 0 END) AS cor,
+        SUM(CASE WHEN type = 'tossup' AND correct = 1 AND points >= 15 THEN 1 ELSE 0 END) AS pw,
+        SUM(CASE WHEN type = 'tossup' AND points < 0 THEN 1 ELSE 0 END) AS neg,
+        SUM(CASE WHEN type = 'bonus' THEN COALESCE(bonus_parts_correct, 0) ELSE 0 END) AS bpc
+      FROM sessions WHERE profile_id = ? GROUP BY d ORDER BY d`).all(off, pid);
+    const iso = (d) => new Date(d * DAY).toISOString().slice(0, 10);
+    let best = 0, run = 0, prev = null;
+    for (const r of rows) { run = prev != null && r.d === prev + 1 ? run + 1 : 1; best = Math.max(best, run); prev = r.d; }
+    let streak = 0;
+    if (rows.length && rows[rows.length - 1].d >= today - 1) { let want = rows[rows.length - 1].d; for (let i = rows.length - 1; i >= 0 && rows[i].d === want; i--) { streak++; want--; } }
+    return {
+      today: iso(today), streak, best,
+      days: rows.map((r) => ({ date: iso(r.d), q: r.q, tu: r.tu || 0, bo: r.bo || 0, pts: r.pts || 0, cor: r.cor || 0, pw: r.pw || 0, neg: r.neg || 0, bpc: r.bpc || 0 })),
+    };
+  }
+
   getReviewDismissedMap() {
     const pid = this.getActiveProfileId();
     let raw;

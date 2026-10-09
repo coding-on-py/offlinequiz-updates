@@ -1,5 +1,5 @@
 {
-  "version": "14.37",
+  "version": "14.38",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Phones: Buzz, Skip and Pause stay on the bottom edge of the screen (they move out of the way once you scroll down to the stats or chat), long questions scroll along as they're read, and Setup and Settings fill the screen with bigger buttons and sliders.",
+  "notes": "New Streaks page (a year of practice as blue squares — tap the streak at the top). Answered bonus parts fold up. Public multiplayer rooms you can join from the lobby. Tips float in a corner instead of moving things. Sound is off unless you turn it on in Settings → Sound. Smoother home background. Packet-file import removed.",
   "files": {
-    "renderer/index.html": "4036ca1f9e9eebcf5da643f20d1e9b83262e355b1fc77160d4e0f1613a20ce0c",
-    "renderer/style.css": "2ce6ea7092e764819c7098ab15c17aa3b9180d86da2ff1d3cfde6ed4f17c205a",
+    "renderer/index.html": "e2db6820b42d27d8f629df9d2316abca8df757cbaf24582b34adca6fe9af41a6",
+    "renderer/style.css": "1da45c8d067a47b4a181ac89707bce6603d40de6eb5f8da832f6abe9ce571e29",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "dc4f8b0663e705c7c74a44fb74c51f1dd84e26b8f8fe03b22819b038b6386bee",
-    "renderer/app.js": "2d7afa05551f825cdde4cdf2934eb0e77017eb8710467d6275b0e69930294b34",
+    "renderer/extensions.js": "fd55bcd43e95cef1bd8c3e0e1b1c29426dcd8961dce6923fcaad43057788e24d",
+    "renderer/app.js": "6322c58e340747194aaee0aa5329c3ec3101128a241dddde88d4ab0075e1b15c",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "CkwOCTJItzsE3zxDeC+LVkVNZ24mA3APv2d1xuWwGb5smq689AaYxczoIpGFFlNCGaKmTu4h65bLwqHTCBesBg=="
+  "signature": "ZnxOt+WBPQc9eTQ6gfWcHpnimwaNdrxzKGTkY48ZbWIn8mgS0E9mu7Xv8v7FSF3ImleE82If/Yw7B5c7eOVDCg=="
 }

@@ -707,6 +707,11 @@ export class App {
   }
 
   // categories per session in the CURRENT tree (rows store the old labels)
+  // the Streaks page: practice per day in the viewer's time zone, the streaks
+  getActivity(tz) {
+    return this.userData.activityDays(Number(tz) || 0);
+  }
+
   getSessionList() {
     const list = this.userData.getSessionList();
     try {

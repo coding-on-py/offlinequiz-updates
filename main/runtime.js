@@ -343,6 +343,8 @@ export async function start(env) {
       return { ok: true };
     });
 
+    ipcMain.handle("get-activity", (_e, { tz }) => qbApp.getActivity(tz));
+
     ipcMain.handle("get-stats", (_e, { sessionId, since, categoryIds }) => {
       if (sessionId) {
         return { stats: qbApp.getSessionStats(sessionId) };

@@ -70,6 +70,7 @@ const API = isElectron
         if (path === "/api/starred") return window.qbreader.getStarred(q.type);
         if (path === "/api/starred/check") return window.qbreader.checkStarred(q.questionId, q.type);
         if (path === "/api/stats") return window.qbreader.getStats(q.sessionId, q.since, q.categoryIds || null);
+        if (path === "/api/activity") return window.qbreader.getActivity ? window.qbreader.getActivity(Number(q.tz) || 0) : Promise.reject(new Error("update the app"));
         if (path === "/api/sessions") return window.qbreader.getSessions();
         if (path === "/api/sessions/breakdown") return window.qbreader.getSessionBreakdown(q.category, q.difficulty, q.categoryIds || null);
         if (path === "/api/sessions/entries") return window.qbreader.getSessionEntries(q.sessionId);
@@ -468,7 +469,7 @@ function updateKeyLabels() {
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
   if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
-  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"]]
+  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-streaks-home"]]
     .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
@@ -836,6 +837,7 @@ function goTo(target) {
     case "download": showScreen("download"); renderDownload(); break;
     case "friends": showScreen("friends"); renderFriends(); break;
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
+    case "streaks": showScreen("streaks"); renderStreaks(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -853,7 +855,7 @@ document.addEventListener("click", (e) => {
 // move between pages, and the tab title names the page. server.js answers these
 // paths with the app's page (WEB_PAGE_PATHS). The desktop app (file://) has none.
 const WEB_PATHS = { tossups: "practice-tossups", bonuses: "practice-bonuses", multiplayer: "multiplayer", search: "db-search", sets: "db-sets",
-  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards" };
+  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks" };
 let _webRouting = false;
 // the address of what is on screen now (null: leave the address alone)
 function webPathNow() {
@@ -868,6 +870,7 @@ function webPathNow() {
     case "player-screen": return "/profile";
     case "friends-screen": return "/friends";
     case "leaderboards-screen": return "/leaderboards";
+    case "streaks-screen": return "/streaks";
     case "download-screen": return "/download";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
   }
@@ -920,7 +923,7 @@ if (IS_WEB) {
 (function wireTopbar() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener("click", fn);
   on("tb-brand", () => { closeSetupDrawer(); if (!document.querySelector("#title-screen.active")) goHome(); });
-  on("tb-streak", () => goTo("stats"));
+  on("tb-streak", () => goTo("streaks"));
   on("tb-plugins", () => goTo("plugins"));
   on("tb-scheme", () => toggleScheme());
   document.getElementById("opt-light-mode")?.addEventListener("change", (e) => { if (e.target.checked !== (uiScheme() === "light")) toggleScheme(); });
@@ -976,44 +979,128 @@ function renderStreak(n) {
   const lbl = b.querySelector(".lbl"); if (lbl) lbl.textContent = n === 1 ? "day" : "days";
 }
 
-// ── home background: real power-marked tossups drifting upward, each with
-//    one to three buzz marks in three player colours and its answer line ──
-let _homeBgState = 0;   // 0 never, 1 loading, 2 done
-async function ensureHomeBg() {
-  if (_homeBgState) return;
-  _homeBgState = 1;
-  const host = document.getElementById("home-bg");
-  if (!host) return;
-  // A random narrow slice (one difficulty, a few years) keeps the random pick
-  // on the filter index: ~0.1s instead of seconds over every powermarked tossup.
-  let rows = [];
-  for (let attempt = 0; attempt < 3 && rows.length < 24; attempt++) {
-    const d = 2 + Math.floor(Math.random() * 6), y0 = 2010 + Math.floor(Math.random() * 12);
-    try {
-      const r = await API.get(`/api/tossups/query?powermarkOnly=true&cleanOnly=1&random=1&limit=40&difficulties=${d}&yearMin=${y0}&yearMax=${y0 + 4}`);
-      rows = rows.concat((r && r.rows) || []);
-    } catch (e) { break; }
-  }
-  const cards = [];
-  for (const q of rows) {
-    const raw = String(q.question_sanitized || "");
-    const i = raw.indexOf("(*)");
-    if (i < 40 || raw.indexOf("(*)", i + 3) >= 0 || raw.length < 260 || raw.length > 680) continue;
-    if (/\b(note to|moderator|do not read|read slowly)\b/i.test(raw)) continue;
-    let ans = "";
-    try { ans = apPrimary(q.answer || "", q.answer_sanitized || ""); } catch (e) { ans = ""; }
-    if (!ans) ans = primaryAnswerText(q.answer_sanitized || "");
-    if (!ans || ans.length > 40) continue;
-    cards.push(homeBgCardHtml(raw.slice(0, i).trim(), raw.slice(i + 3).trim(), ans));
-    if (cards.length >= 24) break;
-  }
-  if (!cards.length) { _homeBgState = 2; return; }
-  const cols = [[], [], [], []];
-  cards.forEach((c, k) => cols[k % 4].push(c));
-  const durs = [96, 122, 106, 134];
-  host.innerHTML = cols.map((c, k) => `<div class="home-track" style="--dur:${durs[k]}s">${c.join("")}${c.join("")}</div>`).join("");
-  _homeBgState = 2;
+// ── home background: real power-marked tossups rising up the home in columns,
+//    each with one to three buzz marks in three player colours and its answer
+//    line. A live stream, not a fixed loop: each column adds a card below once
+//    its last one rises into view (so any window size or zoom is filled — the
+//    number of columns follows the width too) and drops the card that left the
+//    top. Fresh questions come from the server in batches; a shown one waits in
+//    the pool (newest HB_KEEP), so with the connection gone — or the server
+//    unreachable — the stream just loops what it has. The pool is kept in
+//    localStorage, so the home fills at once even before (or without) a fetch.
+const HB = { fresh: [], pool: [], live: new Set(), cols: [], n: 0, fetching: false, failAt: 0, raf: 0, last: 0, check: 0 };
+const HB_LS = "qb-home-bg", HB_KEEP = 180;
+function homeBgLoadSaved() {
+  try { const a = JSON.parse(lsGet(HB_LS) || "[]"); if (Array.isArray(a)) HB.pool = a.filter((c) => c && c.id && c.pre && c.ans).sort(() => Math.random() - 0.5); } catch (e) {}
 }
+function homeBgSave() {
+  try { lsSet(HB_LS, JSON.stringify([...HB.fresh, ...HB.pool].slice(-HB_KEEP))); } catch (e) {}
+}
+function homeBgCard(q) {
+  const raw = String(q.question_sanitized || "");
+  const i = raw.indexOf("(*)");
+  if (i < 40 || raw.indexOf("(*)", i + 3) >= 0 || raw.length < 260 || raw.length > 680) return null;
+  if (/\b(note to|moderator|do not read|read slowly)\b/i.test(raw)) return null;
+  let ans = "";
+  try { ans = apPrimary(q.answer || "", q.answer_sanitized || ""); } catch (e) { ans = ""; }
+  if (!ans) ans = primaryAnswerText(q.answer_sanitized || "");
+  if (!ans || ans.length > 40) return null;
+  return { id: String(q.id), pre: raw.slice(0, i).trim(), post: raw.slice(i + 3).trim(), ans };
+}
+// a batch of fresh cards; a random narrow slice (one difficulty, a few years)
+// keeps each random pick on the filter index (~0.1 s, not seconds)
+async function homeBgFetch(slices) {
+  if (HB.fetching || (HB.failAt && Date.now() - HB.failAt < 30e3)) return;
+  HB.fetching = true;
+  try {
+    const got = await Promise.all(Array.from({ length: slices }, () => {
+      const d = 2 + Math.floor(Math.random() * 6), y0 = 2010 + Math.floor(Math.random() * 12);
+      return API.get(`/api/tossups/query?powermarkOnly=true&cleanOnly=1&random=1&limit=50&difficulties=${d}&yearMin=${y0}&yearMax=${y0 + 4}`).then((r) => (r && r.rows) || []);
+    }));
+    const have = new Set([...HB.fresh, ...HB.pool].map((c) => c.id).concat([...HB.live]));
+    for (const q of got.flat()) { const c = homeBgCard(q); if (c && !have.has(c.id)) { have.add(c.id); HB.fresh.push(c); } }
+    HB.failAt = 0;
+    homeBgSave();
+  } catch (e) { HB.failAt = Date.now(); }
+  HB.fetching = false;
+}
+window.addEventListener("online", () => { HB.failAt = 0; });
+// the next card for a column: a fresh one first, else the oldest shown one not on screen now
+function homeBgNext() {
+  if (HB.fresh.length < 30) homeBgFetch(2);
+  let c = HB.fresh.shift();
+  if (!c) {
+    for (let k = 0; k < HB.pool.length; k++) { const x = HB.pool.shift(); if (!HB.live.has(x.id)) { c = x; break; } HB.pool.push(x); }
+  }
+  if (!c) return null;
+  HB.live.add(c.id);
+  return c;
+}
+function homeBgRetire(c) {
+  HB.live.delete(c.id);
+  HB.pool.push(c);
+  if (HB.pool.length > HB_KEEP) HB.pool.splice(0, HB.pool.length - HB_KEEP);   // online, older shown ones make room for fresh ones
+}
+function homeBgAppend(col) {
+  const c = homeBgNext(); if (!c) return false;
+  const tmp = document.createElement("div"); tmp.innerHTML = homeBgCardHtml(c.pre, c.post, c.ans);
+  const el = tmp.firstElementChild; el._hb = c;
+  col.el.appendChild(el);
+  return true;
+}
+// columns for this width; each filled to below the bottom edge, staggered
+function homeBgLayout() {
+  const host = document.getElementById("home-bg"); if (!host || !host.clientWidth) return;
+  const n = Math.max(2, Math.min(10, Math.round(host.clientWidth / 310)));
+  if (n !== HB.n) {
+    for (const col of HB.cols) for (const el of col.el.children) if (el._hb) homeBgRetire(el._hb);
+    host.innerHTML = "";
+    host.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))`;
+    HB.cols = Array.from({ length: n }, (_, k) => {
+      const el = document.createElement("div"); el.className = "home-track"; host.appendChild(el);
+      return { el, y: 120 + Math.random() * 260, speed: 11 + ((k * 7) % 5) + Math.random() * 2 };
+    });
+    HB.n = n;
+  }
+  homeBgFill();
+}
+// drop cards that left the top, add cards until the column runs past the bottom (reads layout: not every frame)
+function homeBgFill() {
+  const host = document.getElementById("home-bg"); if (!host) return;
+  const H = host.clientHeight;
+  for (const col of HB.cols) {
+    // a card that left the top goes; the column moves down by exactly what it took up (to the
+    // next card's top, sub-pixel), in the same frame — nothing on screen shifts
+    let first = col.el.firstElementChild;
+    while (first && first.nextElementSibling) {
+      const step = first.nextElementSibling.getBoundingClientRect().top - first.getBoundingClientRect().top;
+      if (step >= col.y - 8) break;
+      col.y -= step; if (first._hb) homeBgRetire(first._hb); first.remove(); first = col.el.firstElementChild;
+    }
+    for (let k = 0; k < 12 && col.el.scrollHeight - col.y < H + 260; k++) if (!homeBgAppend(col)) break;
+    col.el.style.transform = `translate3d(0, ${-col.y}px, 0)`;
+  }
+}
+function homeBgTick(t) {
+  HB.raf = 0;
+  if (!document.querySelector("#title-screen.active") || document.hidden) return;   // resumes when the home shows again
+  const dt = HB.last ? Math.min(0.1, (t - HB.last) / 1000) : 0; HB.last = t;
+  for (const col of HB.cols) { col.y += col.speed * dt; col.el.style.transform = `translate3d(0, ${-col.y}px, 0)`; }
+  if (t - HB.check > 400) { HB.check = t; homeBgFill(); }
+  HB.raf = requestAnimationFrame(homeBgTick);
+}
+async function ensureHomeBg() {
+  const host = document.getElementById("home-bg"); if (!host) return;
+  host.classList.add("live");
+  if (!HB.pool.length && !HB.fresh.length && !HB.live.size) homeBgLoadSaved();
+  if (!HB.pool.length && !HB.fresh.length && !HB.live.size) await homeBgFetch(4);   // the first visit: a big batch
+  else if (HB.fresh.length < 30) homeBgFetch(3);
+  homeBgLayout();
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (!HB.raf) { HB.last = 0; HB.raf = requestAnimationFrame(homeBgTick); }
+}
+window.addEventListener("resize", () => { if (HB.n) homeBgLayout(); });   // zoom changes the width too
+document.addEventListener("visibilitychange", () => { if (!document.hidden && HB.n && document.querySelector("#title-screen.active")) ensureHomeBg(); });
 function homeBgCardHtml(pre, post, ans) {
   const words = (pre + " \u00b6 " + post).split(/\s+/);
   const n = words.length;
@@ -1089,7 +1176,7 @@ function refreshDrawerCount() {
     const el = document.getElementById("fp-count");
     if (!el || !isSetupDrawerOpen()) return;
     const mv = $("#mode-select")?.value;
-    if (mv === "set" || mv === "import" || mv === "custom") { el.textContent = ""; return; }
+    if (mv === "set" || mv === "custom") { el.textContent = ""; return; }
     const seq = ++_drawerCountSeq;
     const f = getActiveFilters({ real: true, allUnits: true });
     const type = filtersMode();
@@ -1194,6 +1281,7 @@ function showSettingsSection(sec) {
   panes.forEach((p) => p.classList.toggle("on", p.dataset.pane === sec));
   if (sec === "tags") renderTagSettings();
   if (sec === "hotkeys") renderHotkeySettings();
+  if (sec === "sound") syncSoundControls();
   if (sec === "profile") { const n = document.getElementById("set-username"); if (n) n.value = state.username || ""; }
   if (sec === "appearance") { const tn = document.getElementById("set-theme-name"); if (tn) tn.textContent = activeTheme()?.name || "Default"; }
   const body = document.getElementById("set-body"); if (body) body.scrollTop = 0;
@@ -1246,6 +1334,30 @@ function refreshDom() {
 }
 
 
+// Settings → Sound (this device, localStorage "qb-sound"): off unless turned on;
+// a volume, and the tick on button presses. Every sound — plugins' included
+// (ctx.host.playSound) — goes through _beep, so this one gate covers them all.
+const SOUND_LS = "qb-sound";
+function soundPrefs() {
+  if (soundPrefs._c) return soundPrefs._c;
+  let p = {}; try { p = JSON.parse(lsGet(SOUND_LS) || "{}") || {}; } catch (e) {}
+  return (soundPrefs._c = { on: p.on === true, vol: Math.max(10, Math.min(100, Number(p.vol) || 70)), clicks: p.clicks !== false });
+}
+function setSoundPrefs(ch) { const p = { ...soundPrefs(), ...ch }; soundPrefs._c = p; lsSet(SOUND_LS, JSON.stringify(p)); syncSoundControls(); }
+function syncSoundControls() {
+  const p = soundPrefs(), on = document.getElementById("opt-sound"), v = document.getElementById("opt-sound-volume"), vl = document.getElementById("opt-sound-volume-val"), ck = document.getElementById("opt-sound-clicks");
+  if (on) on.checked = p.on;
+  if (v) { v.value = String(p.vol); try { v.style.setProperty("--pct", ((p.vol - 10) / 90) * 100 + "%"); } catch (e) {} }
+  if (vl) vl.textContent = p.vol + "%";
+  if (ck) ck.checked = p.clicks;
+  document.querySelectorAll("#ovl-sound .sound-sub").forEach((r) => r.classList.toggle("is-off", !p.on));
+}
+document.getElementById("opt-sound")?.addEventListener("change", (e) => { setSoundPrefs({ on: e.target.checked }); if (e.target.checked) Sound.correct(); });
+document.getElementById("opt-sound-volume")?.addEventListener("input", (e) => setSoundPrefs({ vol: parseInt(e.target.value, 10) || 70 }));
+document.getElementById("opt-sound-volume")?.addEventListener("change", () => Sound.correct());
+document.getElementById("opt-sound-clicks")?.addEventListener("change", (e) => setSoundPrefs({ clicks: e.target.checked }));
+syncSoundControls();
+
 const Sound = {
   _ctx: null,
   _init() {
@@ -1254,6 +1366,9 @@ const Sound = {
     }
   },
   _beep(freq, len, type = "square", vol = 0.08) {
+    const p = soundPrefs();
+    if (!p.on) return;
+    vol *= p.vol / 70;   // 70 % is the sounds' own level
     this._init();
     if (!this._ctx) return;
     const o = this._ctx.createOscillator();
@@ -1277,7 +1392,7 @@ const Sound = {
   toggle() { if (this._recentClick()) return; this._beep(700, 0.04, "triangle", 0.05); },
   pause()  { this._beep(400, 0.05, "triangle", 0.03); },
   achievement(){ this._beep(660, 0.08, "sine", 0.06); setTimeout(() => this._beep(880, 0.08, "sine", 0.06), 90); setTimeout(() => this._beep(1320, 0.18, "sine", 0.07), 180); },
-  click()  { this._beep(620, 0.02, "square", 0.022); },
+  click()  { if (soundPrefs().clicks) this._beep(620, 0.02, "square", 0.022); },
 };
 
 (function initGlobalClickSound() {
@@ -1495,6 +1610,7 @@ function showScreen(name, opts) {
     // everywhere immediately, not only after a restart.
     renderGreeting();
     ensureHomeBg();
+    streakNow().then(renderStreak).catch(() => {});   // the day streak, with whatever was just practiced
   }
   updateTopbar();
   qbEmit("screen:change", { name, back });
@@ -1616,9 +1732,10 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  if (matchesHotkey(e, "text-bigger")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) + 0.05); return; }
-  if (matchesHotkey(e, "text-smaller")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) - 0.05); return; }
-  if (matchesHotkey(e, "text-reset")) { e.preventDefault(); setUiScale(1); return; }
+  // the website leaves Cmd+= / Cmd+- / Cmd+0 to the browser's own zoom
+  if (!IS_WEB && matchesHotkey(e, "text-bigger")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) + 0.05); return; }
+  if (!IS_WEB && matchesHotkey(e, "text-smaller")) { e.preventDefault(); setUiScale((state.settings.uiScale || 1) - 0.05); return; }
+  if (!IS_WEB && matchesHotkey(e, "text-reset")) { e.preventDefault(); setUiScale(1); return; }
 
   // ANSWERING BLOCKS EVERY HOTKEY. Focus alone was not enough: buzzing focuses
   // the input 50ms later and clicking the question text drops focus to the
@@ -1811,13 +1928,13 @@ applyTheme();
   // hotkey re-renders the icon away under the pointer, no mouseout ever fires
   // for it, and the tip used to stay up on every screen after.
   document.addEventListener("mouseover", (e) => {
-    const icon = e.target.closest?.(".qb-info");
+    const icon = e.target.closest?.(".qb-info, .stk-cell[data-tip]");   // ⓘs, and the Streaks page's days
     if (!icon || !icon.dataset.tip) { hideTip(); return; }
     clearTimeout(tipTimer);
     tipTimer = setTimeout(() => showTip(icon), 120);
   });
   document.addEventListener("mouseout", (e) => {
-    if (e.target.closest?.(".qb-info")) hideTip();
+    if (e.target.closest?.(".qb-info, .stk-cell[data-tip]")) hideTip();
   });
   document.addEventListener("scroll", hideTip, true);
   // hotkeys re-render what the tip points at. WINDOW capture, registered before
@@ -1849,7 +1966,7 @@ async function _maybeIdleUpdateReminder() {
 setInterval(_maybeIdleUpdateReminder, 60 * 1000);
 
 {
-  const z = parseFloat(lsGet("qb-ui-scale") || "1");
+  const z = IS_WEB ? 1 : parseFloat(lsGet("qb-ui-scale") || "1");   // the website: the browser's zoom only
   if (z && z !== 1) { state.settings.uiScale = z; _applyUiScale(z); }
 }
 
@@ -1877,8 +1994,7 @@ async function initTitle() {
   renderTopbarProfile();
   ensureHomeBg();
   try {
-    const sd = await API.get("/api/stats");
-    renderStreak(computeDailyStreak(sd.stats?.questionsByDate));
+    renderStreak(await streakNow());
   } catch {}
   refreshReviewBadge();
 }
@@ -2703,6 +2819,7 @@ async function _applySnapshotInner(snap, gen) {
     state.settings.useWeights = !!snap.useWeights;
     $("#category-filters")?.classList.toggle("weights-on", !!snap.useWeights);
   }
+  if (snap.mode === "import") snap = { ...snap, mode: "random" };   // packet files are gone (14.38)
   if (snap.mode != null && snap.mode !== "custom") {
     const ms = $("#mode-select");
     if (ms && ms.value !== snap.mode) { ms.value = snap.mode; _syncSel(ms); try { updateModeFields(); } catch {} }
@@ -2770,11 +2887,9 @@ async function loadSets() {
 function updateModeFields() {
   const modeVal = $("#mode-select")?.value;
   const isSet = modeVal === "set";
-  const isImport = modeVal === "import";
   $("#set-mode-fields")?.classList.toggle("hidden", !isSet);
-  $("#import-mode-fields")?.classList.toggle("hidden", !isImport);
   state._gameSig = null;
-  const packetMode = isSet || isImport;
+  const packetMode = isSet;
   const isCustom = modeVal === "custom";
   const msEl = $("#mode-select");
   if (msEl) msEl.disabled = isCustom;   // QBSelect follows the attribute
@@ -2898,25 +3013,6 @@ $("#mode-select")?.addEventListener("change", () => {
   }
   updateModeFields(); debounceSaveFilters();
 });
-$("#import-packet-btn")?.addEventListener("click", () => $("#import-packet-file")?.click());
-$("#import-packet-file")?.addEventListener("change", async (e) => {
-  const file = e.target.files && e.target.files[0];
-  e.target.value = "";
-  if (!file) return;
-  const status = $("#import-packet-status");
-  try {
-    const data = JSON.parse(await file.text());
-    const tossups = Array.isArray(data.tossups) ? data.tossups : [];
-    const bonuses = Array.isArray(data.bonuses) ? data.bonuses : [];
-    if (!tossups.length && !bonuses.length) throw new Error("no questions");
-    state._importedPacket = { name: data.name || file.name.replace(/\.json$/i, ""), tossups, bonuses };
-    state._gameSig = null;
-    if (status) status.textContent = state._importedPacket.name + " — " + tossups.length + " TU · " + bonuses.length + " B";
-  } catch {
-    state._importedPacket = null;
-    if (status) status.textContent = "Couldn't read that file — export one from Packet Builder.";
-  }
-});
 $("#mode-set-name")?.addEventListener("change", () => { state._gameSig = null; loadSetPackets(); debounceSaveFilters(); });
 $("#mode-packet")?.addEventListener("change", () => { state._gameSig = null; validatePacketInput(); debounceSaveFilters(); });
 $("#mode-packet")?.addEventListener("input", debounceSaveFilters);
@@ -2928,7 +3024,6 @@ function getActiveFilters(opts) {
   const cv = _customView;
   if (cv && !(opts && opts.real)) return { random: true };
   const modeVal = cv ? cv.prevMode : $("#mode-select")?.value;
-  if (modeVal === "import") return { random: true };
   if (modeVal === "set") {
     const setName = $("#mode-set-name")?.value || "";
     const f = { random: true };
@@ -3137,7 +3232,7 @@ document.addEventListener("click", (e) => {
 // Function declarations only: updateModeFields runs from earlier call sites.
 function isPacketModeSelected() {
   const v = $("#mode-select")?.value;
-  return v === "set" || v === "import" || v === "custom";
+  return v === "set" || v === "custom";
 }
 function isCatOverlayOpen() {
   const o = document.getElementById("cat-ovl");
@@ -3608,7 +3703,7 @@ function CategoryButton(btn, opts) {
   return api;
 }
 // Custom lists, sets and packet files decide their own questions.
-function categoriesLocked() { return ["custom", "set", "import"].includes($("#mode-select")?.value); }
+function categoriesLocked() { return ["custom", "set"].includes($("#mode-select")?.value); }
 // The launcher summarizes the selection ("All", up to two names + N, or "Set by
 // the mode" when locked) and keeps the tree's weights class in sync.
 function refreshCategorySummary() {
@@ -4134,7 +4229,7 @@ async function nextQuestion() {
   }
 
   const _mv = $("#mode-select")?.value;
-  if (_mv === "import" || _mv === "set") { await serveOrdered(); return; }
+  if (_mv === "set") { await serveOrdered(); return; }
 
   restoreTossupDisplay();
 
@@ -4252,7 +4347,7 @@ function _randomQuestionParams(filters) {
 function _prefetchEligible() {
   const mv = $("#mode-select")?.value;
   return state.sessionActive && !state.reviewIds && !state.bonusIds && !state._wantBonus &&
-    mv !== "import" && mv !== "set" && mv !== "custom" &&
+    mv !== "set" && mv !== "custom" &&
     !$("#filter-starred")?.checked &&
     (state.mode === "tossups" || state.mode === "bonuses") &&
     (!state._practiceBase || state._practiceBase === state.mode);   // not the bonus-after-correct interlude
@@ -4365,15 +4460,7 @@ async function ensureOrderedQueue() {
   const wantBonuses = state._practiceBase === "bonuses";
   const modeVal = $("#mode-select")?.value;
   let sig, tossups = null, bonuses = null;
-  if (modeVal === "import") {
-    const pk = state._importedPacket;
-    if (!pk) return { error: "Choose a packet file in MODE first (export one from Packet Builder)." };
-    sig = "import::" + pk.name + "::" + (wantBonuses ? "b" : "t");
-    if (state._gameSig !== sig) {
-      tossups = (pk.tossups || []).slice();
-      bonuses = (pk.bonuses || []).slice();
-    }
-  } else {
+  {
     const setName = $("#mode-set-name")?.value || "";
     if (!setName) return { error: "Pick a set name in MODE first." };
     const packets = parsePacketNumbers($("#mode-packet")?.value);
@@ -4699,6 +4786,7 @@ async function renderBonus(q) {
     $(`#bonus-text-${i}`).textContent = partText;
     $(`#bonus-input-${i}`).value = "";
     $(`#bonus-part-${i}`).classList.add("hidden");
+    $(`#bonus-part-${i}`).classList.remove("bp-done", "bp-collapsed");
     $(`#bonus-input-${i}`).disabled = true;
     $(`#bonus-part-${i}`)?.querySelector(".bonus-input")?.classList.remove("hidden");
     const ansEl = $(`#bonus-answer-${i}`);
@@ -4760,25 +4848,29 @@ function followReading(el, key, block) {
   // a new question drops the room a previous one added (below)
   const qa = el.closest(".question-area");
   key = String(key != null ? key : el.textContent.slice(0, 40));
-  if (qa && qa._followKey !== key) { qa._followKey = key; qa.style.minHeight = ""; }
+  if (qa && qa._followKey !== key) { qa._followKey = key; qa.style.minHeight = ""; followReading._target = null; }
   const rects = el.getClientRects(); if (!rects.length) return;
   let sc = el.parentElement;
   while (sc && sc !== document.body) { const o = getComputedStyle(sc).overflowY; if ((o === "auto" || o === "scroll") && sc.scrollHeight > sc.clientHeight) break; sc = sc.parentElement; }
   if (!sc || sc === document.body) return;
-  const now = performance.now();
   const box = sc.getBoundingClientRect(), first = rects[0], last = rects[rects.length - 1];
+  // a smooth scroll still on its way counts as done (fast reading outran it)
+  const pending = followReading._sc === sc && followReading._target != null ? Math.max(0, followReading._target - sc.scrollTop) : 0;
   let limit = box.bottom - 8;
   for (const bar of sc.querySelectorAll(".practice-actions, .mp-actions")) { const r = bar.getBoundingClientRect(); if (r.height && r.top < limit && r.bottom >= box.bottom - 2) limit = r.top - 8; }
+  const tip = document.querySelector("#qb-tip-dock .qb-tip:not([hidden])");   // a tip floating over the bottom counts too
+  if (tip) { const r = tip.getBoundingClientRect(), er = el.getBoundingClientRect(); if (r.height && r.top < limit && r.left < er.right && r.right > er.left) limit = r.top - 8; }
   const lh = parseFloat(getComputedStyle(el.parentElement).lineHeight) || last.height || 24;
-  const over = last.bottom - limit;
+  const over = last.bottom - pending - limit;
   let d = 0;
-  if (block) { if (over > 0) d = Math.min(over + 16, first.top - box.top - 12); }
-  else if (now >= (followReading._until || 0) && over > 0 && over < lh * 4) { d = over + lh * 3; followReading._until = now + 400; }
+  if (block) { if (over > 0) d = Math.min(over + 16, first.top - pending - box.top - 12); }
+  else if (over > 0 && over < lh * 4) d = over + lh * 3;
   if (d <= 0) return;
   // the question area grows by as much, so a bar pinned to the bottom (sticky, its last
   // item) stays pinned instead of docking mid-screen with the stats showing under it
   if (qa) qa.style.minHeight = Math.ceil(qa.getBoundingClientRect().height + d) + "px";
-  sc.scrollBy({ top: d, behavior: "smooth" });
+  followReading._sc = sc; followReading._target = sc.scrollTop + pending + d;
+  sc.scrollTo({ top: followReading._target, behavior: "smooth" });
 }
 window.qbFollowReading = followReading;
 function syncPracticeActions() {
@@ -4816,6 +4908,7 @@ function advanceBonusPart() {
 }
 
 function startBonusPart(idx) {
+  for (let j = 0; j < idx; j++) if ($(`#bonus-part-${j}`)?.classList.contains("bp-done")) bonusPartCollapse(j, true);
   $(`#bonus-part-${idx}`)?.classList.remove("hidden");
   if (matchMedia("(max-width: 760px)").matches) followReading($(`#bonus-part-${idx}`), state.currentQuestion && state.currentQuestion.id, true);   // phones: the new part, above the bottom bar
   const inp = $(`#bonus-input-${idx}`);
@@ -4907,6 +5000,23 @@ function promptBonusPart(idx, firstAnswer, r) {
   if (t > 0) startEventTimer(t, "Part " + (idx + 1), () => bonusPartTimeUp(idx));
 }
 
+// An answered part folds to one line — its letter, your answer, ✓ / ✗ — once the
+// next part starts; a tap opens it again (and its header folds it back).
+const bpMark = (k) => `<span class="bp-mark ${k}" aria-label="${k === "correct" ? "right" : k === "unsure" ? "unsure" : "wrong"}">${k === "correct" ? "✓" : k === "unsure" ? "?" : "✗"}</span>`;
+function bonusPartDone(idx) {
+  const part = $(`#bonus-part-${idx}`); if (!part) return;
+  part.classList.add("bp-done");
+  const h = part.querySelector(".bonus-part-header");
+  if (h && !h.querySelector(".collapse-chevron")) h.insertAdjacentHTML("beforeend", '<span class="collapse-chevron" aria-hidden="true"></span>');
+}
+function bonusPartCollapse(idx, on) { $(`#bonus-part-${idx}`)?.classList.toggle("bp-collapsed", !!on); }
+document.addEventListener("click", (e) => {
+  const part = e.target.closest?.("#bonus-parts-area .bonus-part.bp-done");
+  if (!part || e.target.closest(".bonus-verdict, .qb-info, a, input")) return;
+  if (part.classList.contains("bp-collapsed")) part.classList.remove("bp-collapsed");
+  else if (e.target.closest(".bonus-part-header")) part.classList.add("bp-collapsed");
+});
+
 async function revealBonusPartAnswer(idx) {
   const el = $(`#bonus-answer-${idx}`);
   if (!el) return;
@@ -4919,17 +5029,19 @@ async function revealBonusPartAnswer(idx) {
   $(`#bonus-part-${idx}`)?.querySelector(".bonus-prompt-banner")?.remove();
   const from = (state._bonusPromptFrom || [])[idx];
   const given = userAns ? escapeHtml(userAns) : '<span class="text-muted">(no answer)</span>';
-  const yourLine = `<div class="bonus-your-answer">Your Answer: <strong>${from ? escapeHtml(from) + " → " + given : given}</strong></div>`;
-  const show = (verdict) => { el.innerHTML = `${yourLine}<div>${verdict}ANSWER: <span class="bonus-answer-text">${answerLineHtml(rawAns, ans)}</span></div>`; el.classList.remove("hidden"); };
+  // .bp-mark repeats the verdict next to your answer: all a collapsed part shows (bonusPartCollapse)
+  const yourLine = (mark) => `<div class="bonus-your-answer">Your Answer: <strong>${from ? escapeHtml(from) + " → " + given : given}</strong>${mark || '<span class="bp-mark"></span>'}</div>`;
+  const show = (verdict, mark) => { el.innerHTML = `${yourLine(mark)}<div class="bp-ans-line">${verdict}ANSWER: <span class="bonus-answer-text">${answerLineHtml(rawAns, ans)}</span></div>`; el.classList.remove("hidden"); };
+  bonusPartDone(idx);
   show("");
-  let verdict = '<span class="bonus-verdict incorrect">✗ </span>';
+  let verdict = '<span class="bonus-verdict incorrect">✗ </span>', mark = bpMark("incorrect");
   if (userAns) {
     // A prompt left standing after the prompt round is not an accept.
     const r = await judgeBonusPart(idx, userAns);
-    if (r && r.status === "accept") verdict = '<span class="bonus-verdict correct">✓ </span>';
-    else if (r && r.unsure) verdict = '<span class="bonus-verdict unsure">? </span><span class="qb-info bonus-unsure-tip" data-tip="This answer line accepts equivalents and your answer matched none of the listed ones. Click ? to mark it correct.">i</span> ';
+    if (r && r.status === "accept") { verdict = '<span class="bonus-verdict correct">✓ </span>'; mark = bpMark("correct"); }
+    else if (r && r.unsure) { verdict = '<span class="bonus-verdict unsure">? </span><span class="qb-info bonus-unsure-tip" data-tip="This answer line accepts equivalents and your answer matched none of the listed ones. Click ? to mark it correct.">i</span> '; mark = bpMark("unsure"); }
   }
-  show(verdict);
+  show(verdict, mark);
 }
 
 async function submitBonusAnswers() {
@@ -5498,7 +5610,7 @@ function displayTossupResult(result, userAnswer) {
     state._wantBonus = true;
     state._bonusFromQ = state.currentQuestion;
     const _mv = $("#mode-select")?.value;
-    state._pendingPairedBonus = (_mv === "import" || _mv === "set") ? (state._currentPaired || null) : null;
+    state._pendingPairedBonus = _mv === "set" ? (state._currentPaired || null) : null;
     _primePairBonus();
   }
 
@@ -6350,7 +6462,7 @@ function toggleResultOverride(markCorrect) {
       state._wantBonus = true;
       state._bonusFromQ = state.currentQuestion;
       const _mv = $("#mode-select")?.value;
-      state._pendingPairedBonus = (_mv === "import" || _mv === "set") ? (state._currentPaired || null) : null;
+      state._pendingPairedBonus = _mv === "set" ? (state._currentPaired || null) : null;
       _primePairBonus();
     } else if (!markCorrect && wasCorrect) {
       state._wantBonus = false;
@@ -6444,6 +6556,7 @@ async function applyBonusOverride(idx, force) {
   const holder = $("#bonus-answer-" + idx);
   const vs = holder && holder.querySelector(".bonus-verdict");
   if (vs) { vs.className = "bonus-verdict " + (next ? "correct" : "incorrect"); vs.textContent = next ? "✓ " : "✗ "; }
+  const mk = holder && holder.querySelector(".bp-mark"); if (mk) mk.outerHTML = bpMark(next ? "correct" : "incorrect");
   holder?.querySelector(".bonus-unsure-tip")?.remove();
 
   // banner
@@ -6956,6 +7069,7 @@ $("#btn-ext-home")?.addEventListener("click", goBack);
 $("#btn-download-home")?.addEventListener("click", goBack);
 $("#btn-friends-home")?.addEventListener("click", goBack);
 $("#btn-leaderboards-home")?.addEventListener("click", goBack);
+$("#btn-streaks-home")?.addEventListener("click", goBack);
 
 function renderResultPanels(resultCtx) {
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
@@ -8339,6 +8453,7 @@ function renderHotkeySettings() {
 
   let html = '<table class="stats-table"><thead><tr><th>Action</th><th>Where</th><th>Binding</th></tr></thead><tbody>';
   for (const { action, label } of actions) {
+    if (IS_WEB && /^text-(bigger|smaller|reset)$/.test(action)) continue;   // the browser's zoom on the website
     const binding = getHotkey(action) || "Not Set";
     const isRebinding = state.hotkeyRebinding === action;
     const conflict = (binding !== "Not Set" && !!bindingConflict(action, binding)) || state._hotkeyError === action;
@@ -10474,14 +10589,7 @@ function init() {
         }
         return true;
       },
-      getImportedPacket: () => state._importedPacket
-        ? {
-            ...state._importedPacket,
-            // "both" mirrors the solo bonus-after-correct pairing rule so
-            // multiplayer can interleave imported bonuses too.
-            mode: state.settings.bonusAfter && (state._importedPacket.bonuses || []).length ? "both" : "tu",
-          }
-        : null,
+      getImportedPacket: () => null,   // packet files were removed (14.38); kept for older plugins
       // path = the category-tree prefix an achievement counts within (cat kept for older plugins)
       getAchievementList: () => ACHIEVEMENT_LIST.map((a) => { const cat = a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined); return { ...a, cat, path: a.path || cat || undefined }; }),
       // Open the app's own session-history overlay over a supplied list, so a
@@ -10944,12 +11052,13 @@ const TIPS = {
   "freq": "Click any answer to see every question that answers it. Categories and Tossups / Bonuses / Both change the list.",
   "sets": "Open a set to read its packets in order — or play a whole set from Setup → Mode.",
   "setup": "Your setup is remembered. Tags narrow the questions further (an era, a place…), and Categories can be weighted.",
-  "practice-keys": TOUCH ? "Use the buttons under the question to buzz, skip and pause." : "Space buzzes, S skips, P pauses and N moves on — or click the buttons under the question.",
+  "practice-keys": TOUCH ? "Use the buttons along the bottom to buzz, skip and pause." : "Space buzzes, S skips, P pauses and N moves on — or click the buttons under the question.",
   "stats": "Click a session to see every question in it. Categories narrows all of these numbers.",
   "mp-lobby": IS_WEB ? "Type a room code to join, or leave it empty for a new room. In a room, the copy button copies its link — friends open it to join." : "Type a room code to join, or leave it empty for a new room — then share the code with friends.",
   "store": "Get adds a plugin and turns it on; switch it off or on any time, here or under Manage.",
   "friends": "Share your username — friends add you by it. The board shows everyone's last 7 days.",
   "leaderboards": "Make your own leaderboard with + New leaderboard and invite friends to race each week.",
+  "streaks": "Each square is a day — the bluer it is, the more you practiced. Tap one to see that day.",
   "cat-presets": "Save the categories you picked as a preset (the bookmark row at the bottom) to switch back in one click.",
 };
 const _TIPS_LS = "qb-tips";
@@ -10957,15 +11066,162 @@ function _tipsMap() { try { return JSON.parse(localStorage.getItem(_TIPS_LS) || 
 function tipSeen(id) { return !!_tipsMap()[id]; }
 function tipDone(id) { const m = _tipsMap(); m[id] = Date.now(); try { localStorage.setItem(_TIPS_LS, JSON.stringify(m)); } catch (e) {} }
 // put tip `id` into `container` before `ref` (default: at the top), once
+// Tips float in a corner dock (#qb-tip-dock: bottom-left; on phones along the
+// bottom, lifted over any bar or footer there) — never inside the page, so they
+// move nothing. Each belongs to its feature's element (container) and shows only
+// while that is on screen (and not under someone else's dialog); one at a time,
+// the newest. ref is kept for plugins that pass it (no longer used).
+function tipDock() {
+  let d = document.getElementById("qb-tip-dock");
+  if (!d) { d = document.createElement("div"); d.id = "qb-tip-dock"; d.setAttribute("aria-live", "polite"); document.body.appendChild(d); }
+  return d;
+}
 function tipInto(container, id, text, ref) {
   if (!container || !(id in TIPS || text) || tipSeen(id)) return null;
-  if (container.querySelector(`:scope > .qb-tip[data-tip-id="${id}"]`)) return null;
-  const el = document.createElement("div");
-  el.className = "qb-tip"; el.dataset.tipId = id; el.setAttribute("role", "note");
+  const dock = tipDock();
+  let el = dock.querySelector(`.qb-tip[data-tip-id="${id}"]`);
+  if (el) { el._owner = container; tipSync(); return el; }   // re-rendered: the same tip follows the new element
+  el = document.createElement("div");
+  el.className = "qb-tip"; el.dataset.tipId = id; el.setAttribute("role", "note"); el.hidden = true;
   el.innerHTML = `<span class="qb-tip-ico">${ic("bulb", 18)}</span><div class="qb-tip-body"><b>Tip</b><p>${escapeHtml(text || TIPS[id])}</p></div><button type="button" class="qb-tip-x" aria-label="Close tip" title="Close">×</button>`;
-  el.querySelector(".qb-tip-x").addEventListener("click", (e) => { e.stopPropagation(); tipDone(id); animateRemove(el); });
-  container.insertBefore(el, ref && ref.parentNode === container ? ref : container.firstChild);
+  el.querySelector(".qb-tip-x").addEventListener("click", (e) => { e.stopPropagation(); tipDone(id); animateRemove(el); setTimeout(tipSync, 200); });
+  el._owner = container;
+  dock.appendChild(el);
+  tipSync();
   return el;
+}
+const tipOwnerShown = (o) => {
+  if (!o || !o.isConnected || !o.getClientRects().length) return false;
+  const st = getComputedStyle(o); if (st.visibility === "hidden") return false;
+  // a dialog on top: only its own tips
+  const ovl = [...document.querySelectorAll(".qb-overlay:not(.hidden), .settings-ovl:not(.hidden)")].filter((x) => x.getClientRects().length).pop();
+  if (ovl && !ovl.contains(o)) return false;
+  const panel = document.querySelector(".filters-panel.open");
+  if (panel && !panel.contains(o) && matchMedia("(max-width: 760px)").matches) return false;   // phones: Setup covers the page
+  return true;
+};
+function tipSync() {
+  const dock = document.getElementById("qb-tip-dock"); if (!dock) return;
+  const tips = [...dock.querySelectorAll(".qb-tip:not(.qb-leaving)")];
+  for (const t of tips) if (!t._owner || !t._owner.isConnected) t.remove();   // its page re-renders it when it comes back
+  const live = [...dock.querySelectorAll(".qb-tip:not(.qb-leaving)")];
+  const show = live.filter((t) => tipOwnerShown(t._owner)).pop() || null;
+  for (const t of live) if ((t === show) === t.hidden) t.hidden = t !== show;
+  if (!show) return;
+  // stay clear of what's along the bottom: the practice / room bar, Setup's footer, a dialog's footer
+  const W = innerWidth, H = innerHeight, phone = matchMedia("(max-width: 760px)").matches;
+  const left = phone ? 12 : 16, right = phone ? W - 12 : Math.min(W - 16, 16 + 360);
+  let lift = 0;
+  for (const b of document.querySelectorAll(".practice-actions, .mp-actions, .filters-panel.open .fp-foot, .qb-overlay:not(.hidden) .modal-foot, .cat-modal .cp-foot")) {
+    const r = b.getBoundingClientRect();
+    if (!r.height || r.bottom < H - 140 || r.right < left || r.left > right) continue;
+    lift = Math.max(lift, H - r.top + 8);
+  }
+  dock.style.setProperty("--tip-lift", lift + "px");
+}
+setInterval(tipSync, 400);
+window.addEventListener("resize", tipSync);
+
+// ── Streaks ──
+// A year of practice as squares, one per day (bluer = more questions), this
+// week's days, the current and longest day streak; tap a day for its numbers.
+// Days are the viewer's own (/api/activity?tz=, userData.activityDays).
+const _stk = { range: "year", sel: null, data: null };
+const STK_DAY = 864e5;
+const stkUtc = (iso) => Date.parse(iso + "T00:00:00Z");
+const stkIso = (t) => new Date(t).toISOString().slice(0, 10);
+const STK_FLAME = '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>';
+const stkFlame = (n) => `<svg viewBox="0 0 24 24" width="${n}" height="${n}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STK_FLAME}</svg>`;
+async function fetchActivity() {
+  return API.get("/api/activity?tz=" + (-new Date().getTimezoneOffset()));
+}
+// the top bar's day streak: the viewer's own days; an older backend falls back to the stats count
+async function streakNow() {
+  try { const d = await fetchActivity(); if (d && typeof d.streak === "number") return d.streak; } catch (e) {}
+  try { const sd = await API.get("/api/stats"); return computeDailyStreak(sd.stats?.questionsByDate); } catch (e) { return 0; }
+}
+async function renderStreaks() {
+  const c = document.getElementById("streaks-container"); if (!c) return;
+  if (needsAccount()) { c.innerHTML = '<div class="stk-page">' + accountPanelHtml("Sign in to keep your streak and see the days you practiced.") + "</div>"; return; }
+  if (!c.querySelector(".stk-page")) c.innerHTML = loadingBarHtml("Loading your activity…");
+  let d = null;
+  try { d = await fetchActivity(); } catch (e) { d = null; }
+  if (!d || !Array.isArray(d.days)) { c.innerHTML = '<div class="db-empty">Couldn\'t load your activity.</div>'; return; }
+  _stk.data = d;
+  if (!_stk.sel) _stk.sel = d.today;
+  renderStreak(d.streak);
+  paintStreaks(c);
+}
+function paintStreaks(c) {
+  const d = _stk.data, byDate = new Map(d.days.map((x) => [x.date, x]));
+  const today = stkUtc(d.today), dow = (t) => new Date(t).getUTCDay();
+  const years = [...new Set(d.days.map((x) => x.date.slice(0, 4)))].sort().reverse();
+  if (_stk.range !== "year" && !years.includes(_stk.range)) _stk.range = "year";
+  // the range: the past year (53 weeks to today) or one calendar year, Sunday-first weeks
+  let from, to;
+  if (_stk.range === "year") { to = today; from = today - dow(today) * STK_DAY - 52 * 7 * STK_DAY; }
+  else { const y = +_stk.range; from = Date.UTC(y, 0, 1); to = Math.min(Date.UTC(y, 11, 31), today); from -= dow(from) * STK_DAY; }
+  const inRange = d.days.filter((x) => { const t = stkUtc(x.date); return t >= from && t <= to; });
+  const max = Math.max(1, ...inRange.map((x) => x.q));
+  const level = (q) => !q ? 0 : Math.max(1, Math.min(4, Math.ceil((4 * q) / max)));
+  const fmtDay = (t, long) => new Date(t).toLocaleDateString(undefined, long ? { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" } : { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const plural = (n, w) => n.toLocaleString() + " " + (n === 1 ? w : w === "bonus" ? "bonuses" : w + "s");
+  // the squares, one column per week
+  let cells = "", months = "", lastMonth = -1, col = 0;
+  const cols = Math.floor((to - from) / (7 * STK_DAY)) + 1;
+  for (let w = from; w <= to; w += 7 * STK_DAY, col++) {
+    let label = "";
+    for (let k = 0; k < 7; k++) {
+      const t = w + k * STK_DAY, iso = stkIso(t);
+      if (t > to) { cells += '<span class="stk-cell stk-void"></span>'; continue; }
+      // a month's name over the first week starting in it (the first column too, given room before the next)
+      if (k === 0) { const m = new Date(t).getUTCMonth(), dt = new Date(t).getUTCDate(); if (col < cols - 2 && ((dt <= 7 && m !== lastMonth) || (col === 0 && dt <= 14))) { label = new Date(t).toLocaleDateString(undefined, { month: "short", timeZone: "UTC" }); lastMonth = m; } }
+      const x = byDate.get(iso), q = x ? x.q : 0;
+      cells += `<button type="button" class="stk-cell l${level(q)}${iso === d.today ? " stk-today" : ""}${iso === _stk.sel ? " stk-sel" : ""}" data-day="${iso}" data-tip="${escapeHtml(fmtDay(t) + ": " + (q ? plural(q, "question") : "no practice"))}" aria-label="${escapeHtml(fmtDay(t) + ", " + (q ? plural(q, "question") : "no practice"))}"></button>`;
+    }
+    months += `<span class="stk-mon">${label}</span>`;
+  }
+  // this week, Duolingo style: a flame on each day you practiced
+  const wk0 = today - dow(today) * STK_DAY;
+  const week = Array.from({ length: 7 }, (_, k) => {
+    const t = wk0 + k * STK_DAY, x = byDate.get(stkIso(t)), future = t > today;
+    const name = new Date(t).toLocaleDateString(undefined, { weekday: "narrow", timeZone: "UTC" });
+    return `<span class="stk-wd${x ? " on" : ""}${t === today ? " now" : ""}${future ? " future" : ""}"><small>${name}</small><span class="stk-dot">${x ? stkFlame(16) : ""}</span></span>`;
+  }).join("");
+  const practicedToday = byDate.has(d.today);
+  const sub = d.streak ? (practicedToday ? "You practiced today — see you tomorrow." : "Practice today to keep it going.") : "Answer a question to start one.";
+  const qIn = inRange.reduce((a, x) => a + x.q, 0);
+  const rangeName = _stk.range === "year" ? "in the past year" : "in " + _stk.range;
+  const ranges = years.length ? `<div class="seg stk-ranges" role="group" aria-label="Range">${[["year", "Past year"], ...years.map((y) => [y, y])].map(([k, l]) => `<button type="button" data-stk-range="${k}" aria-pressed="${_stk.range === k}">${l}</button>`).join("")}</div>` : "";
+  // the picked day's numbers
+  const sx = byDate.get(_stk.sel);
+  const stat = (n, l) => `<span class="fr-stat"><b class="num">${n}</b><small>${l}</small></span>`;
+  const dayBox = `<div class="stk-day"><b>${escapeHtml(fmtDay(stkUtc(_stk.sel), true))}</b>` + (sx
+    ? `<div class="stk-day-stats">${stat(sx.q.toLocaleString(), sx.q === 1 ? "question" : "questions")}${stat(sx.pts.toLocaleString(), "points")}` +
+      (sx.tu ? stat(Math.round((100 * sx.cor) / sx.tu) + "%", "tossups right") + stat(sx.pw, sx.pw === 1 ? "power" : "powers") + stat(sx.neg, sx.neg === 1 ? "neg" : "negs") : "") +
+      (sx.bo ? stat(sx.bpc, "bonus parts") : "") + `</div><small class="stk-day-mix">${plural(sx.tu, "tossup")} · ${plural(sx.bo, "bonus")}</small>`
+    : `<p>${_stk.sel === d.today ? "Nothing yet today." : "No practice this day."}</p>`) + "</div>";
+  const wdLbl = ["", "Mon", "", "Wed", "", "Fri", ""].map((x) => `<span>${x}</span>`).join("");
+  c.innerHTML = `<div class="stk-page">
+    <div class="stk-cards">
+      <div class="fr-card stk-now${d.streak ? " lit" : ""}"><div class="stk-big">${stkFlame(30)}<span><b class="num">${d.streak}</b> ${d.streak === 1 ? "day" : "days"}</span></div><small>Current streak · ${escapeHtml(sub)}</small><div class="stk-week" aria-label="This week">${week}</div></div>
+      <div class="fr-card stk-stat"><b class="num">${d.best}</b><small>best streak</small></div>
+      <div class="fr-card stk-stat"><b class="num">${inRange.length.toLocaleString()}</b><small>days practiced</small></div>
+      <div class="fr-card stk-stat"><b class="num">${qIn.toLocaleString()}</b><small>questions</small></div>
+    </div>
+    <div class="fr-card stk-chart">
+      <div class="stk-chart-head"><h2>${plural(qIn, "question")} ${rangeName}</h2>${ranges}</div>
+      <div class="stk-cal"><div class="stk-wdl" aria-hidden="true">${wdLbl}</div><div class="stk-scroll"><div class="stk-months" aria-hidden="true">${months}</div><div class="stk-grid">${cells}</div></div></div>
+      <div class="stk-legend"><span>Less</span>${[0, 1, 2, 3, 4].map((l) => `<span class="stk-cell l${l}"></span>`).join("")}<span>More</span></div>
+      ${dayBox}
+    </div>
+  </div>`;
+  // the weekday names line up with the rows (the squares size to the width)
+  const cell = c.querySelector(".stk-grid .stk-cell"); if (cell) c.querySelector(".stk-cal").style.setProperty("--stk-c", cell.getBoundingClientRect().height + "px");
+  const sc = c.querySelector(".stk-scroll"); if (sc) sc.scrollLeft = sc.scrollWidth;   // phones: the latest weeks in view
+  c.querySelectorAll("[data-stk-range]").forEach((b) => b.onclick = () => { _stk.range = b.dataset.stkRange; paintStreaks(c); });
+  c.querySelector(".stk-grid")?.addEventListener("click", (e) => { const b = e.target.closest("[data-day]"); if (!b) return; const keep = sc ? sc.scrollLeft : 0; _stk.sel = b.dataset.day; paintStreaks(c); const s2 = c.querySelector(".stk-scroll"); if (s2) s2.scrollLeft = keep; });
+  tipInto(c.querySelector(".stk-page"), "streaks", null, c.querySelector(".stk-cards"));
 }
 
 // ── Leaderboards ──

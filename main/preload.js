@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld("qbreader", {
     ipcRenderer.invoke("check-starred", { questionId, type }),
 
   getStats: (sessionId, since, categoryIds) => ipcRenderer.invoke("get-stats", { sessionId, since, categoryIds }),
+  getActivity: (tz) => ipcRenderer.invoke("get-activity", { tz }),
 
   getSessions: () => ipcRenderer.invoke("get-sessions"),
 

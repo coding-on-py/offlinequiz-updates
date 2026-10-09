@@ -1892,6 +1892,7 @@ function __qbMain(ctx) {
     var DEFAULT_RELAY = "https://offlinequiz-mp-relay.warren2028045.workers.dev";
     var serverMode = false;
     function relayUrl() { return DEFAULT_RELAY; }
+    var pubTimer = null;   // the lobby's Public rooms refresh
     function gameServerUrl() { try { return localStorage.getItem("qb-mp-server") || GAME_SERVER; } catch (e) { return GAME_SERVER; } }
     var lobby = "", myName = "", body = null, page = null;
     var mySpec = false;  // joined as spectator (watch + chat, no buzzing)
@@ -2186,7 +2187,7 @@ function __qbMain(ctx) {
     }
 
     // ── join ──
-    var ROOM_DEFAULTS = { answerSeconds: 10, buzzWindow: 10, rebuzz: false, bonusEvery: false, stopPower: false, allowSkips: true, locked: false };
+    var ROOM_DEFAULTS = { answerSeconds: 10, buzzWindow: 10, rebuzz: false, bonusEvery: false, stopPower: false, allowSkips: true, locked: false, public: true };
     // While in a room the app must not reload itself (it switches to a newly
     // downloaded question database only when nothing is busy).
     function markBusy(on) { try { if (ctx.host && ctx.host.setBusy) ctx.host.setBusy("multiplayer", on); } catch (e) {} }
@@ -2433,23 +2434,6 @@ function __qbMain(ctx) {
       return setQueue[setIndex++];
     }
 
-    // MODE > "Imported packet file" → serve the file's tossups in order; with
-    // "TU + bonus" each tossup carries its same-index bonus.
-    var impIndex = 0, impSig = "";
-    function nextImportQuestion() {
-      var pk = (ctx.host && ctx.host.getImportedPacket) ? ctx.host.getImportedPacket() : null;
-      if (!pk) { setStatus("Choose a packet file in MODE first (export one from Packet Builder)."); return null; }
-      if (!pk.tossups.length) { setStatus("That packet file has no tossups."); return null; }
-      var sig = pk.name + "::" + pk.mode + "::" + pk.tossups.length + "/" + pk.bonuses.length;
-      if (sig !== impSig) { impSig = sig; impIndex = 0; }
-      if (impIndex >= pk.tossups.length) { setStatus("Imported packet finished \u2014 no more tossups."); sysChat("Imported packet finished."); return null; }
-      var i = impIndex++;
-      var q = Object.assign({}, pk.tossups[i]);
-      if (pk.mode === "both" && pk.bonuses[i]) q._mpBonus = pk.bonuses[i];
-      filterSummary = "Imported packet: " + pk.name + " (TU " + (i + 1) + "/" + pk.tossups.length + (pk.mode === "both" ? ", with bonuses" : "") + ")";
-      return q;
-    }
-
     // Any player may advance: after a question ends it's a plain "next"; mid-
     // question it's a SKIP and only allowed when skips are on (host included).
     function requestNext() {
@@ -2490,10 +2474,7 @@ function __qbMain(ctx) {
         if (roomConfig && wEl && wEl.checked && mode === "random" && !(f.setNames && f.setNames.length) && ctx.host && ctx.host.getPracticeConfig) {
           try { f = ctx.host.getPracticeConfig().filters || f; curFilters = f; } catch (e2) {}
         }
-        if (mode === "import") {
-          q = nextImportQuestion();                // imported packet file
-          if (!q) return;                          // status already set
-        } else if (f.setNames && f.setNames.length) {
+        if (f.setNames && f.setNames.length) {
           q = await nextSetQuestion(f);           // ordered set mode
           if (!q) return;                          // status already set
         } else {
@@ -2540,7 +2521,6 @@ function __qbMain(ctx) {
     }
     function mpPrefetchNext(f) {
       if (!isHost) return;
-      if (realMode() === "import") return;                   // ordered local queue
       if (f && f.setNames && f.setNames.length) return;      // ordered local queue
       var wt = weightedOn();
       if (wt && ctx.host && ctx.host.getPracticeConfig) {
@@ -2940,7 +2920,7 @@ function __qbMain(ctx) {
       if (!paused && !pendingBuzzer && !ended) beginReveal();
     }
     function describeSetting(key, val) {
-      var label = key === "answerSeconds" ? "Answer Time" : key === "buzzWindow" ? "Buzz Window" : key === "rebuzz" ? "Rebuzzes" : key === "bonusEvery" ? "Bonus after every question" : key === "stopPower" ? "Stop on power" : key === "allowSkips" ? "Skips" : key === "locked" ? "Room lock" : key;
+      var label = key === "answerSeconds" ? "Answer Time" : key === "buzzWindow" ? "Buzz Window" : key === "rebuzz" ? "Rebuzzes" : key === "bonusEvery" ? "Bonus after every question" : key === "stopPower" ? "Stop on power" : key === "allowSkips" ? "Skips" : key === "locked" ? "Room lock" : key === "public" ? "Public room" : key;
       return "changed " + label + " to " + val;
     }
 
@@ -3131,6 +3111,7 @@ function __qbMain(ctx) {
             '<button type="button" class="btn btn-lg btn-go" id="mp-join">Join/Create Room</button>' +
           "</section>" +
           '<div class="mp-status" id="mp-status"></div>' +
+          '<section class="mp-recent mp-public" id="mp-public-rooms" hidden><h2 class="eyebrow">Public rooms <span class="qb-info" data-tip="Rooms whose players left them public (Room settings → Public room). Pick one to join.">i</span></h2><div class="list" id="mp-public-list"></div></section>' +
           (recent.length ? '<section class="mp-recent"><h2 class="eyebrow">Recent rooms</h2><div class="list">' + recent.map(function (r) {
             return '<button type="button" class="list-row clickable mp-recent-row" data-code="' + esc(r.code) + '"><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + '</b><span class="mp-rwho">' + esc(r.players ? r.players + (r.players === 1 ? " player" : " players") : "") + (r.host ? " · you hosted" : "") + '</span><span class="mp-rwhen">' + esc(whenLabel(r.at)) + '</span><span class="mp-rjoin">Rejoin ›</span></button>';
           }).join("") + "</div></section>" : "") +
@@ -3150,6 +3131,25 @@ function __qbMain(ctx) {
         join();
       };
       joinBtn.onclick = goTyped;
+      // the game server's public rooms, refreshed while this form shows
+      var loadPublic = function () {
+        var sec = body && body.querySelector("#mp-public-rooms");
+        if (!sec) { clearInterval(pubTimer); pubTimer = null; return; }
+        var base = gameServerUrl();
+        if (!base || base === "off") return;
+        fetch(base.replace(/\/$/, "") + "/lobby/_rooms", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+          if (!d || !Array.isArray(d.rooms) || !body || !body.contains(sec)) return;
+          sec.hidden = false;
+          var list = sec.querySelector("#mp-public-list");
+          list.innerHTML = d.rooms.length ? d.rooms.map(function (r) {
+            var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - r.names.length) : "");
+            var state = (r.players === 1 ? "1 player" : r.players + " players") + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.questions ? " · Q" + r.questions : " · waiting");
+            return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
+          }).join("") : '<p class="mp-pub-empty">No public rooms right now — leave the code empty and press Join/Create Room to start one.</p>';
+          list.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
+        }).catch(function () {});
+      };
+      clearInterval(pubTimer); pubTimer = setInterval(loadPublic, 5000); loadPublic();
       try { if (ctx.host && ctx.host.tip) ctx.host.tip(body.querySelector(".mp-lobby"), "mp-lobby"); } catch (e) {}
       body.querySelectorAll(".mp-recent-row").forEach(function (r) { r.onclick = function () { go(r.dataset.code); }; });
     }
@@ -3202,6 +3202,8 @@ function __qbMain(ctx) {
         '<label class="checkbox-row" title="After every correct tossup, the winner answers a random bonus"><input type="checkbox" id="mp-bonusevery" ' + (settings.bonusEvery ? "checked" : "") + "> Bonus after every question</label>" +
         '<label class="checkbox-row"><input type="checkbox" id="mp-stoppow"' + (settings.stopPower ? " checked" : "") + "> Stop on power</label>" +
         '<label class="checkbox-row"><input type="checkbox" id="mp-skips"' + (settings.allowSkips !== false ? " checked" : "") + "> Allow skips</label>" +
+        // public rooms are listed in everyone's lobby (game server rooms only — the relay has no list)
+        (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-public"' + (settings.public !== false ? " checked" : "") + '> Public room</label><span class="qb-info" data-tip="Listed under Public rooms for everyone who opens Multiplayer, so anyone can join. Off: only people with the code or link.">i</span></span>' : "") +
         '<label class="checkbox-row" title="When on, new players cannot join this lobby"><input type="checkbox" id="mp-lock"' + (settings.locked ? " checked" : "") + "> Lock room</label>" +
         "</div>";
     }
@@ -3359,6 +3361,8 @@ function __qbMain(ctx) {
       if (sk2) sk2.addEventListener("change", function (e) { changeSetting("allowSkips", e.target.checked); });
       var lk = body.querySelector("#mp-lock");
       if (lk) lk.addEventListener("change", function (e) { changeSetting("locked", e.target.checked); });
+      var pub = body.querySelector("#mp-public");
+      if (pub) pub.addEventListener("change", function (e) { changeSetting("public", e.target.checked); });
       var nx = body.querySelector("#mp-next"); if (nx) nx.onclick = function () { requestNext(); };
     }
 
@@ -3492,7 +3496,6 @@ function __qbMain(ctx) {
         c.weighted = weightedOn();
         c.hideNotes = st.hideNotes !== false;
         if (st.hidePronunciations) c.hidePron = true;
-        if (c.mode === "import") { try { c.importPacket = (ctx.host && ctx.host.getImportedPacket && ctx.host.getImportedPacket()) || null; } catch (e) { c.importPacket = null; } }
       }
       return c;
     }
@@ -3568,6 +3571,7 @@ function __qbMain(ctx) {
       var sp3 = body.querySelector("#mp-stoppow"); if (sp3) sp3.checked = !!settings.stopPower;
       var sk3 = body.querySelector("#mp-skips"); if (sk3) sk3.checked = settings.allowSkips !== false;
       var lk3 = body.querySelector("#mp-lock"); if (lk3) lk3.checked = !!settings.locked;
+      var pb3 = body.querySelector("#mp-public"); if (pb3) pb3.checked = settings.public !== false;
     }
 
     function renderQuestion() {

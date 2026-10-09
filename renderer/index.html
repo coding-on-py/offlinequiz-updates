@@ -43,6 +43,7 @@
           <div class="pop right tb-menu" id="tb-profile-menu" role="menu" aria-label="Profile" hidden>
             <div class="tbm-head"><span class="avatar" id="tbm-avatar">?</span><span class="tbm-who"><b id="tbm-name">Player</b></span></div>
             <button type="button" class="pop-item" role="menuitem" id="tbm-profile" data-go="player"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="6"/><path d="M8.6 13.9L7 22l5-3 5 3-1.6-8.1"/></svg>Profile</button>
+            <button type="button" class="pop-item" role="menuitem" id="tbm-streaks" data-go="streaks"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>Streaks</button>
             <button type="button" class="pop-item" role="menuitem" id="tbm-friends" data-go="friends" hidden><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 15c2 .7 3.2 2.3 3.8 5"/></svg>Friends<span class="badge tbm-badge" id="tbm-friends-n" hidden></span></button>
             <button type="button" class="pop-item" role="menuitem" id="tbm-account" disabled aria-disabled="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-4 4.2-6 8-6s6.8 2 8 6"/></svg>Account<span class="soon">Soon</span></button>
           </div>
@@ -86,7 +87,7 @@
         <section class="hcard home-dl web-only" aria-labelledby="h-dl">
           <div class="home-dl-text">
             <h2 id="h-dl"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>OfflineQuiz</h2>
-            <p>Our free quizbowl practice app. Read more than 187,000 tossups and 159,000 bonuses from 700 sets word by word, buzz in and get your answer checked instantly. Same features as the website, but all entirely local and offline. <span class="qb-info" data-tip="Multiplayer requires an internet connection.">i</span></p>
+            <p>Our free quizbowl practice app. Read more than 187,000 tossups and 159,000 bonuses from 700 sets word by word, buzz in and get your answer checked instantly. Same features as the website, but all entirely local and <span class="nowrap">offline.<span class="qb-info dl-info" data-tip="Multiplayer requires an internet connection.">i</span></span></p>
           </div>
           <button type="button" class="btn btn-lg btn-primary" data-go="download"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 20h16"/></svg>Download our app</button>
         </section>
@@ -120,7 +121,6 @@
               <select id="mode-select" class="mode-input">
                 <option value="random">Random questions</option>
                 <option value="set">Select set by name</option>
-                <option value="import">Imported packet file</option>
               </select>
               <div id="set-mode-fields" class="hidden">
                 <label class="mode-field"><span>Set name</span>
@@ -129,11 +129,6 @@
                 <label class="mode-field"><span>Packet #</span>
                   <input type="text" id="mode-packet" class="mode-input" placeholder="1-24, 3" autocomplete="off">
                 </label>
-              </div>
-              <div id="import-mode-fields" class="hidden">
-                <button type="button" class="btn btn-sm" id="import-packet-btn">Choose packet file…</button>
-                <input type="file" id="import-packet-file" accept=".json,application/json" class="hidden">
-                <div class="text-muted" id="import-packet-status" style="font-size:12px">No packet loaded</div>
               </div>
             </div>
           </div>
@@ -389,6 +384,18 @@
       <div class="lb-container" id="lb-container"></div>
     </div>
 
+    <div id="streaks-screen" class="screen">
+      <div class="top-bar page-head">
+        <div class="top-bar-left">
+          <span class="top-bar-title">Streaks</span>
+        </div>
+        <div class="top-bar-right">
+          <button class="btn btn-ghost" id="btn-streaks-home">Back</button>
+        </div>
+      </div>
+      <div class="stk-container" id="streaks-container"></div>
+    </div>
+
     <div id="friends-screen" class="screen">
       <div class="top-bar page-head">
         <div class="top-bar-left">
@@ -436,6 +443,7 @@
             <button type="button" class="set-nav-btn" data-sec="review">Review</button>
             <button type="button" class="set-nav-btn" data-sec="tags">Tags</button>
             <button type="button" class="set-nav-btn" data-sec="appearance">Appearance</button>
+            <button type="button" class="set-nav-btn" data-sec="sound">Sound</button>
             <button type="button" class="set-nav-btn" data-sec="hotkeys">Hotkeys</button>
             <button type="button" class="set-nav-btn" data-sec="plugins" id="set-nav-plugins">Plugins</button>
             <button type="button" class="set-nav-btn" data-sec="updates">Updates</button>
@@ -587,6 +595,21 @@
               </div>
             </section>
 
+            <section class="set-pane" data-pane="sound" id="ovl-sound">
+              <h3>Sound</h3>
+              <div class="setting-row">
+                <span class="setting-label">Sound effects<span class="qb-info" data-tip="Short beeps for buzzing, right and wrong answers, powers, stars and achievements. Off unless you turn them on.">i</span></span>
+                <input type="checkbox" class="switch" id="opt-sound">
+              </div>
+              <div class="setting-row sound-sub">
+                <span class="setting-label">Volume</span>
+                <div class="slider-group"><input type="range" id="opt-sound-volume" min="10" max="100" step="5" value="70" aria-label="Volume"><span class="slider-value" id="opt-sound-volume-val">70%</span></div>
+              </div>
+              <div class="setting-row sound-sub">
+                <span class="setting-label">Button clicks<span class="qb-info" data-tip="A soft tick whenever you press a button.">i</span></span>
+                <input type="checkbox" class="switch" id="opt-sound-clicks" checked>
+              </div>
+            </section>
             <section class="set-pane" data-pane="hotkeys" id="ovl-hotkeys">
               <h3>Hotkeys</h3>
               <div class="hotkey-section">
