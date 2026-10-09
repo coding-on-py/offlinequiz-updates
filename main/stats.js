@@ -1,3 +1,8 @@
+// A question the player skipped (Skip / S) — saved with the answer "(skipped)", or an
+// older row index.js recognised (e.skipped) — counts as heard, never as a miss: it's
+// left out of accuracy, bonus conversion and points per bonus.
+export const isSkipped = (e) => !!e && (e.skipped === true || e.given_answer === "(skipped)");
+
 export function computeStats(entries) {
   if (!entries || entries.length === 0) {
     return emptyStats();
@@ -5,6 +10,8 @@ export function computeStats(entries) {
 
   const tossups = entries.filter((e) => e.type === "tossup");
   const bonuses = entries.filter((e) => e.type === "bonus");
+  const tuAnswered = tossups.filter((e) => !isSkipped(e)).length;
+  const bonusesPlayed = bonuses.filter((e) => !isSkipped(e));
 
   const stats = {
     totalQuestions: entries.length,
@@ -19,7 +26,9 @@ export function computeStats(entries) {
     bonusTotalPoints: 0,
     bonusPartsCorrect: 0,
     // bonuses have 1-9 parts (entries carry part_count when resolved; 3 before)
-    bonusPartsTotal: bonuses.reduce((a, b) => a + (b.part_count != null ? b.part_count : 3), 0),
+    bonusPartsTotal: bonusesPlayed.reduce((a, b) => a + (b.part_count != null ? b.part_count : 3), 0),
+    tossupsSkipped: tossups.length - tuAnswered,
+    bonusesSkipped: bonuses.length - bonusesPlayed.length,
     bonusConversion: 0,
     bonusDist: { 0: 0, 10: 0, 20: 0, 30: 0 },
     totalBonusPoints: 0,
@@ -90,11 +99,11 @@ export function computeStats(entries) {
     addToDateStats(stats.questionsByDate, b);
   }
 
-  stats.tossupAccuracy = tossups.length > 0 ? tossupCorrect / tossups.length : 0;
+  stats.tossupAccuracy = tuAnswered > 0 ? tossupCorrect / tuAnswered : 0;
   stats.tossupsCorrect = tossupCorrect;
   stats.tossupTotalPoints = stats.totalTossupPoints;
 
-  stats.bonusConversion = bonuses.length > 0 ? bonusTotalPts / bonuses.length : 0;
+  stats.bonusConversion = bonusesPlayed.length > 0 ? bonusTotalPts / bonusesPlayed.length : 0;
   stats.bonusTotalPoints = stats.totalBonusPoints;
 
   stats.totalPoints = stats.totalTossupPoints + stats.totalBonusPoints;
@@ -144,6 +153,7 @@ function addToCategoryStats(byCategory, entry, type) {
   }
 
   const c = byCategory[cat];
+  if (isSkipped(entry)) c.skipped = (c.skipped || 0) + 1;
   if (type === "tossup") {
     c.tossupsAttempted++;
     c.totalQuestions++;
@@ -180,6 +190,7 @@ function addToDifficultyStats(byDifficulty, entry, type) {
   }
 
   const d = byDifficulty[diff];
+  if (type === "tossup" && isSkipped(entry)) d.tossupsSkipped = (d.tossupsSkipped || 0) + 1;
   if (type === "tossup") {
     d.tossupsAttempted++;
     d.totalQuestions++;

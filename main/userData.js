@@ -314,10 +314,12 @@ export class UserData {
     const pid = this.getActiveProfileId(), DAY = 864e5;
     const sum = (since) => {
       const o = { q: 0, pts: 0, pw: 0, tu: 0, cor: 0 };
-      for (const r of this.db.prepare(`SELECT type, COUNT(*) AS n, SUM(points) AS pts, SUM(correct) AS c, SUM(CASE WHEN points >= 15 AND correct = 1 THEN 1 ELSE 0 END) AS pw
+      // tu: the tossups answered (a skipped one isn't an attempt — leaderboards' accuracy is cor / tu)
+      for (const r of this.db.prepare(`SELECT type, COUNT(*) AS n, SUM(points) AS pts, SUM(correct) AS c, SUM(CASE WHEN points >= 15 AND correct = 1 THEN 1 ELSE 0 END) AS pw,
+          SUM(CASE WHEN COALESCE(given_answer, '') <> '(skipped)' THEN 1 ELSE 0 END) AS ans
           FROM sessions WHERE profile_id = ? AND timestamp >= ? GROUP BY type`).all(pid, since)) {
         o.q += r.n; o.pts += r.pts || 0;
-        if (r.type === "tossup") { o.tu = r.n; o.cor = r.c || 0; o.pw = r.pw || 0; }
+        if (r.type === "tossup") { o.tu = r.ans || 0; o.cor = r.c || 0; o.pw = r.pw || 0; }
       }
       return o;
     };
@@ -334,12 +336,14 @@ export class UserData {
     const all = this.db.prepare("SELECT COUNT(*) AS n, MAX(timestamp) AS last FROM sessions WHERE profile_id = ?").get(pid);
     const todayN = this.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE profile_id = ? AND timestamp >= ?").get(pid, today * DAY - off).n;
     const wk = { questions: 0, tossups: 0, correct: 0, points: 0, powers: 0 };
-    for (const r of this.db.prepare(`SELECT type, COUNT(*) AS n, SUM(correct) AS c, SUM(points) AS pts, SUM(CASE WHEN points >= 15 AND correct = 1 THEN 1 ELSE 0 END) AS pw
+    let wkAnswered = 0;
+    for (const r of this.db.prepare(`SELECT type, COUNT(*) AS n, SUM(correct) AS c, SUM(points) AS pts, SUM(CASE WHEN points >= 15 AND correct = 1 THEN 1 ELSE 0 END) AS pw,
+        SUM(CASE WHEN COALESCE(given_answer, '') <> '(skipped)' THEN 1 ELSE 0 END) AS ans
         FROM sessions WHERE profile_id = ? AND timestamp >= ? GROUP BY type`).all(pid, now - 7 * DAY)) {
       wk.questions += r.n; wk.points += r.pts || 0;
-      if (r.type === "tossup") { wk.tossups = r.n; wk.correct = r.c || 0; wk.powers = r.pw || 0; }
+      if (r.type === "tossup") { wk.tossups = r.n; wk.correct = r.c || 0; wk.powers = r.pw || 0; wkAnswered = r.ans || 0; }
     }
-    wk.accuracy = wk.tossups ? Math.round((100 * wk.correct) / wk.tossups) : null;
+    wk.accuracy = wkAnswered ? Math.round((100 * wk.correct) / wkAnswered) : null;   // skipped tossups left out
     const days = this.db.prepare("SELECT DISTINCT CAST((timestamp + ?) / 86400000 AS INTEGER) AS d FROM sessions WHERE profile_id = ? ORDER BY d DESC LIMIT 400").all(off, pid).map((r) => r.d);
     let streak = 0;
     if (days.length && days[0] >= today - 1) { let want = days[0]; for (const d of days) { if (d !== want) break; streak++; want--; } }
@@ -358,7 +362,8 @@ export class UserData {
         SUM(points) AS pts, SUM(CASE WHEN type = 'tossup' AND correct = 1 THEN 1 ELSE 0 END) AS cor,
         SUM(CASE WHEN type = 'tossup' AND correct = 1 AND points >= 15 THEN 1 ELSE 0 END) AS pw,
         SUM(CASE WHEN type = 'tossup' AND points < 0 THEN 1 ELSE 0 END) AS neg,
-        SUM(CASE WHEN type = 'bonus' THEN COALESCE(bonus_parts_correct, 0) ELSE 0 END) AS bpc
+        SUM(CASE WHEN type = 'bonus' THEN COALESCE(bonus_parts_correct, 0) ELSE 0 END) AS bpc,
+        SUM(CASE WHEN type = 'tossup' AND COALESCE(given_answer, '') <> '(skipped)' THEN 1 ELSE 0 END) AS tans
       FROM sessions WHERE profile_id = ? GROUP BY d ORDER BY d`).all(off, pid);
     const iso = (d) => new Date(d * DAY).toISOString().slice(0, 10);
     let best = 0, run = 0, prev = null;
@@ -367,7 +372,8 @@ export class UserData {
     if (rows.length && rows[rows.length - 1].d >= today - 1) { let want = rows[rows.length - 1].d; for (let i = rows.length - 1; i >= 0 && rows[i].d === want; i--) { streak++; want--; } }
     return {
       today: iso(today), streak, best,
-      days: rows.map((r) => ({ date: iso(r.d), q: r.q, tu: r.tu || 0, bo: r.bo || 0, pts: r.pts || 0, cor: r.cor || 0, pw: r.pw || 0, neg: r.neg || 0, bpc: r.bpc || 0 })),
+      // tans: tossups answered (not skipped) — the day's accuracy is cor / tans
+      days: rows.map((r) => ({ date: iso(r.d), q: r.q, tu: r.tu || 0, bo: r.bo || 0, pts: r.pts || 0, cor: r.cor || 0, pw: r.pw || 0, neg: r.neg || 0, bpc: r.bpc || 0, tans: r.tans || 0 })),
     };
   }
 

@@ -277,7 +277,7 @@ export async function start(env) {
     ipcMain.handle("clear-review", () => qbApp.clearReview());
     ipcMain.handle("review-manual", (_e, { questionId, add, type }) => (add === false ? qbApp.removeReviewManual(questionId) : qbApp.addReviewManual(questionId, type)));
 
-    ipcMain.handle("check-bonus", (_e, { questionId, answers, sessionId, strictness, overrides, previous }) => {
+    ipcMain.handle("check-bonus", (_e, { questionId, answers, sessionId, strictness, overrides, previous, skipped }) => {
       const bonus = qbApp.getBonus(questionId);
       if (!bonus) return { error: "Question not found" };
 
@@ -293,6 +293,7 @@ export async function start(env) {
         correct: result.totalPoints > 0 ? 1 : 0,
         points: result.totalPoints,
         bonus_parts_correct: result.partsCorrect,
+        ...(skipped ? { given_answer: "(skipped)" } : {}),   // Skip: not an attempt (stats.js isSkipped)
       });
 
       return {

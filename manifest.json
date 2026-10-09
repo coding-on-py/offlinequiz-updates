@@ -1,5 +1,5 @@
 {
-  "version": "14.41",
+  "version": "14.42",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Right-click any word to search for it — no need to highlight it first. On computers, Buzz, Skip, Pause and Next stay in the bottom-left corner.",
+  "notes": "Skipped questions no longer count against your accuracy (or points per bonus) — in the session panel, Stats, leaderboards and Streaks.",
   "files": {
     "renderer/index.html": "e2db6820b42d27d8f629df9d2316abca8df757cbaf24582b34adca6fe9af41a6",
     "renderer/style.css": "62642e192eefeb5665879cdbc433d819058d9e1d6a850973b37536e1c6696180",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "2191d04ad1fc9a67faef6e3e71db41c9082b1d99156a91d6964fc0a9fded8bf0",
-    "renderer/app.js": "8f4067ae5493e914ba6cf286944a5458260a5421552f55add6bf0a0baf1fc48c",
+    "renderer/app.js": "609ef02ed91c738f94a357d431d0a4a20b4c8fa984c7e69a28a933bdea95d3bc",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "g214Nf62LTaMZUxzXS2792kMTnzNNknvrBGsQ7LF0UmVP1F1M333E1GYAjt/0InVtviDqewn5XvwXvDUud98AA=="
+  "signature": "9mXOn0yeewalbck5vvxuSkKmn6kYTdMSZ+WNEbx1KO+4SDVkcu39OGixf1rsDugilhUVYsWUeXdRKibYRws0CQ=="
 }

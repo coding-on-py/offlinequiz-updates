@@ -772,8 +772,12 @@ export class App {
       let partCount;
       if (q.part_count != null) partCount = q.part_count;
       else if (q.parts != null) { try { partCount = JSON.parse(q.parts).length; } catch { partCount = undefined; } }
+      // an older skip: no answer, no points, and the reading stopped well before the end
+      // (a dead question was read out — its position is at the end)
+      const oldSkip = e.type !== "bonus" && !e.correct && !e.points && !e.given_answer && q.qlen > 0 && e.buzz_position != null && e.buzz_position < q.qlen - 15;
       return {
         ...e,
+        ...(oldSkip ? { skipped: true } : {}),
         category: q.category || e.category,
         subcategory: q.subcategory || "",
         alternate_subcategory: q.alternate_subcategory || "",

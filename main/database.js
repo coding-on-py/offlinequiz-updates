@@ -179,7 +179,7 @@ export class QuestionDatabase {
     const out = new Map();
     const t = table === "bonuses" ? "bonuses" : "tossups";
     const cols = (this.v2 ? "id, category, subcategory, alternate_subcategory, category_path, category_id" : "id, category, subcategory, alternate_subcategory")
-      + (t === "bonuses" ? (this.v2 ? ", part_count" : ", parts") : "");
+      + (t === "bonuses" ? (this.v2 ? ", part_count" : ", parts") : ", length(question_sanitized) AS qlen");   // qlen: index.js tells an older skip from a dead question
     const list = [...new Set(ids)].filter(Boolean);
     for (let i = 0; i < list.length; i += 500) {
       const chunk = list.slice(i, i + 500);

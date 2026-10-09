@@ -114,7 +114,7 @@ const API = isElectron
         if (path === "/api/plugin-sql") return window.qbreader.pluginSql(data.plugin, data.sql, data.params);
         if (path === "/api/db-update-start") return window.qbreader.dbUpdateStart ? window.qbreader.dbUpdateStart() : { state: "idle" };
         if (path === "/api/db-update-commit") return window.qbreader.dbUpdateCommit ? window.qbreader.dbUpdateCommit() : { ok: false };
-        if (path === "/api/check-bonus") return window.qbreader.checkBonus(data.questionId, data.answers, data.sessionId, data.strictness, data.overrides, data.previous);
+        if (path === "/api/check-bonus") return window.qbreader.checkBonus(data.questionId, data.answers, data.sessionId, data.strictness, data.overrides, data.previous, !!data.skipped);
         if (path === "/api/starred/toggle") return window.qbreader.toggleStar(data.questionId, data.type);
         if (path === "/api/profiles") return window.qbreader.createProfile(data.name);
         if (path === "/api/profiles/activate") return window.qbreader.setActiveProfile(data.id);
@@ -1513,7 +1513,7 @@ function resetEndedPracticeView() {
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
   stopBuzzTimer();
   stopEventTimer();
-  state.questionCount = 0; state.totalPoints = 0; state.powers = 0; state.negs = 0; state.correct = 0;
+  state.questionCount = 0; state.totalPoints = 0; state.powers = 0; state.negs = 0; state.correct = 0; state.skips = 0;
   state.correctCelerityHistory = []; state.incorrectCelerityHistory = [];
   state.histories = { tossups: [], bonuses: [] };
   state.currentQuestion = null; state.lastResult = null; state.resultOverridden = false;
@@ -4074,6 +4074,7 @@ function startSession() {
   state.powers = 0;
   state.negs = 0;
   state.correct = 0;
+  state.skips = 0;
   state.celerityHistory = [];
   state.correctCelerityHistory = [];
   state.incorrectCelerityHistory = [];
@@ -4399,7 +4400,7 @@ async function skipQuestion() {
       // is in the books — don't overwrite that row with a 0-point skip.
       if (!state._negRecorded) API.post("/api/check-tossup", {
         questionId: question.id,
-        answer: "",
+        answer: "(skipped)",   // saved as the given answer: a skip, not a miss (stats.js isSkipped)
         buzzPosition: displayPosToOriginal(state.buzzPosition || 0),
         sessionId: state.sessionId,
         overriding: true,
@@ -4412,9 +4413,11 @@ async function skipQuestion() {
         questionId: question.id,
         answers: [],
         sessionId: state.sessionId,
+        skipped: true,
       }).catch(() => {});
     }
   }
+  if (!(state.mode === "tossups" && state._negRecorded)) state.skips = (state.skips || 0) + 1;   // left out of the session's accuracy
 
   state.sessionHistory.push({
     id: question.id,
@@ -6648,8 +6651,9 @@ function updateSessionStats(result) {
 function updateLiveStats() {
   const n = Math.max(1, state.questionCount);
   const active = state.sessionActive && state.questionCount > 0;
-
-  $("#stat-acc").textContent = active ? `${((state.correct / n) * 100).toFixed(0)}%` : "\u2014";
+  // skipped questions aren't attempts: accuracy is over the rest
+  const answered = state.questionCount - (state.skips || 0);
+  $("#stat-acc").textContent = active && answered > 0 ? `${((state.correct / answered) * 100).toFixed(0)}%` : "\u2014";
   $("#stat-pwr").textContent = active ? `${state.powers}` : "\u2014";
   $("#stat-neg").textContent = active ? `${state.negs}` : "\u2014";
 
@@ -7384,7 +7388,7 @@ function drawStatsGraph(canvas, stats) {
 }
 function drawDiffAccuracy(canvas, stats) {
   const t = chartTheme();
-  const bars = Object.keys(stats.byDifficulty || {}).sort((a, b) => a - b).map((k) => { const d = stats.byDifficulty[k]; return d.tossupsAttempted > 0 ? { label: k, value: (d.tossupsCorrect / d.tossupsAttempted) * 100, color: t.green } : null; }).filter(Boolean);
+  const bars = Object.keys(stats.byDifficulty || {}).sort((a, b) => a - b).map((k) => { const d = stats.byDifficulty[k]; const ans = d.tossupsAttempted - (d.tossupsSkipped || 0); return ans > 0 ? { label: k, value: (d.tossupsCorrect / ans) * 100, color: t.green } : null; }).filter(Boolean);
   barChart(canvas, bars, { title: "Tossup Accuracy by Difficulty", fmt: (v) => Math.round(v) + "%", yMax: 100, empty: "No tossup data yet" });
 }
 function drawDiffCelerity(canvas, stats) {
@@ -11284,7 +11288,7 @@ function paintStreaks(c) {
   const stat = (n, l) => `<span class="fr-stat"><b class="num">${n}</b><small>${l}</small></span>`;
   const dayBox = `<div class="stk-day"><b>${escapeHtml(fmtDay(stkUtc(_stk.sel), true))}</b>` + (sx
     ? `<div class="stk-day-stats">${stat(sx.q.toLocaleString(), sx.q === 1 ? "question" : "questions")}${stat(sx.pts.toLocaleString(), "points")}` +
-      (sx.tu ? stat(Math.round((100 * sx.cor) / sx.tu) + "%", "tossups right") + stat(sx.pw, sx.pw === 1 ? "power" : "powers") + stat(sx.neg, sx.neg === 1 ? "neg" : "negs") : "") +
+      (sx.tu ? ((sx.tans != null ? sx.tans : sx.tu) ? stat(Math.round((100 * sx.cor) / (sx.tans != null ? sx.tans : sx.tu)) + "%", "tossups right") : "") + stat(sx.pw, sx.pw === 1 ? "power" : "powers") + stat(sx.neg, sx.neg === 1 ? "neg" : "negs") : "") +
       (sx.bo ? stat(sx.bpc, "bonus parts") : "") + `</div><small class="stk-day-mix">${plural(sx.tu, "tossup")} · ${plural(sx.bo, "bonus")}</small>`
     : `<p>${_stk.sel === d.today ? "Nothing yet today." : "No practice this day."}</p>`) + "</div>";
   const wdLbl = ["", "Mon", "", "Wed", "", "Fri", ""].map((x) => `<span>${x}</span>`).join("");
