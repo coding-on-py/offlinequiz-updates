@@ -3227,7 +3227,6 @@ function __qbMain(ctx) {
             '<main class="question-area">' +
               '<div class="question-placeholder" id="mp-placeholder">' +
                 '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>' +
-                '<p class="text-muted">Press <kbd>N</kbd> to start.</p>' +
               "</div>" +
               '<div class="question-content hidden" id="mp-content">' +
                 '<div class="question-meta" id="mp-meta"></div>' +
@@ -3421,7 +3420,7 @@ function __qbMain(ctx) {
       if (t.id === "category-filters") return "cleared categories";
       if (t.id === "year-min" || t.id === "year-max") { var lo = document.getElementById("year-min"), hi = document.getElementById("year-max"); var a = parseInt(lo.value), b = parseInt(hi.value); return "changed years to " + Math.min(a, b) + "-" + Math.max(a, b); }
       if (t.id === "strictness-slider") return "changed strictness to " + t.value;
-      if (t.id === "panel-speed-slider") return "changed reading speed to " + t.value;
+      if (t.id === "panel-speed-slider") return "changed reading speed to " + (window.qbSpeedLabel ? window.qbSpeedLabel(parseInt(t.value)) : t.value);
       if (t.id === "enable-cat-weights") return "changed weights to " + (t.checked ? "true" : "false");
       if (t.id === "filter-standard") return "changed standard-only to " + (t.checked ? "true" : "false");
       if (t.id === "filter-powermark") return "changed powermarked-only to " + (t.checked ? "true" : "false");

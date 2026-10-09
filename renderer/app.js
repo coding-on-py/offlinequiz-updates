@@ -593,7 +593,9 @@ document.addEventListener("click", (e) => {
   const sync = (el) => {
     const min = parseFloat(el.min) || 0, max = parseFloat(el.max), v = parseFloat(el.value);
     const hi = Number.isFinite(max) ? max : 100;
-    el.style.setProperty("--pct", (hi > min ? Math.max(0, Math.min(100, ((v - min) / (hi - min)) * 100)) : 0) + "%");
+    let pct = hi > min ? Math.max(0, Math.min(100, ((v - min) / (hi - min)) * 100)) : 0;
+    if (el.classList.contains("speed-range")) pct = 100 - pct;   // reversed (slow on the left): fill to the thumb
+    el.style.setProperty("--pct", pct + "%");
   };
   const isRange = (el) => el && el.tagName === "INPUT" && el.type === "range" && !el.closest(".dual-range");
   document.addEventListener("input", (e) => { if (isRange(e.target)) sync(e.target); }, true);
@@ -2829,8 +2831,8 @@ async function _applySnapshotInner(snap, gen) {
     if (s) s.value = snap.revealSpeed;
     const s2 = $("#speed-slider"); if (s2) s2.value = snap.revealSpeed;
     state.settings.revealSpeed = snap.revealSpeed;
-    const l = $("#panel-speed-label"); if (l) l.textContent = snap.revealSpeed + "ms";
-    const l2 = $("#speed-slider-label"); if (l2) l2.textContent = snap.revealSpeed + "ms";
+    const l = $("#panel-speed-label"); if (l) l.textContent = speedLabel(snap.revealSpeed);
+    const l2 = $("#speed-slider-label"); if (l2) l2.textContent = speedLabel(snap.revealSpeed);
   }
   if (snap.strictness != null) {
     const s = $("#strictness-slider");
@@ -3768,10 +3770,19 @@ window.addEventListener("keydown", (e) => {
   e.stopPropagation();
 }, true);
 
+// Reading speed shows as 1 (slowest) … 20 (fastest), then Instant; underneath it is
+// still milliseconds per character (100 … 5, 0 = instant) — the reading code, rooms,
+// saved settings and plugins all use that. The sliders run reversed (CSS .speed-range:
+// right-to-left, so slow is on the left).
+function speedLabel(ms) {
+  ms = Number(ms) || 0;
+  return ms <= 0 ? "Instant" : String(Math.max(1, Math.min(20, Math.round(21 - ms / 5))));
+}
+window.qbSpeedLabel = speedLabel;
 function setRevealSpeed(val) {
   state.settings.revealSpeed = val;
   lsSet("qb-speed", String(val));
-  const label = val === 0 ? "instant" : `${val}ms`;
+  const label = speedLabel(val);
   const pl = $("#panel-speed-label"); if (pl) pl.textContent = label;
   const sl = $("#speed-slider-label"); if (sl) sl.textContent = label;
   const ps = $("#panel-speed-slider"); if (ps && parseInt(ps.value) !== val) ps.value = val;
@@ -4049,7 +4060,7 @@ function applyModeVisibility(mode) {
     const row = el.closest(container) || el;
     row.style.display = show ? "" : "none";
   };
-  hide("#panel-speed-slider", ".filter-section", tossup);
+  hide("#panel-speed-slider", ".filter-section", true);   // every mode reads at the chosen speed (bonuses too)
   hide("#panel-buzz-timer", ".slider-group", tossup);
   hide("#panel-buzz-window", ".slider-group", tossup);
   hide("#panel-bonus-timer", ".slider-group", !tossup);
@@ -4746,9 +4757,11 @@ async function renderBonus(q) {
   try { state.bonusAnswersRaw = JSON.parse(q.answers || "[]"); } catch { state.bonusAnswersRaw = []; }
 
   $("#power-mark").classList.add("hidden");
-  $("#question-text").textContent = leadin;
+  stopBonusReader();
+  $("#question-text").textContent = "";
   state.currentDisplayText = null; // stale tossup text must never resume over a bonus
   state.revealIndex = leadin.length;
+  state._bonusPartTexts = [];
   $("#buzz-area").classList.add("hidden");
 
   const bonusArea = $("#bonus-parts-area");
@@ -4775,6 +4788,7 @@ async function renderBonus(q) {
     if (state.settings.hidePronunciations) partText = stripPronunciations(partText);
     partText = window.QB?.applyTextTransforms?.(partText, { type: "bonus-part", question: q, part: i }) ?? partText;
     $(`#bonus-text-${i}`).textContent = partText;
+    state._bonusPartTexts[i] = partText;
     $(`#bonus-input-${i}`).value = "";
     $(`#bonus-part-${i}`).classList.add("hidden");
     $(`#bonus-part-${i}`).classList.remove("bp-done", "bp-collapsed");
@@ -4785,10 +4799,56 @@ async function renderBonus(q) {
   }
   $("#btn-submit-bonus").classList.add("hidden");
 
-  // Parts reveal one at a time: read the leadin, then the next key steps
-  // through A → B → C (each part's timer starts when it appears).
-  state.bonusAwait = 0;
-  showBonusNextHint(0);
+  // The leadin is read at the chosen speed; then parts come one at a time: the next
+  // key steps through A → B → C, each read out, its timer starting once it's read.
+  state.bonusAwait = null;
+  const q0 = state.currentQuestion;
+  readBonusText($("#question-text"), leadin, () => {
+    if (state.currentQuestion !== q0 || state.mode !== "bonuses") return;
+    state.bonusAwait = 0;
+    showBonusNextHint(0);
+  }, "leadin");
+}
+
+// A bonus's leadin or part, read at the reading speed (Instant: all at once). The
+// unread rest is held by its invisible shape (textShape), so nothing moves; Pause holds
+// it (resumeReveal), the next key or answering shows the rest at once, and a new
+// question stops it.
+function readBonusText(el, text, done, kind) {
+  stopBonusReader();
+  if (!el) return;
+  text = String(text || "");
+  const q = state.currentQuestion;
+  const r = { el, text, idx: 0, last: 0, raf: 0, done, kind: kind || "part" };
+  const paint = () => { el.innerHTML = '<span class="revealed">' + escapeHtml(text.slice(0, r.idx)) + '</span><span class="unrevealed" aria-hidden="true">' + escapeHtml(textShape(text.slice(r.idx))) + "</span>"; };
+  r.finish = (callDone = true) => {
+    if (r.raf) cancelAnimationFrame(r.raf); r.raf = 0;
+    if (state._bonusReader === r) state._bonusReader = null;
+    el.textContent = text;
+    if (callDone && r.done) { const d = r.done; r.done = null; d(); }
+  };
+  const step = (t) => {
+    r.raf = 0;
+    if (state._bonusReader !== r) return;
+    if (state.currentQuestion !== q || state.mode !== "bonuses") { state._bonusReader = null; return; }
+    if (state.isPaused) return;   // resumeReveal starts it again
+    const sp = state.settings.revealSpeed;
+    if (!sp) { r.finish(); return; }
+    if (!r.last) r.last = t;
+    const n = Math.floor((t - r.last) / sp);
+    if (n > 0) { r.idx = Math.min(text.length, r.idx + n); r.last += n * sp; paint(); followReading(el.querySelector(".revealed"), q && q.id); }
+    if (r.idx >= text.length) { r.finish(); return; }
+    r.raf = requestAnimationFrame(step);
+  };
+  r.resume = () => { r.last = 0; if (!r.raf) r.raf = requestAnimationFrame(step); };
+  if (!state.settings.revealSpeed || !text) { el.textContent = text; if (done) done(); return; }
+  state._bonusReader = r;
+  paint();
+  r.raf = requestAnimationFrame(step);
+}
+function stopBonusReader() {
+  const r = state._bonusReader;
+  if (r) { if (r.raf) cancelAnimationFrame(r.raf); state._bonusReader = null; }
 }
 
 function bonusPartLetter(i) { return "ABCDEFGHI"[i] || String(i + 1); }
@@ -4894,6 +4954,10 @@ function syncPracticeActions() {
 })();
 
 function advanceBonusPart() {
+  // still reading: during a part the next key shows the rest of it; during the leadin
+  // it finishes the leadin and goes on to Part A (one press moves on)
+  const rd = state.mode === "bonuses" ? state._bonusReader : null;
+  if (rd) { rd.finish(); if (rd.kind !== "leadin") return true; }
   if (state.mode !== "bonuses" || !state.currentQuestion || state.bonusAwait == null) return false;
   const idx = state.bonusAwait;
   state.bonusAwait = null;
@@ -4907,10 +4971,16 @@ function startBonusPart(idx) {
   $(`#bonus-part-${idx}`)?.classList.remove("hidden");
   if (matchMedia("(max-width: 760px)").matches) followReading($(`#bonus-part-${idx}`), state.currentQuestion && state.currentQuestion.id, true);   // phones: the new part, above the bottom bar
   const inp = $(`#bonus-input-${idx}`);
-  if (inp) { inp.disabled = false; setTimeout(() => inp.focus(), 60); }
+  if (inp) { inp.disabled = false; setTimeout(() => inp.focus(), 60); }   // typing early is fine
   stopEventTimer();
-  const t = state.settings.bonusTimer;
-  if (t > 0) startEventTimer(t, "Part " + (idx + 1), () => bonusPartTimeUp(idx));
+  // the part is read at the reading speed; its timer starts once it's read
+  const q = state.currentQuestion, textEl = $(`#bonus-text-${idx}`);
+  const startTimer = () => {
+    if (state.currentQuestion !== q || (state._bonusDone || [])[idx]) return;
+    const t = state.settings.bonusTimer;
+    if (t > 0) startEventTimer(t, "Part " + (idx + 1), () => bonusPartTimeUp(idx));
+  };
+  readBonusText(textEl, (state._bonusPartTexts || [])[idx] != null ? state._bonusPartTexts[idx] : (textEl ? textEl.textContent : ""), startTimer);
 }
 
 function bonusPartTimeUp(idx) {
@@ -4922,6 +4992,7 @@ function bonusPartTimeUp(idx) {
 function finalizeBonusPart(idx) {
   if ((state._bonusDone ||= [])[idx]) return;   // Enter and the part timer can both land
   state._bonusDone[idx] = true;
+  if (state._bonusReader) state._bonusReader.finish(false);   // answered while it read: show the rest
   stopEventTimer();
   state._bonusLastIdx = idx;
   revealBonusPartAnswer(idx);
@@ -5125,8 +5196,13 @@ function revealText(text) {
       state.revealTimer = requestAnimationFrame(step);
       return;
     }
-    lastTime = ts;
-    state.revealIndex++;
+    // as many characters as the time since the last one allows — a speed faster than
+    // the screen's refresh (5–15 ms) still reads at its own pace, not one per frame;
+    // never past the power mark when reading stops there
+    let n = Math.max(1, Math.floor((ts - lastTime) / curSpeed));
+    lastTime = n > 1 ? lastTime + n * curSpeed : ts;
+    if (state.settings.stopOnPower && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) n = Math.min(n, state.prePowerEnd - state.revealIndex);
+    state.revealIndex = Math.min(text.length, state.revealIndex + n);
     state.buzzPosition = state.revealIndex;
     $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
     followReading($("#question-text .revealed"), state.currentQuestion && state.currentQuestion.id);
@@ -5246,9 +5322,9 @@ function displayPosToOriginal(displayPos) {
 
 function resumeReveal() {
   if (!state.sessionActive || state.isBuzzed || state.isPaused) return;
-  // Bonuses have no progressive reveal — resuming with the stale tossup text
-  // would paint the previous tossup over the bonus and start a buzz window.
-  if (state.mode !== "tossups") return;
+  // Bonuses: their own reader picks up again (resuming the stale tossup text would
+  // paint the previous tossup over the bonus and start a buzz window).
+  if (state.mode !== "tossups") { if (state._bonusReader) state._bonusReader.resume(); return; }
   const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
   if (state.revealIndex < text.length) {
     revealText(text);
@@ -6684,8 +6760,7 @@ function updateLiveStats() {
 
 
 function startPromptHtml() {
-  return '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>' +
-    '<p class="text-muted">Press <kbd id="placeholder-start-key">' + escapeHtml(keyDisplay("start-skip")) + "</kbd> to start.</p>";
+  return '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>';
 }
 function resetQuestionUI() {
   state.resultAreaVisible = false;
@@ -8099,12 +8174,12 @@ function initSettings() {
 
   if (speedSlider) {
     speedSlider.value = state.settings.revealSpeed;
-    $("#speed-slider-label").textContent = state.settings.revealSpeed === 0 ? "instant" : `${state.settings.revealSpeed}ms`;
+    $("#speed-slider-label").textContent = speedLabel(state.settings.revealSpeed);
   }
   const panelSpeed = $("#panel-speed-slider");
   if (panelSpeed) {
     panelSpeed.value = state.settings.revealSpeed;
-    const pl = $("#panel-speed-label"); if (pl) pl.textContent = state.settings.revealSpeed === 0 ? "instant" : `${state.settings.revealSpeed}ms`;
+    const pl = $("#panel-speed-label"); if (pl) pl.textContent = speedLabel(state.settings.revealSpeed);
   }
   if (autoReveal) autoReveal.checked = state.settings.autoReveal;
   const qmeta = $("#opt-show-qmeta");

@@ -186,9 +186,9 @@
           <div class="filter-section" id="sec-timing">
             <div class="filter-label">Reading &amp; timers</div>
             <div class="slider-group">
-              <span class="sg-label">Reading speed</span>
-              <input type="range" id="panel-speed-slider" min="0" max="100" step="5" value="50" aria-label="Reading speed">
-              <span class="slider-value" id="panel-speed-label">50ms</span>
+              <span class="sg-label">Reading speed <span class="qb-info" data-tip="How fast questions are read: 1 is the slowest, 20 the fastest, and past 20 the whole question shows at once (Instant).">i</span></span>
+              <input type="range" class="speed-range" id="panel-speed-slider" min="0" max="100" step="5" value="50" aria-label="Reading speed">
+              <span class="slider-value" id="panel-speed-label">11</span>
             </div>
             <div class="slider-group">
               <span class="sg-label">Buzz window <span class="qb-info" data-tip="Seconds you get to buzz once the question finishes reading.">i</span></span>
@@ -243,7 +243,6 @@
         <main class="question-area" id="question-area">
           <div class="question-placeholder" id="question-placeholder">
             <div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>
-            <p class="text-muted">Press <kbd id="placeholder-start-key">S</kbd> to start.</p>
           </div>
 
           <div class="question-content hidden" id="question-content">
@@ -453,10 +452,10 @@
             <section class="set-pane" data-pane="gameplay" id="ovl-gameplay">
               <h3>Gameplay</h3>
               <div class="setting-row">
-                <span class="setting-label">Reveal speed<span class="qb-info" data-tip="How fast question text appears, in milliseconds per character. 0 shows the whole question instantly.">i</span></span>
+                <span class="setting-label">Reading speed<span class="qb-info" data-tip="How fast questions are read: 1 is the slowest, 20 the fastest, and past 20 the whole question shows at once (Instant).">i</span></span>
                 <div class="slider-group">
-                  <input type="range" id="speed-slider" min="0" max="100" step="5" value="50" aria-label="Reveal speed">
-                  <span class="slider-value" id="speed-slider-label">50ms</span>
+                  <input type="range" class="speed-range" id="speed-slider" min="0" max="100" step="5" value="50" aria-label="Reading speed">
+                  <span class="slider-value" id="speed-slider-label">11</span>
                 </div>
               </div>
               <div class="setting-row">
