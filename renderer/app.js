@@ -6811,24 +6811,53 @@ function selectionMenuItems() {
   return selectionTermItems(q);
 }
 
+// Right-clicking a word selects it first (no highlighting needed): the menus below
+// then offer it — Copy, search questions / answers for it… An existing highlight
+// under the pointer stays (several words), and so do the things with their own
+// whole-term menus (frequency answers, links, rows), inputs and the unread
+// (invisible) part of a question.
+function wordRangeAt(x, y) {
+  let node = null, off = 0;
+  if (document.caretRangeFromPoint) { const r = document.caretRangeFromPoint(x, y); if (r) { node = r.startContainer; off = r.startOffset; } }
+  else if (document.caretPositionFromPoint) { const p = document.caretPositionFromPoint(x, y); if (p) { node = p.offsetNode; off = p.offset; } }
+  if (!node || node.nodeType !== 3) return null;
+  const t = node.nodeValue || "", isW = (c) => !!c && /[\p{L}\p{N}'\u2019-]/u.test(c);
+  let a = off, b = off;
+  if (!isW(t[a]) && isW(t[a - 1])) a = b = off - 1;
+  if (!isW(t[a])) return null;
+  while (a > 0 && isW(t[a - 1])) a--;
+  while (b < t.length && isW(t[b])) b++;
+  while (a < b && /['\u2019-]/.test(t[a])) a++;
+  while (b > a && /['\u2019-]/.test(t[b - 1])) b--;
+  if (b - a < 2) return null;
+  const range = document.createRange(); range.setStart(node, a); range.setEnd(node, b);
+  // the pointer must really be over the word (caret lookups also answer for empty space beside text)
+  const rect = range.getBoundingClientRect();
+  if (!rect.width || x < rect.left - 2 || x > rect.right + 2 || y < rect.top - 2 || y > rect.bottom + 2) return null;
+  return range;
+}
+document.addEventListener("contextmenu", (e) => {
+  const t = e.target;
+  if (!t || !t.closest || t.closest("input, textarea, select, button, .btn, [contenteditable], .qb-ctx-menu, .pop, .unrevealed, .session-row, .db-row, .qb-select, .tb-menu")) return;
+  if (interactiveTermAt(t)) return;   // a whole term already (a frequency answer, a link…)
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && sel.rangeCount && String(sel).trim().length >= 2) {
+    for (const r of sel.getRangeAt(0).getClientRects()) if (e.clientX >= r.left - 2 && e.clientX <= r.right + 2 && e.clientY >= r.top - 2 && e.clientY <= r.bottom + 2) return;   // right-clicked their own highlight
+  }
+  const range = wordRangeAt(e.clientX, e.clientY);
+  if (!range) return;
+  sel.removeAllRanges(); sel.addRange(range);
+}, true);
+
 // Right-click any question card (search, packets, history, review, starred)
-// for quick actions built from what the card actually contains.
+// for quick actions built from what the card actually contains — a word
+// right-clicked on it (selected) leads the menu.
 document.addEventListener("contextmenu", (e) => {
   const card = e.target.closest?.(".qcard");
   if (!card || !window.QB?.contextMenu) return;
   // Highlighted text wins: offer actions for WHAT WAS SELECTED, not for the
   // card's answer. The answer menu is what you get when nothing is selected.
   const picked = selectionInside(card);
-  if (picked) {
-    e.preventDefault();
-    const selItems = selectionTermItems(picked).filter((it) => !it.sep);
-    window.QB.contextMenu(e.clientX, e.clientY, [
-      { label: "Copy", onClick: () => copyToClipboard(picked) },
-      { sep: true },
-      ...selItems,
-    ], { title: "\u201C" + picked.slice(0, 40) + "\u201D" });
-    return;
-  }
   const items = [];
   const text = card.querySelector(".qcard-text")?.textContent?.trim();
   const ans = card.querySelector(".ans")?.textContent?.trim();
@@ -6854,6 +6883,11 @@ document.addEventListener("contextmenu", (e) => {
     });
   }
   e.preventDefault();
+  if (picked) {
+    const selItems = selectionTermItems(picked).filter((it) => !it.sep);
+    window.QB.contextMenu(e.clientX, e.clientY, [{ label: "Copy", onClick: () => copyToClipboard(picked) }, { sep: true }, ...selItems, { sep: true }, ...items], { title: "\u201C" + picked.slice(0, 40) + "\u201D" });
+    return;
+  }
   window.QB.contextMenu(e.clientX, e.clientY, items, { title: cleanAns || (text || "").slice(0, 44) });
 });
 
@@ -6940,15 +6974,6 @@ $("#question-content")?.addEventListener("contextmenu", (e) => {
   const isBonus = state.mode === "bonuses";
   const revealed = !isBonus && state.resultAreaVisible && q.answer_sanitized;
   const picked = selectionInside($("#question-content"));
-  if (picked) {
-    e.preventDefault();
-    window.QB.contextMenu(e.clientX, e.clientY, [
-      { label: "Copy", onClick: () => copyToClipboard(picked) },
-      { sep: true },
-      ...selectionTermItems(picked).filter((it) => !it.sep),
-    ], { title: "\u201C" + picked.slice(0, 40) + "\u201D" });
-    return;
-  }
   const items = [];
   if (revealed) {
     const pa = primaryAnswerText(q.answer_sanitized);
@@ -6966,6 +6991,10 @@ $("#question-content")?.addEventListener("contextmenu", (e) => {
     onClick: () => toggleQuestionHidden(q.id, qtype, q.answer_sanitized || q.id),
   });
   e.preventDefault();
+  if (picked) {
+    window.QB.contextMenu(e.clientX, e.clientY, [{ label: "Copy", onClick: () => copyToClipboard(picked) }, { sep: true }, ...selectionTermItems(picked).filter((it) => !it.sep), { sep: true }, ...items], { title: "\u201C" + picked.slice(0, 40) + "\u201D" });
+    return;
+  }
   window.QB.contextMenu(e.clientX, e.clientY, items, { title: revealed ? primaryAnswerText(q.answer_sanitized) : (isBonus ? "Bonus" : "Tossup") });
 });
 

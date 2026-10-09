@@ -3564,7 +3564,6 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
   .practice-actions .btn { flex: 1 1 0; height: 52px; padding: 0 10px; font-size: 15px; justify-content: center; }
   #practice-screen .question-area > .practice-actions { order: 99; margin-top: auto; }   /* below the bonus parts too */
-  #practice-screen .result-actions { display: none; }
   #practice-screen :is(.result-area, .bonus-part) { scroll-margin: 12px 0 96px; }   /* clear of the bottom bar when scrolled to */
   .mp-actions { position: sticky; bottom: 0; z-index: 6; margin: 8px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
@@ -3641,8 +3640,6 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .practice-actions:not(:has(> :not([hidden]))) { display: none; }
 .practice-actions [hidden] { display: none !important; }
 .practice-actions .btn { height: 44px; padding: 0 22px; }
-/* wide screens answer with the result's own Next button; the bar's Next is for phones */
-@media (min-width: 761px) { .practice-actions .pa-next { display: none !important; } .practice-actions:not(:has(> :not([hidden]):not(.pa-next))) { display: none; } }
 .practice-actions kbd, .mp-buzz-btn kbd { margin-left: 4px; padding: 1px 6px; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 4px; background: transparent; color: inherit; font-size: 11px; font-weight: 500; opacity: 0.8; }
 @media (hover: none) { .practice-actions kbd, .mp-buzz-btn kbd { display: none; } }
 /* the room's buttons are the practice page's: Next-sized, the key inside Buzz */
@@ -4248,3 +4245,20 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
 /* the moment a result shows, Buzz / Pause go (syncPracticeActions polls every 200 ms — for that
    moment they were pushed below the result and jumped) */
 #practice-screen .question-area:has(> .result-area:not(.hidden)) :is(#pa-buzz, #pa-pause) { display: none !important; }
+
+/* Computers too: the practice / room buttons stay in the bottom corner of the screen —
+   the question area fills the window, the bar is its last item (sticky to the bottom,
+   left-aligned), and Next lives in the bar (the result's own Next is gone), so the main
+   button never moves: Start → Skip → Next in one spot. Phones keep their own rules above. */
+#practice-screen .result-actions { display: none; }
+@media (min-width: 761px) {
+  #practice-screen .question-area, #practice-screen:has(.filters-panel.open) .question-area { min-height: calc(100vh - var(--topbar-h) - 74px); min-height: calc(100dvh - var(--topbar-h) - 74px); }
+  #practice-screen .question-area > .practice-actions, .mp-room .question-area > .mp-actions {
+    order: 98; margin-top: auto; position: sticky; bottom: 0; z-index: 6; padding: 16px 0 22px;
+    background: linear-gradient(to top, var(--bg) 72%, color-mix(in srgb, var(--bg) 0%, transparent));
+  }
+  .mp-room .question-area { min-height: calc(100vh - var(--topbar-h) - 60px); min-height: calc(100dvh - var(--topbar-h) - 60px); }
+  .mp-room .question-area > .mp-history { order: 99; }
+  .ext-page-body.mp-flush:has(> .mp-room) { padding-bottom: 0; }
+}
+.practice-actions > .btn, .mp-actions > .btn { margin: 0; }   /* the bars space with gap (a ".btn + .btn" margin pushed Next right after a hidden Buzz) */
