@@ -877,9 +877,11 @@ function webPathNow() {
   if (pg.pluginId === "multiplayer") { const room = window.QB.mpRoom ? window.QB.mpRoom() : ""; return "/multiplayer" + (room ? "/" + encodeURIComponent(room) : ""); }
   return "/plugins/" + encodeURIComponent(pg.pluginId) + "/" + encodeURIComponent(pg.id);
 }
+// the home page's title — what search results show as the link (server.js sends the same)
+const WEB_HOME_TITLE = "onlinequiz — free quizbowl practice";
 function webTitleSync() {
   const crumb = document.getElementById("tb-crumb"), t = crumb && !crumb.hidden ? (document.getElementById("tb-crumb-text")?.textContent || "").trim() : "";
-  document.title = t ? t + " · onlinequiz" : "onlinequiz";
+  document.title = t ? t + " · onlinequiz" : WEB_HOME_TITLE;
 }
 // after any screen change: a new history entry for a new address
 function webPathSync() {
@@ -6907,8 +6909,9 @@ function updateLiveStats() {
 }
 
 
+// practice before Start / after a session: an empty area (no "?" icon, no "press S")
 function startPromptHtml() {
-  return '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>';
+  return "";
 }
 function resetQuestionUI() {
   state.resultAreaVisible = false;

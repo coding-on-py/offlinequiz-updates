@@ -4292,3 +4292,5 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
 .up-stats b { font-size: 18px; color: var(--strong); }
 .up-stats small { color: var(--muted); font-size: 11.5px; text-align: center; }
 @media (max-width: 520px) { .up-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* practice and rooms show no "?" icon before a question (also hides it in older plugins) */
+.question-placeholder .placeholder-icon { display: none; }

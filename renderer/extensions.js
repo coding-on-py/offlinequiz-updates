@@ -3236,7 +3236,6 @@ function __qbMain(ctx) {
           '<div class="practice-layout mp-layout">' +
             '<main class="question-area">' +
               '<div class="question-placeholder" id="mp-placeholder">' +
-                '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>' +
               "</div>" +
               '<div class="question-content hidden" id="mp-content">' +
                 '<div class="question-meta" id="mp-meta"></div>' +

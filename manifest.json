@@ -1,5 +1,5 @@
 {
-  "version": "14.48",
+  "version": "14.49",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Questions stay preloaded far ahead, so holding N never waits; if one is ever late, the screen just stays put until it's ready",
+  "notes": "No more question-mark icon before a question in practice and multiplayer",
   "files": {
-    "renderer/index.html": "91b867bac7716a4e7fb86b36df11df80b8c32ec845db16407244762436f0b533",
-    "renderer/style.css": "85cea70a466ee46bf7b7efdb2d22ad98d5ab9ac0bd48e6a2f87a21a0ea9aca47",
+    "renderer/index.html": "6994f603608bccd4924f3de434e9d6d35add89a81d050044089f0758a59dbf40",
+    "renderer/style.css": "c2c38fbe1703fad82b04a422c3979867e37f37d05d12241cffce8628aa2d7aff",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "c78dfcd4f633d2e6fb73af367fc8bfed6b2b95df4d4ef4f14e14228b6788720d",
-    "renderer/app.js": "90f713a143c099d95d9c42a4d25b11e6d16bddb6f433efbb3b2a16eabf14bb6e",
+    "renderer/extensions.js": "3cd5eaf9d65333d17254e7ba265fd927dc1135cf8af0f3b2939c22c1d87d9b8c",
+    "renderer/app.js": "759e7408d4e152eb9f47745cbac82eba2c9e25a1aaf51ea19c5681569445eb6a",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "B5u0UvNKaZaG3vV9/7T+sVmfBDPeb8Jk5YgxQdSZzd58Aa5XTbGvsDxNA8sbHYNMyv0WDYeu9DQIe1EhYaUwBw=="
+  "signature": "PySJ+ri36NVJ0TNmbbZ+4bTMD1AKLfyMRP/7mIJzK/zBBcd6GljynfD2VHZd2XUynAdsxRw5eW5XHEI0mY7wCA=="
 }
