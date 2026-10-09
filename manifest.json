@@ -1,5 +1,5 @@
 {
-  "version": "14.46",
+  "version": "14.47",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Reading speed now goes from 1 to 50 (50 is almost instant), then Instant; speeds in between read at their true pace",
+  "notes": "Click or right-click any player for their profile and achievements, or to add them as a friend; questions and leaderboards are preloaded so nothing waits; longer Setup sliders",
   "files": {
     "renderer/index.html": "91b867bac7716a4e7fb86b36df11df80b8c32ec845db16407244762436f0b533",
-    "renderer/style.css": "c914c292786bb0a2737fa20887afc96ceb4d908ae86b9886712a0a8b09bca37e",
+    "renderer/style.css": "a453cb0b116ed47a7f6e2849de436e658be44a276a3c7f3310f1c896e4df596b",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "5a6f5dd765890f37ff1ebb9e4bd2964a1f05584ed4cc8126e3fce7776c57fd81",
-    "renderer/app.js": "71605ad10313787c669c470d75f0a19e464d199181dd522e69c10918f2f7362b",
+    "renderer/extensions.js": "c78dfcd4f633d2e6fb73af367fc8bfed6b2b95df4d4ef4f14e14228b6788720d",
+    "renderer/app.js": "da3be5311be5c8d50d07c3e4b112ef74213e41327f02cb4416e42808006a97f2",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "DetQdTVZfLqkm8nmzd0SB6Dwl6NefEl4yUS48zcQcM1LFAvApYlVBP4DzTA1+SB8894iEExEGs/oIIRksbLFDg=="
+  "signature": "YP7b8ZMYrJoHhM5IddGyq3QI3u5hcjYAv/OjdwiwbYaTjpogdiTz2sODO+WI6VlWYa7SRL6QUnDdiYJafc42BA=="
 }

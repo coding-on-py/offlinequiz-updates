@@ -1897,6 +1897,9 @@ function __qbMain(ctx) {
     var lobby = "", myName = "", body = null, page = null;
     var mySpec = false;  // joined as spectator (watch + chat, no buzzing)
     function myAv() { try { return ((ctx.host && ctx.host.getState && ctx.host.getState()) || {}).avatar || ""; } catch (e) { return ""; } }
+    // your onlinequiz username when signed in: other players can open your profile / add you
+    function myHandle() { try { return (window.qbAccountHandle && window.qbAccountHandle()) || ""; } catch (e) { return ""; } }
+    var validHandle = function (h) { h = String(h || "").trim().toLowerCase(); return /^[a-z0-9]{3,20}$/.test(h) ? h : ""; };
 
     // Shared game state (host is the source of truth; clients mirror it).
     var players = {};            // id -> { id, name, team, score }
@@ -2105,9 +2108,9 @@ function __qbMain(ctx) {
     function stateMsg() { return { t: "state", players: order.map(function (id) { return players[id]; }), settings: settings, filterSummary: filterSummary, roomFilters: (roomConfig && roomConfig.filters) || null, roomSel: isHost ? hostSel() : null }; }
     function pushState() { broadcast(stateMsg()); renderScores(); renderSettings(); updateTopBar(); }
 
-    function addPlayer(id, name, team, spec, avatar) {
+    function addPlayer(id, name, team, spec, avatar, handle) {
       if (!players[id]) order.push(id);
-      players[id] = { id: id, name: name || ("Player" + order.length), team: team || "", score: (players[id] && players[id].score) || 0, spec: !!spec, avatar: avatar || (players[id] && players[id].avatar) || "" };
+      players[id] = { id: id, name: name || ("Player" + order.length), team: team || "", score: (players[id] && players[id].score) || 0, spec: !!spec, avatar: avatar || (players[id] && players[id].avatar) || "", handle: validHandle(handle) || (players[id] && players[id].handle) || "" };
     }
     function removePlayer(id) { delete players[id]; order = order.filter(function (x) { return x !== id; }); }
 
@@ -2238,11 +2241,11 @@ function __qbMain(ctx) {
           setTimeout(rememberRoom, 1500);
           if (isHost) {
             try { if (ctx.host && ctx.host.resetPracticeFilters) ctx.host.resetPracticeFilters(); } catch (e) {}
-            addPlayer(myId, myName, "", mySpec, myAv());
+            addPlayer(myId, myName, "", mySpec, myAv(), myHandle());
             sysChat(myName + " created the lobby");
             mpPrefetchNow();   // the FIRST question should serve instantly too
           } else {
-            toHost({ t: "hello", name: myName, spectate: mySpec, avatar: myAv() });
+            toHost({ t: "hello", name: myName, spectate: mySpec, avatar: myAv(), handle: myHandle() });
           }
           render();
           return;
@@ -2260,7 +2263,7 @@ function __qbMain(ctx) {
           if (m.left && players[m.left]) { players[m.left].off = true; renderScores(); }
           // If our hello was swallowed by the dying host (we joined during the
           // detection gap and never got seated), introduce ourselves again.
-          if (!players[myId]) toHost({ t: "hello", name: myName, spectate: mySpec, avatar: myAv() });
+          if (!players[myId]) toHost({ t: "hello", name: myName, spectate: mySpec, avatar: myAv(), handle: myHandle() });
           setStatus("Host left \u2014 " + (((players[m.id] || {}).name) || "another player") + " is now the host.");
           return;
         }
@@ -2333,6 +2336,7 @@ function __qbMain(ctx) {
           seat.off = false;
           seat.spec = !!d.spectate;
           if (d.avatar) seat.avatar = d.avatar;
+          if (validHandle(d.handle)) seat.handle = validHandle(d.handle);
           players[id] = seat;
           if (bonusState && bonusState.winner === oldId) bonusState.winner = id;
           if (pendingBuzzer === oldId) pendingBuzzer = id;
@@ -2350,7 +2354,7 @@ function __qbMain(ctx) {
             while (taken(base + " (" + n + ")")) n++;
             joinName = base + " (" + n + ")";
           }
-          addPlayer(id, joinName || d.name, "", d.spectate, d.avatar);
+          addPlayer(id, joinName || d.name, "", d.spectate, d.avatar, d.handle);
           sysChat(players[id].name + " joined" + (d.spectate ? " (spectating)" : ""));
         }
         pushState();
@@ -3052,7 +3056,10 @@ function __qbMain(ctx) {
     function paintChatMsg(el, c) {
       var r = document.createElement("div");
       r.className = "mp-chat-msg" + (c.s ? " mp-chat-sys" : "") + (c.m ? " mp-chat-team" : "");
-      r.innerHTML = c.s ? esc(c.x) : (c.m ? '<span class="mp-chat-teamtag">TEAM</span> ' : "") + "<strong>" + esc(c.n) + ":</strong> " + esc(c.x);
+      var who = null;
+      if (!c.s && c.n && c.n !== ((players[myId] || {}).name || myName)) order.forEach(function (id) { var p = players[id]; if (!who && p && p.name === c.n) who = p; });
+      var nameHtml = who ? '<strong class="mp-chat-name" data-user="' + esc(who.handle || "") + '" data-user-name="' + esc(who.name) + '">' + esc(c.n) + ":</strong> " : "<strong>" + esc(c.n) + ":</strong> ";
+      r.innerHTML = c.s ? esc(c.x) : (c.m ? '<span class="mp-chat-teamtag">TEAM</span> ' : "") + nameHtml + esc(c.x);
       el.appendChild(r);
     }
     function addChat(name, text, sys, team) {
@@ -3573,7 +3580,7 @@ function __qbMain(ctx) {
         var subHtml = p.off ? "offline" : p.spec ? "spectating"
           : you ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
           : (p.team ? "team " + esc(p.team) : (p.avatar ? esc(p.avatar) : "&nbsp;"));
-        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
+        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '"') + '><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
           '<span class="nm">' + nameHtml + "<span>" + subHtml + "</span></span>" +
           (p.spec ? "" : '<span class="sc num">' + (p.score || 0) + "</span>") + "</div>";
       };

@@ -95,7 +95,7 @@ const API = isElectron
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
-        if (/^\/api\/(account\/|friends$|leaderboards(\/board)?$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
+        if (/^\/api\/(account\/|friends$|leaderboards(\/board)?$|users\/profile$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
         throw new Error("Unknown API route: " + path);
       },
       post(url, data) {
@@ -503,6 +503,7 @@ const ICON = {
   bulb: '<path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2V17h6v-.3c0-.8.4-1.5 1-2A7 7 0 0 0 12 2z"/>',
   bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
   chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 };
 function ic(name, size, extra) {
   const s = size || 18;
@@ -1612,6 +1613,7 @@ function showScreen(name, opts) {
     renderGreeting();
     ensureHomeBg();
     streakNow().then(renderStreak).catch(() => {});   // the day streak, with whatever was just practiced
+    setTimeout(() => { if (document.querySelector("#title-screen.active")) preloadLeaderboards(); }, 1200);   // so Leaderboards opens at once
   }
   updateTopbar();
   qbEmit("screen:change", { name, back });
@@ -3804,6 +3806,8 @@ function speedLabel(ms) {
   return ms <= 0 ? "Instant" : String(speedLevel(ms));
 }
 window.qbSpeedLabel = speedLabel;
+// multiplayer.js: the username a room shows for you (signed in), so others can pick you
+window.qbAccountHandle = () => (Account.user && Account.user.handle) || "";
 window.qbSpeedLevel = speedLevel;
 window.qbSpeedMs = speedMs;
 function setRevealSpeed(val) {
@@ -4055,7 +4059,7 @@ function setMode(mode) {
       $("#category-filters")?.classList.toggle("weights-on", !!state.settings.useWeights);
       refreshCategorySummary();
     }),
-  ]).then(() => { restoreFilterState(); applyPendingPacketPlay(); applyCustomView(); });
+  ]).then(() => { restoreFilterState(); applyPendingPacketPlay(); applyCustomView(); clearPrefetch(); warmOrdered(); });   // preload for the restored Setup
   updateModeFields();
   initGameplayControls();
   updateKeyLabels();
@@ -4202,7 +4206,9 @@ async function nextQuestion() {
 
   const placeholder = $("#question-placeholder");
   placeholder.classList.remove("hidden");
-  placeholder.innerHTML = '<div class="placeholder-icon"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div><p class="text-muted">Loading next question…</p>';
+  // questions are preloaded (refillPrefetch), so this is almost never seen: no words,
+  // just three dots that fade in if a wait ever lasts (ui.css .q-wait)
+  placeholder.innerHTML = '<div class="q-wait" aria-label="Next question" role="status"><i></i><i></i><i></i></div>';
 
   if (state.reviewIds && state.mode === "tossups") {
     if (!state.reviewIds.length) {
@@ -4211,9 +4217,10 @@ async function nextQuestion() {
       return;
     }
     const id = state.reviewIds.shift();
+    _prefetchById("tossups", state.reviewIds);
     try {
-      const d = await API.get("/api/tossups/" + encodeURIComponent(id));
-      if (d.tossup) {
+      const d = await _questionById("tossups", id);
+      if (d && d.tossup) {
         state.currentQuestion = d.tossup;
         renderQuestion(d.tossup);
         $("#session-counter").textContent = `${state.questionCount}`;
@@ -4226,9 +4233,10 @@ async function nextQuestion() {
   if (state.bonusIds && state.mode === "bonuses") {
     if (!state.bonusIds.length) { state.bonusIds = null; endOfQueue("Done — Press Esc to leave."); return; }
     const id = state.bonusIds.shift();
+    _prefetchById("bonuses", state.bonusIds);
     try {
-      const d = await API.get("/api/bonuses/" + encodeURIComponent(id));
-      if (d.bonus) { state.currentQuestion = d.bonus; renderQuestion(d.bonus); $("#session-counter").textContent = `${state.questionCount}`; return; }
+      const d = await _questionById("bonuses", id);
+      if (d && d.bonus) { state.currentQuestion = d.bonus; renderQuestion(d.bonus); $("#session-counter").textContent = `${state.questionCount}`; return; }
     } catch {}
     return nextQuestion();
   }
@@ -4279,18 +4287,17 @@ async function nextQuestion() {
   // makes "next" instant. Fall back to a live fetch otherwise.
   let question = null;
   const _plist = state.mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
-  while (_plist.length && !question) {
-    const cand = _plist.shift();
-    if (servable(cand)) question = cand;
-  }
+  const take = () => { while (_plist.length && !question) { const cand = _plist.shift(); if (servable(cand)) question = cand; } };
+  take();
 
-  // The website: a refill already on its way beats a fresh request queued
-  // behind it (each is a round trip to the server).
-  if (!question && IS_WEB && _prefetch.filling) {
-    for (let i = 0; i < 160 && _prefetch.filling && !_plist.length; i++) await new Promise((r) => setTimeout(r, 25));
-    while (_plist.length && !question) {
-      const cand = _plist.shift();
-      if (servable(cand)) question = cand;
+  // A refill on its way (or started now) beats a fresh request queued behind it:
+  // take its first batch the moment it lands.
+  if (!question && _prefetchEligible()) {
+    if (_prefetch.filling !== _prefetch.gen) refillPrefetch();
+    const until = Date.now() + 10000;
+    while (!question && _prefetch.filling === _prefetch.gen && Date.now() < until) {
+      await Promise.race([_prefetchArrival(), new Promise((r) => setTimeout(r, 400))]);
+      take();
     }
   }
 
@@ -4333,23 +4340,37 @@ async function nextQuestion() {
 }
 
 // ── Question preloading ────────────────────────────────────────────────────
-// Random-mode questions are fetched a few ahead in the background so pressing
-// "next" renders instantly instead of waiting on the year-filtered random
-// query (~150ms). Any filter-panel change empties the queue (a capture-phase
-// listener below), and hidden/plugin-filtered questions are re-checked at
-// serve time, so a stale entry can never be served.
-// The website keeps more in hand and fetches them side by side: each request
-// there is a round trip to the server, so a quick run of Nexts would empty a
-// queue of 3 refilled one at a time.
-const _PREFETCH_TARGET = IS_WEB ? 6 : 3;
-const _prefetch = { tossups: [], bonuses: [], gen: 0, filling: false };
+// Random-mode questions are kept preloaded so Next never waits on the server
+// (on the website every request is a round trip — up to a second from far away).
+// The queue holds _PREFETCH_TARGET and is topped up in BATCHES —
+// query?random=1&limit=N brings several distinct questions per round trip, and
+// several batches go side by side — whenever it is below target: as soon as the
+// practice page is open (before Start too), after every question served, and
+// right after a Setup change that picks different questions (that empties it: the
+// next question must match the new categories). Weighted categories roll once per
+// request (getFilters), so those come one per request, many at a time. Hidden /
+// plugin-filtered questions are re-checked at serve time, so a stale entry can
+// never be served.
+const _PREFETCH_TARGET = IS_WEB ? 24 : 10;
+const _PREFETCH_BATCH = 4;
+const _prefetch = { tossups: [], bonuses: [], gen: 0, filling: -1, waiters: [] };
 function clearPrefetch() {
   _prefetch.tossups.length = 0;
   _prefetch.bonuses.length = 0;
   _prefetch.gen++;
+  schedulePrefetch();
 }
-document.getElementById("filters-panel")?.addEventListener("change", clearPrefetch, true);
-document.getElementById("filters-panel")?.addEventListener("input", clearPrefetch, true);
+let _prefetchTimer = null;
+function schedulePrefetch(ms = 150) {
+  clearTimeout(_prefetchTimer);
+  _prefetchTimer = setTimeout(() => { _prefetchTimer = null; refillPrefetch(); }, ms);
+}
+// Setup edits that pick different questions empty the queue; reading speed, timers,
+// strictness and display toggles don't (dragging the speed slider used to empty it).
+const _NOT_A_FILTER = new Set(["panel-speed-slider", "strictness-slider", "panel-buzz-timer", "panel-buzz-window", "panel-bonus-timer", "opt-allow-rebuzzes", "opt-stop-on-power", "opt-allow-skips", "opt-bonus-after", "opt-hide-pron", "opt-show-qmeta", "filter-hide-pron", "filter-hide-notes", "auto-reveal"]);
+const _filterEdit = (e) => { if (!(e.target && _NOT_A_FILTER.has(e.target.id))) clearPrefetch(); };
+document.getElementById("filters-panel")?.addEventListener("change", _filterEdit, true);
+document.getElementById("filters-panel")?.addEventListener("input", _filterEdit, true);
 
 function _randomQuestionParams(filters) {
   const params = new URLSearchParams();
@@ -4373,50 +4394,74 @@ function _randomQuestionParams(filters) {
 
 function _prefetchEligible() {
   const mv = $("#mode-select")?.value;
-  return state.sessionActive && !state.reviewIds && !state.bonusIds && !state._wantBonus &&
+  const open = state.sessionActive || !!$("#practice-screen")?.classList.contains("active");
+  // never with a half-built panel (getFilters would read no categories at all)
+  return open && !!$("#category-filters .category-group") && !state.reviewIds && !state.bonusIds && !state._wantBonus &&
     mv !== "set" && mv !== "custom" &&
     !$("#filter-starred")?.checked &&
     (state.mode === "tossups" || state.mode === "bonuses") &&
     (!state._practiceBase || state._practiceBase === state.mode);   // not the bonus-after-correct interlude
 }
+// resolves when a question joins the queue or a fill ends
+function _prefetchArrival() { return new Promise((res) => _prefetch.waiters.push(res)); }
+function _wakePrefetchWaiters() { _prefetch.waiters.splice(0).forEach((f) => f()); }
 
 async function refillPrefetch() {
-  if (_prefetch.filling || !_prefetchEligible()) return;
-  _prefetch.filling = true;
+  if (!_prefetchEligible()) return;
   const gen = _prefetch.gen;
+  if (_prefetch.filling === gen) return;   // already filling for these filters (an older fill's results are dropped)
+  _prefetch.filling = gen;
   const mode = state.mode;
   const list = mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
-  const endpoint = mode === "tossups" ? "/api/tossups/random" : "/api/bonuses/random";
+  const endpoint = mode === "tossups" ? "/api/tossups/query" : "/api/bonuses/query";
+  const stale = () => gen !== _prefetch.gen || mode !== state.mode;
   try {
-    let attempts = 0;
-    while (list.length < _PREFETCH_TARGET && attempts < _PREFETCH_TARGET * 3) {
-      // Fresh filters per fetch: in weighted mode every question is its own
-      // category roll, exactly as if it had been fetched on demand. The whole
-      // shortfall is fetched at once (the website), one at a time otherwise.
-      const n = IS_WEB ? _PREFETCH_TARGET - list.length : 1;
-      attempts += n;
-      // each question joins the queue the moment it arrives (a Next waiting on
-      // the refill gets the first one, not the slowest)
-      const keep = (q) => {
-        if (!q || gen !== _prefetch.gen || mode !== state.mode) return;
-        const dup = list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id);
-        if (!dup) list.push(q);
-      };
+    let rounds = 0;
+    while (!stale() && list.length < _PREFETCH_TARGET && rounds++ < 4) {
+      const per = state.settings.useWeights ? 1 : _PREFETCH_BATCH;
+      const reqs = Math.min(IS_WEB ? 8 : 3, Math.ceil((_PREFETCH_TARGET - list.length) / per));
       const batch = [];
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < reqs; i++) {
         const filters = getFilters();
         if (filters.starredOnly) break;
-        batch.push(API.get(`${endpoint}?${_randomQuestionParams(filters)}`).then((d) => { const q = mode === "tossups" ? d.tossup : d.bonus; keep(q); return q; }, () => null));
+        const params = _randomQuestionParams(filters);
+        params.set("limit", String(per));
+        // each batch joins the queue the moment it arrives (a Next waiting on the
+        // refill gets the first one, not the slowest)
+        batch.push(API.get(`${endpoint}?${params}`).then((d) => {
+          if (stale()) return 0;
+          let added = 0;
+          for (const q of (d && d.rows) || []) {
+            if (!q || list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id)) continue;
+            list.push(q); added++;
+          }
+          if (added) _wakePrefetchWaiters();
+          return added;
+        }, () => 0));
       }
       if (!batch.length) break;
       const got = await Promise.all(batch);
-      if (gen !== _prefetch.gen || mode !== state.mode) return;   // filters/mode moved on
-      if (!got.some(Boolean)) break;
+      if (!got.some(Boolean)) break;   // nothing new: a tiny pool, or offline
     }
   } finally {
-    _prefetch.filling = false;
+    if (_prefetch.filling === gen) _prefetch.filling = -1;
+    _wakePrefetchWaiters();
   }
 }
+
+// Review / list modes serve questions by id: the next few load while you play.
+const _byId = new Map();   // "tossups:<id>" → Promise<{tossup}|{bonus}|null>
+function _questionById(kind, id) {
+  const k = kind + ":" + id;
+  let p = _byId.get(k);
+  if (!p) {
+    p = API.get(`/api/${kind}/` + encodeURIComponent(id)).catch(() => null);
+    _byId.set(k, p);
+    while (_byId.size > 60) _byId.delete(_byId.keys().next().value);
+  }
+  return p;
+}
+function _prefetchById(kind, ids) { for (const id of (ids || []).slice(0, 5)) _questionById(kind, id); }
 
 async function skipQuestion() {
   if (!state.currentQuestion || state.resultAreaVisible || state._loadingQuestion) return;
@@ -4485,6 +4530,32 @@ async function skipQuestion() {
   nextQuestion();
 }
 
+// set mode's packet requests, kept (the content never changes) so a set picked in
+// Setup is already loaded when Start is pressed (warmOrdered)
+const _setCache = new Map();
+function _setGet(url) {
+  let p = _setCache.get(url);
+  if (!p) {
+    p = API.get(url);
+    p.catch(() => _setCache.delete(url));
+    _setCache.set(url, p);
+    while (_setCache.size > 80) _setCache.delete(_setCache.keys().next().value);
+  }
+  return p;
+}
+let _warmTimer = null;
+function warmOrdered() {
+  clearTimeout(_warmTimer);
+  _warmTimer = setTimeout(async () => {
+    if ($("#mode-select")?.value !== "set" || !$("#practice-screen")?.classList.contains("active")) return;
+    const setName = $("#mode-set-name")?.value || ""; if (!setName) return;
+    let pkts = parsePacketNumbers($("#mode-packet")?.value);
+    try { if (!pkts.length) pkts = ((await _setGet("/api/packets-for-set?setName=" + encodeURIComponent(setName))).packets || []).map((p) => p.packet_number); } catch { return; }
+    pkts.slice(0, 40).forEach((n) => _setGet(`/api/packet-content?setName=${encodeURIComponent(setName)}&packetNumber=${n}`).catch(() => {}));
+  }, 300);
+}
+document.getElementById("filters-panel")?.addEventListener("change", (e) => { if (e.target && /^mode-(select|set-name|packet)$/.test(e.target.id)) warmOrdered(); }, true);
+
 async function ensureOrderedQueue() {
   const wantBonuses = state._practiceBase === "bonuses";
   const modeVal = $("#mode-select")?.value;
@@ -4497,13 +4568,13 @@ async function ensureOrderedQueue() {
     if (state._gameSig !== sig) {
       tossups = []; bonuses = [];
       let pkts = packets.length ? packets : null;
-      if (!pkts) { try { pkts = ((await API.get("/api/packets-for-set?setName=" + encodeURIComponent(setName))).packets || []).map((p) => p.packet_number); } catch { pkts = []; } }
-      for (const n of pkts) {
-        try {
-          const pc = await API.get(`/api/packet-content?setName=${encodeURIComponent(setName)}&packetNumber=${n}`);
-          (pc.tossups || []).forEach((t) => tossups.push(t));
-          (pc.bonuses || []).forEach((b) => bonuses.push(b));
-        } catch {}
+      if (!pkts) { try { pkts = ((await _setGet("/api/packets-for-set?setName=" + encodeURIComponent(setName))).packets || []).map((p) => p.packet_number); } catch { pkts = []; } }
+      // all packets side by side (they used to load one after another — a round trip each)
+      const got = await Promise.all(pkts.map((n) => _setGet(`/api/packet-content?setName=${encodeURIComponent(setName)}&packetNumber=${n}`).catch(() => null)));
+      for (const pc of got) {
+        if (!pc) continue;
+        (pc.tossups || []).forEach((t) => tossups.push(t));
+        (pc.bonuses || []).forEach((b) => bonuses.push(b));
       }
     }
   }
@@ -5947,7 +6018,8 @@ window.QB?.on?.("theme:change", () => { applyTheme(); applyDefaultAppearance(); 
 rebuildAppearanceOptions();
 applyDefaultAppearance();
 
-// opts: { yes, no, title, detail, danger }. Enter confirms, Esc / backdrop cancel.
+// opts: { yes, no, title, detail, danger, noCancel (a notice: just the one button) }.
+// Enter confirms, Esc / backdrop cancel.
 function confirmDialog(message, onYes, opts) {
   opts = opts || {};
   document.getElementById("confirm-dialog")?.remove();
@@ -5957,13 +6029,13 @@ function confirmDialog(message, onYes, opts) {
   el.setAttribute("role", "alertdialog"); el.setAttribute("aria-modal", "true");
   el.innerHTML = `<div class="confirm-box">${opts.title ? `<div class="confirm-title">${escapeHtml(opts.title)}</div>` : ""}<div class="confirm-msg">${escapeHtml(message)}</div>` +
     (opts.detail ? `<div class="confirm-detail">${escapeHtml(opts.detail)}</div>` : "") +
-    `<div class="confirm-actions"><button class="btn btn-ghost" id="cf-no">${escapeHtml(opts.no || "Cancel")}</button>` +
+    `<div class="confirm-actions">${opts.noCancel ? "" : `<button class="btn btn-ghost" id="cf-no">${escapeHtml(opts.no || "Cancel")}</button>`}` +
     `<button class="btn ${opts.danger ? "btn-danger" : "btn-primary"}" id="cf-yes">${escapeHtml(opts.yes || "Delete")}</button></div></div>`;
   const close = () => animateRemove(el);
   el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
   document.body.appendChild(el);
   el.querySelector("#cf-yes").onclick = () => { close(); try { onYes(); } catch (e) { console.error(e); } };
-  el.querySelector("#cf-no").onclick = close;
+  const no = el.querySelector("#cf-no"); if (no) no.onclick = close;
 }
 // A one-line text question ("Name your leaderboard"): Enter or the button
 // answers it, Escape / the backdrop / Cancel drops it.
@@ -6953,7 +7025,7 @@ function wordRangeAt(x, y) {
 }
 document.addEventListener("contextmenu", (e) => {
   const t = e.target;
-  if (!t || !t.closest || t.closest("input, textarea, select, button, .btn, [contenteditable], .qb-ctx-menu, .pop, .unrevealed, .session-row, .db-row, .qb-select, .tb-menu")) return;
+  if (!t || !t.closest || t.closest("input, textarea, select, button, .btn, [contenteditable], .qb-ctx-menu, .pop, .unrevealed, .session-row, .db-row, .qb-select, .tb-menu, [data-user]")) return;
   if (interactiveTermAt(t)) return;   // a whole term already (a frequency answer, a link…)
   const sel = window.getSelection();
   if (sel && !sel.isCollapsed && sel.rangeCount && String(sel).trim().length >= 2) {
@@ -8477,7 +8549,10 @@ async function syncAppUpdateUI() {
     const status = $("#app-update-status");
     if (status && !status.textContent) {
       status.textContent = info.configured
-        ? "Current version: v" + (info.version || "0") + (info.active ? " (updated)" : " (bundled)")
+        ? "Current version: v" + (info.version || "0") + (info.active ? " (updated)" : " (bundled)") +
+          // the screens updated but the app's core (window, files, backend) didn't: an older
+          // Windows install couldn't swap those files in — a fresh install finishes it
+          (info.active && !info.mainActive ? " — the app's core is still the one it was installed with; reinstall from onlinequiz.net/download to finish updating it" : "")
         : "App updates aren't set up in this build.";
     }
   } catch {}
@@ -11132,7 +11207,148 @@ function friendDots() {
 function friendsSeen() { lsSet(FR_SEEN, JSON.stringify(_frIncoming.slice(0, 200))); friendDots(); }
 async function friendPoll() {
   if (!Account.user || !Account.user.handle || Account.offline) { _frIncoming = []; friendDots(); return; }
-  try { const d = await API.get("/api/friends"); if (d && Array.isArray(d.incoming)) { _frIncoming = d.incoming.map((f) => f.handle); friendDots(); } } catch (e) {}
+  try { const d = await API.get("/api/friends"); if (d && Array.isArray(d.incoming)) { _frIncoming = d.incoming.map((f) => f.handle); friendDots(); noteFriendRelations(d); } } catch (e) {}
+}
+
+// ── Other players: one menu wherever they appear ──
+// Anything carrying data-user="<username>" — leaderboard and friends rows, players
+// and chat in a multiplayer room — opens it on a click or a right-click: View
+// profile (achievements), Add friend / Remove friend (Accept / Cancel a request),
+// Invite to one of your leaderboards, Copy username. data-user-name is the name
+// shown; a room player without an account has data-user="" (their name only).
+const _rel = { at: 0, map: new Map(), p: null };   // username → "friends" | "outgoing" | "incoming"
+function noteFriendRelations(d) {
+  const m = new Map();
+  (d.friends || []).forEach((f) => m.set(f.handle, "friends"));
+  (d.incoming || []).forEach((f) => m.set(f.handle, "incoming"));
+  (d.outgoing || []).forEach((f) => m.set(f.handle, "outgoing"));
+  _rel.map = m; _rel.at = Date.now(); _rel.p = Promise.resolve(m);
+}
+function friendRelations(force) {
+  if (!Account.user || !Account.user.handle) return Promise.resolve(new Map());
+  if (!force && _rel.p && Date.now() - _rel.at < 60000) return _rel.p;
+  _rel.at = Date.now();
+  _rel.p = API.get("/api/friends").then((d) => { if (d && !d.error) noteFriendRelations(d); return _rel.map; }, () => _rel.map);
+  return _rel.p;
+}
+async function friendAction(handle, rel) {
+  const path = rel === "incoming" ? "/api/friends/respond" : rel ? "/api/friends/remove" : "/api/friends/request";
+  const r = await API.post(path, rel === "incoming" ? { handle, accept: true } : { handle }).catch(() => ({ error: "Couldn't reach onlinequiz.net." }));
+  if (r && r.error) { confirmDialog(r.error, () => {}, { yes: "OK", noCancel: true }); return false; }
+  _rel.map.set(handle, rel === "incoming" ? "friends" : rel ? null : (r && r.friends ? "friends" : "outgoing"));
+  if (!_rel.map.get(handle)) _rel.map.delete(handle);
+  _lbCache.clear();
+  if (document.querySelector("#friends-screen.active")) renderFriends();
+  friendPoll();
+  return true;
+}
+function userTarget(t) {
+  const el = t && t.closest && t.closest("[data-user]");
+  if (!el || t.closest("button, a, input, select, textarea, label")) return null;   // their own controls stay theirs
+  return el;
+}
+document.addEventListener("click", (e) => {
+  if (e.button !== 0) return;
+  const el = userTarget(e.target); if (!el) return;
+  if (String(window.getSelection() || "").trim().length > 1) return;   // selecting their name, not picking them
+  e.preventDefault();
+  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "" });
+});
+document.addEventListener("contextmenu", (e) => {
+  const el = userTarget(e.target); if (!el || !window.QB?.contextMenu) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "" });
+}, true);
+async function openUserMenu(x, y, u) {
+  const handle = String(u.handle || "").replace(/^@/, ""), name = u.name || (handle ? "@" + handle : "Player");
+  const title = handle ? (u.name && u.name !== handle ? u.name + "  @" + handle : "@" + handle) : name;
+  if (!handle) {
+    window.QB.contextMenu(x, y, [
+      { label: "Not signed in — no profile", onClick: () => {}, hint: "" },
+      { label: "Copy name", onClick: () => copyToClipboard(name) },
+    ], { title });
+    return;
+  }
+  const me = Account.user && Account.user.handle;
+  if (me && me === handle) {
+    window.QB.contextMenu(x, y, [
+      { label: "View your profile", onClick: () => openUserProfile(handle, u.name) },
+      { label: "Your achievements", onClick: () => goTo("player") },
+      { sep: true },
+      { label: "Copy your username", onClick: () => copyToClipboard("@" + handle) },
+    ], { title: title + " (you)" });
+    return;
+  }
+  // how you stand with them: what the friends list said (a quick look if it's old)
+  let rel = null;
+  if (me) {
+    const m = await Promise.race([friendRelations(), new Promise((r) => setTimeout(() => r(_rel.map), 700))]);
+    rel = m.get(handle) || null;
+  }
+  const items = [{ label: "View profile", hint: "achievements", onClick: () => openUserProfile(handle, u.name) }, { sep: true }];
+  if (!Account.user) items.push({ label: "Sign in to add friends", onClick: () => openAccount("signin") });
+  else if (!me) items.push({ label: "Choose a username to add friends", onClick: () => openAccount("handle") });
+  else if (rel === "friends") items.push({ label: "Remove friend", danger: true, onClick: () => confirmDialog("Remove @" + handle + " from your friends?", () => friendAction(handle, "friends"), { yes: "Remove" }) });
+  else if (rel === "outgoing") items.push({ label: "Cancel friend request", onClick: () => friendAction(handle, "outgoing") });
+  else if (rel === "incoming") items.push({ label: "Accept friend request", onClick: () => friendAction(handle, "incoming") }, { label: "Decline friend request", onClick: () => friendAction(handle, "outgoing") });
+  else items.push({ label: "Add friend", onClick: () => friendAction(handle, null) });
+  if (rel === "friends") {
+    const boards = ((_lbCache.get(_lbUrl(_lb.period)) || {}).boards || []);
+    if (boards.length) items.push({ label: "Invite to a leaderboard…", onClick: () => window.QB.contextMenu(x, y, boards.map((b) => ({ label: b.name, onClick: async () => {
+      const r = await API.post("/api/leaderboards/invite", { id: b.id, handle }).catch(() => ({ error: "Couldn't reach onlinequiz.net." }));
+      confirmDialog(r && r.error ? r.error : "Invited @" + handle + " to " + b.name + ".", () => {}, { yes: "OK", noCancel: true });
+      _lbCache.clear();
+    } })), { title: "Invite @" + handle + " to" }) });
+  }
+  items.push({ sep: true }, { label: "Copy username", onClick: () => copyToClipboard("@" + handle) });
+  window.QB.contextMenu(x, y, items, { title });
+}
+// Their profile: who they are, their totals and achievements (worked out here from
+// what the server sends, exactly as your own are), and the friend button.
+async function openUserProfile(handle, shownName) {
+  document.getElementById("user-profile")?.remove();
+  const el = document.createElement("div");
+  el.id = "user-profile";
+  el.className = "qb-overlay confirm-overlay up-overlay";
+  el.innerHTML = `<div class="confirm-box up-box" role="dialog" aria-label="Profile of @${escapeHtml(handle)}"><div class="up-head"><span class="fr-av up-av">${escapeHtml(String(shownName || handle)[0].toUpperCase())}</span><div class="up-who"><b>${escapeHtml(shownName || handle)}</b><small>@${escapeHtml(handle)}</small></div><button type="button" class="btn btn-ghost btn-icon btn-sm up-x" aria-label="Close">${ic("x", 16)}</button></div><div class="up-body">${loadingBarHtml("Loading profile…")}</div></div>`;
+  const close = () => animateRemove(el);
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
+  el.querySelector(".up-x").onclick = close;
+  const onKey = (ev) => { if (ev.key === "Escape" && document.body.contains(el)) { ev.stopPropagation(); close(); document.removeEventListener("keydown", onKey, true); } };
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(el);
+  let d;
+  try { d = await API.get("/api/users/profile?handle=" + encodeURIComponent(handle)); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
+  if (!document.body.contains(el)) return;
+  const body = el.querySelector(".up-body");
+  if (!d || d.error) { body.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't load that profile.")}</div>`; return; }
+  el.querySelector(".up-who b").textContent = d.displayName || d.handle;
+  el.querySelector(".up-av").textContent = String(d.displayName || d.handle || "?")[0].toUpperCase();
+  const rel = d.relation;
+  const friendBtn = d.you ? "" : !d.signedIn ? '<button type="button" class="btn btn-sm" data-up="signin">Sign in to add friends</button>'
+    : !d.canFriend ? '<button type="button" class="btn btn-sm" data-up="handle">Choose a username to add friends</button>'
+    : rel === "friends" ? '<span class="badge">Friends</span><button type="button" class="btn btn-sm" data-up="remove">Remove friend</button>'
+    : rel === "outgoing" ? '<span class="badge">Request sent</span><button type="button" class="btn btn-sm" data-up="cancel">Cancel</button>'
+    : rel === "incoming" ? '<button type="button" class="btn btn-sm btn-primary" data-up="accept">Accept friend request</button>'
+    : '<button type="button" class="btn btn-sm btn-primary" data-up="add">Add friend</button>';
+  const st = d.stats || {}, num = (v) => Number(v || 0).toLocaleString();
+  let achHtml = "", achNote = "";
+  if (d.private) achNote = `<p class="fr-empty">${ic("lock", 14)} @${escapeHtml(d.handle)} keeps their practice private — it shows to friends and on leaderboards you share.</p>`;
+  else {
+    const p = d.powers || {};
+    const achData = computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, p.answer_questions || {});
+    const all = Object.values(achData || {}), got = all.filter((a) => a && a.earned).length;
+    achNote = `<div class="up-stats"><span><b class="num">${num(st.totalQuestions)}</b><small>questions</small></span><span><b class="num">${num(st.tossupPowers)}</b><small>powers</small></span><span><b class="num">${st.totalQuestions ? Math.round((st.tossupAccuracy || 0) * 100) + "%" : "—"}</b><small>tossup accuracy</small></span><span><b class="num">${got}</b><small>achievements</small></span></div>`;
+    achHtml = `<div class="stats-section"><div class="stats-section-title">ACHIEVEMENTS</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
+  }
+  body.innerHTML = `<div class="up-actions">${friendBtn}</div>${achNote}${achHtml}`;
+  try { initCollapsibles(body); } catch (e) {}
+  body.querySelectorAll("[data-up]").forEach((b) => b.onclick = async () => {
+    const k = b.dataset.up;
+    if (k === "signin" || k === "handle") { close(); openAccount(k); return; }
+    const go = () => friendAction(d.handle, k === "accept" ? "incoming" : k === "remove" ? "friends" : k === "cancel" ? "outgoing" : null).then((ok) => { if (ok) openUserProfile(d.handle, d.displayName); });
+    if (k === "remove") confirmDialog("Remove @" + d.handle + " from your friends?", go, { yes: "Remove" }); else go();
+  });
 }
 setInterval(() => { if (!document.hidden && Account.user) friendPoll(); }, 60000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Account.user) friendPoll(); });
@@ -11433,24 +11649,51 @@ function paintStreaks(c) {
 // friends (they accept), and race them. Periods: the last 7 days, 30 days, all
 // time. The numbers come from each account's synced practice (server lb_stats).
 const _lb = { tab: "global", period: "week", friends: null };
+// Preloaded while you're on the home page (preloadLeaderboards): the page paints
+// those numbers at once, then fetches fresh ones and repaints only if they changed.
+const _lbCache = new Map();   // url → response
+const _lbUrl = (period) => "/api/leaderboards?period=" + period;
+const _lbBoardUrl = (id, period) => "/api/leaderboards/board?id=" + encodeURIComponent(id) + "&period=" + period;
+let _lbPreloadAt = 0;
+function preloadLeaderboards() {
+  if (!Account.available || Date.now() - _lbPreloadAt < 45000) return;
+  _lbPreloadAt = Date.now();
+  const get = (url) => API.get(url).then((d) => { if (d && !d.error) _lbCache.set(url, d); return d; }, () => null);
+  get(_lbUrl(_lb.period)).then((d) => {
+    if (d && _lb.tab !== "global" && (d.boards || []).some((b) => b.id === _lb.tab)) get(_lbBoardUrl(_lb.tab, _lb.period));
+    for (const p of ["week", "month", "all"]) if (p !== _lb.period) get(_lbUrl(p));   // the other periods, for their tabs
+  });
+}
 async function renderLeaderboards(note) {
   const c = document.getElementById("lb-container"); if (!c) return;
-  if (!note) await accountFresh();
+  // the account check runs alongside (it's a round trip) once the account is known
+  if (!note) { const af = accountFresh(); if (!Account.known) await af; }
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need onlinequiz accounts, which aren't open yet.</p></div>`; return; }
-  if (!c.querySelector(".lb-page")) c.innerHTML = loadingBarHtml("Loading leaderboards…");
+  const url = _lbUrl(_lb.period);
+  // preloaded numbers first (not after an edit: those must show the change)
+  let shown = "";
+  const cd = !note ? _lbCache.get(url) : null, cb = cd && _lb.tab !== "global" ? _lbCache.get(_lbBoardUrl(_lb.tab, _lb.period)) : null;
+  if (cd && (_lb.tab === "global" || cb) && (_lb.tab === "global" || (cd.boards || []).some((b) => b.id === _lb.tab))) {
+    shown = JSON.stringify([cd, cb || null]);
+    await paintLeaderboards(c, cd, cb || null, note);
+  } else if (!c.querySelector(".lb-page")) c.innerHTML = loadingBarHtml("Loading leaderboards…");
   if (_cloudOn) await cloudSyncNow();   // the app: your own numbers include what you just did
-  const per = "period=" + _lb.period;
   let d, board = null;
-  try { d = await API.get("/api/leaderboards?" + per); } catch (e) { d = null; }
-  if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't reach onlinequiz.net — check your internet connection.")}</div>`; return; }
+  try { d = await API.get(url); } catch (e) { d = null; }
+  if (!d || d.error) { if (!shown) c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't reach onlinequiz.net — check your internet connection.")}</div>`; return; }
+  _lbCache.set(url, d);
   if (_lb.tab !== "global" && !(d.boards || []).some((b) => b.id === _lb.tab)) _lb.tab = "global";
-  if (_lb.tab !== "global") { try { board = await API.get("/api/leaderboards/board?id=" + encodeURIComponent(_lb.tab) + "&" + per); } catch (e) { board = null; } if (!board || board.error) { _lb.tab = "global"; board = null; } }
+  if (_lb.tab !== "global") { try { board = await API.get(_lbBoardUrl(_lb.tab, _lb.period)); } catch (e) { board = null; } if (!board || board.error) { _lb.tab = "global"; board = null; } else _lbCache.set(_lbBoardUrl(_lb.tab, _lb.period), board); }
   if (!document.querySelector("#leaderboards-screen.active") && !note) return;
+  if (shown && shown === JSON.stringify([d, board])) return;   // the preloaded numbers were current
+  await paintLeaderboards(c, d, board, note);
+}
+async function paintLeaderboards(c, d, board, note) {
   const tabs = [["global", "Global"], ...(d.boards || []).map((b) => [b.id, b.name])].map(([k, l]) => `<button type="button" class="db-tab${_lb.tab === k ? " active" : ""}" data-lb-tab="${escapeHtml(k)}">${escapeHtml(l)}</button>`).join("") +
     (d.signedIn ? '<button type="button" class="db-tab lb-new" data-lb-new>+ New leaderboard</button>' : "");
   const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
-  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}"><span class="lb-rank num">${r.rank}</span>${av(r.displayName || r.handle)}` +
+  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}"><span class="lb-rank num">${r.rank}</span>${av(r.displayName || r.handle)}` +
     `<span class="fr-name"><b>${escapeHtml(r.displayName || r.handle)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>points</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.questions || 0).toLocaleString()}</b><small>questions</small></span>` +
@@ -11487,7 +11730,7 @@ async function renderLeaderboards(note) {
   const act = async (path, bodyObj, okNote) => {
     const r = await API.post(path, bodyObj).catch(() => ({ error: "Couldn't reach onlinequiz.net." }));
     if (r && r.error) { msg(r.error, true); return null; }
-    _lb.friends = null; renderLeaderboards(okNote || ""); return r;
+    _lb.friends = null; _lbCache.clear(); renderLeaderboards(okNote || ""); return r;
   };
   c.querySelectorAll("[data-lb-tab]").forEach((b) => b.onclick = () => { _lb.tab = b.dataset.lbTab; renderLeaderboards(); });
   c.querySelectorAll("[data-lb-period]").forEach((b) => b.onclick = () => { _lb.period = b.dataset.lbPeriod; renderLeaderboards(); });
@@ -11528,15 +11771,15 @@ async function renderFriends(note) {
   const board = rows.map((f, i) => {
     const s = f.summary || {}, w = s.week || {};
     const nm = f.you ? (Account.user && Account.user.displayName) || f.handle : f.displayName || f.handle;
-    return `<div class="fr-row${f.you ? " fr-you" : ""}"><span class="fr-rank num">${i + 1}</span>${av(nm)}<span class="fr-name"><b>${escapeHtml(nm || "")}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
+    return `<div class="fr-row${f.you ? " fr-you" : ""}" data-user="${escapeHtml(f.handle || "")}" data-user-name="${escapeHtml(nm || "")}"><span class="fr-rank num">${i + 1}</span>${av(nm)}<span class="fr-name"><b>${escapeHtml(nm || "")}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
       `<span class="fr-stat"><b class="num">${num(w.questions)}</b><small>this week</small></span>` +
       `<span class="fr-stat"><b class="num">${w.accuracy == null ? "—" : w.accuracy + "%"}</b><small>accuracy</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.today)}</b><small>today</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.streak)}</b><small>day streak</small></span>` +
       (f.you ? '<span class="fr-act"></span>' : `<span class="fr-act"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fr-remove="${escapeHtml(f.handle)}" title="Remove friend" aria-label="Remove @${escapeHtml(f.handle)}">${ic("trash", 15)}</button></span>`) + "</div>";
   }).join("");
-  const reqs = (d.incoming || []).map((f) => `<div class="fr-req">${av(f.displayName || f.handle)}<span class="fr-name"><b>${escapeHtml(f.displayName || f.handle)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
-  const sent = (d.outgoing || []).map((f) => `<div class="fr-req">${av(f.displayName || f.handle)}<span class="fr-name"><b>${escapeHtml(f.displayName || f.handle)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
+  const reqs = (d.incoming || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}">${av(f.displayName || f.handle)}<span class="fr-name"><b>${escapeHtml(f.displayName || f.handle)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
+  const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}">${av(f.displayName || f.handle)}<span class="fr-name"><b>${escapeHtml(f.displayName || f.handle)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
   c.innerHTML = `<div class="fr-page">` +
     `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button></div>` +
       `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Friend's username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +
@@ -11548,6 +11791,7 @@ async function renderFriends(note) {
   `</div>`;
   tipInto(c.querySelector(".fr-page"), "friends");
   _frIncoming = (d.incoming || []).map((f) => f.handle); friendsSeen();   // looked at: the dots go
+  noteFriendRelations(d);
   const act = async (path, body, okNote) => {
     const r = await API.post(path, body).catch(() => ({ error: "Couldn't reach onlinequiz.net." }));
     if (r && r.error) { const m = document.getElementById("fr-msg"); if (m) { m.textContent = r.error; m.classList.add("err"); } return; }

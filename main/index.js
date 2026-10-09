@@ -995,6 +995,7 @@ export class App {
     if (key === "POST /api/cloud/open") { this._openExternal(String(body.url || "")); return { ok: true }; }
     // the global leaderboard is public; the rest needs the account
     if (key === "GET /api/leaderboards") return this._cloudFetch("GET", path + (body.qs ? "?" + body.qs : ""), null, c && c.token);
+    if (key === "GET /api/users/profile") return this._cloudFetch("GET", path + (body.qs ? "?" + body.qs : ""), null, c && c.token);
     if (key === "POST /api/account/profile" || key === "GET /api/friends" || /^POST \/api\/friends\/(request|respond|remove)$/.test(key)
       || key === "GET /api/leaderboards/board" || /^POST \/api\/leaderboards\/(create|invite|respond|leave|remove|rename|delete)$/.test(key)) {
       if (!c) return { error: "Sign in first.", authRequired: true };
