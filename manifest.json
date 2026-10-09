@@ -1,5 +1,5 @@
 {
-  "version": "14.47",
+  "version": "14.48",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Click or right-click any player for their profile and achievements, or to add them as a friend; questions and leaderboards are preloaded so nothing waits; longer Setup sliders",
+  "notes": "Questions stay preloaded far ahead, so holding N never waits; if one is ever late, the screen just stays put until it's ready",
   "files": {
     "renderer/index.html": "91b867bac7716a4e7fb86b36df11df80b8c32ec845db16407244762436f0b533",
-    "renderer/style.css": "a453cb0b116ed47a7f6e2849de436e658be44a276a3c7f3310f1c896e4df596b",
+    "renderer/style.css": "85cea70a466ee46bf7b7efdb2d22ad98d5ab9ac0bd48e6a2f87a21a0ea9aca47",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "c78dfcd4f633d2e6fb73af367fc8bfed6b2b95df4d4ef4f14e14228b6788720d",
-    "renderer/app.js": "da3be5311be5c8d50d07c3e4b112ef74213e41327f02cb4416e42808006a97f2",
+    "renderer/app.js": "90f713a143c099d95d9c42a4d25b11e6d16bddb6f433efbb3b2a16eabf14bb6e",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "YP7b8ZMYrJoHhM5IddGyq3QI3u5hcjYAv/OjdwiwbYaTjpogdiTz2sODO+WI6VlWYa7SRL6QUnDdiYJafc42BA=="
+  "signature": "B5u0UvNKaZaG3vV9/7T+sVmfBDPeb8Jk5YgxQdSZzd58Aa5XTbGvsDxNA8sbHYNMyv0WDYeu9DQIe1EhYaUwBw=="
 }

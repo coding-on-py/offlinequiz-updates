@@ -4271,18 +4271,6 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
   .ext-page-body.mp-flush:has(> .mp-room) { padding-bottom: 0; }
 }
 .practice-actions > .btn, .mp-actions > .btn { margin: 0; }   /* the bars space with gap (a ".btn + .btn" margin pushed Next right after a hidden Buzz) */
-
-
-/* the wait between questions (questions are preloaded, so it's almost never seen):
-   no words, three dots that only fade in if it lasts */
-.q-wait { display: inline-flex; gap: 7px; padding: 18px 0; opacity: 0; animation: q-wait-in 240ms ease 700ms forwards; }
-.q-wait i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: q-wait-dot 1.1s ease-in-out infinite; }
-.q-wait i:nth-child(2) { animation-delay: 0.15s; }
-.q-wait i:nth-child(3) { animation-delay: 0.3s; }
-@keyframes q-wait-in { to { opacity: 1; } }
-@keyframes q-wait-dot { 0%, 80%, 100% { opacity: 0.25; transform: translateY(0); } 40% { opacity: 0.9; transform: translateY(-3px); } }
-@media (prefers-reduced-motion: reduce) { .q-wait i { animation: none; opacity: 0.5; } }
-
 /* Other players (data-user: leaderboards, friends, rooms): a click or right-click opens
    their menu (app.js openUserMenu) */
 [data-user] { cursor: pointer; }

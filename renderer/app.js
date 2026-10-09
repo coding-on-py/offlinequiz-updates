@@ -4183,7 +4183,15 @@ function endSession() {
 }
 
 async function nextQuestion() {
-  if (!state.sessionActive) return;
+  if (!state.sessionActive || state._awaitingNext) return;
+  // Random practice serves from the preload queue. If a run of Nexts ever outpaces it, the
+  // screen stays exactly as it is — no blank, no wait text — until one is ready, and more
+  // Nexts are ignored meanwhile.
+  if (_prefetchEligible() && !_queueReady()) {
+    state._awaitingNext = true; state._loadingQuestion = true;
+    try { await _awaitQueued(12000); } finally { state._awaitingNext = false; state._loadingQuestion = false; }
+    if (!state.sessionActive) return;
+  }
   stopBuzzTimer();
 
   state.questionCount++;
@@ -4204,11 +4212,10 @@ async function nextQuestion() {
   state._loadingQuestion = true; // cleared by renderQuestion / endOfQueue
   resetQuestionUI();
 
+  // nothing shows while the next one loads (preloaded, so it's normally instant)
   const placeholder = $("#question-placeholder");
-  placeholder.classList.remove("hidden");
-  // questions are preloaded (refillPrefetch), so this is almost never seen: no words,
-  // just three dots that fade in if a wait ever lasts (ui.css .q-wait)
-  placeholder.innerHTML = '<div class="q-wait" aria-label="Next question" role="status"><i></i><i></i><i></i></div>';
+  placeholder.classList.add("hidden");
+  placeholder.innerHTML = "";
 
   if (state.reviewIds && state.mode === "tossups") {
     if (!state.reviewIds.length) {
@@ -4293,9 +4300,9 @@ async function nextQuestion() {
   // A refill on its way (or started now) beats a fresh request queued behind it:
   // take its first batch the moment it lands.
   if (!question && _prefetchEligible()) {
-    if (_prefetch.filling !== _prefetch.gen) refillPrefetch();
+    if (!_pumping()) refillPrefetch(true);
     const until = Date.now() + 10000;
-    while (!question && _prefetch.filling === _prefetch.gen && Date.now() < until) {
+    while (!question && _pumping() && Date.now() < until) {
       await Promise.race([_prefetchArrival(), new Promise((r) => setTimeout(r, 400))]);
       take();
     }
@@ -4351,9 +4358,10 @@ async function nextQuestion() {
 // request (getFilters), so those come one per request, many at a time. Hidden /
 // plugin-filtered questions are re-checked at serve time, so a stale entry can
 // never be served.
-const _PREFETCH_TARGET = IS_WEB ? 24 : 10;
-const _PREFETCH_BATCH = 4;
-const _prefetch = { tossups: [], bonuses: [], gen: 0, filling: -1, waiters: [] };
+const _PREFETCH_TARGET = IS_WEB ? 100 : 24;  // in hand + on the way: a held-down N can't drain it
+const _PREFETCH_BATCH = IS_WEB ? 12 : 8;     // questions per request
+const _PREFETCH_REQS = IS_WEB ? 8 : 3;       // requests in flight at most
+const _prefetch = { tossups: [], bonuses: [], gen: 0, pump: null, waiters: [] };
 function clearPrefetch() {
   _prefetch.tossups.length = 0;
   _prefetch.bonuses.length = 0;
@@ -4406,46 +4414,78 @@ function _prefetchEligible() {
 function _prefetchArrival() { return new Promise((res) => _prefetch.waiters.push(res)); }
 function _wakePrefetchWaiters() { _prefetch.waiters.splice(0).forEach((f) => f()); }
 
-async function refillPrefetch() {
+// a servable question is waiting in the queue
+function _queueReady() {
+  const list = state.mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
+  const t = state.mode === "tossups" ? "tossup" : "bonus";
+  return list.some((q) => q && !isQuestionHidden(q.id, t) && (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode })));
+}
+// wait (at most ms) for the queue to have one; the pump is started if nothing is on its way.
+// Gives up at once when nothing is in flight and nothing came (no matches / offline):
+// nextQuestion's own fetch then reports it.
+async function _awaitQueued(ms) {
+  const until = Date.now() + ms;
+  let started = false;
+  while (state.sessionActive && !_queueReady() && Date.now() < until) {
+    if (!_pumping() && !started) { started = true; refillPrefetch(true); }
+    const p = _prefetch.pump;
+    if ((!_pumping() && !_queueReady()) || (p && p.gen === _prefetch.gen && p.none)) break;   // nothing coming / nothing matches
+    await Promise.race([_prefetchArrival(), new Promise((r) => setTimeout(r, 400))]);
+  }
+}
+
+// What one request asks for: [query string, how many]. Weighted categories roll once per
+// question (getFilters rolls once per call), and rolls that land on the same category
+// share one request.
+function _prefetchGroups() {
+  const groups = new Map();
+  if (state.settings.useWeights) {
+    for (let i = 0; i < _PREFETCH_BATCH; i++) {
+      const f = getFilters(); if (f.starredOnly) return [];
+      const k = _randomQuestionParams(f).toString(); groups.set(k, (groups.get(k) || 0) + 1);
+    }
+  } else {
+    const f = getFilters(); if (f.starredOnly) return [];
+    groups.set(_randomQuestionParams(f).toString(), _PREFETCH_BATCH);
+  }
+  return [...groups];
+}
+// requests for the current filters are on their way
+function _pumping() { const p = _prefetch.pump; return !!(p && p.gen === _prefetch.gen && p.mode === state.mode && p.reqs > 0); }
+// A pump, not rounds: whenever the queue plus what's on its way is below target, another
+// request goes out (up to _PREFETCH_REQS at once), and every batch that lands tops it up
+// again — nothing waits for the slowest request of a round. Responses for old filters are
+// dropped. A run of empty answers (a tiny pool, offline) pauses it 5 s rather than hammer.
+function refillPrefetch(force) {
   if (!_prefetchEligible()) return;
-  const gen = _prefetch.gen;
-  if (_prefetch.filling === gen) return;   // already filling for these filters (an older fill's results are dropped)
-  _prefetch.filling = gen;
-  const mode = state.mode;
+  const gen = _prefetch.gen, mode = state.mode;
   const list = mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
+  let p = _prefetch.pump;
+  if (!p || p.gen !== gen || p.mode !== mode) p = _prefetch.pump = { gen, mode, expect: 0, reqs: 0, misses: 0, missAt: 0 };
+  if (p.none || (!force && p.misses >= 3 && Date.now() - p.missAt < 5000)) return;   // none match these filters / nothing new lately
   const endpoint = mode === "tossups" ? "/api/tossups/query" : "/api/bonuses/query";
   const stale = () => gen !== _prefetch.gen || mode !== state.mode;
-  try {
-    let rounds = 0;
-    while (!stale() && list.length < _PREFETCH_TARGET && rounds++ < 4) {
-      const per = state.settings.useWeights ? 1 : _PREFETCH_BATCH;
-      const reqs = Math.min(IS_WEB ? 8 : 3, Math.ceil((_PREFETCH_TARGET - list.length) / per));
-      const batch = [];
-      for (let i = 0; i < reqs; i++) {
-        const filters = getFilters();
-        if (filters.starredOnly) break;
-        const params = _randomQuestionParams(filters);
-        params.set("limit", String(per));
-        // each batch joins the queue the moment it arrives (a Next waiting on the
-        // refill gets the first one, not the slowest)
-        batch.push(API.get(`${endpoint}?${params}`).then((d) => {
-          if (stale()) return 0;
-          let added = 0;
-          for (const q of (d && d.rows) || []) {
-            if (!q || list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id)) continue;
-            list.push(q); added++;
-          }
-          if (added) _wakePrefetchWaiters();
-          return added;
-        }, () => 0));
-      }
-      if (!batch.length) break;
-      const got = await Promise.all(batch);
-      if (!got.some(Boolean)) break;   // nothing new: a tiny pool, or offline
+  while (list.length + p.expect < _PREFETCH_TARGET && p.reqs < _PREFETCH_REQS) {
+    const groups = _prefetchGroups();
+    if (!groups.length) break;
+    for (const [qs, n] of groups) {
+      p.reqs++; p.expect += n;
+      API.get(`${endpoint}?${qs}&limit=${n}`).then((d) => {
+        if (stale()) return 0;
+        if (d && d.total === 0 && !state.settings.useWeights) p.none = true;   // the server says nothing matches at all
+        let added = 0;
+        for (const q of (d && d.rows) || []) {
+          if (!q || list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id)) continue;
+          list.push(q); added++;
+        }
+        return added;
+      }, () => 0).then((added) => {
+        p.reqs--; p.expect -= n;
+        if (added) p.misses = 0; else { p.misses++; p.missAt = Date.now(); }
+        _wakePrefetchWaiters();
+        if (!stale()) refillPrefetch();
+      });
     }
-  } finally {
-    if (_prefetch.filling === gen) _prefetch.filling = -1;
-    _wakePrefetchWaiters();
   }
 }
 
