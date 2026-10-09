@@ -1813,6 +1813,7 @@ document.addEventListener("keydown", (e) => {
     if (matchesHotkey(e, "start-skip") && !isInput) {
       e.preventDefault();
       if (!state.sessionActive) startSession();
+      else if (practiceStalled()) nextQuestion();   // nothing to play (no match / list done): try again with the settings as they are now
       else if (advanceBonusPart()) { /* revealed the next bonus part */ }
       else if (state.resultAreaVisible) nextQuestion();
       else if (state.settings.allowSkips) skipQuestion();
@@ -1821,7 +1822,10 @@ document.addEventListener("keydown", (e) => {
       confirmEndSession(goHome);
     }
     if (matchesHotkey(e, "next-question") && !isInput) {
-      if (state.sessionActive && advanceBonusPart()) {
+      if (practiceStalled()) {
+        e.preventDefault();
+        nextQuestion();
+      } else if (state.sessionActive && advanceBonusPart()) {
         e.preventDefault();
       } else if (state.resultAreaVisible) {
         e.preventDefault();
@@ -4273,15 +4277,15 @@ async function nextQuestion() {
       data = await API.get(`${endpoint}?${params}`);
     } catch (e) {
       console.error(e);
-      showError(e.name === "AbortError"
+      endOfQueue(e.name === "AbortError"
         ? "Request timed out. The database may be too large."
         : "Couldn't load question: " + (e.message || e));
       return;
     }
     question = state.mode === "tossups" ? data.tossup : data.bonus;
-    if (data.error) { showError("Error: " + data.error); return; }
+    if (data.error) { endOfQueue("Error: " + data.error); return; }
     if (!question) {
-      showError("No questions match your filters");
+      endOfQueue("No questions match your filters — change Setup, then press Next");
       return;
     }
     for (let tries = 0; tries < 8 && !servable(question); tries++) {
@@ -4491,9 +4495,9 @@ async function ensureOrderedQueue() {
 
 async function serveOrdered() {
   const r = await ensureOrderedQueue();
-  if (r.error) { showError(r.error); return; }
+  if (r.error) { endOfQueue(r.error); return; }
   const queue = r.queue || [];
-  if (!queue.length) { showError("No questions found for that selection."); return; }
+  if (!queue.length) { endOfQueue("No questions found for that selection."); return; }
   // Skip questions the user has hidden ("never serve again").
   {
     const t = state._practiceBase === "bonuses" ? "bonus" : "tossup";
@@ -4549,7 +4553,7 @@ async function serveStarredQuestion(filters) {
       const d = await API.get("/api/starred?type=" + type);
       list = (d.starred || []).map((s) => s.question).filter(Boolean).filter((q) => _starredPasses(q, filters));
     } catch { failed = true; }
-    if (failed) { showError("Couldn't load your starred questions \u2014 check your connection and try again."); return; }
+    if (failed) { endOfQueue("Couldn't load your starred questions \u2014 check your connection and try again."); return; }
     for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
     state._starredQueue = list;
     state._starredSig = sig;
@@ -4560,7 +4564,7 @@ async function serveStarredQuestion(filters) {
   // Hidden questions are never served — skip at serve time so mid-session
   // hides take effect immediately.
   while (state._starredIdx < queue.length && queue[state._starredIdx] && isQuestionHidden(queue[state._starredIdx].id, type)) state._starredIdx++;
-  if (!queue.length) { endOfQueue(`No starred ${noun} match these filters`); return; }
+  if (!queue.length) { endOfQueue(`No starred ${noun} match these filters — change Setup, then press Next`); return; }
   if (state._starredIdx >= queue.length) {
     endOfQueue(`All ${queue.length} starred ${noun} done`);
     return;
@@ -4883,8 +4887,15 @@ function showBonusNextHint(idx) {
 // main button (Start → Skip while reading → "Next part" between bonus parts;
 // after an answer the result's own Next takes over), Buzz and Pause/Resume.
 // Kept in step with the session by a light poll while practice is on screen.
+// A session with nothing on screen to play — nothing matched the filters, a list ran
+// out, or a question couldn't load. S / N / the bar's Next try again with the settings
+// as they are now (change them in Setup, then keep going).
+function practiceStalled() {
+  return !!(state.sessionActive && !state.currentQuestion && !state._loadingQuestion && !state.resultAreaVisible && !state.isBuzzed);
+}
 function practiceMain() {
   if (!state.sessionActive) return { label: "Start", key: "start-skip", run: () => startSession() };
+  if (practiceStalled()) return { label: "Next", key: "next-question", next: true, run: () => nextQuestion() };
   if (state.mode === "bonuses" && state.bonusAwait != null) return { label: "Next part", key: "next-question", run: () => advanceBonusPart() };
   if (!state.resultAreaVisible && state.settings.allowSkips && state.currentQuestion && !state.isBuzzed && !state._loadingQuestion) return { label: "Skip", key: "start-skip", run: () => skipQuestion() };
   // phones: Next rides the bottom bar (the result's own Next button is hidden there, below a long question)
@@ -7211,6 +7222,8 @@ function renderResultPanels(resultCtx) {
 // question state, so a later Next/Skip can't phantom-skip the stale last
 // question (which would overwrite its recorded result via the override path).
 function endOfQueue(msg) {
+  // nothing was served: the attempt nextQuestion counted isn't a question heard
+  if (state.questionCount > 0) { state.questionCount--; try { const c = document.getElementById("session-counter"); if (c) c.textContent = String(state.questionCount); updateLiveStats(); } catch (e) {} }
   state.currentQuestion = null;
   state._loadingQuestion = false;
   state._wantBonus = false;

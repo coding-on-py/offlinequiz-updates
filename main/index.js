@@ -6,9 +6,9 @@ import { checkAnswer, checkBonus, evaluateAnswer, parseDirectives, frequencyKey,
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
 import * as updater from "./updater.js";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, renameSync, statSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -242,12 +242,13 @@ export class App {
     let list = cache.get(key);
     if (list) { cache.delete(key); cache.set(key, list); }
     else {
-      // the three whole-database lists (what Frequency opens on) take 1–3 s
-      // each to build, so the app keeps them on disk per database build
-      list = ids.length ? null : this._freqDisk(qtype);
+      // a list takes 1–3 s to build (much longer on the website's small server), so
+      // every one built is kept on disk per database build — the whole-database ones
+      // and each category pick — for every later page, process and restart
+      list = this._freqDisk(qtype, undefined, ids);
       if (!list) {
         list = this._frequencyRows(null, null, null, qtype, ids.length ? ids : null, FREQ_MAX);
-        if (!ids.length) this._freqDisk(qtype, list);
+        this._freqDisk(qtype, list, ids);
       }
       cache.set(key, list);
       while (cache.size > 12) cache.delete(cache.keys().next().value);
@@ -257,17 +258,24 @@ export class App {
   }
 
   // read (list omitted) or write the on-disk copy of a whole-database list
-  _freqDisk(qtype, list) {
+  _freqDisk(qtype, list, ids = []) {
     if (!this.freqCacheDir) return null;
     const FREQ_VERSION = 1;   // bump when the list-building rules change
     const dir = join(this.freqCacheDir, "freq-cache");
     const build = String(this.getDbInfo().built || "v1").replace(/[^A-Za-z0-9_.-]/g, "_");
-    const name = `${FREQ_VERSION}-${build}-${qtype}.json`;
+    const prefix = `${FREQ_VERSION}-${build}-`;
+    const pick = ids && ids.length ? "-" + createHash("sha1").update(ids.join(",")).digest("hex").slice(0, 16) : "";
+    const name = `${prefix}${qtype}${pick}.json`;
     try {
       if (!list) { const l = JSON.parse(readFileSync(join(dir, name), "utf8")); return Array.isArray(l) ? l : null; }
       mkdirSync(dir, { recursive: true });
-      for (const f of readdirSync(dir)) if (f.endsWith("-" + qtype + ".json") && f !== name) { try { unlinkSync(join(dir, f)); } catch {} }
-      writeFileSync(join(dir, name), JSON.stringify(list));
+      writeFileSync(join(dir, name + ".tmp"), JSON.stringify(list));
+      renameSync(join(dir, name + ".tmp"), join(dir, name));
+      // another database build's lists go; category picks: the newest 600 stay
+      const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+      for (const f of files) if (!f.startsWith(prefix)) { try { unlinkSync(join(dir, f)); } catch {} }
+      const picks = files.filter((f) => f.startsWith(prefix) && /-[0-9a-f]{16}\.json$/.test(f));
+      if (picks.length > 600) picks.map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs })).sort((a, b) => a.t - b.t).slice(0, picks.length - 600).forEach((x) => { try { unlinkSync(join(dir, x.f)); } catch {} });
     } catch { return null; }
     return null;
   }

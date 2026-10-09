@@ -403,9 +403,10 @@ export class QuestionDatabase {
 
     const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number, rowid");
 
-    if (!filters.random && (offset >= DEEP_PAGE_OFFSET || this._hasOrderedIds("tossups", where, params, orderBy))) {
-      return this._orderedPage("tossups", where, params, orderBy, offset, limit);
-    }
+    // browsing: the whole ordered id list once (one sort; the count is its length), then
+    // every page is a lookup — a separate COUNT plus an OFFSET query re-sorted everything
+    // for each page (3–4 s a page on the website's server)
+    if (!filters.random) return this._orderedPage("tossups", where, params, orderBy, offset, limit);
     if (filters.random) return this._randomRows("tossups", where, params, limit);
 
     const countSql = `SELECT COUNT(*) as count FROM tossups ${where}`;
@@ -425,9 +426,7 @@ export class QuestionDatabase {
 
     const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number, rowid");
 
-    if (!filters.random && (offset >= DEEP_PAGE_OFFSET || this._hasOrderedIds("bonuses", where, params, orderBy))) {
-      return this._orderedPage("bonuses", where, params, orderBy, offset, limit);
-    }
+    if (!filters.random) return this._orderedPage("bonuses", where, params, orderBy, offset, limit);
     if (filters.random) return this._randomRows("bonuses", where, params, limit);
 
     const countSql = `SELECT COUNT(*) as count FROM bonuses ${where}`;

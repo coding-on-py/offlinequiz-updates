@@ -1,5 +1,5 @@
 {
-  "version": "14.43",
+  "version": "14.44",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Reading speed is now 1 (slowest) to 20 (fastest), then Instant, in every mode — and bonuses are read out at that speed too. The fastest speeds are truly faster now. The \"Press S to start\" hint is gone.",
+  "notes": "After \"no questions match\" or an empty starred list, change Setup and press Next (or N / S) to keep playing. Faster browsing of later pages and category frequency lists.",
   "files": {
     "renderer/index.html": "e0708b1ffd82b1089cd39564513ac5f59046afd1e1842dcb830d07de90e9b1b9",
     "renderer/style.css": "a765afa19548a2dacc59fb3aba16c4bb6ae4cce9188e428a8106cc126d596485",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "548dfa30bfa7b8212a80eb4f1da587d3ecfbfaf9a01fbfbfc7fdea198d80a18c",
-    "renderer/app.js": "7f90b8997d8bcdf1d03a0a34e6462c35e1eeaac7b87bd3e30723479e4f4c4a29",
+    "renderer/app.js": "6df4b3d2375955b74d5d799f32f0f56cc04efc6957eff1414aa484a61591f0dd",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "eRliv257v66UAPW2bzF5T4eLYxOuRQhkPPq/ypZlhvkGXGxeepZgEaSgRkrsm24GcmOkxHfg/0okKgwdKDUHDw=="
+  "signature": "y29KnZyVRI8gL5XudMnGU7KZZobuXKjEw6syaY7xp6X78ZmjtLXQwHf//r68z1UsAJlU9xN7lbFzz62Z4xbeAw=="
 }
