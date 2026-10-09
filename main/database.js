@@ -528,63 +528,52 @@ export class QuestionDatabase {
     return this._randomRow("bonuses", where, params);
   }
 
-  searchTossups(query, filters = {}) {
+  searchTossups(query, filters = {}) { return this._ftsSearch("tossups", "t", query, filters); }
+
+  searchBonuses(query, filters = {}) { return this._ftsSearch("bonuses", "b", query, filters, { isBonus: true }); }
+
+  // Full-text search. A word in a big share of the questions ("the" is in ~186,000
+  // tossups) used to read every matching row from the big table — to check the
+  // filters and to rank — which took ~10 s on the website's small server (it can't
+  // keep the 1.6 GB file in memory). Past FTS_MANY matches, best-match ranks inside
+  // the FTS index alone and the filters come from the table's covering indexes
+  // (playable / difficulty / year / category …: `rowid IN (SELECT rowid FROM t WHERE …)`),
+  // so only the page's own rows are read. Fewer matches (most searches) keep the plain
+  // join — cheaper there. Other sort orders join (they sort by the table's columns).
+  _ftsSearch(table, alias, query, filters, opts) {
     const limit = filters.limit || 50;
     const offset = filters.offset || 0;
-    const { where, params } = this._buildWhere(filters, "t.");
-
-    const fullWhere = where
-      ? `tossups_fts MATCH :query AND ${where.substring(6)}`
-      : "tossups_fts MATCH :query";
-
-    const countSql = `
-      SELECT COUNT(*) as count FROM tossups t
-      JOIN tossups_fts ON t.rowid = tossups_fts.rowid
-      WHERE ${fullWhere}`;
-    const sql = `
-      SELECT t.* FROM tossups t
-      JOIN tossups_fts ON t.rowid = tossups_fts.rowid
-      WHERE ${fullWhere}
-      ORDER BY ${sortSql(filters.sort, "t.") || "rank"}
-      LIMIT :limit OFFSET :offset
-    `;
+    const fts = table + "_fts";
+    const FTS_MANY = 4000, FTS_HUGE = 40000;
+    const { where, params } = this._buildWhere(filters, alias + ".", opts);
+    const fullWhere = where ? `${fts} MATCH :query AND ${where.substring(6)}` : `${fts} MATCH :query`;
+    const order = sortSql(filters.sort, alias + ".");
+    const joinCount = `SELECT COUNT(*) AS count FROM ${table} ${alias} JOIN ${fts} ON ${alias}.rowid = ${fts}.rowid WHERE ${fullWhere}`;
+    const joinRows = `SELECT ${alias}.* FROM ${table} ${alias} JOIN ${fts} ON ${alias}.rowid = ${fts}.rowid WHERE ${fullWhere}
+      ORDER BY ${order || "rank"} LIMIT :limit OFFSET :offset`;
     const run = (q) => {
-      const countRow = this.db.prepare(countSql).get({ ...params, query: q });
-      const rows = this.db.prepare(sql).all({ ...params, query: q, limit, offset });
-      return { rows, total: countRow ? countRow.count : 0 };
-    };
-    try { return run(query); }
-    catch (e) {
-      if (!isFtsSyntaxError(e)) throw e;
-      const safe = sanitizeFtsFallback(query);
-      if (safe && safe !== query) { try { return run(safe); } catch (e2) {  } }
-      return { rows: [], total: 0 };
-    }
-  }
-
-  searchBonuses(query, filters = {}) {
-    const limit = filters.limit || 50;
-    const offset = filters.offset || 0;
-    const { where, params } = this._buildWhere(filters, "b.", { isBonus: true });
-
-    const fullWhere = where
-      ? `bonuses_fts MATCH :query AND ${where.substring(6)}`
-      : "bonuses_fts MATCH :query";
-
-    const countSql = `
-      SELECT COUNT(*) as count FROM bonuses b
-      JOIN bonuses_fts ON b.rowid = bonuses_fts.rowid
-      WHERE ${fullWhere}`;
-    const sql = `
-      SELECT b.* FROM bonuses b
-      JOIN bonuses_fts ON b.rowid = bonuses_fts.rowid
-      WHERE ${fullWhere}
-      ORDER BY ${sortSql(filters.sort, "b.") || "rank"}
-      LIMIT :limit OFFSET :offset
-    `;
-    const run = (q) => {
-      const countRow = this.db.prepare(countSql).get({ ...params, query: q });
-      const rows = this.db.prepare(sql).all({ ...params, query: q, limit, offset });
+      const many = this.db.prepare(`SELECT COUNT(*) AS n FROM ${fts} WHERE ${fts} MATCH :query`).get({ query: q }).n > FTS_MANY;
+      let countRow, rows;
+      if (many) {
+        const plain = this._buildWhere(filters, "", opts);
+        const inSet = plain.where ? `WHERE rid IN (SELECT rowid FROM ${table} ${plain.where})` : "";
+        countRow = this.db.prepare(`WITH m AS MATERIALIZED (SELECT rowid AS rid FROM ${fts} WHERE ${fts} MATCH :query) SELECT COUNT(*) AS count FROM m ${inSet}`).get({ ...plain.params, query: q });
+        // a word in a huge share of the questions ("of", "points"): best match means nothing
+        // there and ranking it all is the slow part — question order instead, which stops
+        // after the page's rows
+        const huge = !order && countRow && countRow.count > FTS_HUGE;
+        rows = huge
+          ? this.db.prepare(`SELECT ${alias}.* FROM ${table} ${alias} WHERE ${alias}.rowid IN (SELECT rowid FROM ${fts} WHERE ${fts} MATCH :query)${where ? " AND " + where.substring(6) : ""}
+              ORDER BY ${alias}.rowid DESC LIMIT :limit OFFSET :offset`).all({ ...params, query: q, limit, offset })
+          : order
+          ? this.db.prepare(joinRows).all({ ...params, query: q, limit, offset })
+          : this.db.prepare(`WITH m AS MATERIALIZED (SELECT rowid AS rid, rank AS rk FROM ${fts} WHERE ${fts} MATCH :query)
+              SELECT ${alias}.* FROM (SELECT rid, rk FROM m ${inSet} ORDER BY rk LIMIT :limit OFFSET :offset) x
+              JOIN ${table} ${alias} ON ${alias}.rowid = x.rid ORDER BY x.rk`).all({ ...plain.params, query: q, limit, offset });
+      } else {
+        countRow = this.db.prepare(joinCount).get({ ...params, query: q });
+        rows = this.db.prepare(joinRows).all({ ...params, query: q, limit, offset });
+      }
       return { rows, total: countRow ? countRow.count : 0 };
     };
     try { return run(query); }

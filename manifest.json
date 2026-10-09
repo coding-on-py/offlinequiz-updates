@@ -1,5 +1,5 @@
 {
-  "version": "14.39",
+  "version": "14.40",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "Steadier buttons: Buzz and Pause no longer jump while a question reads (multiplayer too). A blue dot on your profile when a friend request arrives. Display names stay in step with the website. Rename yourself or join a team from the Players tab. Rooms have Reading speed again. Copy buttons show a checkmark. The 1–7 home shortcuts are gone.",
+  "notes": "Faster searches for very common words. On phones, Next and your stats now follow the result right away (no screen of blank space), and Session history has room at the bottom.",
   "files": {
     "renderer/index.html": "e2db6820b42d27d8f629df9d2316abca8df757cbaf24582b34adca6fe9af41a6",
-    "renderer/style.css": "5fc47f0681385d3549734f6f53496883c1e5ce169f13810310843c38389ec903",
+    "renderer/style.css": "8767c011309be0b9d15bf3542401442f278ff5aaa6786acd6cf5bf9b57efd615",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "2191d04ad1fc9a67faef6e3e71db41c9082b1d99156a91d6964fc0a9fded8bf0",
-    "renderer/app.js": "6f10f04680edb28155f3b47e1e9fe59cc08efd8772284620107735bbb7e8f512",
+    "renderer/app.js": "91aeafc8e4ac25cac2466f6c887111ec6265ea1a238915639a915fcca3fae02e",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "+26YjImUcf8m+3a9nxtr7ZSH7AZBICiAAFG4eZAieMwYddQ3pu7kpDP6idlxzH0IPLmTaBVj7+BcfFcl6INHBA=="
+  "signature": "91uKqkt1g+WitOzLo35CitQySDO/hJ60N246RHTQv4cs8rFUi30MgFUgrktbpSLkqZftClAQF6PRg7oAfID3BQ=="
 }

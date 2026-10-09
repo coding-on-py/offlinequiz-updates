@@ -3522,7 +3522,7 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .mp-rwhen { color: var(--muted); }
 .mp-rjoin { color: var(--go); }
 .mp-public h2 { display: flex; align-items: center; gap: 6px; }
-.mp-pub-empty { margin: 0; padding: 12px 0; color: var(--muted); font-size: 13px; }
+.mp-pub-empty { margin: 0; padding: 16px 18px; color: var(--muted); font-size: 13px; line-height: 1.55; }
 @media (max-width: 560px) { .mp-recent-row { flex-wrap: wrap; row-gap: 2px; } .mp-recent-row .mp-rcode { flex-basis: 70px; } .mp-recent-row .mp-rwhen { order: 3; flex: 1 1 100%; padding-left: 70px; font-size: 12px; } }
 #ext-page-multiplayer-lobby.mp-in-room > .top-bar { display: none; }
 .mp-room { display: flex; flex-direction: column; gap: 14px; }
@@ -3550,6 +3550,9 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   /* the question area fills the screen and the controls are its last item (sticky): they sit on the
      bottom edge while you read and dock above the stats once you scroll down to them */
   #practice-screen .question-area { min-height: calc(100dvh - var(--topbar-h) - 70px); }
+  #practice-screen .question-area:has(> .result-area:not(.hidden)) { min-height: 0; }   /* a result: Next and the stats follow it (no screen of blank) */
+  #practice-screen .practice-side { padding-bottom: calc(28px + env(safe-area-inset-bottom)); }   /* Session history clear of the browser's bottom bar */
+  #practice-screen .history-panel { margin-top: 6px; }
   #practice-screen .question-placeholder { min-height: 34vh; }
   /* the unread rest of the question isn't laid out (invisible, it pushed the answer box a screen below what was read) */
   :is(#practice-screen, .mp-room) .question-text .unrevealed { display: none; }

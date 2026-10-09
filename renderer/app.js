@@ -132,19 +132,25 @@ const API = isElectron
       },
     }
   : {
-      async get(url, timeoutMs = 15000) {
+      // 30 s: a heavy first-time answer (a category's frequency list, a very common
+      // word) can take a while on the website's server; a timeout says so in words
+      async get(url, timeoutMs = 30000) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const timer = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
         try {
           const r = await fetch(url, { signal: controller.signal });
           return r.json();
+        } catch (e) {
+          if (controller.signal.aborted) throw new Error("the server took too long to answer — try again in a moment");
+          if (e && e.name === "TypeError") throw new Error("couldn't reach the server — check your connection");
+          throw e;
         } finally {
           clearTimeout(timer);
         }
       },
-      async post(url, data, timeoutMs = 15000) {
+      async post(url, data, timeoutMs = 30000) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const timer = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
         try {
           const r = await fetch(url, {
             method: "POST",
@@ -153,6 +159,10 @@ const API = isElectron
             signal: controller.signal,
           });
           return r.json();
+        } catch (e) {
+          if (controller.signal.aborted) throw new Error("the server took too long to answer — try again in a moment");
+          if (e && e.name === "TypeError") throw new Error("couldn't reach the server — check your connection");
+          throw e;
         } finally {
           clearTimeout(timer);
         }
@@ -4861,9 +4871,13 @@ function syncPracticeActions() {
   const mk = document.querySelector("#pa-main kbd"); if (m && mk) mk.textContent = keyDisplay(m.key);
   set(document.getElementById("pa-buzz"), state.mode === "tossups" && reading && !state.isBuzzed);
   set(document.getElementById("pa-pause"), reading && !state.isBuzzed && state.bonusAwait == null, state.isPaused ? "Resume" : "Pause");
-  // phones: the verdict and answer come into view once (they sit below a long question)
+  // phones: once the result shows, the question area lets go of its screen-tall room
+  // (Next and the stats follow the result) and the verdict comes into view once
   const ra = document.getElementById("result-area"), shown = !!(state.resultAreaVisible && ra && !ra.classList.contains("hidden"));
-  if (shown && !syncPracticeActions._shown && matchMedia("(max-width: 760px)").matches) followReading(ra, state.currentQuestion && state.currentQuestion.id, true);
+  if (shown && !syncPracticeActions._shown && matchMedia("(max-width: 760px)").matches) {
+    const qa = document.getElementById("question-area"); if (qa) qa.style.minHeight = "";
+    ra.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
   syncPracticeActions._shown = shown;
 }
 (function wirePracticeActions() {
@@ -9832,7 +9846,7 @@ async function performDbSearch(opts) {
   } catch (e) {
     clearTimeout(barT);
     early = null;
-    if (seq === _dbSearchSeq) { container.classList.remove("db-loading"); container.innerHTML = '<div class="db-empty">Search failed: ' + escapeHtml(e.message || "") + "</div>"; if (pt) pt.innerHTML = ""; if (pb) pb.innerHTML = ""; }
+    if (seq === _dbSearchSeq) { container.classList.remove("db-loading"); container.innerHTML = '<div class="db-empty">Search failed: ' + escapeHtml(e.message || "something went wrong") + ' <button type="button" class="acct-link" data-db-retry>Try again</button></div>'; container.querySelector("[data-db-retry]")?.addEventListener("click", () => performDbSearch({ page: _dbPage })); if (pt) pt.innerHTML = ""; if (pb) pb.innerHTML = ""; }
   }
 }
 
