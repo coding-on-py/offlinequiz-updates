@@ -62,13 +62,15 @@ export async function start(env) {
     setDockIcon();
     // QB_E2E_HIDDEN=1 (automated tests only): the window is never shown
     const hidden = process.env.QB_E2E_HIDDEN === "1";
+    // Opens as an ordinary window that fills the screen (maximized — like Blender), not
+    // macOS full-screen mode: hidden until it's ready, then maximized and shown, so it
+    // never flashes small first.
     mainWindow = new BrowserWindow({
       width: 1200,
       height: 800,
       minWidth: 900,
       minHeight: 600,
-      fullscreen: !hidden,
-      show: !hidden,
+      show: false,
       title: "OfflineQuiz",
       backgroundColor: "#0d1117",
       webPreferences: {
@@ -79,16 +81,23 @@ export async function start(env) {
       },
     });
 
-    // A relaunch ("Restart now to apply") can come back windowed: macOS
-    // restores the previous window state, and quitting out of a fullscreen
-    // space makes the constructor flag unreliable. Enforce it once the window
-    // is actually ready, and again after the page loads.
-    const goFullScreen = () => {
-      if (hidden) return;
-      try { if (mainWindow && !mainWindow.isFullScreen()) mainWindow.setFullScreen(true); } catch (e) {}
+    // Once, at launch (the user may resize it afterwards). macOS can restore a window
+    // that was full screen when the app quit: it leaves full screen first, then fills
+    // the screen.
+    let filled = false;
+    const fillScreen = () => {
+      if (hidden || filled || !mainWindow) return;
+      filled = true;
+      try {
+        if (mainWindow.isFullScreen()) {
+          mainWindow.once("leave-full-screen", () => { try { mainWindow.maximize(); } catch (e) {} });
+          mainWindow.setFullScreen(false);
+        } else mainWindow.maximize();
+        mainWindow.show();
+      } catch (e) { try { mainWindow.show(); } catch (e2) {} }
     };
-    try { mainWindow.once("ready-to-show", goFullScreen); } catch (e) {}
-    try { mainWindow.webContents.once("did-finish-load", goFullScreen); } catch (e) {}
+    try { mainWindow.once("ready-to-show", fillScreen); } catch (e) {}
+    setTimeout(fillScreen, 4000);   // never left hidden if ready-to-show doesn't come
 
     let indexPath = BUNDLED_INDEX;
     try { if (!isDev) indexPath = appUpdater.overlayRendererIndex(OVERLAY_DIR) || BUNDLED_INDEX; } catch { indexPath = BUNDLED_INDEX; }

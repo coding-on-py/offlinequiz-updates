@@ -1,5 +1,5 @@
 {
-  "version": "14.44",
+  "version": "14.45",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,7 +100,7 @@
     }
   ],
   "main": true,
-  "notes": "After \"no questions match\" or an empty starred list, change Setup and press Next (or N / S) to keep playing. Faster browsing of later pages and category frequency lists.",
+  "notes": "The app now opens as a window that fills your screen (like a maximized window) instead of going into full-screen mode.",
   "files": {
     "renderer/index.html": "e0708b1ffd82b1089cd39564513ac5f59046afd1e1842dcb830d07de90e9b1b9",
     "renderer/style.css": "a765afa19548a2dacc59fb3aba16c4bb6ae4cce9188e428a8106cc126d596485",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "y29KnZyVRI8gL5XudMnGU7KZZobuXKjEw6syaY7xp6X78ZmjtLXQwHf//r68z1UsAJlU9xN7lbFzz62Z4xbeAw=="
+  "signature": "acSu6GxnhTT50z6VdvNzkHozGLv+AaXQyodXOJLC393R6cpKL4ocqT3Znb1HT2HwGECLoVcWoeYt1tMtWjyqCA=="
 }

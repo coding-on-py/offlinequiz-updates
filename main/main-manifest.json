@@ -1,5 +1,5 @@
 {
-  "version": "14.44",
+  "version": "14.45",
   "files": {
     "index.js": "c595d7ab26a438d809513ac59a9853f1c2c6e12dbc025909bd5c82a1723e5338",
     "database.js": "bc8ac2bb72418fbc4ba9bb1df9e190a1678c9b8dc01fe1b8358d83a15afbea7f",
@@ -9,7 +9,7 @@
     "stats.js": "945d14e8d42bb2f27d3568fa10b95269aefe6b5cbe26ce5161da54163af9671b",
     "updater.js": "52b63950890c2b787b9083d5b539a007fdd3d4b07f586cb9127f34143b634a99",
     "preload.js": "3e80da889b7cc71f3b9db2de8b0d62209809e1698514410c2301997eee737e4b",
-    "runtime.js": "2c2f725c38047dae3ed708737d1fb9d08b6d62ec9db38e5c8b453b110361bc9b"
+    "runtime.js": "46d0c7cce5dd093a1baccf60c9d7a8ad17f9266eab946ba2311ec59ff282c7d6"
   },
-  "signature": "wHUvAucQBTwI7GRcYt8Haw6kjh2As6DdDpij2RvNV+CWDmUccf84zYOL3DlWcE7VVBXY5yfgu9i6MtH7oIvqCA=="
+  "signature": "cVTD8aC/90NZYRJVaOKyf7uXIM1rh1q1n1w/yyudZyWKZOEBDjq2iyejhf+RS3K3hFsEP4Ue0ZvGwujXa3tLDg=="
 }
