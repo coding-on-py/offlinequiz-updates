@@ -2175,7 +2175,8 @@ function __qbMain(ctx) {
         if (b.mode === "set") { setVal("mode-set-name", b.setName); setVal("mode-packet", b.packet); }
         Promise.resolve(ctx.host.applyFilterSelectionSnapshot(b.sel)).catch(function () {}).then(function () {
           setVal("strictness-slider", b.cfg.strictness, ["input", "change"]);
-          setVal("panel-speed-slider", b.cfg.revealSpeed, ["input", "change"]);
+          // the slider holds a level (1 … 50, 51 = Instant); the config is ms per character
+          setVal("panel-speed-slider", window.qbSpeedLevel ? window.qbSpeedLevel(b.cfg.revealSpeed) : b.cfg.revealSpeed, ["input", "change"]);
           setChk("opt-stop-on-power", b.cfg.stopOnPower);
           setChk("opt-allow-skips", b.cfg.allowSkips !== false);
           setChk("filter-hide-pron", b.cfg.hidePron);
@@ -2358,7 +2359,7 @@ function __qbMain(ctx) {
         if (current) {
           conn.send(questionMsg());
           var reading = !paused && !pendingBuzzer && !ended && revealIdx < current.text.length;
-          conn.send({ t: "read", from: revealIdx, speed: reading ? Math.max(8, curRevealSpeed) : 0 });
+          conn.send({ t: "read", from: revealIdx, speed: reading ? curRevealSpeed : 0 });
           // A bonus is in progress — replay it (and its judged parts) so the
           // newcomer sees the bonus UI, not a frozen tossup.
           if (bonusState && bonusView) {
@@ -2605,13 +2606,15 @@ function __qbMain(ctx) {
         }
         revealIdx = current.text.length; broadcast({ t: "read", from: revealIdx, speed: 0 }); applyReveal(revealIdx); hostStartBuzzWindow(); return;
       }
-      broadcast({ t: "read", from: revealIdx, speed: Math.max(8, curRevealSpeed) });
+      broadcast({ t: "read", from: revealIdx, speed: curRevealSpeed });
       // TIME-BASED reveal: the index follows the wall clock, not the number of
       // interval fires — a busy host machine can no longer fall behind its own
       // clients' text. (The old ticker also ran getPracticeConfig — two full
       // panel scans — per CHARACTER on the host and nothing on clients, which
       // is exactly why nonhosts used to see the question sooner.)
-      var tickMs = Math.max(8, curRevealSpeed);
+      // ms per character (fractional at the fast end: several characters per tick); the
+      // timer itself never fires more often than every 8 ms
+      var tickMs = curRevealSpeed;
       var t0 = Date.now(), base = revealIdx, lastCfg = 0;
       revealTimer = setInterval(function () {
         // While held, keep sliding the baseline so resuming never jumps ahead.
@@ -2652,7 +2655,7 @@ function __qbMain(ctx) {
           broadcast({ t: "pause", paused: true, idx: revealIdx });
           applyPause(true);
         }
-      }, tickMs);
+      }, Math.max(8, tickMs));
     }
 
     // ── client-side reading ticker (driven by the host's "read" message) ──
@@ -2665,7 +2668,7 @@ function __qbMain(ctx) {
       if (!current || !speed) return;   // speed 0 ⇒ hold at "from" (instant reveal sends from = full length)
       // Same wall-clock pacing as the host's reveal, so both texts track the
       // same clock regardless of tick jitter on either machine.
-      var tickMs = Math.max(8, speed);
+      var tickMs = speed;   // may be under 1 ms per character: the clock decides how many show
       var t0 = Date.now(), base = revealIdx;
       clientReadTimer = setInterval(function () {
         // While held, slide the baseline so a resume never leaks unread text.
@@ -2676,7 +2679,7 @@ function __qbMain(ctx) {
         if (want <= revealIdx) return;
         revealIdx = want;
         applyReveal(revealIdx);
-      }, tickMs);
+      }, Math.max(8, tickMs));
     }
     function stopReveal() { if (revealTimer) { clearInterval(revealTimer); revealTimer = null; } }
 
@@ -3420,7 +3423,7 @@ function __qbMain(ctx) {
       if (t.id === "category-filters") return "cleared categories";
       if (t.id === "year-min" || t.id === "year-max") { var lo = document.getElementById("year-min"), hi = document.getElementById("year-max"); var a = parseInt(lo.value), b = parseInt(hi.value); return "changed years to " + Math.min(a, b) + "-" + Math.max(a, b); }
       if (t.id === "strictness-slider") return "changed strictness to " + t.value;
-      if (t.id === "panel-speed-slider") return "changed reading speed to " + (window.qbSpeedLabel ? window.qbSpeedLabel(parseInt(t.value)) : t.value);
+      if (t.id === "panel-speed-slider") return "changed reading speed to " + (window.qbSpeedLabel && window.qbSpeedMs ? window.qbSpeedLabel(window.qbSpeedMs(t.value)) : t.value);
       if (t.id === "enable-cat-weights") return "changed weights to " + (t.checked ? "true" : "false");
       if (t.id === "filter-standard") return "changed standard-only to " + (t.checked ? "true" : "false");
       if (t.id === "filter-powermark") return "changed powermarked-only to " + (t.checked ? "true" : "false");

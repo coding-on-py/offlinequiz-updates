@@ -1,5 +1,5 @@
 {
-  "version": "14.45",
+  "version": "14.46",
   "renderer": [
     "index.html",
     "style.css",
@@ -100,13 +100,13 @@
     }
   ],
   "main": true,
-  "notes": "The app now opens as a window that fills your screen (like a maximized window) instead of going into full-screen mode.",
+  "notes": "Reading speed now goes from 1 to 50 (50 is almost instant), then Instant; speeds in between read at their true pace",
   "files": {
-    "renderer/index.html": "e0708b1ffd82b1089cd39564513ac5f59046afd1e1842dcb830d07de90e9b1b9",
-    "renderer/style.css": "a765afa19548a2dacc59fb3aba16c4bb6ae4cce9188e428a8106cc126d596485",
+    "renderer/index.html": "91b867bac7716a4e7fb86b36df11df80b8c32ec845db16407244762436f0b533",
+    "renderer/style.css": "c914c292786bb0a2737fa20887afc96ceb4d908ae86b9886712a0a8b09bca37e",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "548dfa30bfa7b8212a80eb4f1da587d3ecfbfaf9a01fbfbfc7fdea198d80a18c",
-    "renderer/app.js": "6df4b3d2375955b74d5d799f32f0f56cc04efc6957eff1414aa484a61591f0dd",
+    "renderer/extensions.js": "5a6f5dd765890f37ff1ebb9e4bd2964a1f05584ed4cc8126e3fce7776c57fd81",
+    "renderer/app.js": "71605ad10313787c669c470d75f0a19e464d199181dd522e69c10918f2f7362b",
     "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
     "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
     "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
@@ -126,5 +126,5 @@
     "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
     "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
   },
-  "signature": "acSu6GxnhTT50z6VdvNzkHozGLv+AaXQyodXOJLC393R6cpKL4ocqT3Znb1HT2HwGECLoVcWoeYt1tMtWjyqCA=="
+  "signature": "DetQdTVZfLqkm8nmzd0SB6Dwl6NefEl4yUS48zcQcM1LFAvApYlVBP4DzTA1+SB8894iEExEGs/oIIRksbLFDg=="
 }

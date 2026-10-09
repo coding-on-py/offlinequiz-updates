@@ -316,7 +316,7 @@ const state = {
   settings: {
     theme: localStorage.getItem("qb-theme") || "dark",
     accent: localStorage.getItem("qb-accent") || "blue",
-    revealSpeed: parseInt(localStorage.getItem("qb-speed") || "50"),
+    revealSpeed: (() => { const v = parseFloat(localStorage.getItem("qb-speed") || "50"); return Number.isFinite(v) && v >= 0 ? v : 50; })(),   // ms per character, fractional at the fast end
     autoReveal: localStorage.getItem("qb-auto-reveal") !== "false",
     buzzTimeout: parseInt(localStorage.getItem("qb-buzz-timeout") || "10"),
     buzzWindow: parseInt(localStorage.getItem("qb-buzz-window") || "10"),
@@ -594,7 +594,6 @@ document.addEventListener("click", (e) => {
     const min = parseFloat(el.min) || 0, max = parseFloat(el.max), v = parseFloat(el.value);
     const hi = Number.isFinite(max) ? max : 100;
     let pct = hi > min ? Math.max(0, Math.min(100, ((v - min) / (hi - min)) * 100)) : 0;
-    if (el.classList.contains("speed-range")) pct = 100 - pct;   // reversed (slow on the left): fill to the thumb
     el.style.setProperty("--pct", pct + "%");
   };
   const isRange = (el) => el && el.tagName === "INPUT" && el.type === "range" && !el.closest(".dual-range");
@@ -1078,6 +1077,9 @@ function homeBgFill() {
     for (let k = 0; k < 12 && col.el.scrollHeight - col.y < H + 260; k++) if (!homeBgAppend(col)) break;
     col.el.style.transform = `translate3d(0, ${-col.y}px, 0)`;
   }
+  // the first time there are cards (they can take a moment to arrive): the website fades the
+  // background in (ui.css html.web) — styles flushed at opacity 0 first, so it always animates
+  if (!host.classList.contains("hb-in") && HB.cols.some((c) => c.el.firstElementChild)) requestAnimationFrame(() => { void getComputedStyle(host).opacity; host.classList.add("hb-in"); });
 }
 function homeBgTick(t) {
   HB.raf = 0;
@@ -2832,8 +2834,8 @@ async function _applySnapshotInner(snap, gen) {
   }
   if (snap.revealSpeed != null) {
     const s = $("#panel-speed-slider");
-    if (s) s.value = snap.revealSpeed;
-    const s2 = $("#speed-slider"); if (s2) s2.value = snap.revealSpeed;
+    if (s) s.value = speedLevel(snap.revealSpeed);
+    const s2 = $("#speed-slider"); if (s2) s2.value = speedLevel(snap.revealSpeed);
     state.settings.revealSpeed = snap.revealSpeed;
     const l = $("#panel-speed-label"); if (l) l.textContent = speedLabel(snap.revealSpeed);
     const l2 = $("#speed-slider-label"); if (l2) l2.textContent = speedLabel(snap.revealSpeed);
@@ -3774,26 +3776,47 @@ window.addEventListener("keydown", (e) => {
   e.stopPropagation();
 }, true);
 
-// Reading speed shows as 1 (slowest) … 20 (fastest), then Instant; underneath it is
-// still milliseconds per character (100 … 5, 0 = instant) — the reading code, rooms,
-// saved settings and plugins all use that. The sliders run reversed (CSS .speed-range:
-// right-to-left, so slow is on the left).
+// Reading speed shows as 1 (slowest) … 50 (fastest — almost instant), then Instant; underneath
+// it is still milliseconds per character (100 … 0.3, 0 = instant) — the reading code, rooms,
+// saved settings and plugins all use that. The sliders hold the LEVEL (1 … 50, 51 = Instant).
+// Not linear: log(ms) falls a little per level at the slow end and a lot at the top
+// (~4% faster per level at 1, ~18% at 50), two significant figures.
+const SPEED_LEVELS = 50;
+const SPEED_MS = Array.from({ length: SPEED_LEVELS }, (_, i) => {
+  const x = i / (SPEED_LEVELS - 1);
+  return +(100 * Math.pow(0.003, 0.3 * x + 0.7 * x * x)).toPrecision(2);
+});
+// ms per character → slider level (the nearest one; 0 = Instant → SPEED_LEVELS + 1)
+function speedLevel(ms) {
+  ms = Number(ms) || 0;
+  if (ms <= 0) return SPEED_LEVELS + 1;
+  let best = 0;
+  for (let i = 1; i < SPEED_LEVELS; i++) if (Math.abs(Math.log(SPEED_MS[i] / ms)) < Math.abs(Math.log(SPEED_MS[best] / ms))) best = i;
+  return best + 1;
+}
+// slider level → ms per character
+function speedMs(level) {
+  level = Math.round(Number(level) || 1);
+  return level > SPEED_LEVELS ? 0 : SPEED_MS[Math.max(1, level) - 1];
+}
 function speedLabel(ms) {
   ms = Number(ms) || 0;
-  return ms <= 0 ? "Instant" : String(Math.max(1, Math.min(20, Math.round(21 - ms / 5))));
+  return ms <= 0 ? "Instant" : String(speedLevel(ms));
 }
 window.qbSpeedLabel = speedLabel;
+window.qbSpeedLevel = speedLevel;
+window.qbSpeedMs = speedMs;
 function setRevealSpeed(val) {
   state.settings.revealSpeed = val;
   lsSet("qb-speed", String(val));
-  const label = speedLabel(val);
+  const label = speedLabel(val), lv = speedLevel(val);
   const pl = $("#panel-speed-label"); if (pl) pl.textContent = label;
   const sl = $("#speed-slider-label"); if (sl) sl.textContent = label;
-  const ps = $("#panel-speed-slider"); if (ps && parseInt(ps.value) !== val) ps.value = val;
-  const ss = $("#speed-slider"); if (ss && parseInt(ss.value) !== val) ss.value = val;
+  const ps = $("#panel-speed-slider"); if (ps && parseInt(ps.value) !== lv) ps.value = lv;
+  const ss = $("#speed-slider"); if (ss && parseInt(ss.value) !== lv) ss.value = lv;
 }
 
-$("#panel-speed-slider")?.addEventListener("input", (e) => setRevealSpeed(parseInt(e.target.value)));
+$("#panel-speed-slider")?.addEventListener("input", (e) => setRevealSpeed(speedMs(e.target.value)));
 
 function setBuzzTimer(val) {
   state.settings.buzzTimeout = val;
@@ -5208,10 +5231,12 @@ function revealText(text) {
       return;
     }
     // as many characters as the time since the last one allows — a speed faster than
-    // the screen's refresh (5–15 ms) still reads at its own pace, not one per frame;
-    // never past the power mark when reading stops there
+    // the screen's refresh still reads at its own pace, not one per frame; the leftover
+    // time carries over (resetting to `ts` made every speed a whole number of frames:
+    // 8–16 ms all read at one character a frame); never past the power mark when
+    // reading stops there
     let n = Math.max(1, Math.floor((ts - lastTime) / curSpeed));
-    lastTime = n > 1 ? lastTime + n * curSpeed : ts;
+    lastTime += n * curSpeed;
     if (state.settings.stopOnPower && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) n = Math.min(n, state.prePowerEnd - state.revealIndex);
     state.revealIndex = Math.min(text.length, state.revealIndex + n);
     state.buzzPosition = state.revealIndex;
@@ -8136,7 +8161,7 @@ async function loadStats(preserveScroll = false) {
 
 
 
-$("#speed-slider").addEventListener("input", (e) => setRevealSpeed(parseInt(e.target.value)));
+$("#speed-slider").addEventListener("input", (e) => setRevealSpeed(speedMs(e.target.value)));
 
 $("#auto-reveal").addEventListener("change", (e) => {
   state.settings.autoReveal = e.target.checked;
@@ -8186,12 +8211,12 @@ function initSettings() {
   const autoReveal = $("#auto-reveal");
 
   if (speedSlider) {
-    speedSlider.value = state.settings.revealSpeed;
+    speedSlider.value = speedLevel(state.settings.revealSpeed);
     $("#speed-slider-label").textContent = speedLabel(state.settings.revealSpeed);
   }
   const panelSpeed = $("#panel-speed-slider");
   if (panelSpeed) {
-    panelSpeed.value = state.settings.revealSpeed;
+    panelSpeed.value = speedLevel(state.settings.revealSpeed);
     const pl = $("#panel-speed-label"); if (pl) pl.textContent = speedLabel(state.settings.revealSpeed);
   }
   if (autoReveal) autoReveal.checked = state.settings.autoReveal;

@@ -2874,7 +2874,13 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px 
   gap: 22px; padding: 0 12px; pointer-events: none; filter: blur(0.5px);
 }
 .home-track { display: flex; flex-direction: column; gap: 22px; animation: home-rise var(--dur, 100s) linear infinite; will-change: transform; }
-.home-bg.live { overflow: hidden; filter: none; } .home-bg.live .home-track { animation: none; align-self: start; filter: blur(0.5px); backface-visibility: hidden; }   /* app.js streams these (ensureHomeBg); the blur rides with each column, so moving one never re-blurs the page */
+.home-bg.live { overflow: hidden; filter: none; }
+/* website: the stream starts invisible (html.web is set before the first paint) and fades in once
+   its first cards are there (homeBgFill adds .hb-in) — they can take a moment to arrive */
+html.web .home-bg { opacity: 0; transition: opacity 1100ms ease; }
+html.web .home-bg.hb-in { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { html.web .home-bg { transition: none; } }
+.home-bg.live .home-track { animation: none; align-self: start; filter: blur(0.5px); backface-visibility: hidden; }   /* app.js streams these (ensureHomeBg); the blur rides with each column, so moving one never re-blurs the page */
 @keyframes home-rise { from { transform: translateY(0); } to { transform: translateY(-50%); } }
 .home-bgq {
   padding: 18px; border: 1px solid var(--line-soft); border-radius: var(--r-lg);
@@ -4263,6 +4269,3 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
 }
 .practice-actions > .btn, .mp-actions > .btn { margin: 0; }   /* the bars space with gap (a ".btn + .btn" margin pushed Next right after a hidden Buzz) */
 
-/* Reading speed: 1 (slow) on the left … 20, then Instant on the right — the value underneath
-   is ms per character (100 … 5, 0), so the slider runs right-to-left (app.js speedLabel) */
-input[type="range"].speed-range { direction: rtl; }
