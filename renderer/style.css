@@ -3824,8 +3824,7 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
   .qb-coll.qb-collapsed > .qb-coll-body { opacity: 0; }
   @starting-style { .qb-coll:not(.qb-collapsed) > .qb-coll-body { opacity: 0; } }
   .collapse-chevron { transition: transform 180ms var(--ease-out); }
-  /* result, answer box and placeholders appear rather than pop */
-  .result-area:not(.hidden), .buzz-area:not(.hidden) { animation: qb-rise 200ms var(--ease-out); }
+  /* the answer box and the verdict appear AT ONCE — a fade made a 5 ms verdict feel slow */
   .cp-sub, .cp-find-pop { animation: qb-rise 160ms var(--ease-out); }
   #qb-tooltip { transition: opacity 120ms ease; }
 }
@@ -4773,3 +4772,59 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 /* `hidden` always hides — a class's own display (a menu item's flex…) used to beat it: everyone signed
    in saw the admins' "Site stats" item in the avatar menu */
 [hidden] { display: none !important; }
+/* the lobby's nudge, under the join card, down to "Your own room" */
+.mp-own-teaser { display: inline-flex; align-items: center; gap: 6px; align-self: center; padding: 6px 12px; border-radius: 99px; color: var(--accent); font-size: 13px; font-weight: 600; text-decoration: none; transition: background 120ms ease; }
+.mp-own-teaser:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.mp-own-teaser svg { animation: mp-nudge 1.8s ease-in-out infinite; }
+@keyframes mp-nudge { 0%, 60%, 100% { transform: none; } 30% { transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) { .mp-own-teaser svg { animation: none; } }
+/* "Your own room": the shop's section, last in the lobby and as wide as it */
+.mp-own { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; justify-content: flex-start; gap: 22px; width: 100%; max-width: none; align-self: stretch; margin-top: 28px; padding: 32px 36px; scroll-margin-top: 16px;
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: radial-gradient(640px 360px at 100% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
+    radial-gradient(520px 320px at 0% 100%, color-mix(in srgb, var(--green) 8%, transparent), transparent 70%), var(--surface); }
+.mp-own-head { display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
+.mp-own-h { margin: 0; color: var(--strong); font-size: 28px; font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; }
+.mp-own-h span { color: var(--accent); }
+.mp-own-sub { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.mp-own-features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.mp-own-feat { display: flex; gap: 14px; padding: 16px 18px; border: 1px solid var(--line-soft); border-radius: var(--r-lg); background: color-mix(in srgb, var(--bg) 55%, transparent); }
+.mp-own-feat b { display: block; margin-bottom: 4px; color: var(--strong); font-size: 14px; }
+.mp-own-feat p { margin: 0; color: var(--text); font-size: 13px; line-height: 1.6; }
+.mp-own-ico { display: grid; place-items: center; width: 38px; height: 38px; flex: none; border-radius: 10px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.mp-own-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg); }
+.mp-own-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mp-own-table th, .mp-own-table td { padding: 11px 16px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: middle; }
+.mp-own-table tr:last-child > * { border-bottom: 0; }
+.mp-own-table thead th { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; background: var(--surface); }
+.mp-own-table tbody th { width: 30%; color: var(--muted); font-weight: 500; }
+.mp-own-table td { color: var(--text); }
+.mp-own-table .mp-own-col { background: color-mix(in srgb, var(--accent) 7%, transparent); color: var(--strong); }
+.mp-own-table thead .mp-own-col { color: var(--accent); }
+.mp-own-table i { font-style: normal; color: var(--accent); }
+.mp-own-yes { color: var(--green); font-weight: 800; }
+.mp-own-no { color: var(--muted); }
+.mp-own-foot { margin-top: 0; padding-top: 18px; }
+.mp-own-foot .mp-promo-price b { font-size: 28px; }
+.mp-own .mp-buy-btn { min-height: 44px; padding: 0 28px; }
+@media (max-width: 720px) {
+  .mp-own { padding: 22px 18px; }
+  .mp-own-h { font-size: 22px; }
+  .mp-own-features { grid-template-columns: minmax(0, 1fr); }
+  .mp-own-table th, .mp-own-table td { padding: 9px 10px; }
+}
+/* the lobby fills the first screen, so "Your own room" waits below it (the teaser scrolls there) */
+.mp-lobby-main { display: flex; flex-direction: column; align-items: stretch; gap: 24px; min-height: calc(100vh - var(--topbar-h, 56px) - 150px); min-height: calc(100dvh - var(--topbar-h, 56px) - 150px); }
+.mp-lobby-main > .mp-who { align-self: center; }
+@media (max-width: 600px) {
+  /* phones: each row stacks — what it is, then free vs yours side by side */
+  .mp-own-table thead { display: none; }
+  .mp-own-table, .mp-own-table tbody { display: block; }
+  .mp-own-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-bottom: 1px solid var(--line-soft); }
+  .mp-own-table tr:last-child { border-bottom: 0; }
+  .mp-own-table th, .mp-own-table td { border-bottom: 0; }
+  .mp-own-table tbody th { grid-column: 1 / -1; width: auto; padding: 10px 12px 2px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .mp-own-table td { padding: 4px 12px 10px; overflow-wrap: anywhere; }
+  .mp-own-table td::before { content: attr(data-l); display: block; margin-bottom: 2px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .mp-own-table td.mp-own-col::before { color: var(--accent); }
+}

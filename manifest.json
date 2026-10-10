@@ -1,5 +1,5 @@
 {
-  "version": "14.58",
+  "version": "14.59",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,22 +55,22 @@
     }
   ],
   "main": true,
-  "notes": "End a session without saving it. Deleting things, stars and friend changes now happen instantly. A new Profile page. Room hosts can take players out. Bought rooms: the password can be shown and copied, rooms start private, and the price is $4.99. Plugin guide pictures redrawn to match the real screens. Many layout fixes.",
+  "notes": "Minor bug fixes and UI improvements.",
   "files": {
     "renderer/index.html": "03edf13f5a08444dca484cf25a1c203813a45ce694f8897c26c102931b78c2f1",
-    "renderer/style.css": "5b8caf419a9a59c5e43b6988eeadce885f26682fc887106946dd2790a5f8a864",
+    "renderer/style.css": "92378a1ac8643fd29d2bfb58a77827698077f2c52baf6fa256f1b8cfeffcd5cd",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "7f002f682ea792740946a9d9ff2f2527682c80cd4f496a266f15582888b8f53f",
-    "renderer/app.js": "0e652a6673a171380a55e8cee11470c24c85246f5fc762557a32b4ad293f2afb",
+    "renderer/extensions.js": "b3c8b1496d2b593d6fe2bf0fe310f17dc2d6031d6bce6e85f6694851fea78af8",
+    "renderer/app.js": "96785d91f91839f388dd134c87ee6c61310650e451c8b79db44303a0ad190d82",
     "plugins/achievement-glyphs.zip": "8a4fd1632df36a70017618ce25e6e913207f6fdaede3d5a5dc8bed98669cfd7c",
     "plugins/buzz-words.zip": "fb96b9b4b8c0bc654868eadba64bf20d5789ec062aa6d9523e1d77e6e9597119",
     "plugins/canon-tracker.zip": "fdc2f1c541f9ea828801400f729ca00187982e6a2e97c0524bde3bd14cb72db5",
-    "plugins/coach-mode.zip": "cec1ba2c03ab55a19f1d09a7e225f111b3af17182a653f9bbadf286f5ea621c7",
+    "plugins/coach-mode.zip": "f1b86b1cd87862aee1fc5eeb282c171f19754b388a48b69f8ffa5766a7c6bb5c",
     "plugins/fact-sheet.zip": "e1564b171571828bf3e9b7dc9da973b6ea52afce90de541dba65cb3f9e67e896",
     "plugins/flashcards.zip": "528f87bd37c2da7a1b67583f5a636da5bfe8898d435dec17432b81469b5753ee",
     "plugins/folders.zip": "85bc0d14ee700297a1e6a8f902b943cbce87e6fd381e966bd6a84646de1d2c7b",
     "plugins/keyword-freq.zip": "1442044528ffd61e05b6d74396589e541f33d0ceafbd3c72d9d69b4a60a28d5b",
-    "plugins/packet-builder.zip": "9deef2b87b428b796692d7ce316b930a5519c08071abaaa1565d1cb00532bdab"
+    "plugins/packet-builder.zip": "c87f7b924d0c3c1dadbfab87d480573784013e2da23118918789381e3fac05e6"
   },
-  "signature": "cag7q3/f2k2xndwiPgk3WqXwnHH+FopweFxaIg36YYhXcEs9ALNlzjw/F2oPJHYzYpOBDIDEVqI/rRfiJBSTCg=="
+  "signature": "eMzIbwWdebstTGEsMZ7BmanYkmU05mzwL4Rk7kxDJckXFufPEoIrwno71Gy9gwGVLU4IsgQ/jC5fQqracphxDg=="
 }

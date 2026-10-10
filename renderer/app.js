@@ -879,10 +879,11 @@ function webPathNow() {
   return "/plugins/" + encodeURIComponent(pg.pluginId) + "/" + encodeURIComponent(pg.id);
 }
 // the home page's title — what search results show as the link (server.js sends the same)
-const WEB_HOME_TITLE = "onlinequiz - Free Quizbowl Practice for Everyone";
+// the tab / search-result title says "OnlineQuiz"; the page's wordmark stays lowercase
+const WEB_HOME_TITLE = "OnlineQuiz - Free Quizbowl Practice for Everyone";
 function webTitleSync() {
   const crumb = document.getElementById("tb-crumb"), t = crumb && !crumb.hidden ? (document.getElementById("tb-crumb-text")?.textContent || "").trim() : "";
-  document.title = t ? t + " · onlinequiz" : WEB_HOME_TITLE;
+  document.title = t ? t + " · OnlineQuiz" : WEB_HOME_TITLE;
 }
 // after any screen change: a new history entry for a new address
 function webPathSync() {
@@ -5586,7 +5587,9 @@ function buzz() {
 
   clearPromptBanner();
   $("#buzz-area").classList.remove("hidden");
-  setTimeout(() => $("#buzz-input")?.focus(), 50);
+  // focused now, so the first letters typed after the buzz key land in it (a 50 ms wait lost them)
+  try { $("#buzz-input")?.focus({ preventScroll: true }); } catch (e) {}
+  setTimeout(() => { const bi = $("#buzz-input"); if (bi && document.activeElement !== bi && !bi.disabled) bi.focus(); }, 50);
 
   startBuzzTimer();
 
@@ -5707,6 +5710,28 @@ function clearPromptBanner() {
 // ever disagree, the server's verdict (what's recorded) replaces the shown one. Questions
 // without `_hidden` (an older backend) are judged by the server as before.
 const canJudgeHere = (q) => !!(window.QBJudge && window.QBJudge.ready(q));
+const verdictOf = (ev) => ({ status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt, unsure: !!ev.unsure });
+async function hostJudgeTossup(q, answer, o) {
+  const strictness = o.strictness || 10, buzzPosition = o.buzzPosition == null ? null : o.buzzPosition, previous = o.previous || null;
+  if (canJudgeHere(q)) {
+    try { return { ...verdictOf(window.QBJudge.evaluateTossup(answer, q, strictness, buzzPosition, previous)), answer: q.answer_sanitized, answerRaw: q.answer }; } catch (e) { console.error("[judge]", e); }
+  }
+  return API.post("/api/evaluate-tossup", { questionId: q && q.id, answer, strictness, buzzPosition, previous });
+}
+async function hostJudgeBonusPart(q, part, answer, o) {
+  const strictness = o.strictness || 10, previous = o.previous || null;
+  if (canJudgeHere(q)) {
+    try { const ev = window.QBJudge.evaluateBonusPart(answer, q, Number(part), strictness, previous); return ev ? verdictOf(ev) : { error: "No such part" }; } catch (e) { console.error("[judge]", e); }
+  }
+  return API.post("/api/evaluate-bonus-part", { questionId: q && q.id, part, answer, strictness, previous });
+}
+async function hostJudgeLine(answerline, sanitized, answer, o) {
+  const strictness = o.strictness || 10, previous = o.previous || null;
+  if (window.QBAnswerChecker) {
+    try { return verdictOf(window.QBAnswerChecker.evaluateAnswer(answer, answerline || "", sanitized || "", strictness, previous ? { previous } : undefined)); } catch (e) { console.error("[judge]", e); }
+  }
+  return API.post("/api/evaluate-answer", { answerline, sanitized, answer, strictness, previous });
+}
 // A recording in the background: retried while the connection is down (the website), with one
 // id the server answers again from memory instead of recording twice. A later override of
 // the same answer waits for it (state._recordP).
@@ -10970,6 +10995,13 @@ function init() {
       playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),
       keyDisplay: (action) => keyDisplay(action),
       confirm: (message, onYes, opts) => confirmDialog(message, onYes, opts),
+      // A plugin's answers judged right here, like practice's (judge.js — the backend's own checker):
+      // every question the backend hands out carries its hidden answers, so there's no round trip.
+      // A question without them is judged by the backend. Same answers as /api/evaluate-tossup,
+      // /api/evaluate-bonus-part and /api/evaluate-answer.
+      judgeTossup: (q, answer, o) => hostJudgeTossup(q, answer, o || {}),
+      judgeBonusPart: (q, part, answer, o) => hostJudgeBonusPart(q, part, answer, o || {}),
+      judgeAnswerLine: (answerline, sanitized, answer, o) => hostJudgeLine(answerline, sanitized, answer, o || {}),
       addUserMenuItems: (fn) => { if (typeof fn !== "function") return () => {}; _userMenuExtras.add(fn); return () => _userMenuExtras.delete(fn); },
       animateRemove: (el) => animateRemove(el),
       updateTopbar: () => updateTopbar(),
