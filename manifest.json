@@ -1,5 +1,5 @@
 {
-  "version": "14.56",
+  "version": "14.57",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,12 +55,12 @@
     }
   ],
   "main": true,
-  "notes": "The shop's order page tells you where your room is when you aren't signed in",
+  "notes": "The shop shows where to write with questions: support@onlinequiz.net",
   "files": {
     "renderer/index.html": "e7f97dc73df0ca246701ea8f365f3e0fafb0782de70e184aaf2f09ba8bc8168a",
-    "renderer/style.css": "0bb07f9fa2f28bee75516fe890d02c79c7f1a2ad3b7291c0249c40b85f1fbef0",
+    "renderer/style.css": "5d33d1f02c766711f6e95fae322b72630d1cb127e7ec97cb60ed33ce0ab6f2ed",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "1821c724c1d96b8ae9246f347260e8fb3951db03ddb967b886e22c5b6eaf003a",
+    "renderer/extensions.js": "1a7c69b72c6d07d7db3bbbc155a854bfd15a5217376221593ff739bfa42552e6",
     "renderer/app.js": "d1dfc814466b8a0d06e5b9f0e45719dd85c00cb92c1fa9221f76f3f793699b19",
     "plugins/achievement-glyphs.zip": "2d0b38e205eaa7bd4dbe4c85cbac268c6b761d1d0645188740927e7139f41e0a",
     "plugins/buzz-words.zip": "db51f8d7e00c14166f5b93ec46deaafa917d48588cb1d31c7734f9ead950fd36",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "45721e77eb5bb943d69572bf2bb178cad2a03e845d83249c101be7d0ad9b48b1",
     "plugins/packet-builder.zip": "337afd6fdf2316ce2383d330e40ece37d6e533dcf7d9f4b883b1081ac092255e"
   },
-  "signature": "PXkOLBs/DCAP+MQTuELjS182TnxnVYS+8bGm9yyTQRTxS5YmsUIP8kVIpwyIGpswV8DDIGTmqVtaCcyyXTJIAQ=="
+  "signature": "zRG/Xk23m82ofcAgAO/d/YLiqHTmIBvCslZoWBIQV2cV+1PTjAea7aRNR944JXYnbZOBPyPdvGPlr9zm/MgcAQ=="
 }

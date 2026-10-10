@@ -3590,6 +3590,12 @@ function __qbMain(ctx) {
         sec.querySelectorAll(".mp-mine-row").forEach(function (b) { b.onclick = function () { if (goJoin) goJoin(b.dataset.code); }; });
       }).catch(function () {});
     }
+    // "Questions? support@…" — a mail link on the website; plain (selectable) text in the app
+    function supportLine() {
+      var s = (shopInfo && shopInfo.support) || "support@onlinequiz.net";
+      var web = !window.qbreader && window.QB_WEB;
+      return '<br>Questions? ' + (web ? '<a href="mailto:' + esc(s) + '">' + esc(s) + "</a>" : '<span class="shop-mail">' + esc(s) + "</span>");
+    }
     var BUY_PERKS = ["Never resets by itself — scores, settings and chat stay", "Members you add by username always get in", "A password for everyone else (or open it to anyone)", "Admins you choose, and a Reset button"];
     function shopDialog(inner) {
       var old = document.getElementById("mp-buy-dlg"); if (old) old.remove();
@@ -3620,7 +3626,7 @@ function __qbMain(ctx) {
           '<div class="shop-check" id="shop-check" aria-live="polite">3–24 letters, numbers and dashes. People join with it, or at <span class="shop-url">onlinequiz.net/room/<b id="shop-prev">…</b></span></div>' +
           '<ul class="shop-perks">' + BUY_PERKS.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") + "</ul>" +
           '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-no">Cancel</button><button type="submit" class="btn btn-primary" id="shop-pay" disabled>Continue to payment</button></div>' +
-          '<div class="shop-fine">You pay on ' + (shopInfo && shopInfo.provider === "lemon" ? "Lemon Squeezy" : "Stripe") + '’s secure page — your card never reaches onlinequiz.</div>' +
+          '<div class="shop-fine">You pay on ' + (shopInfo && shopInfo.provider === "lemon" ? "Lemon Squeezy" : "Stripe") + '’s secure page — your card never reaches onlinequiz.' + supportLine() + '</div>' +
         "</form>");
       var inp = el.querySelector("#shop-name"), chk = el.querySelector("#shop-check"), pay = el.querySelector("#shop-pay"), prev = el.querySelector("#shop-prev");
       var gen = 0, okName = "";
@@ -3677,7 +3683,8 @@ function __qbMain(ctx) {
         var msg = st === "paid" ? "Payment received — setting up your room…" : st === "expired" || st === "failed" || st === "replaced" ? "That payment didn’t go through. Nothing was charged." : "Waiting for your payment" + (!window.QB_WEB ? " — finish it in your browser." : "…");
         box.innerHTML = shopHead(st === "expired" || st === "failed" || st === "replaced" ? "No payment" : "Almost there", esc(name ? String(name).toUpperCase() : (o && o.item ? String(o.item).toUpperCase() : ""))) +
           '<div class="shop-wait"><span class="shop-spin" aria-hidden="true"></span><span>' + esc(msg) + "</span></div>" +
-          '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button></div>';
+          '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button></div>' +
+          (st === "expired" || st === "failed" || st === "replaced" ? (supportLine() ? '<div class="shop-fine">' + supportLine().slice(4) + "</div>" : "") : "");
         box.querySelector("#shop-close").onclick = el._close;
         if (st === "expired" || st === "failed" || st === "replaced") clearInterval(el._poll);
       };
@@ -3687,7 +3694,8 @@ function __qbMain(ctx) {
         clearInterval(el._poll);
         box.innerHTML = shopHead("Payment received", "Your room is kept with the account you bought it with") +
           '<ul class="shop-perks shop-next"><li>Bought in the app? Go back to it — your room is under <b>Your rooms</b></li><li>Or sign in here with that account to open it</li></ul>' +
-          '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button></div>';
+          '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button></div>' +
+          (supportLine() ? '<div class="shop-fine">' + supportLine().slice(4) + "</div>" : "");
         box.querySelector("#shop-close").onclick = el._close;
       };
       paint(null);

@@ -4588,3 +4588,5 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
 @media (max-width: 510px) { .pgm { zoom: 0.6; } }
 @media (max-width: 440px) { .pgm { zoom: 0.52; } }
 @media (max-width: 385px) { .pgm { zoom: 0.46; } }
+.shop-fine a { color: var(--accent); }
+.shop-mail { color: var(--text); user-select: text; }
