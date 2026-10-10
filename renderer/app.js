@@ -11930,10 +11930,12 @@ function renderStore() {
     : `<button type="button" class="btn btn-primary ${cls || ""}" data-store-buy="${sku}">${label || "Buy"}</button>`;
   const plugIco = (p, size) => `<span class="st-ico" style="--c:${p.color}"><svg width="${size || 20}" height="${size || 20}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p.icon}</svg></span>`;
   const sum4 = STORE_PLUGINS.reduce((n, p) => n + cents(p.sku), 0), usd = (n) => "$" + (n / 100).toFixed(2);
-  const myName = (Account.user && (Account.user.displayName || Account.user.handle)) || state.username || "Your name";
-  const neonNow = has("neon") ? (o.neon || null) : null, pick = _shop.neonPick || neonNow || "cyan";
+  const myName = storeMyName();
+  // your name as it glows now (an owner's own colour, or none), or the colour being tried
+  const neonNow = has("neon") ? (o.neon || null) : null, shown = has("neon") ? neonNow : _shop.neonPick || "cyan";
+  const wasOpen = !!c.querySelector(".st-neon-pop:not([hidden])");
   const incl = (p) => `<li>${plugIco(p, 16)}<span>${escapeHtml(p.name)}</span>${has("plugin:" + p.id) ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
-  const neonLi = `<li><span class="st-ico st-ico-neon">${ic("sparkle", 16)}</span><span>Neon name ${neonName(myName, pick)}</span>${has("neon") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
+  const neonLi = `<li><span class="st-ico st-ico-neon">${ic("sparkle", 16)}</span><span>Neon name <span class="st-neon-sample" data-fallback="cyan">${neonName(myName, shown || "cyan")}</span></span>${has("neon") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
   c.innerHTML = `<div class="st-page">
     <header class="st-hero">
       <h1 class="st-title">Study tools, a name that glows, and a room of your own</h1>
@@ -11986,14 +11988,16 @@ function renderStore() {
       </article>
     </section>
     <section class="st-sec" id="st-neon" aria-labelledby="st-h-neon">
-      <h2 class="eyebrow" id="st-h-neon">Neon name</h2>
+      <h2 class="eyebrow" id="st-h-neon">Neon name <span class="qb-info" data-tip="Press your name to pick its colour. Others see it glow in multiplayer rooms and on leaderboards.">i</span></h2>
       <div class="st-neon">
-        <div class="st-neon-stage" aria-hidden="true"><span class="st-neon-big">${neonName(myName, pick)}</span><small>in rooms and on leaderboards</small></div>
-        <div class="st-neon-side">
-          <div class="st-swatches" role="radiogroup" aria-label="Neon colour">${Object.entries(NEON_COLORS).map(([k, v]) =>
-            `<button type="button" class="st-sw${pick === k ? " on" : ""}" role="radio" aria-checked="${pick === k}" data-neon="${k}" style="--neon:${v}" title="${k[0].toUpperCase() + k.slice(1)}" aria-label="${k}"></button>`).join("")}</div>
-          ${has("neon") ? `<p class="st-neon-note">${neonNow ? "Your name glows in <b>" + escapeHtml(neonNow) + "</b>." : "Your name doesn’t glow right now."}${neonNow ? ' <button type="button" class="acct-link" data-neon-off>Turn it off</button>' : ""}</p>`
-            : `<p class="st-neon-note">Comes with the <button type="button" class="acct-link" data-store-go="starter">Starter</button> and <button type="button" class="acct-link" data-store-go="captain">Team Captain</button> bundles. Try the colours here.</p>`}
+        <div class="pop-wrap st-neon-wrap">
+          <button type="button" class="st-neon-me" aria-haspopup="dialog" aria-expanded="false" aria-label="Neon colour"><span class="st-neon-big st-neon-sample">${neonName(myName, shown)}</span><span class="st-neon-caret" aria-hidden="true">${ic("down", 16)}</span></button>
+          <div class="pop st-neon-pop" role="dialog" aria-label="Neon colour" hidden>
+            <div class="st-swatches" role="radiogroup" aria-label="Neon colour">${Object.entries(NEON_COLORS).map(([k, v]) =>
+              `<button type="button" class="st-sw${shown === k ? " on" : ""}" role="radio" aria-checked="${shown === k}" data-neon="${k}" style="--neon:${v}" title="${k[0].toUpperCase() + k.slice(1)}" aria-label="${k}"></button>`).join("")}</div>
+            ${has("neon") ? `<button type="button" class="pop-item st-neon-off${shown ? "" : " on"}" role="radio" aria-checked="${!shown}" data-neon="">${ic("x", 14)}Off</button>`
+              : `<button type="button" class="btn btn-primary btn-sm st-neon-get" data-store-go="starter">See bundles</button>`}
+          </div>
         </div>
       </div>
     </section>
@@ -12001,8 +12005,22 @@ function renderStore() {
   </div>`;
   c.querySelectorAll("[data-store-buy]").forEach((b) => b.addEventListener("click", () => storeBuy(b.dataset.storeBuy, b)));
   c.querySelectorAll("[data-store-go]").forEach((b) => b.addEventListener("click", () => openStore(b.dataset.storeGo)));
-  c.querySelectorAll("[data-neon]").forEach((b) => b.addEventListener("click", () => storeNeon(b.dataset.neon, b)));
-  c.querySelector("[data-neon-off]")?.addEventListener("click", (e) => storeNeon("", e.currentTarget));
+  // the colour picker: a popover from your name (it stays open while colours are tried)
+  const me = c.querySelector(".st-neon-me"), pop = c.querySelector(".st-neon-pop");
+  if (me && pop) {
+    const show = (open) => {
+      if (open) {
+        closeAllPops();
+        const r = me.getBoundingClientRect();   // up when the page's end leaves no room below
+        pop.classList.toggle("up", window.innerHeight - r.bottom < 200 && r.top > 200);
+      }
+      pop.hidden = !open; me.setAttribute("aria-expanded", String(open));
+    };
+    me.addEventListener("click", (e) => { e.stopPropagation(); const open = pop.hidden; show(open); if (open && e.detail === 0) (pop.querySelector(".st-sw.on") || pop.querySelector(".st-sw"))?.focus({ preventScroll: true }); });   // the keyboard: into the colours
+    pop.querySelectorAll("[data-neon]").forEach((b) => b.addEventListener("click", () => storeNeon(b.dataset.neon, b)));
+    pop.querySelector("[data-store-go]")?.addEventListener("click", () => show(false));
+    if (wasOpen) show(true);   // repainted while it was open
+  }
 }
 async function storeBuy(sku, btn) {
   if (!Account.user) { openAccount("signin", { reason: "Sign in to buy — what you buy is kept with your account." }); return; }
@@ -12021,17 +12039,24 @@ async function storeBuy(sku, btn) {
   window.QB?.shopWatch?.(r.order);
 }
 // the neon colour: saved at once (back as it was if the server says no)
+function storeMyName() { return (Account.user && (Account.user.displayName || Account.user.handle)) || state.username || "Your name"; }
+// the Store's samples of your name, and the picker's ticks, in colour k (none: plain)
+function paintNeon(k) {
+  const c = document.getElementById("store-container"); if (!c) return;
+  c.querySelectorAll(".st-neon-sample").forEach((el) => { el.innerHTML = neonName(storeMyName(), k || el.dataset.fallback || null); });
+  c.querySelectorAll(".st-neon-pop [data-neon]").forEach((b) => { const on = (b.dataset.neon || null) === (k || null); b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on)); });
+}
 async function storeNeon(k, btn) {
   const o = window.QB && window.QB._owned;
-  if (!o || !Account.user || !(o.grants || []).includes("neon")) { _shop.neonPick = k || null; renderStore(); return; }
+  if (!o || !Account.user || !(o.grants || []).includes("neon")) { _shop.neonPick = k || "cyan"; paintNeon(_shop.neonPick); return; }   // trying the colours
   const prev = o.neon || null;
-  _shop.neonPick = null; o.neon = k || null; renderStore();
+  if ((k || null) === prev) return;
+  o.neon = k || null; paintNeon(k);
   let r = null;
   try { r = await API.post("/api/account/profile", { neon: k || "" }); } catch (e) {}
   if (!r || r.error || !r.user) {
-    o.neon = prev; renderStore();
-    const again = document.querySelector(`#store-container [data-neon="${k || prev || "cyan"}"]`) || document.querySelector("#st-neon");
-    failBubble(again, (r && r.error) || "Couldn't save that. Try again.");
+    o.neon = prev; paintNeon(prev);
+    failBubble(btn, (r && r.error) || "Couldn't save that. Try again.");
     return;
   }
   Account.user = r.user;
