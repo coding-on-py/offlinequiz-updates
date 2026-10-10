@@ -4409,3 +4409,69 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
 .ms-table tbody tr:last-child td { border-bottom: 0; }
 .ms-players td:first-child, .ms-players th:first-child { text-align: left; }
 @media (max-width: 760px) { .ms-box { width: 100vw; height: 100dvh; border-radius: 0; border: 0; } .ms-head, .ms-scroll { padding-left: 14px; padding-right: 14px; } }
+
+/* Multiplayer: the shop (Buy a room), Your rooms, a bought room's door and its Room tab (multiplayer.js) */
+.mp-shop { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; width: 100%; max-width: 520px; align-self: center; }
+.mp-shop[hidden] { display: none; }
+.mp-buy-btn { gap: 8px; }
+.mp-shop-note { font-size: 12.5px; color: var(--muted); }
+.mp-shop-note b { color: var(--strong); }
+.mp-mine-row .badge { margin-right: 4px; }
+.mp-lock { display: inline-flex; vertical-align: -1px; margin-left: 4px; color: var(--muted); }
+.mp-door { display: flex; flex-direction: column; gap: 8px; align-items: stretch; max-width: 420px; margin: 4px auto 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--text); font-size: 13px; text-align: left; }
+.mp-door-t b { color: var(--strong); letter-spacing: 0.04em; }
+.mp-door-row { display: flex; gap: 8px; }
+.mp-door-row .mode-input { flex: 1; min-width: 0; }
+.mp-door-err { color: var(--red); font-size: 12.5px; }
+.mp-door-note { color: var(--muted); font-size: 12px; }
+.shop-overlay .shop-box { width: min(460px, 92vw); min-width: 0; min-height: 300px; display: flex; flex-direction: column; gap: 14px; text-align: left; }
+.shop-head { display: flex; gap: 12px; align-items: center; }
+.shop-ico { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: var(--r-lg); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.shop-head .confirm-title { margin: 0; }
+.shop-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.shop-price { color: var(--strong); font-size: 15px; }
+.shop-box form { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+.shop-box .mp-field .code-input { text-transform: lowercase; letter-spacing: 0.04em; font-size: 18px; padding: 10px 12px; }
+.shop-check { min-height: 34px; font-size: 12px; color: var(--muted); line-height: 1.4; }
+.shop-check.ok { color: var(--green); }
+.shop-check.ok b { color: var(--green); }
+.shop-check.bad { color: var(--red); }
+.shop-url b { color: var(--text); font-weight: 600; }
+.shop-perks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--text); }
+.shop-perks li { position: relative; padding-left: 20px; }
+.shop-perks li::before { content: ""; position: absolute; left: 3px; top: 5px; width: 8px; height: 4px; border-left: 2px solid var(--green); border-bottom: 2px solid var(--green); transform: rotate(-45deg); }
+.shop-fine { font-size: 11.5px; color: var(--muted); text-align: center; }
+.shop-wait { display: flex; align-items: center; gap: 10px; padding: 18px 4px; font-size: 13px; color: var(--text); flex: 1; }
+.shop-spin { width: 18px; height: 18px; flex: none; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: shop-spin 0.9s linear infinite; }
+@keyframes shop-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .shop-spin { animation: none; } }
+.shop-box .confirm-actions { margin-top: auto; }
+.rh-own { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.rh-own[hidden] { display: none; }
+.mp-roominfo { display: flex; flex-direction: column; gap: 14px; font-size: 13px; }
+.ri-head { display: flex; align-items: center; gap: 8px; }
+.ri-name { color: var(--strong); font-size: 16px; letter-spacing: 0.05em; }
+.ri-line { color: var(--muted); }
+.ri-line b { color: var(--text); }
+.ri-sec { display: flex; flex-direction: column; gap: 8px; }
+.ri-lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.ri-lbl .num { margin-left: 4px; color: var(--text); }
+.ri-note { font-size: 12px; color: var(--muted); }
+.ri-seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.ri-segbtn { border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--text); font-family: var(--font); font-size: 12px; padding: 7px 4px; cursor: pointer; }
+.ri-segbtn:last-child { border-right: 0; }
+.ri-segbtn:hover { background: var(--surface-2); }
+.ri-segbtn[aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
+.ri-row { display: flex; gap: 6px; margin: 0; }
+.ri-row .mode-input { flex: 1; min-width: 0; }
+.ri-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.ri-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12px; }
+.ri-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; border-radius: 50%; }
+.ri-x:hover { color: var(--red); }
+.ri-empty { font-size: 12px; color: var(--muted); }
+.ri-err { color: var(--red); font-size: 12.5px; }
+.ri-danger { padding-top: 10px; border-top: 1px solid var(--line-soft); align-items: flex-start; }
+/* a bought room's name can be long (up to 24): its code takes the room it needs, on one line */
+.mp-rcode { white-space: nowrap; }
+.mp-recent-row .mp-rcode { flex: 0 0 auto; min-width: 90px; }
+.mp-mine-row .mp-rcode, .mp-pub-row .mp-rcode { letter-spacing: 0.12em; }

@@ -95,7 +95,7 @@ const API = isElectron
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
-        if (/^\/api\/(account\/|friends$|leaderboards(\/board)?$|users\/profile$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
+        if (/^\/api\/(account\/|friends$|leaderboards(\/board)?$|users\/profile$|shop\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
         throw new Error("Unknown API route: " + path);
       },
       post(url, data) {
@@ -121,7 +121,7 @@ const API = isElectron
         if (path === "/api/import-questions") return window.qbreader.importQuestions(data.sets, data.tossups, data.bonuses);
         if (path === "/api/apply-update") return window.qbreader.applyUpdate(data.folderId);
         if (path === "/api/app-update-check") return window.qbreader.appUpdateCheck ? window.qbreader.appUpdateCheck() : { configured: false, updated: false, dev: true };
-        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
+        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
         throw new Error("Unknown API route: " + path);
       },
       delete(url) {
@@ -902,9 +902,23 @@ function webRoute(path) {
   try {
     if (a === "multiplayer") {
       if (b) window.QB?.mpJoin?.(b);
-      else { window.QB?.mpLeave?.(); goTo("multiplayer"); }
+      else {
+        window.QB?.mpLeave?.(); goTo("multiplayer");
+        // back from Stripe without paying: the Buy window again, with the name
+        const buy = new URLSearchParams(location.search).get("buy");
+        if (buy != null) window.QB?.mpBuy?.(buy);
+      }
+    } else if (a === "room" && b) {
+      // a bought room's own address: onlinequiz.net/room/<name>
+      window.QB?.mpJoin?.(b);
+    } else if (a === "shop" && b === "done") {
+      // back from Stripe: the order's progress, then the new room
+      const id = new URLSearchParams(location.search).get("order");
+      goTo("multiplayer");
+      if (id) window.QB?.mpOrder?.(id);
     } else if (a === "plugins" && b && c) {
-      if (!window.QB?.showPage?.(b + "::" + c)) goTo("plugins");
+      // plugins start once the profile's plugin data is loaded
+      Promise.resolve(window.QB?.whenReady?.()).then(() => { if (!window.QB?.showPage?.(b + "::" + c)) goTo("plugins"); });
     } else if (a === "plugins") {
       goTo("plugins");
       if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
@@ -4381,7 +4395,7 @@ function schedulePrefetch(ms = 150) {
 }
 // Setup edits that pick different questions empty the queue; reading speed, timers,
 // strictness and display toggles don't (dragging the speed slider used to empty it).
-const _NOT_A_FILTER = new Set(["panel-speed-slider", "strictness-slider", "panel-buzz-timer", "panel-buzz-window", "panel-bonus-timer", "opt-allow-rebuzzes", "opt-stop-on-power", "opt-allow-skips", "opt-bonus-after", "opt-hide-pron", "opt-show-qmeta", "filter-hide-pron", "filter-hide-notes", "auto-reveal"]);
+const _NOT_A_FILTER = new Set(["panel-speed-slider", "strictness-slider", "panel-buzz-timer", "panel-buzz-window", "panel-bonus-timer", "opt-allow-rebuzzes", "opt-stop-on-power", "opt-allow-skips", "opt-bonus-after", "opt-hide-pron", "opt-show-qmeta", "filter-hide-pron", "filter-hide-notes", "opt-hide-notes", "auto-reveal"]);
 const _filterEdit = (e) => { if (!(e.target && _NOT_A_FILTER.has(e.target.id))) clearPrefetch(); };
 document.getElementById("filters-panel")?.addEventListener("change", _filterEdit, true);
 document.getElementById("filters-panel")?.addEventListener("input", _filterEdit, true);
@@ -4833,22 +4847,41 @@ function renderQuestion(question) {
   qbEmit("question:render", { type: isTossup ? "tossup" : "bonus", question });
 }
 
-function renderTossup(q) {
+// The text a tossup reads as the settings make it (moderator notes, pronunciations,
+// plugin transforms) and where its power mark falls in it.
+function tossupDisplay(q) {
   let text = q.question_sanitized || q.question || "";
   text = applyNoteFilter(text, q.question);   // notes first: the HTML locates them in the unstripped text
   if (state.settings.hidePronunciations) text = stripPronunciations(text);
   text = window.QB?.applyTextTransforms?.(text, { type: "tossup", question: q }) ?? text;
   const powerIdx = text.indexOf("(*)");
   const displayText = text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "");
+  return { displayText, prePowerEnd: powerIdx >= 0 ? powerIdx : -1 };
+}
+function bonusDisplay(q) {
+  let leadin = q.leadin_sanitized || q.leadin || "";
+  leadin = applyNoteFilter(leadin, q.leadin);
+  if (state.settings.hidePronunciations) leadin = stripPronunciations(leadin);
+  leadin = window.QB?.applyTextTransforms?.(leadin, { type: "bonus-leadin", question: q }) ?? leadin;
+  let parts, partsHtml = [];
+  try { parts = JSON.parse(q.parts_sanitized || q.parts || "[]"); } catch { parts = ["Error parsing bonus parts"]; }
+  try { partsHtml = JSON.parse(q.parts || "[]"); } catch { partsHtml = []; }
+  const texts = parts.map((p, i) => {
+    let s = p || `Part ${i + 1}`;
+    s = applyNoteFilter(s, partsHtml[i]);
+    if (state.settings.hidePronunciations) s = stripPronunciations(s);
+    return window.QB?.applyTextTransforms?.(s, { type: "bonus-part", question: q, part: i }) ?? s;
+  });
+  return { leadin, parts, texts };
+}
+
+function renderTossup(q) {
+  const { displayText, prePowerEnd } = tossupDisplay(q);
   state.currentDisplayText = displayText;
 
   state.buzzPosition = 0;
 
-  if (powerIdx >= 0) {
-    state.prePowerEnd = powerIdx;
-  } else {
-    state.prePowerEnd = -1;
-  }
+  state.prePowerEnd = prePowerEnd;
 
   $("#power-mark").classList.add("hidden");
   $("#bonus-parts-area").classList.add("hidden");
@@ -4881,18 +4914,7 @@ function renderTossup(q) {
 }
 
 async function renderBonus(q) {
-  let leadin = q.leadin_sanitized || q.leadin || "";
-  leadin = applyNoteFilter(leadin, q.leadin);
-  if (state.settings.hidePronunciations) leadin = stripPronunciations(leadin);
-  leadin = window.QB?.applyTextTransforms?.(leadin, { type: "bonus-leadin", question: q }) ?? leadin;
-  let parts;
-  try {
-    parts = JSON.parse(q.parts_sanitized || q.parts || "[]");
-  } catch {
-    parts = ["Error parsing bonus parts"];
-  }
-  let partsHtml = [];
-  try { partsHtml = JSON.parse(q.parts || "[]"); } catch { partsHtml = []; }
+  const { leadin, parts, texts: partTexts } = bonusDisplay(q);
   try {
     state.bonusAnswers = JSON.parse(q.answers_sanitized || q.answers || "[]");
   } catch {
@@ -4927,10 +4949,7 @@ async function renderBonus(q) {
   for (let i = 0; i < nParts; i++) {
     const head = $(`#bonus-part-${i} .bonus-part-header`);
     if (head) head.textContent = "PART " + bonusPartLetter(i) + (bv.stated && bv.values[i] !== 10 ? ` [${bv.values[i]}]` : "");
-    let partText = parts[i] || `Part ${i + 1}`;
-    partText = applyNoteFilter(partText, partsHtml[i]);
-    if (state.settings.hidePronunciations) partText = stripPronunciations(partText);
-    partText = window.QB?.applyTextTransforms?.(partText, { type: "bonus-part", question: q, part: i }) ?? partText;
+    const partText = partTexts[i] != null ? partTexts[i] : `Part ${i + 1}`;
     $(`#bonus-text-${i}`).textContent = partText;
     state._bonusPartTexts[i] = partText;
     $(`#bonus-input-${i}`).value = "";
@@ -4963,12 +4982,13 @@ function readBonusText(el, text, done, kind) {
   if (!el) return;
   text = String(text || "");
   const q = state.currentQuestion;
+  // r.text: what it reads (retextLive swaps it mid-read when notes / pronunciations are switched)
   const r = { el, text, idx: 0, last: 0, raf: 0, done, kind: kind || "part" };
-  const paint = () => { el.innerHTML = '<span class="revealed">' + escapeHtml(text.slice(0, r.idx)) + '</span><span class="unrevealed" aria-hidden="true">' + escapeHtml(textShape(text.slice(r.idx))) + "</span>"; };
+  const paint = r.paint = () => { el.innerHTML = '<span class="revealed">' + escapeHtml(r.text.slice(0, r.idx)) + '</span><span class="unrevealed" aria-hidden="true">' + escapeHtml(textShape(r.text.slice(r.idx))) + "</span>"; };
   r.finish = (callDone = true) => {
     if (r.raf) cancelAnimationFrame(r.raf); r.raf = 0;
     if (state._bonusReader === r) state._bonusReader = null;
-    el.textContent = text;
+    el.textContent = r.text;
     if (callDone && r.done) { const d = r.done; r.done = null; d(); }
   };
   const step = (t) => {
@@ -4980,8 +5000,8 @@ function readBonusText(el, text, done, kind) {
     if (!sp) { r.finish(); return; }
     if (!r.last) r.last = t;
     const n = Math.floor((t - r.last) / sp);
-    if (n > 0) { r.idx = Math.min(text.length, r.idx + n); r.last += n * sp; paint(); followReading(el.querySelector(".revealed"), q && q.id); }
-    if (r.idx >= text.length) { r.finish(); return; }
+    if (n > 0) { r.idx = Math.min(r.text.length, r.idx + n); r.last += n * sp; paint(); followReading(el.querySelector(".revealed"), q && q.id); }
+    if (r.idx >= r.text.length) { r.finish(); return; }
     r.raf = requestAnimationFrame(step);
   };
   r.resume = () => { r.last = 0; if (!r.raf) r.raf = requestAnimationFrame(step); };
@@ -8371,11 +8391,80 @@ $("#auto-reveal").addEventListener("change", (e) => {
 
 $("#buzz-timeout-slider")?.addEventListener("input", (e) => setBuzzTimer(parseInt(e.target.value)));
 
+// ── Hide notes / pronunciations, live ──
+// Switching either changes the question on screen at once, where it is: the text is made
+// again and every position in it (how far it's read, the buzz, the power mark) moves to the
+// same place in the new text. Each display text is the original with spans cut out, so a
+// position maps through the original (the same walk as displayPosToOriginal).
+function rawPosIn(disp, orig, pos) {
+  let oi = 0, di = 0;
+  while (di < pos && oi < orig.length) { if (orig[oi] === disp[di]) { oi++; di++; } else oi++; }
+  return oi;
+}
+function dispPosIn(disp, orig, raw) {
+  let oi = 0, di = 0;
+  while (oi < raw && oi < orig.length) { if (di < disp.length && orig[oi] === disp[di]) { oi++; di++; } else oi++; }
+  return di;
+}
+function moveTextPos(from, to, orig, pos) {
+  if (pos == null || pos < 0 || from === to) return pos;
+  if (pos >= from.length) return to.length;
+  return Math.min(to.length, dispPosIn(to, orig, rawPosIn(from, orig, pos)));
+}
+function retextLive() {
+  const q = state.currentQuestion;
+  if (!q || !state.sessionActive) return;
+  try {
+    if (state.mode === "bonuses") retextBonus(q);
+    else if (state.mode === "tossups") retextTossup(q);
+  } catch (e) { console.error(e); }
+}
+function retextTossup(q) {
+  const was = state.currentDisplayText;
+  if (was == null) return;
+  const { displayText, prePowerEnd } = tossupDisplay(q);
+  if (displayText === was) return;
+  const orig = q.question_sanitized || q.question || "";
+  const mv = (p) => moveTextPos(was, displayText, orig, p);
+  if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+  const over = !!state.resultAreaVisible;
+  state.revealIndex = over || state.questionFullyRead ? displayText.length : mv(state.revealIndex || 0);
+  state.buzzPosition = mv(state.buzzPosition || 0);
+  if (Array.isArray(state.buzzMarks)) state.buzzMarks = state.buzzMarks.map(mv);
+  state.prePowerEnd = prePowerEnd;
+  state.currentDisplayText = displayText;
+  $("#question-text").innerHTML = formatQuestionText(displayText, state.revealIndex, state.prePowerEnd, null, over);
+  // still reading: carry on from the same place in the new text
+  if (!over && !state.isBuzzed && !state.isPaused && !state.questionFullyRead && state.revealIndex < displayText.length) revealText(displayText);
+}
+function retextBonus(q) {
+  const { leadin, parts, texts } = bonusDisplay(q);
+  const r = state._bonusReader;
+  const swap = (el, text, origText) => {
+    if (!el) return;
+    if (r && r.el === el) {
+      if (r.text === text) return;
+      r.idx = moveTextPos(r.text, text, origText, r.idx);
+      r.text = text;
+      r.paint();
+      if (r.idx >= text.length) r.finish();
+    } else if (el.textContent !== text) el.textContent = text;
+  };
+  const qt = $("#question-text");
+  if (qt && !(r && r.el === qt) && qt.textContent === "") { /* the leadin isn't up yet */ }
+  else swap(qt, leadin, q.leadin_sanitized || q.leadin || "");
+  state._bonusPartTexts = state._bonusPartTexts || [];
+  texts.forEach((text, i) => {
+    state._bonusPartTexts[i] = text;
+    swap($(`#bonus-text-${i}`), text, parts[i] || "");
+  });
+}
 function setHidePron(on) {
   state.settings.hidePronunciations = on;
   lsSet("qb-hide-pron", on.toString());
   const a = $("#opt-hide-pron"); if (a) a.checked = on;
   const b = $("#filter-hide-pron"); if (b) b.checked = on;
+  retextLive();
 }
 $("#opt-hide-pron")?.addEventListener("change", (e) => setHidePron(e.target.checked));
 
@@ -8384,7 +8473,7 @@ function setHideNotes(on) {
   lsSet("qb-hide-notes", on.toString());
   const a = $("#opt-hide-notes"); if (a) a.checked = on;
   const b = $("#filter-hide-notes"); if (b) b.checked = on;
-  if (state.currentQuestion) { try { state.mode === "bonuses" ? renderBonus(state.currentQuestion) : renderTossup(state.currentQuestion); } catch (e) {} }
+  retextLive();
 }
 $("#opt-hide-notes")?.addEventListener("change", (e) => setHideNotes(e.target.checked));
 $("#filter-hide-notes")?.addEventListener("change", (e) => setHideNotes(e.target.checked));
@@ -10930,6 +11019,10 @@ function init() {
       needsAccount: () => needsAccount(),
       tip: (container, id, text, ref) => tipInto(container, id, text, ref),
       accountPanelHtml: (reason) => accountPanelHtml(reason),
+      // the shop (multiplayer's Buy a room): sign in first; open the payment page (the website
+      // goes there, the app opens it in the person's browser — onlinequiz.net addresses only)
+      openAccount: (mode, opts) => openAccount(mode, opts),
+      openUrl: (url) => { if (IS_WEB) location.href = url; else API.post("/api/cloud/open", { url }).catch(() => {}); },
       openSaveMenu: (question, type, anchor) => openSaveMenu(question, type, anchor),
       openItemSaveMenu: (spec, anchor) => openItemSaveMenu(spec, anchor),
       itemReviewAdd: (it) => itemReviewAdd(it),
@@ -11554,6 +11647,7 @@ async function cloudSyncNow() {
     if (r && r.ok) {
       Account.lastSync = r.lastSync; Account.syncError = null;
       if (r.pulled) {
+        window.QB?.reloadPluginData?.();   // folders, decks, saved words … from the website / other devices
         loadStarredIds();
         if (document.querySelector("#stats-screen.active")) loadStats();
         if (document.querySelector("#player-screen.active")) loadPlayer();

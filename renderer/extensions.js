@@ -285,6 +285,159 @@
   function saveThemes() { saveStore(THEMES_KEY, QB._themes.map(persistFields)); }
   function findExt(id) { return QB._plugins.find((p) => p.id === id) || QB._themes.find((t) => t.id === id); }
 
+  // ── Plugin data follows the profile (and its account) ──
+  // ctx.storage and plugin settings live in the profile's own data (/api/plugin-data →
+  // "plug:<profile>:<plugin>:<key>" rows), which the account sync carries between the app and
+  // the website — folders, saved words, decks, packets. PD.data holds it in memory as JSON
+  // text (loaded before plugins start: QB.boot), so get() stays synchronous and hands out a
+  // fresh copy like localStorage did; set() writes through, a beat later. 14.50 and older kept
+  // it in this machine's localStorage ("qb-pl-<plugin>-<key>"): that moves into the profile
+  // once, then goes. Which store plugins are on rides along too ("_qb" / "plugins").
+  const PD = { data: null, timers: {}, applying: false };
+  const LIST_ID = "_qb", LIST_KEY = "plugins";
+  const legacyKey = (id, k) => "qb-pl-" + id + "-" + k;
+  function pdGet(id, k) {
+    if (PD.data) {
+      const m = PD.data[id], raw = m && Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null;
+      try { return raw == null ? null : JSON.parse(raw); } catch { return null; }
+    }
+    try { return JSON.parse(localStorage.getItem(legacyKey(id, k))); } catch { return null; }
+  }
+  function pdSend(id, k) {
+    delete PD.timers[id + "\u0000" + k];
+    const raw = PD.data && PD.data[id] ? PD.data[id][k] : undefined;
+    if (raw === undefined) return Promise.resolve();
+    let value = null; try { value = JSON.parse(raw); } catch {}
+    try { return Promise.resolve(QB._host.api.post("/api/plugin-data", { plugin: id, key: k, value })).catch(() => {}); } catch { return Promise.resolve(); }
+  }
+  function pdSet(id, k, v) {
+    const raw = JSON.stringify(v === undefined ? null : v);
+    if (!PD.data) { try { localStorage.setItem(legacyKey(id, k), raw); } catch (e) { console.error("[QB] save failed", e); } return; }
+    const m = PD.data[id] = PD.data[id] || {};
+    if (m[k] === raw) return;
+    m[k] = raw;
+    const tk = id + "\u0000" + k;
+    clearTimeout(PD.timers[tk]);
+    PD.timers[tk] = setTimeout(() => pdSend(id, k), 250);
+  }
+  // a plugin's data by id and key (another plugin's handoff, tests); null = none
+  QB.pluginData = (id, k) => pdGet(String(id), String(k));
+  QB.setPluginData = (id, k, v) => pdSet(String(id), String(k), v);
+  // anything still waiting goes now (leaving the page, before a reload)
+  QB.flushPluginData = () => Promise.all(Object.keys(PD.timers).map((tk) => { clearTimeout(PD.timers[tk]); const [id, k] = tk.split("\u0000"); return pdSend(id, k); }));
+  window.addEventListener("pagehide", () => {
+    // the website: a beacon still goes out while the page closes (a fetch may not)
+    if (WEBSITE && navigator.sendBeacon) {
+      for (const tk of Object.keys(PD.timers)) {
+        clearTimeout(PD.timers[tk]); delete PD.timers[tk];
+        const [id, k] = tk.split("\u0000"), raw = PD.data && PD.data[id] && PD.data[id][k];
+        if (raw != null) try { navigator.sendBeacon("/api/plugin-data", new Blob(['{"plugin":' + JSON.stringify(id) + ',"key":' + JSON.stringify(k) + ',"value":' + raw + "}"], { type: "application/json" })); } catch {}
+      }
+    }
+    QB.flushPluginData();
+  });
+  async function pdLoad() {
+    const r = await QB._host.api.get("/api/plugin-data?plugin=*&key=*");
+    const all = r && r.value && typeof r.value === "object" ? r.value : null;
+    if (!all) throw new Error("no plugin data");
+    const data = {};
+    for (const [id, m] of Object.entries(all)) { data[id] = {}; for (const [k, v] of Object.entries(m || {})) data[id][k] = JSON.stringify(v); }
+    return data;
+  }
+  // the old machine-wide copies: into the profile (where it has none of its own), then gone
+  function pdMigrate() {
+    const ids = [...new Set(QB._plugins.map((p) => p.id).concat(Object.keys(PLUGIN_GROUP)))].sort((a, b) => b.length - a.length);
+    const gone = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const lk = localStorage.key(i);
+      if (!lk || !lk.startsWith("qb-pl-")) continue;
+      const id = ids.find((x) => lk.startsWith("qb-pl-" + x + "-"));
+      if (!id) continue;
+      const k = lk.slice(("qb-pl-" + id + "-").length), raw = localStorage.getItem(lk);
+      gone.push(lk);
+      if (!k || raw == null) continue;
+      const m = PD.data[id] = PD.data[id] || {};
+      if (Object.prototype.hasOwnProperty.call(m, k)) continue;
+      try { JSON.parse(raw); } catch { continue; }
+      m[k] = raw;
+      pdSend(id, k);
+    }
+    gone.forEach((lk) => { try { localStorage.removeItem(lk); } catch {} });
+  }
+  // Which store plugins are on, kept with the profile: turning one on or off here turns it
+  // on or off on the account's other devices (a plugin they don't have yet is added there
+  // from the Store / the app's update; nothing is ever removed, only turned off).
+  const listable = (p) => !!(p && !p._builtin && PLUGIN_GROUP[p.id]);   // the Store's plugins (an imported one of your own stays on this machine)
+  function localList() { return QB._plugins.filter((p) => listable(p) && p.enabled).map((p) => p.id).sort(); }
+  function pluginListChanged() {
+    if (!PD.data || PD.applying) return;
+    const cur = pdGet(LIST_ID, LIST_KEY), on = localList();
+    if (cur && Array.isArray(cur.on) && cur.on.slice().sort().join() === on.join()) return;
+    pdSet(LIST_ID, LIST_KEY, { on });
+  }
+  async function pluginSource(id) {
+    try {
+      if (WEBSITE) {
+        if (!QB._store.list) { const r = await fetch("/api/plugin-store", { cache: "no-store" }); if (r.ok) QB._store.list = ((await r.json()) || {}).plugins || []; }
+        const item = (QB._store.list || []).find((x) => x.id === id); if (!item) return null;
+        const z = await fetch("/store/" + encodeURIComponent(item.file)); return z.ok ? new Uint8Array(await z.arrayBuffer()) : null;
+      }
+      const info = await QB._host.api.get("/api/app-update-plugins");
+      const p = ((info && info.plugins) || []).find((x) => x.id === id);
+      return p ? Uint8Array.from(atob(p.base64), (c) => c.charCodeAt(0)) : null;
+    } catch { return null; }
+  }
+  async function applyPluginList() {
+    const want = pdGet(LIST_ID, LIST_KEY);
+    if (!want || !Array.isArray(want.on)) { pluginListChanged(); return false; }
+    const on = new Set(want.on.filter((x) => typeof x === "string"));
+    let changed = false;
+    PD.applying = true;
+    try {
+      for (const p of QB._plugins.slice()) {
+        if (!listable(p)) continue;
+        if (on.has(p.id) && !p.enabled) { QB.enablePlugin(p.id); changed = true; }
+        else if (!on.has(p.id) && p.enabled) { QB.disablePlugin(p.id); changed = true; }
+      }
+      for (const id of on) {
+        if (QB._plugins.some((p) => p.id === id) || RETIRED_PLUGINS[id]) continue;
+        const bytes = await pluginSource(id);
+        if (!bytes) continue;
+        const p = await QB.installZipBytes(bytes);
+        if (p && p.id) { QB.enablePlugin(p.id); changed = true; }
+      }
+    } finally { PD.applying = false; }
+    return changed;
+  }
+  // (re)load the profile's plugin data: at start, after the account sync brought changes,
+  // when the website tab comes back. A plugin page on screen draws itself again.
+  QB.reloadPluginData = async () => {
+    let data; try { data = await pdLoad(); } catch { return false; }
+    // writes still on their way keep their values
+    if (PD.data) for (const tk of Object.keys(PD.timers)) { const [id, k] = tk.split("\u0000"); if (PD.data[id] && k in PD.data[id]) (data[id] = data[id] || {})[k] = PD.data[id][k]; }
+    const prev = PD.data;
+    PD.data = data;
+    if (!prev) pdMigrate();   // it couldn't load at start: what was kept meanwhile moves in now
+    const ids = Object.keys({ ...(prev || {}), ...data }).filter((id) => JSON.stringify((prev || {})[id] || {}) !== JSON.stringify(data[id] || {}));
+    const listChanged = await applyPluginList();
+    if (!ids.length && !listChanged) return false;
+    // plugins that follow other website tabs listen for "storage" events on their old
+    // localStorage keys: each changed key gets one, so they read it again (Folders does)
+    for (const id of ids) {
+      const a = (prev || {})[id] || {}, b = data[id] || {};
+      for (const k of Object.keys({ ...a, ...b })) {
+        if (a[k] === b[k]) continue;
+        try { window.dispatchEvent(new StorageEvent("storage", { key: legacyKey(id, k), oldValue: a[k] == null ? null : a[k], newValue: b[k] == null ? null : b[k], url: location.href })); } catch {}
+      }
+    }
+    QB._emit("plugin-data:changed", { ids });
+    // the plugin page on screen draws itself again — only when its own data changed
+    const rec = QB._pages.find((p) => p.screenEl && p.screenEl.classList.contains("active"));
+    if (rec && ids.includes(rec.pluginId) && typeof rec.onShow === "function") { try { rec.onShow(rec.body, { back: true, first: false, reload: true }); } catch (e) { console.error(e); } }
+    if (document.getElementById("extensions-container")?.offsetParent) QB.renderScreen();
+    return true;
+  };
+
   QB.on = (ev, fn) => { (QB._events[ev] = QB._events[ev] || []).push(fn); return () => QB.off(ev, fn); };
   QB.off = (ev, fn) => { if (QB._events[ev]) QB._events[ev] = QB._events[ev].filter((f) => f !== fn); };
   QB._emit = (ev, data) => { (QB._events[ev] || []).forEach((fn) => { try { fn(data); } catch (e) { console.error("[QB] handler", ev, e); } }); };
@@ -574,9 +727,10 @@
         });
         return () => obs.disconnect();
       },
+      // the profile's (synced) plugin data — see "Plugin data follows the profile"
       storage: {
-        get(k) { try { return JSON.parse(localStorage.getItem("qb-pl-" + ext.id + "-" + k)); } catch { return null; } },
-        set(k, v) { localStorage.setItem("qb-pl-" + ext.id + "-" + k, JSON.stringify(v)); },
+        get(k) { return pdGet(ext.id, String(k)); },
+        set(k, v) { pdSet(ext.id, String(k), v); },
       },
       getSetting(k) { return QB.getSetting(ext.id, k); },
       setSetting(k, v) { QB.setSetting(ext.id, k, v); },
@@ -731,8 +885,8 @@
     return { plugin: QB._pendingManifest, theme: QB._pendingTheme };
   }
 
-  function readSettings(id) { try { return JSON.parse(localStorage.getItem("qb-pl-" + id + "-settings")) || {}; } catch { return {}; } }
-  function writeSettings(id, s) { try { localStorage.setItem("qb-pl-" + id + "-settings", JSON.stringify(s)); } catch {} }
+  function readSettings(id) { const s = pdGet(id, "settings"); return s && typeof s === "object" && !Array.isArray(s) ? s : {}; }
+  function writeSettings(id, s) { pdSet(id, "settings", s); }
   function settingDef(id, key) {
     const ext = findExt(id);
     return ((ext && ext._manifest && ext._manifest.settings) || []).find((d) => d.key === key);
@@ -794,6 +948,7 @@
       const ctx = makeCtx(p); p._ctx = ctx;
       if (typeof p._manifest.onEnable === "function") p._manifest.onEnable(ctx);
       p._enabledRuntime = true; p.enabled = true; p._error = null; savePlugins();
+      pluginListChanged();
       QB._emit("plugins:changed");
     } catch (e) {
       console.error(e); p._error = e.message || String(e);
@@ -809,10 +964,11 @@
     try { if (p._manifest && typeof p._manifest.onDisable === "function" && p._ctx) p._manifest.onDisable(p._ctx); } catch (e) { console.error(e); }
     if (p._ctx) p._ctx._unsub.forEach((u) => { try { u(); } catch {} });
     p._ctx = null; p._enabledRuntime = false; p.enabled = false; savePlugins();
+    pluginListChanged();
     QB._emit("plugins:changed");
   };
   QB.togglePlugin = (id, on) => (on ? QB.enablePlugin(id) : QB.disablePlugin(id));
-  QB.removePlugin = (id) => { const p = QB._plugins.find((x) => x.id === id); if (p && p._builtin) return; QB.disablePlugin(id); QB._plugins = QB._plugins.filter((x) => x.id !== id); savePlugins(); };
+  QB.removePlugin = (id) => { const p = QB._plugins.find((x) => x.id === id); if (p && p._builtin) return; QB.disablePlugin(id); QB._plugins = QB._plugins.filter((x) => x.id !== id); savePlugins(); pluginListChanged(); };
   QB.isPluginEnabled = (id) => { const p = QB._plugins.find((x) => x.id === id); return !!(p && p._enabledRuntime); };
   QB.getEnabledPlugins = () => QB._plugins.filter((p) => p._enabledRuntime).map((p) => p.id);
 
@@ -1183,9 +1339,31 @@
     QB.syncBaseTheme();
     // The website runs installed plugins only for a signed-in account (when
     // accounts are required): app.js calls setPluginsAllowed once it knows.
-    QB._plugins.forEach((p) => { p._enabledRuntime = false; if (p.enabled && (p._builtin || !QB._pluginsHeld)) QB.enablePlugin(p.id); });
-    if (WEBSITE) setTimeout(storeAutoUpdate, 2500);
+    // plugins start once the profile's plugin data is here (a moment; at most 4 s — then
+    // they start on what this machine has, and the data loads after)
+    QB._plugins.forEach((p) => { p._enabledRuntime = false; });
+    // what's built in (multiplayer) starts now — the website's addresses (/multiplayer/<room>,
+    // /shop/done) need it at once; the rest once the profile's data is here
+    PD.applying = true;
+    try { QB._plugins.forEach((p) => { if (p._builtin && p.enabled) QB.enablePlugin(p.id); }); } finally { PD.applying = false; }
+    const loaded = Promise.race([pdLoad().then((d) => { PD.data = d; pdMigrate(); return true; }, () => false), new Promise((r) => setTimeout(() => r(false), 4000))]);
+    QB._ready = loaded.then(async (ok) => {
+      // starting what this machine had on isn't a change to the list (the profile's list says
+      // what's on: applyPluginList, next)
+      PD.applying = true;
+      try { QB._plugins.forEach((p) => { if (p.enabled && !p._enabledRuntime && (p._builtin || !QB._pluginsHeld)) QB.enablePlugin(p.id); }); }
+      finally { PD.applying = false; }
+      if (ok) { try { if (await applyPluginList()) QB._emit("plugins:changed"); } catch (e) { console.error(e); } }
+      else setTimeout(() => QB.reloadPluginData(), 3000);
+      QB._emit("plugins:ready");
+    });
+    if (WEBSITE) {
+      setTimeout(storeAutoUpdate, 2500);
+      // what the app (or another tab) changed shows up when this tab is looked at again
+      document.addEventListener("visibilitychange", () => { if (!document.hidden && PD.data) QB.reloadPluginData(); });
+    }
   };
+  QB.whenReady = () => QB._ready || Promise.resolve();
   // The website keeps the plugins someone added current with the Store (a new version
   // brings its fixes and its guide); Manage still turns them on and off. (The app gets
   // its plugins with app updates.)
@@ -2042,6 +2220,25 @@ function __qbMain(ctx) {
     function myAv() { try { return ((ctx.host && ctx.host.getState && ctx.host.getState()) || {}).avatar || ""; } catch (e) { return ""; } }
     // your onlinequiz username when signed in: other players can open your profile / add you
     function myHandle() { try { return (window.qbAccountHandle && window.qbAccountHandle()) || ""; } catch (e) { return ""; } }
+    // ── bought rooms (the shop: web/shop.mjs, mpserver/owned.mjs) ──
+    // A signed-in player's hello carries a ticket from the website that proves their account
+    // (members, admins and the owner get in by it); a room's password goes with it when one was
+    // typed for that room. roomInfo: the room's own details (only in a bought room).
+    var myTicket = null, myTicketAt = 0, myPassword = "", myPasswordFor = "", roomInfo = null, roomOpErr = "", door = null, goJoin = null;
+    function acctOf() { var st = (ctx.host && ctx.host.getState && ctx.host.getState()) || {}; return st.account || null; }
+    function hostApi() { return ctx.host && ctx.host.api; }
+    async function getTicket() {
+      if (!acctOf() || !hostApi()) { myTicket = null; return null; }
+      if (myTicket && Date.now() - myTicketAt < 10 * 60e3) return myTicket;
+      try { var r = await hostApi().post("/api/mp/ticket", {}); if (r && r.ticket) { myTicket = r.ticket; myTicketAt = Date.now(); return myTicket; } } catch (e) {}
+      return null;
+    }
+    function helloMsg() {
+      var m = { t: "hello", name: myName, spectate: mySpec, avatar: myAv(), handle: myHandle() };
+      if (myTicket) m.ticket = myTicket;
+      if (myPassword && myPasswordFor === String(lobby).toLowerCase()) m.password = myPassword;
+      return m;
+    }
     var validHandle = function (h) { h = String(h || "").trim().toLowerCase(); return /^[a-z0-9]{3,20}$/.test(h) ? h : ""; };
 
     // Shared game state (host is the source of truth; clients mirror it).
@@ -2347,6 +2544,8 @@ function __qbMain(ctx) {
       // Packet/set reading never carries across lobbies — always start at q1.
       setSig = ""; setIndex = 0; setQueue = null; impSig = ""; impIndex = 0;
       roomConfig = null; leftIntentionally = false;
+      roomInfo = null; roomOpErr = "";
+      await getTicket();   // a bought room lets its members in by their account
       // Fresh log: on (re)join the host replays every entry, so keeping the old
       // list would duplicate the entire session history.
       sessionLog = []; logCollapsed = {}; chatHist = [];
@@ -2388,7 +2587,7 @@ function __qbMain(ctx) {
             sysChat(myName + " created the lobby");
             mpPrefetchNow();   // the FIRST question should serve instantly too
           } else {
-            toHost({ t: "hello", name: myName, spectate: mySpec, avatar: myAv(), handle: myHandle() });
+            toHost(helloMsg());
           }
           render();
           return;
@@ -2406,7 +2605,7 @@ function __qbMain(ctx) {
           if (m.left && players[m.left]) { players[m.left].off = true; renderScores(); }
           // If our hello was swallowed by the dying host (we joined during the
           // detection gap and never got seated), introduce ourselves again.
-          if (!players[myId]) toHost({ t: "hello", name: myName, spectate: mySpec, avatar: myAv(), handle: myHandle() });
+          if (!players[myId]) toHost(helloMsg());
           setStatus("Host left \u2014 " + (((players[m.id] || {}).name) || "another player") + " is now the host.");
           return;
         }
@@ -3139,6 +3338,12 @@ function __qbMain(ctx) {
       // host vanished — reset the question area (scores and log are kept).
       // render only when visible — renderRoom borrows the filters panel and
       // must never steal it from a practice screen in the foreground.
+      // a bought room: not let in (its password / members only / taken off the list)
+      else if (d.t === "denied") { onDenied(d); }
+      else if (d.t === "roominfo") { roomInfo = d; renderRoomInfo(); }
+      else if (d.t === "roomop") { roomOpErr = d.ok ? "" : (d.error || "That didn't work."); renderRoomInfo(); }
+      // the owner / an admin reset the room: a fresh game (seats stay, at 0)
+      else if (d.t === "roomreset") { stopClientRead(); stopAutoSub(); current = null; ended = false; pendingBuzzer = null; bonusView = null; paused = false; sessionLog = []; logCollapsed = {}; chatHist = []; qCount = 0; match = null; if (active()) render(); }
       else if (d.t === "qreset") { stopClientRead(); stopAutoSub(); current = null; ended = false; pendingBuzzer = null; bonusView = null; paused = false; if (active()) render(); }
     }
 
@@ -3267,6 +3472,8 @@ function __qbMain(ctx) {
             '<button type="button" class="btn btn-lg btn-go" id="mp-join">Join/Create Room</button>' +
           "</section>" +
           '<div class="mp-status" id="mp-status"></div>' +
+          '<section class="mp-recent mp-mine" id="mp-my-rooms" hidden><h2 class="eyebrow">Your rooms</h2><div class="list" id="mp-my-list"></div></section>' +
+          '<div class="mp-shop" id="mp-shop" hidden><button type="button" class="btn mp-buy-btn" id="mp-buy"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Buy a room</button><span class="mp-shop-note">A room of your own that never resets — <b>$5</b></span></div>' +
           '<section class="mp-recent mp-public" id="mp-public-rooms" hidden><h2 class="eyebrow">Public rooms <span class="qb-info" data-tip="Rooms whose players left them public (Room settings → Public room). Pick one to join.">i</span></h2><div class="list" id="mp-public-list"></div></section>' +
           (recent.length ? '<section class="mp-recent"><h2 class="eyebrow">Recent rooms</h2><div class="list">' + recent.map(function (r) {
             return '<button type="button" class="list-row clickable mp-recent-row" data-code="' + esc(r.code) + '"><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + '</b><span class="mp-rwho">' + esc(r.players ? r.players + (r.players === 1 ? " player" : " players") : "") + (r.host ? " · you hosted" : "") + '</span><span class="mp-rwhen">' + esc(whenLabel(r.at)) + '</span><span class="mp-rjoin">Rejoin ›</span></button>';
@@ -3278,7 +3485,8 @@ function __qbMain(ctx) {
       var goTyped = function () { go(codeEl.value.trim() || newRoomCode()); };
       codeEl.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); goTyped(); } });
       nameEl.addEventListener("change", function () { var v = nameEl.value.trim(); if (v) { myName = v; ctx.setSetting("name", v); var av = body.querySelector(".mp-who .avatar"); if (av) av.textContent = (v[0] || "?").toUpperCase(); } });
-      var go = function (code) {
+      var go = goJoin = function (code) {
+        if (door && String(door.code).toLowerCase() !== String(code || "").trim().toLowerCase()) door = null;
         myName = (nameEl.value.trim()) || myName;
         if (!fixedName) ctx.setSetting("name", myName); // remember for next time (the app)
         lobby = String(code || "").trim();
@@ -3300,15 +3508,139 @@ function __qbMain(ctx) {
           list.innerHTML = d.rooms.length ? d.rooms.map(function (r) {
             var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - r.names.length) : "");
             var state = (r.players === 1 ? "1 player" : r.players + " players") + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.questions ? " · Q" + r.questions : " · waiting");
-            return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
+            return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
           }).join("") : '<p class="mp-pub-empty">No public rooms right now — leave the code empty and press Join/Create Room to start one.</p>';
           list.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
         }).catch(function () {});
       };
       clearInterval(pubTimer); pubTimer = setInterval(loadPublic, 5000); loadPublic();
+      loadShop(body);
+      if (door) showDoor();
       try { if (ctx.host && ctx.host.tip) ctx.host.tip(body.querySelector(".mp-lobby"), "mp-lobby"); } catch (e) {}
       body.querySelectorAll(".mp-recent-row").forEach(function (r) { r.onclick = function () { go(r.dataset.code); }; });
     }
+    // ── the shop: Buy a room / Your rooms ──
+    var LOCK_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+    var shopInfo = null;
+    function loadShop(root) {
+      var api = hostApi(); if (!api) return;
+      var paint = function () {
+        if (!body || !root || !body.contains(root)) return;
+        var sh = root.querySelector("#mp-shop");
+        if (sh) { sh.hidden = !(shopInfo && shopInfo.on); var b = sh.querySelector("#mp-buy"); if (b) b.onclick = function () { openBuy(""); }; }
+      };
+      if (shopInfo) paint();
+      Promise.resolve(api.get("/api/shop/info")).then(function (d) { shopInfo = d && !d.error ? d : { on: false }; paint(); }).catch(function () {});
+      if (!acctOf()) return;
+      Promise.resolve(api.get("/api/shop/rooms")).then(function (d) {
+        var sec = root.querySelector("#mp-my-rooms");
+        if (!sec || !d || !Array.isArray(d.rooms) || !d.rooms.length || !body || !body.contains(sec)) return;
+        sec.hidden = false;
+        sec.querySelector("#mp-my-list").innerHTML = d.rooms.map(function (r) {
+          var how = r.access === "password" ? "Password" : r.access === "anyone" ? "Open" : "Members only";
+          return '<button type="button" class="list-row clickable mp-recent-row mp-mine-row" data-code="' + esc(r.name) + '"><b class="mp-rcode">' + esc(String(r.name).toUpperCase()) + '</b><span class="mp-rwho"><span class="badge">' + esc(ROLE_LABEL[r.role] || r.role) + "</span> " + esc(how) + '</span><span class="mp-rwhen">' + esc(r.players ? (r.players === 1 ? "1 here" : r.players + " here") : "") + '</span><span class="mp-rjoin">Join ›</span></button>';
+        }).join("");
+        sec.querySelectorAll(".mp-mine-row").forEach(function (b) { b.onclick = function () { if (goJoin) goJoin(b.dataset.code); }; });
+      }).catch(function () {});
+    }
+    var BUY_PERKS = ["Never resets by itself — scores, settings and chat stay", "Members you add by username always get in", "A password for everyone else (or open it to anyone)", "Admins you choose, and a Reset button"];
+    function shopDialog(inner) {
+      var old = document.getElementById("mp-buy-dlg"); if (old) old.remove();
+      var el = document.createElement("div");
+      el.id = "mp-buy-dlg"; el.className = "qb-overlay confirm-overlay shop-overlay";
+      el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Buy a room");
+      el.innerHTML = '<div class="confirm-box shop-box">' + inner + "</div>";
+      var close = function () { clearInterval(el._poll); if (window.QB && window.QB._host && window.QB._host.animateRemove) window.QB._host.animateRemove(el); else el.remove(); };
+      el._close = close;
+      el.addEventListener("click", function (e) { if (e.target === el) close(); });
+      el.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } });
+      document.body.appendChild(el);
+      return el;
+    }
+    var shopHead = function (title, sub) {
+      return '<div class="shop-head"><span class="shop-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span><div><div class="confirm-title">' + title + '</div><div class="shop-sub">' + sub + "</div></div></div>";
+    };
+    function openBuy(prefill) {
+      if (!acctOf()) {
+        if (ctx.host && ctx.host.openAccount) ctx.host.openAccount("signin", { reason: "Sign in to buy a room — it's kept with your account." });
+        return;
+      }
+      var price = shopInfo && shopInfo.room ? shopInfo.room.price : 500;
+      var el = shopDialog(
+        shopHead("Buy a room", '<b class="shop-price">$' + (price / 100).toFixed(2) + '</b> USD · paid once') +
+        '<form id="shop-form">' +
+          '<label class="mp-field"><span>Room name</span><input id="shop-name" class="code-input" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. lincoln-hs" aria-describedby="shop-check"></label>' +
+          '<div class="shop-check" id="shop-check" aria-live="polite">3–24 letters, numbers and dashes. People join with it, or at <span class="shop-url">onlinequiz.net/room/<b id="shop-prev">…</b></span></div>' +
+          '<ul class="shop-perks">' + BUY_PERKS.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") + "</ul>" +
+          '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-no">Cancel</button><button type="submit" class="btn btn-primary" id="shop-pay" disabled>Continue to payment</button></div>' +
+          '<div class="shop-fine">You pay on Stripe’s secure page — your card never reaches onlinequiz.</div>' +
+        "</form>");
+      var inp = el.querySelector("#shop-name"), chk = el.querySelector("#shop-check"), pay = el.querySelector("#shop-pay"), prev = el.querySelector("#shop-prev");
+      var gen = 0, okName = "";
+      var check = function () {
+        var v = inp.value.trim().toLowerCase();
+        if (inp.value !== v) inp.value = v;
+        okName = ""; pay.disabled = true;
+        if (prev) prev.textContent = v || "…";
+        if (!v) { chk.className = "shop-check"; return; }
+        var my = ++gen;
+        chk.className = "shop-check busy"; chk.textContent = "Checking…";
+        clearTimeout(check._t);
+        check._t = setTimeout(function () {
+          Promise.resolve(hostApi().get("/api/shop/room-available?name=" + encodeURIComponent(v))).then(function (r) {
+            if (my !== gen) return;
+            if (r && r.ok) { okName = v; pay.disabled = false; chk.className = "shop-check ok"; chk.innerHTML = "<b>" + esc(v.toUpperCase()) + "</b> is yours to take — onlinequiz.net/room/" + esc(v); }
+            else { chk.className = "shop-check bad"; chk.textContent = (r && r.error) || "Couldn't check that name."; }
+          }).catch(function () { if (my === gen) { chk.className = "shop-check bad"; chk.textContent = "Couldn't check that name — try again."; } });
+        }, 300);
+      };
+      inp.addEventListener("input", check);
+      el.querySelector("#shop-no").onclick = el._close;
+      el.querySelector("#shop-form").onsubmit = function (e) {
+        e.preventDefault();
+        if (!okName) return;
+        pay.disabled = true; pay.textContent = "Opening payment…";
+        Promise.resolve(hostApi().post("/api/shop/checkout", { name: okName })).then(function (r) {
+          if (!r || r.error || !r.url) { pay.disabled = false; pay.textContent = "Continue to payment"; chk.className = "shop-check bad"; chk.textContent = (r && r.error) || "Couldn't start the payment — try again."; return; }
+          // the website goes to Stripe's page (and comes back to /shop/done); the app opens it in
+          // the browser and waits here for the payment to land
+          if (!window.qbreader && window.QB_WEB) { location.href = r.url; return; }
+          if (ctx.host && ctx.host.openUrl) ctx.host.openUrl(r.url);
+          watchOrder(r.order, el, okName);
+        }).catch(function () { pay.disabled = false; pay.textContent = "Continue to payment"; chk.className = "shop-check bad"; chk.textContent = "Couldn't start the payment — try again."; });
+      };
+      if (prefill) { inp.value = prefill; check(); }
+      setTimeout(function () { inp.focus(); }, 30);
+    }
+    // an order's progress: waiting for the payment → the room is ready (Join it)
+    function watchOrder(id, el, name) {
+      el = el || shopDialog("");
+      var box = el.querySelector(".shop-box");
+      var paint = function (o) {
+        var st = o && o.status;
+        if (st === "fulfilled") {
+          clearInterval(el._poll);
+          box.innerHTML = shopHead("Your room is ready", "<b>" + esc(String(o.item).toUpperCase()) + "</b> is yours — onlinequiz.net/room/" + esc(o.item)) +
+            '<ul class="shop-perks shop-next"><li>Set a password or add members in the room’s <b>Room</b> tab</li><li>Share its name (or link) with your team</li></ul>' +
+            '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" id="shop-go">Go to my room</button></div>';
+          box.querySelector("#shop-close").onclick = el._close;
+          box.querySelector("#shop-go").onclick = function () { el._close(); if (window.QB && window.QB.mpJoin) window.QB.mpJoin(o.item); };
+          return;
+        }
+        var msg = st === "paid" ? "Payment received — setting up your room…" : st === "expired" || st === "failed" || st === "replaced" ? "That payment didn’t go through. Nothing was charged." : "Waiting for your payment" + (!window.QB_WEB ? " — finish it in your browser." : "…");
+        box.innerHTML = shopHead(st === "expired" || st === "failed" || st === "replaced" ? "No payment" : "Almost there", esc(name ? String(name).toUpperCase() : (o && o.item ? String(o.item).toUpperCase() : ""))) +
+          '<div class="shop-wait"><span class="shop-spin" aria-hidden="true"></span><span>' + esc(msg) + "</span></div>" +
+          '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button></div>';
+        box.querySelector("#shop-close").onclick = el._close;
+        if (st === "expired" || st === "failed" || st === "replaced") clearInterval(el._poll);
+      };
+      paint(null);
+      var tick = function () { Promise.resolve(hostApi().get("/api/shop/order?id=" + encodeURIComponent(id))).then(function (r) { if (r && r.order) paint(r.order); }).catch(function () {}); };
+      clearInterval(el._poll); el._poll = setInterval(tick, 3000); tick();
+    }
+    window.QB.mpBuy = function (name) { window.QB.showPage("multiplayer::lobby"); setTimeout(function () { if (!lobby) openBuy(name || ""); }, 300); };
+    window.QB.mpOrder = function (id) { window.QB.showPage("multiplayer::lobby"); setTimeout(function () { watchOrder(id, null, ""); }, 200); };
+
     // Room codes: four characters, no look-alikes (0/O, 1/I/L).
     function newRoomCode() {
       var A = "ABCDEFGHJKMNPQRSTUVWXYZ23456789", out = "";
@@ -3377,6 +3709,7 @@ function __qbMain(ctx) {
             '<span class="rh-lbl">Room</span><b class="rh-code" id="mp-code">' + esc(String(lobby).toUpperCase()) + "</b>" +
             '<button type="button" class="btn btn-ghost btn-icon btn-sm" id="mp-copy" title="Copy room code" aria-label="Copy room code"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>' +
             '<span class="badge rh-host" id="mp-hostbadge"' + (isHost ? "" : " hidden") + ">You host</span>" +
+            '<span class="badge rh-own" id="mp-ownbadge" hidden></span>' +
             (mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
             '<span class="spacer"></span>' +
             '<span class="rh-q num" id="mp-qcount"></span>' +
@@ -3406,7 +3739,9 @@ function __qbMain(ctx) {
                 '<button type="button" role="tab" data-mptab="players" aria-selected="' + (panelTab === "players") + '">Players</button>' +
                 '<button type="button" role="tab" data-mptab="chat" aria-selected="' + (panelTab === "chat") + '">Chat<span class="unread" id="mp-unread"' + (unreadChat && panelTab !== "chat" ? "" : " hidden") + ' aria-label="New messages"></span></button>' +
                 '<button type="button" role="tab" data-mptab="sheet" aria-selected="' + (panelTab === "sheet") + '"' + (settings.tournament ? "" : " hidden") + '>Scoresheet</button>' +
+                '<button type="button" role="tab" data-mptab="room" aria-selected="' + (panelTab === "room") + '"' + (roomInfo ? "" : " hidden") + '>Room</button>' +
               "</div>" +
+              '<div class="panel-body" data-pane="room"' + (panelTab === "room" ? "" : " hidden") + '><div class="mp-roominfo" id="mp-roominfo"></div></div>' +
               '<div class="panel-body" data-pane="players"' + (panelTab === "players" ? "" : " hidden") + '><div class="mp-scores" id="mp-scores"></div></div>' +
               '<div class="panel-body" data-pane="sheet"' + (panelTab === "sheet" ? "" : " hidden") + '><div class="mp-sheet" id="mp-sheet"></div></div>' +
               '<div class="panel-body panel-chat" data-pane="chat"' + (panelTab === "chat" ? "" : " hidden") + '>' +
@@ -3456,12 +3791,107 @@ function __qbMain(ctx) {
       // The real practice filter panel becomes this room's settings drawer.
       borrowPanel(body.querySelector(".practice-layout"));
 
-      renderScores(); renderSettings(); renderFilterSummary();
+      renderScores(); renderSettings(); renderFilterSummary(); renderRoomInfo();
       if (current) { renderQuestion(); renderBuzzes(); }
       renderSessionLog();
       syncActions();
     }
     var panelTab = "players", unreadChat = 0;
+
+    // ── a bought room: its Room tab (the owner and admins run it from here) ──
+    var ACCESS_LABEL = { members: "Members only", password: "Password", anyone: "Anyone" };
+    var ROLE_LABEL = { owner: "Your room", admin: "Admin", member: "Member" };
+    function renderRoomInfo() {
+      if (!body) return;
+      var tab = body.querySelector('[data-mptab="room"]'); if (tab) tab.hidden = !roomInfo;
+      var badge = body.querySelector("#mp-ownbadge");
+      if (badge) { badge.hidden = !(roomInfo && roomInfo.role); badge.textContent = roomInfo && roomInfo.role ? ROLE_LABEL[roomInfo.role] : ""; }
+      if (!roomInfo && panelTab === "room") showPanelTab("players");
+      var el = body.querySelector("#mp-roominfo"); if (!el) return;
+      if (!roomInfo) { el.innerHTML = ""; return; }
+      var R = roomInfo, mgr = R.role === "owner" || R.role === "admin", owner = R.role === "owner";
+      var keep = document.activeElement && el.contains(document.activeElement) ? document.activeElement.getAttribute("data-k") : null;
+      var people = function (title, list, role, canEdit) {
+        list = list || [];
+        return '<div class="ri-sec"><div class="ri-lbl">' + title + ' <span class="num">' + list.length + "</span></div>" +
+          (list.length ? '<div class="ri-list">' + list.map(function (x) {
+            return '<span class="ri-chip"><span data-user="' + esc(x.handle) + '">' + esc(x.handle) + "</span>" + (canEdit ? '<button type="button" class="ri-x" data-remove="' + esc(x.uid) + '" aria-label="Take ' + esc(x.handle) + ' off">×</button>' : "") + "</span>";
+          }).join("") + "</div>" : '<div class="ri-empty">' + (role === "admin" ? "No admins yet" : "No members yet") + "</div>") +
+          (canEdit ? '<form class="ri-row" data-add="' + role + '"><input class="mode-input" data-k="add-' + role + '" placeholder="Their username" maxlength="20" autocomplete="off" spellcheck="false" aria-label="Username to add as ' + role + '"><button class="btn btn-sm" type="submit">Add</button></form>' : "") + "</div>";
+      };
+      el.innerHTML =
+        '<div class="ri-head"><b class="ri-name">' + esc(String(R.name).toUpperCase()) + "</b>" + (R.role ? '<span class="badge">' + esc(ROLE_LABEL[R.role]) + "</span>" : "") + "</div>" +
+        '<div class="ri-line">Owner <b data-user="' + esc(R.owner) + '">' + esc(R.owner || "—") + "</b></div>" +
+        '<div class="ri-sec"><div class="ri-lbl">Who can come in</div>' +
+          (mgr ? '<div class="ri-seg" role="radiogroup" aria-label="Who can come in">' + ["members", "password", "anyone"].map(function (a) {
+            return '<button type="button" class="ri-segbtn" role="radio" data-access="' + a + '" aria-checked="' + (R.access === a) + '">' + ACCESS_LABEL[a] + "</button>";
+          }).join("") + "</div>" : '<div class="ri-line">' + esc(ACCESS_LABEL[R.access] || "") + "</div>") +
+          '<div class="ri-note">' + (R.access === "members" ? "Only the owner, admins and members." : R.access === "password" ? "Members get straight in; anyone else types the password." : "Anyone with the room's name.") + "</div>" +
+          (mgr ? '<form class="ri-row" id="ri-pass"><input type="password" class="mode-input" data-k="pass" id="ri-pass-in" placeholder="' + (R.hasPassword ? "New password" : "Set a password") + '" maxlength="64" autocomplete="new-password" aria-label="Room password"><button class="btn btn-sm" type="submit">' + (R.hasPassword ? "Change" : "Set") + "</button>" +
+            (R.hasPassword ? '<button type="button" class="btn btn-sm btn-ghost" id="ri-pass-clear">Remove</button>' : "") + "</form>" : "") +
+        "</div>" +
+        (mgr ? people("Members", R.members, "member", true) + people("Admins", R.admins, "admin", owner) : "") +
+        (roomOpErr ? '<div class="ri-err" role="alert">' + esc(roomOpErr) + "</div>" : "") +
+        (mgr ? '<div class="ri-sec ri-danger"><button type="button" class="btn btn-sm btn-danger" id="ri-reset">Reset room</button><div class="ri-note">Scores, the question log and chat start over. Members, admins, the password and settings stay.</div></div>' : "");
+      var op = function (o) { roomOpErr = ""; o.t = "roomop"; toHost(o); };
+      el.querySelectorAll("[data-access]").forEach(function (b) {
+        b.onclick = function () {
+          var a = b.dataset.access;
+          if (a === R.access) return;
+          if (a === "password" && !R.hasPassword) {
+            var pi = el.querySelector("#ri-pass-in"), v = pi ? pi.value : "";
+            if (!v) { roomOpErr = "Type a password first, then choose Password."; renderRoomInfo(); var p2 = el.querySelector("#ri-pass-in"); if (p2) p2.focus(); return; }
+            op({ op: "access", access: "password", password: v }); return;
+          }
+          op({ op: "access", access: a });
+        };
+      });
+      var pf = el.querySelector("#ri-pass");
+      if (pf) pf.onsubmit = function (e) { e.preventDefault(); var v = el.querySelector("#ri-pass-in").value; if (!v) return; op({ op: "password", password: v }); };
+      var pc = el.querySelector("#ri-pass-clear");
+      if (pc) pc.onclick = function () { op({ op: "password", password: null }); };
+      el.querySelectorAll("form[data-add]").forEach(function (f) {
+        f.onsubmit = function (e) { e.preventDefault(); var v = f.querySelector("input").value.trim(); if (!v) return; op({ op: "addRole", role: f.dataset.add, handle: v }); };
+      });
+      el.querySelectorAll("[data-remove]").forEach(function (b) { b.onclick = function () { op({ op: "removeRole", uid: b.dataset.remove }); }; });
+      var rs = el.querySelector("#ri-reset");
+      if (rs) rs.onclick = function () {
+        var go2 = function () { op({ op: "reset" }); };
+        if (ctx.host && ctx.host.confirm) ctx.host.confirm("Reset " + String(R.name).toUpperCase() + "?", go2, { yes: "Reset", danger: true, detail: "Everyone's score goes back to 0, and the question log and chat are cleared." });
+        else go2();
+      };
+      if (keep) { var k = el.querySelector('[data-k="' + keep + '"]'); if (k) k.focus(); }
+    }
+    // not let into a bought room: back to the form, which says what it takes
+    function onDenied(d) {
+      var code = lobby;
+      leave();
+      door = { code: code, need: d.need, wrong: !!d.wrong, signedIn: !!d.signedIn, kicked: !!d.kicked, text: d.text || "" };
+      showDoor();
+    }
+    function showDoor() {
+      var st = body && body.querySelector("#mp-status");
+      if (!st || !door) return;
+      var D = door, name = esc(String(D.code).toUpperCase());
+      if (D.need === "password") {
+        st.innerHTML = '<form class="mp-door" id="mp-door"><div class="mp-door-t"><b>' + name + "</b> needs its password</div>" +
+          (D.wrong ? '<div class="mp-door-err" role="alert">That password isn\u2019t right.</div>' : "") +
+          '<div class="mp-door-row"><input type="password" id="mp-door-pass" class="mode-input" maxlength="64" autocomplete="off" placeholder="Room password" aria-label="Room password"><button type="submit" class="btn btn-primary">Join</button></div>' +
+          (D.signedIn ? "" : '<div class="mp-door-note">A member? <button type="button" class="btn btn-sm btn-ghost" data-acct="signin">Sign in</button> and you won\u2019t need it.</div>') + "</form>";
+        var f = st.querySelector("#mp-door"), pi = st.querySelector("#mp-door-pass");
+        setTimeout(function () { if (pi) pi.focus(); }, 30);
+        f.onsubmit = function (e) {
+          e.preventDefault();
+          if (!pi.value) { pi.focus(); return; }
+          myPassword = pi.value; myPasswordFor = String(D.code).toLowerCase(); door = null;
+          if (goJoin) goJoin(D.code);
+        };
+      } else {
+        st.innerHTML = '<div class="mp-door">' + (D.kicked ? esc(D.text || "You were taken off this room.") :
+          "<b>" + name + "</b> is for its members. Ask its owner or an admin to add your username" + (D.signedIn ? "." : " — and sign in first.")) +
+          (D.signedIn ? "" : ' <button type="button" class="btn btn-sm" data-acct="signin">Sign in</button>') + "</div>";
+      }
+    }
 
     // ── tournament: the scoresheet (the game server keeps it and sends it with the state) ──
     var match = null;
@@ -3576,7 +4006,7 @@ function __qbMain(ctx) {
       document.body.appendChild(el);
     }
     function showPanelTab(t) {
-      if (t !== "players" && t !== "chat" && !(t === "sheet" && settings.tournament)) t = "players";
+      if (t !== "players" && t !== "chat" && !(t === "sheet" && settings.tournament) && !(t === "room" && roomInfo)) t = "players";
       panelTab = t;
       if (t === "chat") unreadChat = 0;
       if (!body) return;

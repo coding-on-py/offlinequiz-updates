@@ -399,14 +399,29 @@ export class UserData {
     return { ok: true };
   }
 
+  // pluginId "*": everything the profile's plugins keep, { plugin: { key: value } } (the
+  // renderer loads it at start: ctx.storage and plugin settings live here and sync)
   getPluginData(pluginId, key) {
     const pid = this.getActiveProfileId();
+    if (pluginId === "*") {
+      const pre = "plug:" + pid + ":", out = {};
+      for (const r of this.db.prepare("SELECT key, value FROM config WHERE key >= ? AND key < ?").all(pre, pre + "\uffff")) {
+        const rest = r.key.slice(pre.length), i = rest.indexOf(":");
+        if (i <= 0) continue;
+        let v; try { v = JSON.parse(r.value); } catch { continue; }
+        (out[rest.slice(0, i)] = out[rest.slice(0, i)] || {})[rest.slice(i + 1)] = v;
+      }
+      return out;
+    }
     const raw = this.getConfig("plug:" + pid + ":" + pluginId + ":" + key);
     try { return raw == null ? null : JSON.parse(raw); } catch { return null; }
   }
   setPluginData(pluginId, key, value) {
     const pid = this.getActiveProfileId();
-    this.setConfig("plug:" + pid + ":" + pluginId + ":" + key, JSON.stringify(value === undefined ? null : value));
+    if (!pluginId || pluginId === "*" || !key) return { error: "plugin and key required" };
+    const k = "plug:" + pid + ":" + pluginId + ":" + key, raw = JSON.stringify(value === undefined ? null : value);
+    if (this.getConfig(k) === raw) return { ok: true };   // unchanged: nothing to sync
+    this.setConfig(k, raw);
     return { ok: true };
   }
 
