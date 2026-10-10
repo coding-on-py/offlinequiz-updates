@@ -1250,6 +1250,7 @@ export class App {
     if (key === "GET /api/users/profile") return this._cloudFetch("GET", path + (body.qs ? "?" + body.qs : ""), null, c && c.token);
     // the shop (a room of your own) and room tickets: the account's, through the website
     if (key === "GET /api/shop/info") return this._cloudFetch("GET", path, null, c && c.token);
+    if (key === "GET /api/shop/owned") return this._cloudFetch("GET", path, null, c && c.token);
     if (/^GET \/api\/shop\/(room-available|order|rooms)$/.test(key) || key === "POST /api/shop/checkout" || key === "POST /api/mp/ticket") {
       if (!c) return { error: "Sign in first.", authRequired: true };
       return this._cloudFetch(method, path + (method === "GET" && body.qs ? "?" + body.qs : ""), method === "GET" ? null : body, c.token);

@@ -35,6 +35,7 @@
       <div class="tb-right">
         <button type="button" class="tb-pill tb-streak" id="tb-streak" hidden><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg><span class="num" id="tb-streak-n">0</span><span class="lbl">days</span></button>
         <button type="button" class="btn btn-ghost tb-link tb-scheme" id="tb-scheme" title="Light mode" aria-label="Switch to light mode"><svg class="ic-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><svg class="ic-moon" hidden viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg></button>
+        <button type="button" class="btn btn-ghost tb-link tb-store" id="tb-store" title="Store" data-go="store"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg><span>Store</span></button>
         <button type="button" class="btn btn-ghost tb-link" id="tb-leaderboards" title="Leaderboards" data-go="leaderboards" hidden><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 6h3v1a3 3 0 0 1-3 3M7 6H4v1a3 3 0 0 0 3 3"/></svg><span>Leaderboards</span></button>
         <button type="button" class="btn btn-ghost tb-link" id="tb-plugins" title="Plugins"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="14" y="3" width="7" height="7" rx="1.5"/><path d="M10 21V9a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/></svg><span>Plugins</span></button>
         <button type="button" class="btn btn-ghost tb-link" id="tb-settings" aria-haspopup="dialog" aria-controls="settings-modal" title="Settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span>Settings</span></button>
@@ -383,6 +384,18 @@
       <div class="lb-container" id="lb-container"></div>
     </div>
 
+    <div id="store-screen" class="screen">
+      <div class="top-bar page-head">
+        <div class="top-bar-left">
+          <span class="top-bar-title">Store</span>
+        </div>
+        <div class="top-bar-right">
+          <button class="btn btn-ghost" id="btn-store-home">Back</button>
+        </div>
+      </div>
+      <div class="st-container" id="store-container"></div>
+    </div>
+
     <div id="admin-screen" class="screen">
       <div class="top-bar page-head">
         <div class="top-bar-left">
@@ -434,13 +447,24 @@
     <!-- Player Setup Overlay -->
     <div id="player-setup" class="setup-overlay hidden">
       <div class="setup-box">
-        <div class="setup-title">Welcome to OfflineQuiz</div>
-        <div class="setup-field">
-          <input type="text" id="setup-username" placeholder="Your name" maxlength="24">
+        <!-- first: an account (or not now) -->
+        <div class="setup-step" id="setup-step-account">
+          <div class="setup-title">Welcome to OfflineQuiz</div>
+          <p class="setup-sub">Sign in to keep your stats, stars and folders with your account, on this computer and on onlinequiz.net.</p>
+          <div class="setup-actions">
+            <button type="button" class="btn btn-md acct-google" id="setup-google" hidden></button>
+            <button type="button" class="btn btn-primary btn-md" id="setup-signin">Sign in</button>
+            <button type="button" class="btn btn-md" id="setup-signup">Create an account</button>
+          </div>
+          <button type="button" class="btn btn-ghost setup-later" id="setup-later">Not now</button>
         </div>
-        <div class="setup-avatar" id="setup-avatar">(◕‿◕)</div>
-        <div class="setup-avatar-grid" id="setup-avatar-grid"></div>
-        <button class="btn btn-primary btn-full" id="btn-setup-done">Start playing</button>
+        <!-- not now: just a name -->
+        <form class="setup-step hidden" id="setup-step-name">
+          <div class="setup-title">What should we call you?</div>
+          <p class="setup-sub">Your name in multiplayer rooms. You can change it any time in Settings.</p>
+          <input type="text" id="setup-username" class="mode-input" placeholder="Your name" maxlength="24" autocomplete="nickname" spellcheck="false">
+          <button type="submit" class="btn btn-primary btn-md" id="btn-setup-done">Start playing</button>
+        </form>
       </div>
     </div>
 

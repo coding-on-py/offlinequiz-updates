@@ -939,10 +939,61 @@
     try { const r = runEntry(code); return finalizePlugin(filename, code, r.plugin); }
     catch (e) { importFail("Invalid plugin: " + e.message); return null; }
   };
+  // ── Paid plugins: the Store (app.js) sells them; an account that bought one has its grant
+  // ("plugin:<id>"). One on sale and not bought stays installed and keeps its on/off, but
+  // doesn't run. What the account owns is kept here too, for the app offline. ──
+  QB.PAID = { "keyword-freq": "kwfreq", "canon-tracker": "canon", "buzz-words": "buzz", "fact-sheet": "facts" };
+  QB._prices = { kwfreq: 249, canon: 249, buzz: 499, facts: 499, starter: 999, captain: 1299, room: 499 };
+  QB.priceText = (sku) => "$" + ((QB._prices[sku] || 0) / 100).toFixed(2);
+  QB._owned = (() => { try { const o = JSON.parse(localStorage.getItem("qb-owned") || "null"); return o && Array.isArray(o.grants) ? o : null; } catch { return null; } })();
+  // not known yet: the website waits for the answer (a moment); the app — maybe offline, with
+  // plugins it already had — runs them until the website says otherwise
+  QB.pluginLocked = (id) => {
+    if (!QB.PAID[id]) return false;
+    const o = QB._owned, g = "plugin:" + id;
+    if (!o) return !window.qbreader && !!window.QB_WEB;
+    return (o.paywall || []).includes(g) && !(o.grants || []).includes(g);
+  };
+  // the neon name (the Starter / Team Captain bundle): its twelve colours, and a name (already
+  // escaped HTML) glowing in one — leaderboards, multiplayer
+  QB.NEON = { cyan: "#22d3ee", blue: "#4d8dff", indigo: "#7c7dff", violet: "#a95cff", magenta: "#e64bff", pink: "#ff4fa8",
+    red: "#ff4545", orange: "#ff8a1f", gold: "#ffcc1a", lime: "#a6ff1a", green: "#2ee36e", teal: "#19e0c0" };
+  QB.neonHtml = (html, neon) => QB.NEON[neon] ? '<span class="neon-name" style="--neon:' + QB.NEON[neon] + '">' + html + "</span>" : html;
+  QB.owns = (what) => !!(QB._owned && (QB._owned.grants || []).includes(what));
+  function standDown(p) {
+    try { if (p._manifest && typeof p._manifest.onDisable === "function" && p._ctx) p._manifest.onDisable(p._ctx); } catch (e) { console.error(e); }
+    if (p._ctx) p._ctx._unsub.forEach((u) => { try { u(); } catch {} });
+    p._ctx = null; p._enabledRuntime = false;
+  }
+  // o: /api/shop/owned's answer; who: the account it's for (a plugin it just bought gets added and turned on)
+  QB.setOwned = (o, who) => {
+    if (!o || o.error || !Array.isArray(o.grants)) return;
+    const prev = QB._owned;
+    QB._owned = { grants: o.grants.slice(), paywall: Array.isArray(o.paywall) ? o.paywall.slice() : [], neon: o.neon || null, signedIn: !!o.signedIn, admin: !!o.admin, who: who || null };
+    const fresh = prev && prev.who && prev.who === who ? Object.keys(QB.PAID).filter((id) => QB._owned.grants.includes("plugin:" + id) && !(prev.grants || []).includes("plugin:" + id)) : [];
+    fresh.forEach((id) => { const p = QB._plugins.find((x) => x.id === id); if (!p) addBought(id); else if (!p._enabledRuntime && !QB._pluginsHeld) QB.enablePlugin(id); });
+    try { localStorage.setItem("qb-owned", JSON.stringify(QB._owned)); } catch {}
+    let changed = false;
+    QB._plugins.forEach((p) => {
+      if (p._builtin || !QB.PAID[p.id]) return;
+      const locked = QB.pluginLocked(p.id);
+      if (locked && p._enabledRuntime) { standDown(p); changed = true; }
+      else if (!locked && p.enabled && !p._enabledRuntime && !QB._pluginsHeld) { QB.enablePlugin(p.id); changed = true; }
+    });
+    if (changed) { pluginListChanged(); QB._emit("plugins:changed"); }
+    QB._emit("owned:changed", QB._owned);
+    if (document.getElementById("extensions-container")?.offsetParent) QB.renderScreen();
+  };
+  async function addBought(id) {
+    const bytes = await pluginSource(id); if (!bytes) return;
+    try { const p = await QB.installZipBytes(bytes); if (p) QB.enablePlugin(p.id || id); } catch (e) { console.error(e); }
+    if (document.getElementById("extensions-container")?.offsetParent) QB.renderScreen();
+  }
+  const buyBtn = (id) => '<button type="button" class="btn btn-sm btn-primary ext-buy" data-buy-plugin="' + esc(id) + '">Buy · ' + esc(QB.priceText(QB.PAID[id])) + "</button>";
   QB.enablePlugin = (id) => {
     const p = QB._plugins.find((x) => x.id === id);
     if (!p || p._enabledRuntime) return;
-    if (QB._pluginsHeld && !p._builtin) { p.enabled = true; savePlugins(); return; }   // runs once the account allows it
+    if ((QB._pluginsHeld || QB.pluginLocked(p.id)) && !p._builtin) { p.enabled = true; savePlugins(); pluginListChanged(); return; }   // runs once the account allows it / has bought it
     try {
       if (!p._manifest) p._manifest = runEntry(p.code).plugin;
       const ctx = makeCtx(p); p._ctx = ctx;
@@ -1391,11 +1442,7 @@
     QB._plugins.forEach((p) => {
       if (p._builtin) return;
       if (ok && p.enabled && !p._enabledRuntime) { QB.enablePlugin(p.id); changed = true; }
-      if (!ok && p._enabledRuntime) {
-        try { if (p._manifest && typeof p._manifest.onDisable === "function" && p._ctx) p._manifest.onDisable(p._ctx); } catch (e) { console.error(e); }
-        if (p._ctx) p._ctx._unsub.forEach((u) => { try { u(); } catch {} });
-        p._ctx = null; p._enabledRuntime = false; changed = true;
-      }
+      if (!ok && p._enabledRuntime) { standDown(p); changed = true; }
     });
     if (changed) QB._emit("plugins:changed");
   };
@@ -2026,12 +2073,15 @@ QB.registerTheme({
       const page = p && p.enabled ? QB._pages.find((pg) => pg.pluginId === id) : null;
       const busy = QB._store && QB._store.busy[id];
       let h = "";
-      if (page) h += '<button type="button" class="btn btn-primary btn-sm" data-pg="open">Open</button>';
-      if (p) h += '<label class="pg-switch"><span>' + (p.enabled ? "On" : "Off") + '</span><span class="ext-switch"><input type="checkbox" data-pg="toggle"' + (p.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(name) + ' on or off"><span class="ext-slider"></span></span></label>';
-      else if (item) h += '<button type="button" class="btn btn-primary btn-sm" data-pg="get"' + (busy ? " disabled" : "") + ">" + (busy ? esc(busy) : "Get") + "</button>";
+      const locked = QB.pluginLocked(id);
+      if (locked) h += buyBtn(id);
+      else if (page) h += '<button type="button" class="btn btn-primary btn-sm" data-pg="open">Open</button>';
+      if (!locked && p) h += '<label class="pg-switch"><span>' + (p.enabled ? "On" : "Off") + '</span><span class="ext-switch"><input type="checkbox" data-pg="toggle"' + (p.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(name) + ' on or off"><span class="ext-slider"></span></span></label>';
+      else if (!locked && !p && item) h += '<button type="button" class="btn btn-primary btn-sm" data-pg="get"' + (busy ? " disabled" : "") + ">" + (busy ? esc(busy) : "Get") + "</button>";
       if (p && item && verNewer(item.version, p.version)) h += '<button type="button" class="btn btn-sm" data-pg="get"' + (busy ? " disabled" : "") + ">" + (busy ? esc(busy) : "Update") + "</button>";
       a.innerHTML = h;
       a.querySelector('[data-pg="open"]')?.addEventListener("click", () => { close(); QB.showPage(page.pluginId + "::" + page.id); });
+      a.querySelector("[data-buy-plugin]")?.addEventListener("click", () => { close(); QB._host?.openStore?.(QB.PAID[id]); });
       a.querySelector('[data-pg="toggle"]')?.addEventListener("change", (e) => { QB.togglePlugin(id, e.target.checked); QB.renderScreen(); actions(); });
       a.querySelectorAll('[data-pg="get"]').forEach((b) => b.addEventListener("click", async () => { await storeGet(id); actions(); }));
     };
@@ -2080,15 +2130,15 @@ QB.registerTheme({
     } else if (tab === "manage") {
       const rows = visible.slice().sort((a, b) => GROUP_ORDER.indexOf(groupOf(a.id)) - GROUP_ORDER.indexOf(groupOf(b.id)) || String(a.name).localeCompare(String(b.name))).map((p) => {
         const g = groupOf(p.id);
-        const set = p.enabled ? settingsHtml(p, "card") : "";
-        return '<div class="ext-row ext-card' + (p.enabled ? " active" : "") + '" data-guide="' + esc(p.id) + '" tabindex="0" role="button" aria-label="' + esc(p.name) + ' — how to use it">' +
+        const on = p.enabled && !QB.pluginLocked(p.id), set = on ? settingsHtml(p, "card") : "";
+        return '<div class="ext-row ext-card' + (on ? " active" : "") + '" data-guide="' + esc(p.id) + '" tabindex="0" role="button" aria-label="' + esc(p.name) + ' — how to use it">' +
           piconHtml(p, GROUP_COLOR[g]) +
           '<span class="er-name"><b>' + esc(p.name) +
             (p._error ? ' <span class="ext-badge err">failed</span><span class="qb-info" data-tip="' + esc(p._error) + '">i</span>' : "") + "</b>" +
             '<small>' + esc(p.author ? "by " + p.author : "") + "</small></span>" +
           '<span class="er-ver">v' + esc(p.version) + "</span>" +
           '<span class="er-grp">' + esc(g) + "</span>" +
-          '<label class="ext-switch" title="' + (p.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(p.id) + '"' + (p.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(p.name) + ' on or off"><span class="ext-slider"></span></label>' +
+          (QB.pluginLocked(p.id) ? buyBtn(p.id) : '<label class="ext-switch" title="' + (p.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(p.id) + '"' + (p.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(p.name) + ' on or off"><span class="ext-slider"></span></label>') +
           '<button class="ext-remove" data-remove-plugin="' + esc(p.id) + '" title="Remove" aria-label="Remove ' + esc(p.name) + '">' + ICO.trash + "</button>" +
           "</div>" + (set ? '<div class="ext-row-settings ext-settings">' + set + "</div>" : "");
       }).join("");
@@ -2131,6 +2181,7 @@ QB.registerTheme({
         const busy = st.busy[item.id];
         const btn = busy ? '<button type="button" class="btn btn-sm" disabled>' + esc(busy) + "</button>"
           : st.failed[item.id] ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '" title="Couldn\'t add it — try again">Retry</button>'
+          : QB.pluginLocked(item.id) ? buyBtn(item.id)
           : !have ? '<button type="button" class="btn btn-sm btn-primary" data-store-get="' + esc(item.id) + '">Get</button>'
           : verNewer(item.version, have.version) ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '">Update</button>'
           : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
@@ -2187,6 +2238,7 @@ QB.registerTheme({
     wireSettingControls(root);
     root.querySelectorAll("[data-ext-tab]").forEach((b) => b.addEventListener("click", () => { QB._extTab = b.dataset.extTab; QB.renderScreen(); if (window.qbWebPathSync) window.qbWebPathSync(); }));
     root.querySelectorAll("[data-store-get]").forEach((b) => b.addEventListener("click", () => storeGet(b.dataset.storeGet)));
+    root.querySelectorAll("[data-buy-plugin]").forEach((b) => b.addEventListener("click", () => QB._host?.openStore?.(QB.PAID[b.dataset.buyPlugin])));
     root.querySelector("[data-store-reload]")?.addEventListener("click", () => { QB._store.err = false; QB.renderScreen(); });
     root.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => QB.showPage(b.dataset.page)));
     root.querySelectorAll("[data-guide]").forEach((row) => {
@@ -2264,7 +2316,7 @@ function __qbMain(ctx) {
     function gameServerUrl() { try { return localStorage.getItem("qb-mp-server") || GAME_SERVER; } catch (e) { return GAME_SERVER; } }
     var lobby = "", myName = "", body = null, page = null;
     var mySpec = false;  // joined as spectator (watch + chat, no buzzing)
-    function myAv() { try { return ((ctx.host && ctx.host.getState && ctx.host.getState()) || {}).avatar || ""; } catch (e) { return ""; } }
+    function myAv() { return ""; }   // (the emoji avatars are gone: a player is their initial)
     // your onlinequiz username when signed in: other players can open your profile / add you
     function myHandle() { try { return (window.qbAccountHandle && window.qbAccountHandle()) || ""; } catch (e) { return ""; } }
     // ── bought rooms (the shop: web/shop.mjs, mpserver/owned.mjs) ──
@@ -2540,18 +2592,40 @@ function __qbMain(ctx) {
     }
 
     // A visible banner when YOUR connection drops mid-game (lag-out).
+    // A dropped connection (the server restarting, Wi-Fi blinking): the page stays on the room and
+    // quietly rejoins — the seat and score are kept — with a small "Reconnecting…" note. Only when
+    // that keeps failing does a card offer Rejoin / Leave.
+    var reconnectN = 0, reconnectT = null, rejoining = false;
+    var RECONNECT_MS = [600, 1500, 3000, 6000, 10000];
+    function reconnectNote(on) {
+      var area = body && body.querySelector(".question-area"), el = body && body.querySelector("#mp-reconnecting");
+      if (!on) { if (el) el.remove(); return; }
+      if (el || !area) return;
+      el = document.createElement("div");
+      el.id = "mp-reconnecting"; el.className = "mp-reconnecting"; el.setAttribute("role", "status");
+      el.innerHTML = '<span class="mp-recon-dot" aria-hidden="true"></span>Reconnecting\u2026';
+      area.appendChild(el);
+    }
+    function reconnected() { reconnectN = 0; rejoining = false; clearTimeout(reconnectT); reconnectNote(false); var dc = body && body.querySelector("#mp-disconnect"); if (dc) dc.remove(); }
     function showDisconnected() {
       var area = body && body.querySelector(".question-area");
-      if (!area) { setStatus("Disconnected from the lobby."); return; }
-      var existing = body.querySelector("#mp-disconnect"); if (existing) return;
+      if (!area) { setStatus("Disconnected from the room."); return; }
+      if (reconnectN < RECONNECT_MS.length) {
+        reconnectNote(true);
+        clearTimeout(reconnectT);
+        reconnectT = setTimeout(function () { reconnectN++; rejoining = true; isHost = false; join(); }, RECONNECT_MS[reconnectN]);
+        return;
+      }
+      rejoining = false; reconnectNote(false);
+      if (body.querySelector("#mp-disconnect")) return;
       var el = document.createElement("div");
-      el.id = "mp-disconnect"; el.className = "mp-disconnect";
-      el.innerHTML = '<div class="mp-disc-box"><div class="mp-disc-title">\u26a0 Disconnected from the lobby</div>' +
-        '<div class="mp-disc-actions"><button class="btn btn-primary" id="mp-rejoin">Rejoin</button>' +
-        '<button class="btn btn-ghost" id="mp-discleave">Leave</button></div></div>';
+      el.id = "mp-disconnect"; el.className = "mp-disconnect"; el.setAttribute("role", "alert");
+      el.innerHTML = '<div class="mp-disc-box"><div class="mp-disc-title">Lost the connection to the room</div>' +
+        '<div class="mp-disc-sub">Check your internet connection, then rejoin. Your seat and score are kept.</div>' +
+        '<div class="mp-disc-actions"><button type="button" class="btn btn-ghost" id="mp-discleave">Leave</button><button type="button" class="btn btn-primary" id="mp-rejoin">Rejoin</button></div></div>';
       area.appendChild(el);
-      el.querySelector("#mp-rejoin").onclick = function () { el.remove(); isHost = false; join(); };
-      el.querySelector("#mp-discleave").onclick = function () { el.remove(); leave(); };
+      el.querySelector("#mp-rejoin").onclick = function () { el.remove(); reconnectN = 0; rejoining = true; isHost = false; join(); };
+      el.querySelector("#mp-discleave").onclick = function () { el.remove(); reconnectN = 0; rejoining = false; leave(); };
     }
 
     // ── solo-settings isolation ──
@@ -2647,13 +2721,17 @@ function __qbMain(ctx) {
         return;
       }
       // until the room lets us in, the page stays on the lobby ("Joining …"), never the room
-      if (gameServerUrl() && gameServerUrl() !== "off") admitting = true;
+      if (gameServerUrl() && gameServerUrl() !== "off" && !rejoining) admitting = true;
       // Fresh log: on (re)join the host replays every entry, so keeping the old
       // list would duplicate the entire session history.
       sessionLog = []; logCollapsed = {}; chatHist = [];
+      var wasServer = serverMode;
       serverMode = false;
       var srv = gameServerUrl();
-      if (srv && srv !== "off") joinRelay(srv, function () { joinRelay(relayUrl()); });
+      // a room on the game server that dropped: try the game server again (not the backup relay — that
+      // would be an empty room of its own)
+      if (rejoining && wasServer && srv && srv !== "off") joinRelay(srv, function () { serverMode = true; showDisconnected(); });
+      else if (srv && srv !== "off") joinRelay(srv, function () { joinRelay(relayUrl()); });
       else joinRelay(relayUrl());
     }
     // ── relay transport: one outbound WebSocket per player ──
@@ -2684,6 +2762,7 @@ function __qbMain(ctx) {
           myId = m.id; isHost = !serverMode && !!m.host;
           setTimeout(rememberRoom, 1500);
           if (isHost) {
+            if (rejoining || reconnectN) reconnected();
             try { if (ctx.host && ctx.host.resetPracticeFilters) ctx.host.resetPracticeFilters(); } catch (e) {}
             addPlayer(myId, myName, "", mySpec, myAv(), myHandle());
             sysChat(myName + " created the lobby");
@@ -2691,7 +2770,7 @@ function __qbMain(ctx) {
           } else {
             toHost(helloMsg());
           }
-          admitting = serverMode;
+          admitting = serverMode && !rejoining;
           render();
           return;
         }
@@ -3410,6 +3489,7 @@ function __qbMain(ctx) {
     function onClientData(d) {
       if (d.t === "state") {
         if (admitting) { admitting = false; door = null; render(); }   // let in: now the room shows
+        if (rejoining || reconnectN) reconnected();
         srvHost = d.host || null;
         players = {}; order = []; (d.players || []).forEach(function (p) { players[p.id] = p; order.push(p.id); });
         settings = d.settings || settings;
@@ -3672,7 +3752,7 @@ function __qbMain(ctx) {
           var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - r.names.length) : "");
           var state = countText(r.online == null ? { players: r.players, online: r.players } : r) + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.questions ? " · Q" + r.questions : " · waiting");
           return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
-        }).join("") : '<p class="mp-pub-empty">No public rooms right now — leave the code empty and press Join/Create Room to start one.</p>';
+        }).join("") : '<p class="mp-pub-empty">No public rooms right now.</p>';
         list.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
       };
       var loadPublic = function () {
@@ -3788,6 +3868,7 @@ function __qbMain(ctx) {
       return '<br>Questions? ' + (web ? '<a href="mailto:' + esc(s) + '">' + esc(s) + "</a>" : '<span class="shop-mail">' + esc(s) + "</span>");
     }
     // (markup: fixed text with the lead words in bold, as on the product picture)
+    var CAPTAIN_PERKS = ["This room, <b>kept for good</b>, with its password, members and admins", "<b>Keyword Frequency</b>, <b>Canon Tracker</b>, <b>Buzzwords</b> and <b>Fact Sheet</b>", "A <b>glowing neon name</b> in rooms and on leaderboards"];
     var BUY_PERKS = ["<b>Never resets</b> by itself: scores, settings and chat stay", "<b>Members</b> you add by username always get in", "A <b>password</b> for everyone else, or open it to anyone", "<b>Admins</b> you choose, and a Reset button"];
     // ── "Your own room": the shop's section at the very bottom of the lobby ──
     var IC_OWN = {
@@ -3803,19 +3884,20 @@ function __qbMain(ctx) {
       ["lock", "You decide who joins", "Lock it to your members, ask everyone else for a password, or leave it open. Change it any time, and look up the password whenever someone asks."],
       ["crown", "Run it your way", "Choose admins to help run it, take players out, and start a fresh game with Reset. Members and settings stay."],
     ];
-    var OWN_ROWS = [
-      ["Room name", "A random code, like K7QD", "One you choose, like LINCOLN-HS"],
-      ["Its own link", false, "onlinequiz.net/room/<i>name</i>"],
-      ["When everyone leaves", "Cleared after an hour", "Kept for good"],
-      ["Scores, settings and chat", "Lost when it\u2019s cleared", "Saved"],
-      ["Who can join", "Anyone with the code", "Locked to members, a password, or open"],
-      ["Members by username", false, true],
-      ["Admins", false, true],
-      ["In Public rooms", "Listed unless you turn it off", "Only if you list it"],
-      ["Price", "Free", "<b class=\"mp-own-price-cell\">" + "%PRICE%" + "</b> once"],
+    // two plans side by side, the same lines in the same order: what a free room has, what yours adds
+    var OWN_PLANS = [
+      ["Any room name that isn\u2019t taken", "A name that\u2019s yours for good"],
+      ["Anyone with the name can join", "You decide who joins"],
+      [false, "Kept when everyone leaves", "Cleared an hour after everyone leaves"],
+      [false, "Its own link: onlinequiz.net/room/<i>name</i>"],
+      [false, "Members added by username"],
+      [false, "Locked, or a password for everyone else"],
+      [false, "Admins, and a Reset button"],
     ];
     function ownRoomHtml() {
-      var cell = function (v) { return v === true ? '<span class="mp-own-yes" aria-label="Yes">\u2713</span>' : v === false ? '<span class="mp-own-no" aria-label="No">\u2014</span>' : String(v).replace("%PRICE%", priceText()); };
+      var tick = '<span class="mp-plan-ic yes" aria-label="Included">\u2713</span>', cross = '<span class="mp-plan-ic no" aria-label="Not included">\u2715</span>';
+      var free = OWN_PLANS.map(function (r) { return r[0] === false ? '<li class="off">' + cross + "<span>" + (r[2] || r[1]) + "</span></li>" : "<li>" + tick + "<span>" + r[0] + "</span></li>"; }).join("");
+      var mine = OWN_PLANS.map(function (r) { return "<li>" + tick + "<span>" + r[1] + "</span></li>"; }).join("");
       return '<section class="mp-shop mp-own" id="mp-shop" hidden>' +
         '<div class="mp-own-head"><div class="mp-promo-eyebrow">Your own room</div>' +
           '<h2 class="mp-own-h">A room your team <span>keeps for good</span></h2>' +
@@ -3823,14 +3905,17 @@ function __qbMain(ctx) {
         '<div class="mp-own-features">' + OWN_FEATURES.map(function (f) {
           return '<div class="mp-own-feat"><span class="mp-own-ico">' + ownSvg(f[0]) + '</span><div><b>' + f[1] + "</b><p>" + f[2] + "</p></div></div>";
         }).join("") + "</div>" +
-        '<div class="mp-own-table-wrap"><table class="mp-own-table"><thead><tr><th></th><th>Free room</th><th class="mp-own-col">Your own room</th></tr></thead><tbody>' +
-          OWN_ROWS.map(function (r) { return "<tr><th scope=\"row\">" + r[0] + '</th><td data-l="Free room">' + cell(r[1]) + '</td><td class="mp-own-col" data-l="Your own room">' + cell(r[2]) + "</td></tr>"; }).join("") +
-        "</tbody></table></div>" +
-        '<div class="mp-promo-foot mp-own-foot"><span class="mp-promo-price"><b id="mp-shop-price">' + priceText() + '</b><small>one payment \u00b7 no subscription</small></span>' +
-          '<button type="button" class="btn btn-primary btn-lg mp-buy-btn" id="mp-buy">Buy a room</button></div>' +
+        '<div class="mp-plans">' +
+          '<div class="mp-plan"><div class="mp-plan-top"><b class="mp-plan-name">Free room</b><span class="mp-plan-price"><b>Free</b></span></div><ul>' + free + "</ul></div>" +
+          '<div class="mp-plan mp-plan-own"><div class="mp-plan-top"><b class="mp-plan-name">Your own room</b><span class="mp-plan-price"><b id="mp-shop-price">' + priceText() + '</b><small>1 time charge</small></span></div><ul>' + mine + "</ul>" +
+            '<button type="button" class="btn btn-primary btn-lg mp-buy-btn" id="mp-buy">Buy a room</button></div>' +
+        "</div>" +
       "</section>";
     }
-    function priceText() { var c = shopInfo && shopInfo.room && shopInfo.room.price ? shopInfo.room.price : 499; return "$" + (c / 100).toFixed(2); }
+    function priceText(sku) {
+      var p = shopInfo && shopInfo.products && shopInfo.products[sku || "room"], c = p && p.price ? p.price : sku && sku !== "room" ? (window.QB._prices || {})[sku] || 0 : shopInfo && shopInfo.room && shopInfo.room.price ? shopInfo.room.price : 499;
+      return "$" + (c / 100).toFixed(2);
+    }
     function shopDialog(inner) {
       var old = document.getElementById("mp-buy-dlg"); if (old) old.remove();
       var el = document.createElement("div");
@@ -3844,23 +3929,26 @@ function __qbMain(ctx) {
       document.body.appendChild(el);
       return el;
     }
-    var shopHead = function (title, sub) {
-      return '<div class="shop-head"><span class="shop-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span><div><div class="confirm-title">' + title + '</div><div class="shop-sub">' + sub + "</div></div></div>";
+    var BAG_PATH = '<path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>';
+    var shopHead = function (title, sub, bag) {
+      return '<div class="shop-head"><span class="shop-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (bag ? BAG_PATH : '<path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>') + '</svg></span><div><div class="confirm-title">' + title + '</div><div class="shop-sub">' + sub + "</div></div></div>";
     };
-    function openBuy(prefill) {
+    // sku "room", or "captain" (the Team Captain Bundle: the Starter Bundle and a room)
+    function openBuy(prefill, sku) {
+      sku = sku === "captain" ? "captain" : "room";
       if (!acctOf()) {
-        if (ctx.host && ctx.host.openAccount) ctx.host.openAccount("signin", { reason: "Sign in to buy a room — it's kept with your account." });
+        if (ctx.host && ctx.host.openAccount) ctx.host.openAccount("signin", { reason: sku === "captain" ? "Sign in to buy the Team Captain Bundle — it's kept with your account." : "Sign in to buy a room — it's kept with your account." });
         return;
       }
       var el = shopDialog(
-        shopHead("Buy a room", '<b class="shop-price">' + priceText() + '</b> USD · one payment, no subscription') +
+        shopHead(sku === "captain" ? "Team Captain Bundle" : "Buy a room", '<b class="shop-price">' + priceText(sku) + '</b> USD · 1 time charge') +
         // your room as it'll look, with the name you type
         '<div class="shop-preview" aria-hidden="true"><div class="shop-pv-bar"><i></i><i></i><i></i><span>Multiplayer \u00b7 Room</span></div>' +
           '<div class="shop-pv-body"><b class="shop-pv-code" id="shop-pv-code">YOUR-ROOM</b><span class="badge shop-pv-badge">Your room</span></div></div>' +
         '<form id="shop-form">' +
           '<label class="mp-field"><span>Room name</span><input id="shop-name" class="code-input" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. lincoln-hs" aria-describedby="shop-check"></label>' +
-          '<div class="shop-check" id="shop-check" aria-live="polite">3–24 letters, numbers and dashes. People join with it, or at <span class="shop-url">onlinequiz.net/room/<b id="shop-prev">…</b></span></div>' +
-          '<ul class="shop-perks">' + BUY_PERKS.map(function (p) { return "<li>" + p + "</li>"; }).join("") + "</ul>" +
+          '<div class="shop-check" id="shop-check" aria-live="polite"></div>' +
+          '<ul class="shop-perks">' + (sku === "captain" ? CAPTAIN_PERKS : BUY_PERKS).map(function (p) { return "<li>" + p + "</li>"; }).join("") + "</ul>" +
           '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-no">Cancel</button><button type="submit" class="btn btn-primary" id="shop-pay" disabled>Continue to payment</button></div>' +
           '<div class="shop-fine">' + supportLine().slice(4) + '</div>' +
         "</form>");
@@ -3872,7 +3960,7 @@ function __qbMain(ctx) {
         okName = ""; pay.disabled = true;
         if (prev) prev.textContent = v || "…";
         var pv = el.querySelector("#shop-pv-code"); if (pv) pv.textContent = (v || "your-room").toUpperCase();
-        if (!v) { chk.className = "shop-check"; return; }
+        if (!v) { chk.className = "shop-check"; chk.textContent = ""; return; }
         var my = ++gen;
         chk.className = "shop-check busy"; chk.textContent = "Checking…";
         clearTimeout(check._t);
@@ -3890,7 +3978,7 @@ function __qbMain(ctx) {
         e.preventDefault();
         if (!okName) return;
         pay.disabled = true; pay.textContent = "Opening payment…";
-        Promise.resolve(hostApi().post("/api/shop/checkout", { name: okName })).then(function (r) {
+        Promise.resolve(hostApi().post("/api/shop/checkout", { name: okName, sku: sku })).then(function (r) {
           if (!r || r.error || !r.url) { pay.disabled = false; pay.textContent = "Continue to payment"; chk.className = "shop-check bad"; chk.textContent = (r && r.error) || "Couldn't start the payment — try again."; return; }
           // the website goes to Stripe's page (and comes back to /shop/done); the app opens it in
           // the browser and waits here for the payment to land
@@ -3902,7 +3990,17 @@ function __qbMain(ctx) {
       if (prefill) { inp.value = prefill; check(); }
       setTimeout(function () { inp.focus(); }, 30);
     }
-    // an order's progress: waiting for the payment → the room is ready (Join it)
+    // what the Store sells besides rooms (names from the shop's catalogue when it's loaded)
+    var PRODUCT_NAMES = { kwfreq: "Keyword Frequency", canon: "Canon Tracker", buzz: "Buzzwords", facts: "Fact Sheet", starter: "Quizbowler Starter Bundle", captain: "Quizbowler Team Captain Bundle", room: "Your Own Room" };
+    function productName(sku) {
+      var info = shopInfo || (window.QB && window.QB._shopInfo), p = info && info.products && info.products[sku];
+      return (p && p.name) || PRODUCT_NAMES[sku] || "Your purchase";
+    }
+    function boughtLines(sku) {
+      if (sku === "starter") return "<li><b>Keyword Frequency</b>, <b>Canon Tracker</b>, <b>Buzzwords</b> and <b>Fact Sheet</b> are on — they’re under <b>Plugins</b></li><li>Pick your neon name’s colour in the <b>Store</b></li>";
+      return "<li><b>" + esc(productName(sku)) + "</b> is on — it’s under <b>Plugins</b></li><li>It’s kept with your account, in the app and on onlinequiz.net</li>";
+    }
+    // an order's progress: waiting for the payment → the room is ready (Join it) / the plugins are on
     function watchOrder(id, el, name) {
       el = el || shopDialog("");
       var box = el.querySelector(".shop-box");
@@ -3910,15 +4008,24 @@ function __qbMain(ctx) {
         var st = o && o.status;
         if (st === "fulfilled") {
           clearInterval(el._poll);
+          if (ctx.host && ctx.host.refreshOwned) ctx.host.refreshOwned();   // a bundle's plugins and neon name
+          if (!o.item) {
+            box.innerHTML = shopHead("Thank you!", "<b>" + esc(productName(o.kind)) + "</b> is yours", true) +
+              '<ul class="shop-perks shop-next">' + boughtLines(o.kind) + "</ul>" +
+              '<div class="confirm-actions"><button type="button" class="btn btn-primary" id="shop-close">Done</button></div>';
+            box.querySelector("#shop-close").onclick = el._close;
+            return;
+          }
           box.innerHTML = shopHead("Your room is ready", "<b>" + esc(String(o.item).toUpperCase()) + "</b> is yours — onlinequiz.net/room/" + esc(o.item)) +
-            '<ul class="shop-perks shop-next"><li>Set a password or add members in the room’s <b>Room</b> tab</li><li>Share its name (or link) with your team</li></ul>' +
+            '<ul class="shop-perks shop-next"><li>Set a password or add members in the room’s <b>Room</b> tab</li><li>Share its name (or link) with your team</li>' +
+              (o.kind === "captain" ? "<li>Your four study plugins are on, and your neon name is in the <b>Store</b></li>" : "") + "</ul>" +
             '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" id="shop-go">Go to my room</button></div>';
           box.querySelector("#shop-close").onclick = el._close;
           box.querySelector("#shop-go").onclick = function () { el._close(); if (window.QB && window.QB.mpJoin) window.QB.mpJoin(o.item); };
           return;
         }
-        var msg = st === "paid" ? "Payment received — setting up your room…" : st === "expired" || st === "failed" || st === "replaced" ? "That payment didn’t go through. Nothing was charged." : "Waiting for your payment" + (!window.QB_WEB ? " — finish it in your browser." : "…");
-        box.innerHTML = shopHead(st === "expired" || st === "failed" || st === "replaced" ? "No payment" : "Almost there", esc(name ? String(name).toUpperCase() : (o && o.item ? String(o.item).toUpperCase() : ""))) +
+        var msg = st === "paid" ? (o.item ? "Payment received — setting up your room…" : "Payment received — adding it to your account…") : st === "expired" || st === "failed" || st === "replaced" ? "That payment didn’t go through. Nothing was charged." : "Waiting for your payment" + (!window.QB_WEB ? " — finish it in your browser." : "…");
+        box.innerHTML = shopHead(st === "expired" || st === "failed" || st === "replaced" ? "No payment" : "Almost there", esc(name ? String(name).toUpperCase() : (o && o.item ? String(o.item).toUpperCase() : o && o.kind ? productName(o.kind) : "")), !!(o && !o.item)) +
           '<div class="shop-wait"><span class="shop-spin" aria-hidden="true"></span><span>' + esc(msg) + "</span></div>" +
           '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button></div>' +
           (st === "expired" || st === "failed" || st === "replaced" ? (supportLine() ? '<div class="shop-fine">' + supportLine().slice(4) + "</div>" : "") : "");
@@ -3929,8 +4036,8 @@ function __qbMain(ctx) {
       // or another browser): their room is safe — say how to see it
       var notMine = function () {
         clearInterval(el._poll);
-        box.innerHTML = shopHead("Payment received", "Your room is kept with the account you bought it with") +
-          '<ul class="shop-perks shop-next"><li>Bought in the app? Go back to it — your room is under <b>Your rooms</b></li><li>Or sign in here with that account to open it</li></ul>' +
+        box.innerHTML = shopHead("Payment received", "It’s kept with the account you bought it with") +
+          '<ul class="shop-perks shop-next"><li>Bought in the app? Go back to it — it’s there already</li><li>Or sign in here with that account</li></ul>' +
           '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button></div>' +
           (supportLine() ? '<div class="shop-fine">' + supportLine().slice(4) + "</div>" : "");
         box.querySelector("#shop-close").onclick = el._close;
@@ -3944,8 +4051,13 @@ function __qbMain(ctx) {
       };
       clearInterval(el._poll); el._poll = setInterval(tick, 3000); tick();
     }
-    window.QB.mpBuy = function (name) { window.QB.showPage("multiplayer::lobby"); setTimeout(function () { if (!lobby) openBuy(name || ""); }, 300); };
+    window.QB.mpBuy = function (name, sku) { window.QB.showPage("multiplayer::lobby"); setTimeout(function () { if (!lobby) openBuy(name || "", sku); }, 300); };
     window.QB.mpOrder = function (id) { window.QB.showPage("multiplayer::lobby"); setTimeout(function () { watchOrder(id, null, ""); }, 200); };
+    // the Store's way in: a room's (or the Team Captain Bundle's) Buy window over any page, and an
+    // order's progress (the app, with the payment open in the browser; the website, back from it)
+    window.QB.shopBuyRoom = function (name, sku) { openBuy(name || "", sku); };
+    window.QB.shopWatch = function (id) { watchOrder(id, null, ""); };
+    window.QB.mpNewTicket = function () { myTicket = null; myTicketAt = 0; };   // the neon colour changed
 
     // Room codes: four characters, no look-alikes (0/O, 1/I/L).
     function newRoomCode() {
@@ -4616,10 +4728,11 @@ function __qbMain(ctx) {
       var row = function (p) {
         var you = p.id === myId;
         var initial = (String(p.name || "?").trim()[0] || "?").toUpperCase();
-        var nameHtml = you ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + esc(p.name) + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + esc(p.name) + "</b>";
+        var nm = window.QB.neonHtml ? window.QB.neonHtml(esc(p.name), p.neon) : esc(p.name);   // a bought neon name glows
+        var nameHtml = you ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + nm + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + nm + "</b>";
         var subHtml = p.off ? "offline" : p.spec ? "spectating"
           : you ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
-          : (p.team ? "team " + esc(p.team) : (p.avatar ? esc(p.avatar) : "&nbsp;"));
+          : (p.team ? "team " + esc(p.team) : "&nbsp;");
         return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
           '<span class="nm">' + nameHtml + "<span>" + subHtml + "</span></span>" +
           (p.spec ? "" : '<span class="sc num">' + (p.score || 0) + "</span>") + "</div>";

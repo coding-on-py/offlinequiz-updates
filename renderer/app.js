@@ -462,7 +462,7 @@ function updateKeyLabels() {
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
   if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
-  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-streaks-home"], ["#btn-admin-home"]]
+  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-store-home"], ["#btn-streaks-home"], ["#btn-admin-home"]]
     .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
@@ -501,6 +501,9 @@ const ICON = {
   bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
   chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  bag: '<path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
+  home: '<path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
 };
 function ic(name, size, extra) {
   const s = size || 18;
@@ -834,6 +837,7 @@ function goTo(target) {
     case "download": showScreen("download"); renderDownload(); break;
     case "friends": showScreen("friends"); renderFriends(); break;
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
+    case "store": showScreen("store"); renderStore(); refreshOwned(); break;
     case "streaks": showScreen("streaks"); renderStreaks(); break;
     case "admin": showScreen("admin"); renderAdmin(); break;
   }
@@ -853,7 +857,7 @@ document.addEventListener("click", (e) => {
 // move between pages, and the tab title names the page. server.js answers these
 // paths with the app's page (WEB_PAGE_PATHS). The desktop app (file://) has none.
 const WEB_PATHS = { tossups: "practice-tossups", bonuses: "practice-bonuses", multiplayer: "multiplayer", search: "db-search", sets: "db-sets",
-  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin" };
+  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin", store: "store" };
 let _webRouting = false;
 // the address of what is on screen now (null: leave the address alone)
 function webPathNow() {
@@ -868,6 +872,7 @@ function webPathNow() {
     case "player-screen": return "/profile";
     case "friends-screen": return "/friends";
     case "leaderboards-screen": return "/leaderboards";
+    case "store-screen": return "/store";
     case "streaks-screen": return "/streaks";
     case "admin-screen": return "/admin";
     case "download-screen": return "/download";
@@ -912,10 +917,11 @@ function webRoute(path) {
       // a bought room's own address: onlinequiz.net/room/<name>
       window.QB?.mpJoin?.(b);
     } else if (a === "shop" && b === "done") {
-      // back from Stripe: the order's progress, then the new room
-      const id = new URLSearchParams(location.search).get("order");
-      goTo("multiplayer");
-      if (id) window.QB?.mpOrder?.(id);
+      // back from the payment page: the order's progress, then the new room (Multiplayer) or
+      // what it unlocked (the Store)
+      const q = new URLSearchParams(location.search), id = q.get("order"), sku = q.get("for");
+      if (sku && sku !== "captain") { goTo("store"); if (id) Promise.resolve(window.QB?.whenReady?.()).then(() => window.QB?.shopWatch?.(id)); }
+      else { goTo("multiplayer"); if (id) window.QB?.mpOrder?.(id); }
     } else if (a === "plugins" && b && c) {
       // plugins start once the profile's plugin data is loaded
       Promise.resolve(window.QB?.whenReady?.()).then(() => { if (!window.QB?.showPage?.(b + "::" + c)) goTo("plugins"); });
@@ -1562,6 +1568,7 @@ function buildScreen(name) {
   else if (name === "extensions") window.QB?.renderScreen();
   else if (name === "friends") renderFriends();
   else if (name === "leaderboards") renderLeaderboards();
+  else if (name === "store") renderStore();
   else if (name === "admin") renderAdmin();
 }
 function reviveScreen(name) {
@@ -2022,6 +2029,7 @@ async function refreshReviewBadge() {
     _reviewItems = due.items || (due.ids || []).map((id) => ({ id, type: "tossup", ageMs: 0 }));
     const n = _reviewItems.length;
     const c = document.getElementById("review-count"); if (c) c.textContent = n ? String(n) : "";
+    clearTimeout(refreshReviewBadge._pre); refreshReviewBadge._pre = setTimeout(() => preloadReview(_reviewItems.slice(0, 24)), 3000);
   } catch {}
 }
 
@@ -2036,6 +2044,7 @@ function fmtAge(ms) {
 function reviewRemoveAfter() { return localStorage.getItem("qb-review-remove") === "true"; }
 
 function openReviewMenu(items) {
+  preloadReview(items);   // View opens with its questions already here
   document.getElementById("review-menu")?.remove();
   const hasFlashcards = (window.QB?.getActivePages?.() || []).some((pg) => pg.id.startsWith("flashcards::"));
   const el = document.createElement("div");
@@ -2176,6 +2185,21 @@ function reviewAsFlashcards(ids) {
   window.QB.showPage(page.id);
 }
 
+// The Review window's questions, fetched together and kept: preloadReview() runs when the Review
+// menu opens (and once the home knows what's due), so View opens with them already here.
+const _reviewQ = new Map();
+function reviewQuestion(it) {
+  const type = (it && it.type) || "tossup", k = type + ":" + (it && it.id);
+  let p = _reviewQ.get(k);
+  if (!p) {
+    p = API.get((type === "bonus" ? "/api/bonuses/" : "/api/tossups/") + encodeURIComponent(it.id))
+      .then((d) => (d && (d.bonus || d.tossup)) || null).catch(() => { _reviewQ.delete(k); return null; });
+    _reviewQ.set(k, p);
+    while (_reviewQ.size > 240) _reviewQ.delete(_reviewQ.keys().next().value);
+  }
+  return p;
+}
+function preloadReview(items) { (items || []).slice(0, 80).forEach(reviewQuestion); }
 async function openReviewViewer(items) {
   document.getElementById("review-viewer")?.remove();
   const el = document.createElement("div");
@@ -2201,26 +2225,16 @@ async function openReviewViewer(items) {
   el.addEventListener("click", (ev) => { if (ev.target === el) animateRemove(el); });
   document.body.appendChild(el);
   el.querySelector("#rv-close").onclick = () => animateRemove(el);
-  await refreshDbStarred();
+  // all at once (preloaded when the Review menu opened, so usually already here), not one by one
+  const [, qs] = await Promise.all([refreshDbStarred(), Promise.all(items.slice(0, 80).map(reviewQuestion))]);
   const cards = [];
-  for (const it of items.slice(0, 80)) {
-    const type = it.type || "tossup";
-    try {
-      if (type === "bonus") {
-        const d = await API.get("/api/bonuses/" + encodeURIComponent(it.id));
-        if (d.bonus) cards.push({ q: d.bonus, it, type: "bonus" });
-      } else {
-        const d = await API.get("/api/tossups/" + encodeURIComponent(it.id));
-        if (d.tossup) cards.push({ q: d.tossup, it, type: "tossup" });
-      }
-    } catch {}
-  }
+  items.slice(0, 80).forEach((it, i) => { if (qs[i]) cards.push({ q: qs[i], it, type: it.type || "tossup" }); });
   function cardHtml({ q, it, type }) {
     const starred = _dbStarred && _dbStarred.has(type + ":" + q.id);
     const search = ((q.category || "") + " " + (q.subcategory || "") + " " + (q.alternate_subcategory || "") + " " +
       (q.answer_sanitized || "") + " " + (q.question_sanitized || q.leadin_sanitized || "") + " " +
       ((() => { try { return JSON.parse(q.answers_sanitized || "[]").join(" ") + " " + JSON.parse(q.parts_sanitized || "[]").join(" "); } catch { return ""; } })())).toLowerCase();
-    const side = `<span class="star-btn rv-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders" style="font-size:16px">+</span>` +
+    const side = `<span class="star-btn save-plus rv-save" data-qid="${escapeHtml(q.id)}" data-type="${type}" title="Save to review / folders" style="font-size:16px">+</span>` +
       `<button class="btn btn-sm btn-ghost rv-remove" data-qid="${escapeHtml(q.id)}" title="Stop showing this question in Review">Remove from review</button>` +
       `<span class="qb-star${starred ? " on" : ""}" data-qid="${q.id}" data-type="${type}">${starred ? "\u2605" : "\u2606"}</span>`;
     const dataAttrs = ` data-rvqid="${escapeHtml(q.id)}" data-rvtype="${type}" data-rvsearch="${escapeHtml(search)}" data-path="${escapeHtml(qPathOf(q))}"`;
@@ -2244,9 +2258,9 @@ async function openReviewViewer(items) {
       compact: false, question: q, tagsWhere: "starred", category: q.category, subcategory: q.subcategory, altSub: q.alternate_subcategory, year: q.set_year, difficulty: q.difficulty,
       attrs: dataAttrs,
       sideHtml: side,
-      answerHtml: `Answer: <span class="ans">${answerLineHtml(q.answer, q.answer_sanitized || "")}</span>`,
+      answerHtml: `<span class="ra-k">Answer</span><span class="ans">${answerLineHtml(q.answer, q.answer_sanitized || "")}</span>`,
       bodyHtml: `<div class="qcard-text">${historyQuestionHtml(fake)}</div>` +
-        (it.given ? `<div class="qcard-foot">Your answer: <strong style="color:var(--red)">${escapeHtml(it.given)}</strong></div>` : ""),
+        (it.given ? `<div class="qcard-foot"><span class="ra-k">Your answer</span><strong style="color:var(--red)">${escapeHtml(it.given)}</strong></div>` : ""),
     });
   }
   const html = cards.map(cardHtml).join("") || '<div class="text-muted" style="padding:12px">Nothing to show.</div>';
@@ -6752,7 +6766,7 @@ function renderHistoryPanel() {
       year: e.question?.set_year,
       difficulty: e.question?.difficulty,
       sideHtml: (() => { const st = isStarredLocal(e.id, e.type); return `${celMarker}${badge}<span class="star-btn save-plus hist-save" data-idx="${i}" title="Save to review / folders">+</span><span class="star-toggle${st ? " on" : ""}" data-qid="${e.id}" data-type="${e.type}">${st ? "\u2605" : "\u2606"}</span>`; })(),
-      answerHtml: `Answer: <span class="ans">${answer}</span>${histTrackHtml(e)}`,
+      answerHtml: `<span class="ra-k">Answer</span><span class="ans">${answer}</span>${histTrackHtml(e)}`,
       bodyHtml: `
         <div class="qcard-text">${historyQuestionHtml(e)}</div>
         <div class="qcard-foot">Your answer:
@@ -7418,6 +7432,7 @@ $("#btn-ext-home")?.addEventListener("click", goBack);
 $("#btn-download-home")?.addEventListener("click", goBack);
 $("#btn-friends-home")?.addEventListener("click", goBack);
 $("#btn-leaderboards-home")?.addEventListener("click", goBack);
+$("#btn-store-home")?.addEventListener("click", goBack);
 $("#btn-streaks-home")?.addEventListener("click", goBack);
 $("#btn-admin-home")?.addEventListener("click", goBack);
 
@@ -8989,7 +9004,6 @@ async function loadPlayer() {
     const profileKey = (ap && (ap.id ?? ap.profile_id)) || "default";
 
     const username = state.username || "Player";
-    const avatar = state.avatar || "(◕‿◕)";
     const totalQ = stats.totalQuestions || 0;
     const powers = stats.tossupPowers || 0;
     const negs = stats.tossupNegs || 0;
@@ -9006,7 +9020,7 @@ async function loadPlayer() {
     container.innerHTML = `
       <div class="pf-page">
         <section class="pf-card">
-          <button type="button" class="pf-avatar" id="player-avatar" title="Change your avatar" aria-label="Change your avatar">${escapeHtml(avatar)}</button>
+          <span class="pf-avatar" aria-hidden="true">${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
           <div class="pf-id">
             <input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false">
             <small class="pf-sub">${handle ? escapeHtml(handle) : Account.user ? "Signed in" : IS_WEB ? "Not signed in" : "On this computer"}</small>
@@ -9021,7 +9035,6 @@ async function loadPlayer() {
     `;
 
     initCollapsibles(container);
-    $("#player-avatar")?.addEventListener("click", showAvatarPicker);
 
     $("#player-username-input")?.addEventListener("input", (e) => {
       state.username = e.target.value.trim();
@@ -9655,55 +9668,6 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-phil-enlightened",name:"Enlightened Monarch",desc:"Power on Locke, Hume, Kant, Rousseau, Voltaire, and Montesquieu",type:"answer_power",threshold:6,target:["locke","hume","kant","rousseau","voltaire","montesquieu"],distinct:true,icon:"啓"},
   {id:"ap-phil-school",name:"The School of Athens",desc:"Power on 5 figures from The School of Athens",type:"answer_power",threshold:5,target:["plato","aristotle","socrates","pythagoras","euclid","diogenes","heraclitus","ptolemy","zoroaster","raphael"],distinct:true,icon:"学"},
 ];
-
-function showAvatarPicker() {
-  const kaomojis = [
-  "(◕‿◕)", "(◠‿◠)", "(◡‿◡)", "(.❛ᴗ❛.)", "(◍•ᴗ•◍)",
-  "(¬‿¬)", "(≧◡≦)", "(・∀・)", "(｡◕‿◕｡)", "(✿◠‿◠)",
-  "(─‿‿─)", "(^‿^)", "(◑‿◐)", "(◉‿◉)", "(ᵔ◡ᵔ)",
-  "(ꈍ ‿ ꈍ)", "(◕ᴗ◕✿)", "(•̀ᴗ•́)و", "(つ≧▽≦)つ", "(ノ◕ヮ◕)ノ",
-  "♪(๑ᴖ◡ᴖ๑)♪", "☆*:.｡.o(≧▽≦)o.｡.:*☆", "(￣▽￣)ノ", "(^_−)☆", "╰(▔∀▔)╯",
-  "(-‿◦☀)", "(~˘▾˘)~", "(／≧ω＼)", "ψ(｀∇´)ψ", "(•_•)",
-  "(｡･ω･｡)", "(´｡• ᵕ •｡`)", "(｡•́‿•̀｡)", "(„ᵕᴗᵕ„)", "(✧ω✧)",
-  "⁄(⁄ ⁄•⁄ω⁄•⁄ ⁄)⁄", "(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)", "(´• ω •`)", "(｡•̀ᴗ-)✧", "(⁄ʘ⁄ ⁄ ω ⁄ ʘ⁄)♡",
-  "(๑˃̵ᴗ˂̵)و", "(๑•̀ㅂ•́)و✧", "(-ω-、)", "(；一_一)", "(｡-人-｡)",
-  "(￣ω￣;)", "(　；∀；)", "(；⌣̀_⌣́)", "щ(゜ロ゜щ)", "(꒪⌓꒪)",
-  "Σ(°△°|||)", "(×_×;）", "(｡ŏ﹏ŏ)", "(╯︵╰,)", "( ´•̥̥̥ω•̥̥̥` )",
-  "╮(￣▽￣)╭", "＼(￣▽￣)／", "┐(￣ヘ￣)┌", "＼(＾▽＾)／", "ヽ(>∀<☆)ノ",
-];
-  let picker = document.getElementById("avatar-picker");
-  if (picker) { closeAvatarPicker(); return; }
-  const av = document.getElementById("player-avatar");
-  if (!av) return;
-  // a popover under the avatar: every face in a cell of its own, the current one marked
-  picker = document.createElement("div");
-  picker.id = "avatar-picker";
-  picker.className = "avatar-picker";
-  picker.setAttribute("role", "listbox"); picker.setAttribute("aria-label", "Avatars");
-  picker.innerHTML = `<div class="avatar-picker-h">Choose an avatar</div><div class="avatar-grid">` + kaomojis.map((k) =>
-    `<button type="button" class="avatar-option${k === state.avatar ? " on" : ""}" role="option" aria-selected="${k === state.avatar}" data-avatar="${escapeHtml(k)}">${escapeHtml(k)}</button>`
-  ).join("") + `</div>`;
-  document.body.appendChild(picker);
-  const r = av.getBoundingClientRect();
-  picker.style.left = Math.max(12, Math.min(innerWidth - picker.offsetWidth - 12, r.left)) + "px";
-  picker.style.top = Math.min(innerHeight - picker.offsetHeight - 12, r.bottom + 8) + "px";
-  picker.querySelectorAll(".avatar-option").forEach((opt) => {
-    opt.addEventListener("click", (e) => {
-      e.stopPropagation();
-      state.avatar = opt.dataset.avatar;
-      lsSet("qb-avatar", state.avatar);
-      closeAvatarPicker();
-      av.textContent = state.avatar;
-    });
-  });
-  setTimeout(() => { document.addEventListener("click", avatarPickerAway, true); document.addEventListener("keydown", avatarPickerEsc, true); window.addEventListener("scroll", closeAvatarPicker, true); }, 0);
-}
-function avatarPickerAway(e) { const p = document.getElementById("avatar-picker"); if (p && !p.contains(e.target) && !e.target.closest?.("#player-avatar")) closeAvatarPicker(); }
-function avatarPickerEsc(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAvatarPicker(); } }
-function closeAvatarPicker() {
-  document.removeEventListener("click", avatarPickerAway, true); document.removeEventListener("keydown", avatarPickerEsc, true); window.removeEventListener("scroll", closeAvatarPicker, true);
-  const p = document.getElementById("avatar-picker"); if (p) { p.removeAttribute("id"); animateRemove(p); }
-}
 
 let _dbWired = false;
 let _dbStarred = null;
@@ -10805,50 +10769,44 @@ function startSplash() {
 }
 
 
+// The app's first start: an account first (Continue with Google / Sign in / Create an account), or
+// "Not now" — then only a name. Signing in finishes it (the account's display name is used).
 function showSetupOverlay() {
   const overlay = document.getElementById("player-setup");
   if (!overlay) return;
-  overlay.classList.remove("hidden");
-  document.getElementById("setup-username")?.focus();
-
-  const grid = document.getElementById("setup-avatar-grid");
-  const kaomojis = [
-  "(◕‿◕)", "(◠‿◠)", "(◡‿◡)", "(.❛ᴗ❛.)", "(◍•ᴗ•◍)",
-  "(¬‿¬)", "(≧◡≦)", "(・∀・)", "(｡◕‿◕｡)", "(✿◠‿◠)",
-  "(─‿‿─)", "(^‿^)", "(◑‿◐)", "(◉‿◉)", "(ᵔ◡ᵔ)",
-  "(ꈍ ‿ ꈍ)", "(◕ᴗ◕✿)", "(•̀ᴗ•́)و", "(つ≧▽≦)つ", "(ノ◕ヮ◕)ノ",
-  "♪(๑ᴖ◡ᴖ๑)♪", "☆*:.｡.o(≧▽≦)o.｡.:*☆", "(￣▽￣)ノ", "(^_−)☆", "╰(▔∀▔)╯",
-  "(-‿◦☀)", "(~˘▾˘)~", "(／≧ω＼)", "ψ(｀∇´)ψ", "(•_•)",
-  "(｡･ω･｡)", "(´｡• ᵕ •｡`)", "(｡•́‿•̀｡)", "(„ᵕᴗᵕ„)", "(✧ω✧)",
-  "⁄(⁄ ⁄•⁄ω⁄•⁄ ⁄)⁄", "(⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)", "(´• ω •`)", "(｡•̀ᴗ-)✧", "(⁄ʘ⁄ ⁄ ω ⁄ ʘ⁄)♡",
-  "(๑˃̵ᴗ˂̵)و", "(๑•̀ㅂ•́)و✧", "(-ω-、)", "(；一_一)", "(｡-人-｡)",
-  "(￣ω￣;)", "(　；∀；)", "(；⌣̀_⌣́)", "щ(゜ロ゜щ)", "(꒪⌓꒪)",
-  "Σ(°△°|||)", "(×_×;）", "(｡ŏ﹏ŏ)", "(╯︵╰,)", "( ´•̥̥̥ω•̥̥̥` )",
-  "╮(￣▽￣)╭", "＼(￣▽￣)／", "┐(￣ヘ￣)┌", "＼(＾▽＾)／", "ヽ(>∀<☆)ノ",
-];
-  if (grid) {
-    grid.innerHTML = kaomojis.map(k =>
-      `<span class="avatar-option setup-avatar-opt" data-avatar="${k}">${k}</span>`
-    ).join("");
-    grid.querySelectorAll(".setup-avatar-opt").forEach(opt => {
-      opt.addEventListener("click", () => {
-        document.getElementById("setup-avatar").textContent = opt.dataset.avatar;
-        grid.querySelectorAll(".setup-avatar-opt").forEach(o => o.classList.remove("selected"));
-        opt.classList.add("selected");
-      });
-    });
-  }
-
-  document.getElementById("btn-setup-done")?.addEventListener("click", () => {
-    const name = document.getElementById("setup-username")?.value?.trim() || "Player";
-    const avatar = document.getElementById("setup-avatar")?.textContent || "(◕‿◕)";
-    state.username = name;
-    state.avatar = avatar;
-    lsSet("qb-username", name);
-    lsSet("qb-avatar", avatar);
+  const stepAcct = document.getElementById("setup-step-account"), stepName = document.getElementById("setup-step-name");
+  const done = (name) => {
+    clearInterval(showSetupOverlay._watch);
+    if (name) { state.username = name; lsSet("qb-username", name); }
     lsSet("qb-setup-done", "1");
     overlay.classList.add("hidden");
-  });
+    try { renderGreeting(); renderTopbarProfile(); } catch (e) {}
+  };
+  const toName = () => {
+    stepAcct?.classList.add("hidden"); stepName?.classList.remove("hidden");
+    const inp = document.getElementById("setup-username"); if (inp) { inp.value = state.username || ""; setTimeout(() => inp.focus(), 30); }
+  };
+  overlay.classList.remove("hidden");
+  stepName?.classList.add("hidden"); stepAcct?.classList.remove("hidden");
+  // accounts out of reach (offline): straight to the name
+  accountFresh().then(() => {
+    if (!Account.available) { toName(); return; }
+    const g = document.getElementById("setup-google");
+    if (g && Account.google) { g.innerHTML = GOOGLE_G + "Continue with Google"; g.hidden = false; }
+  }).catch(() => toName());
+  document.getElementById("setup-signin").onclick = () => openAccount("signin");
+  document.getElementById("setup-signup").onclick = () => openAccount("signup");
+  document.getElementById("setup-google").onclick = () => { openAccount("signin"); setTimeout(() => document.querySelector('#account-ovl [data-to="google"]')?.click(), 0); };
+  document.getElementById("setup-later").onclick = toName;
+  stepName.onsubmit = (e) => { e.preventDefault(); done(document.getElementById("setup-username")?.value?.trim() || "Player"); };
+  // signed in from here (the account window, or Google in the browser — the app reloads after a
+  // sign-in, so this runs again then): done
+  accountKnownP.then(() => { if (Account.user && !overlay.classList.contains("hidden")) done((Account.user.displayName || Account.user.handle || "").trim()); });
+  clearInterval(showSetupOverlay._watch);
+  showSetupOverlay._watch = setInterval(() => {
+    if (overlay.classList.contains("hidden")) { clearInterval(showSetupOverlay._watch); return; }
+    if (Account.user) done((Account.user.displayName || Account.user.handle || "").trim());
+  }, 700);
 }
 
 function initApp() {
@@ -11014,6 +10972,9 @@ function init() {
       openAccount: (mode, opts) => openAccount(mode, opts),
       whenAccountKnown: () => accountKnownP,
       openUrl: (url) => { if (IS_WEB) location.href = url; else API.post("/api/cloud/open", { url }).catch(() => {}); },
+      // the Store: open it (at a product); what the account owns, fetched again (after a purchase)
+      openStore: (sku) => openStore(sku),
+      refreshOwned: () => refreshOwned(),
       openSaveMenu: (question, type, anchor) => openSaveMenu(question, type, anchor),
       openItemSaveMenu: (spec, anchor) => openItemSaveMenu(spec, anchor),
       itemReviewAdd: (it) => itemReviewAdd(it),
@@ -11128,6 +11089,8 @@ async function refreshAccount(opts) {
   applyAccountName();
   // website: plugins (the Store and running them) need an account when accounts are required
   try { window.QB?.setPluginsAllowed?.(!needsAccount()); } catch (e) {}
+  // what the account bought (the paid plugins run once it's known) and the Store's prices
+  refreshOwned(); loadShopInfo();
   if (document.querySelector("#extensions-screen.active")) window.QB?.renderScreen?.();
   // signed in (e.g. with Google) without a username yet: finish setting up
   if (!opts.noPrompt && Account.user && !Account.user.handle && !document.getElementById("account-ovl") && !refreshAccount._asked) { refreshAccount._asked = true; openAccount("profile"); }
@@ -11822,16 +11785,17 @@ function paintStreaks(c) {
   let cells = "", months = "", lastMonth = -1, col = 0;
   const cols = Math.floor((to - from) / (7 * STK_DAY)) + 1;
   for (let w = from; w <= to; w += 7 * STK_DAY, col++) {
-    let label = "";
+    let label = "", labelEnd = false;
     for (let k = 0; k < 7; k++) {
       const t = w + k * STK_DAY, iso = stkIso(t);
       if (t > to) { cells += '<span class="stk-cell stk-void"></span>'; continue; }
-      // a month's name over the first week starting in it (the first column too, given room before the next)
-      if (k === 0) { const m = new Date(t).getUTCMonth(), dt = new Date(t).getUTCDate(); if (col < cols - 2 && ((dt <= 7 && m !== lastMonth) || (col === 0 && dt <= 14))) { label = new Date(t).toLocaleDateString(undefined, { month: "short", timeZone: "UTC" }); lastMonth = m; } }
+      // a month's name over the first week starting in it (the first column too, given room before the
+      // next) — the current month too: one in the last column reads leftward so it isn't cut off
+      if (k === 0) { const m = new Date(t).getUTCMonth(), dt = new Date(t).getUTCDate(); if ((dt <= 7 && m !== lastMonth) || (col === 0 && dt <= 14)) { label = new Date(t).toLocaleDateString(undefined, { month: "short", timeZone: "UTC" }); lastMonth = m; labelEnd = col === cols - 1; } }
       const x = byDate.get(iso), q = x ? x.q : 0;
       cells += `<button type="button" class="stk-cell l${level(q)}${iso === d.today ? " stk-today" : ""}${iso === _stk.sel ? " stk-sel" : ""}" data-day="${iso}" data-tip="${escapeHtml(fmtDay(t) + ": " + (q ? plural(q, "question") : "no practice"))}" aria-label="${escapeHtml(fmtDay(t) + ", " + (q ? plural(q, "question") : "no practice"))}"></button>`;
     }
-    months += `<span class="stk-mon">${label}</span>`;
+    months += `<span class="stk-mon${labelEnd ? " stk-mon-end" : ""}">${label}</span>`;
   }
   // this week, Duolingo style: a flame on each day you practiced
   const wk0 = today - dow(today) * STK_DAY;
@@ -11841,7 +11805,7 @@ function paintStreaks(c) {
     return `<span class="stk-wd${x ? " on" : ""}${t === today ? " now" : ""}${future ? " future" : ""}"><small>${name}</small><span class="stk-dot">${x ? stkFlame(16) : ""}</span></span>`;
   }).join("");
   const practicedToday = byDate.has(d.today);
-  const sub = d.streak ? (practicedToday ? "You practiced today — see you tomorrow." : "Practice today to keep it going.") : "Answer a question to start one.";
+  const sub = d.streak ? (practicedToday ? "See you tomorrow!" : "Practice today to keep it going.") : "Answer a question to start one.";
   const qIn = inRange.reduce((a, x) => a + x.q, 0);
   const rangeName = _stk.range === "year" ? "in the past year" : "in " + _stk.range;
   const ranges = years.length ? `<div class="seg stk-ranges" role="group" aria-label="Range">${[["year", "Past year"], ...years.map((y) => [y, y])].map(([k, l]) => `<button type="button" data-stk-range="${k}" aria-pressed="${_stk.range === k}">${l}</button>`).join("")}</div>` : "";
@@ -11856,7 +11820,7 @@ function paintStreaks(c) {
   const wdLbl = ["", "Mon", "", "Wed", "", "Fri", ""].map((x) => `<span>${x}</span>`).join("");
   c.innerHTML = `<div class="stk-page">
     <div class="stk-cards">
-      <div class="fr-card stk-now${d.streak ? " lit" : ""}"><div class="stk-big">${stkFlame(30)}<span><b class="num">${d.streak}</b> ${d.streak === 1 ? "day" : "days"}</span></div><small>Current streak · ${escapeHtml(sub)}</small><div class="stk-week" aria-label="This week">${week}</div></div>
+      <div class="fr-card stk-now${d.streak ? " lit" : ""}"><div class="stk-big">${stkFlame(30)}<span><b class="num">${d.streak}</b> ${d.streak === 1 ? "day" : "days"}</span></div><small class="stk-sub"><b>Current streak</b><span>${escapeHtml(sub)}</span></small><div class="stk-week" aria-label="This week">${week}</div></div>
       <div class="fr-card stk-stat"><b class="num">${d.best}</b><small>best streak</small></div>
       <div class="fr-card stk-stat"><b class="num">${inRange.length.toLocaleString()}</b><small>days practiced</small></div>
       <div class="fr-card stk-stat"><b class="num">${qIn.toLocaleString()}</b><small>questions</small></div>
@@ -11897,6 +11861,184 @@ function preloadLeaderboards() {
     for (const p of ["week", "month", "all"]) if (p !== _lb.period) get(_lbUrl(p));   // the other periods, for their tabs
   });
 }
+// ── The Store (the top bar's Store; onlinequiz.net/store) ──
+// Everything the shop sells (web/shop.mjs CATALOG): the four study plugins, the two
+// bundles and a room of your own — and the neon name's colour for an account that has
+// it. What the account owns comes from /api/shop/owned (extensions.js QB.setOwned holds a
+// paid plugin that isn't bought); prices and what's on sale from /api/shop/info. Both
+// load with the account (and again when the page opens), so it paints at once.
+const NEON_COLORS = (window.QB && window.QB.NEON) || {};   // the twelve colours (extensions.js)
+// a name as others see it: glowing in its colour when the account has one
+const neonName = (text, neon) => window.QB && window.QB.neonHtml ? window.QB.neonHtml(escapeHtml(text), neon) : escapeHtml(text);
+const STORE_PLUGINS = [
+  { sku: "kwfreq", id: "keyword-freq", name: "Keyword Frequency", color: "#58a6ff", icon: '<path d="M4 4v16"/><path d="M8 7h12M8 12h8M8 17h4"/>',
+    text: "The words that come up most in an answer’s questions, and the answers that come up most for a word." },
+  { sku: "canon", id: "canon-tracker", name: "Canon Tracker", color: "#56d364", icon: '<path d="M21 12a9 9 0 1 1-9-9v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
+    text: "How much of each category’s most-asked answers you’ve converted — and a drill for the ones you haven’t." },
+  { sku: "buzz", id: "buzz-words", name: "Buzzwords", color: "#e3b341", icon: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+    text: "The giveaway words: clues that almost always mean one answer, found across the whole question database." },
+  { sku: "facts", id: "fact-sheet", name: "Fact Sheet", color: "#f778ba", icon: '<path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+    text: "A study sheet for any answer, built from the clues its questions keep using." },
+];
+const STORE_GRANTS = { kwfreq: ["plugin:keyword-freq"], canon: ["plugin:canon-tracker"], buzz: ["plugin:buzz-words"], facts: ["plugin:fact-sheet"],
+  starter: ["plugin:keyword-freq", "plugin:canon-tracker", "plugin:buzz-words", "plugin:fact-sheet", "neon"] };
+STORE_GRANTS.captain = STORE_GRANTS.starter;
+const _shop = { info: null, infoP: null, ownedP: null, neonPick: null };
+function loadShopInfo() {
+  if (_shop.infoP) return _shop.infoP;
+  _shop.infoP = Promise.resolve(API.get("/api/shop/info")).then((d) => {
+    if (!d || d.error) return;
+    _shop.info = d;
+    if (window.QB) {
+      window.QB._shopInfo = d;
+      Object.entries(d.products || {}).forEach(([sku, p]) => { if (p && p.price) window.QB._prices[sku] = p.price; });
+    }
+  }).catch(() => {}).finally(() => { _shop.infoP = null; });
+  return _shop.infoP;
+}
+// what this account has bought → the paid plugins run (or stand down); the Store repaints
+function refreshOwned() {
+  if (_shop.ownedP) return _shop.ownedP;
+  _shop.ownedP = Promise.resolve(API.get("/api/shop/owned")).then((d) => {
+    if (!d || d.error || !Array.isArray(d.grants)) return;
+    window.QB?.setOwned?.(d, Account.user ? Account.user.email || Account.user.handle : null);
+    if (document.querySelector("#store-screen.active")) renderStore();
+  }).catch(() => {}).finally(() => { _shop.ownedP = null; });
+  return _shop.ownedP;
+}
+function openStore(sku) {
+  goTo("store");
+  if (!sku) return;
+  const card = document.querySelector(`#store-container [data-sku="${sku}"]`);
+  if (card) {
+    card.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    card.classList.remove("st-flash"); void card.offsetWidth; card.classList.add("st-flash");
+  }
+}
+function renderStore() {
+  const c = document.getElementById("store-container"); if (!c) return;
+  if (!_shop.info) loadShopInfo().then(() => { if (_shop.info && document.querySelector("#store-screen.active")) renderStore(); });
+  const info = _shop.info, o = (window.QB && window.QB._owned) || null, signedIn = !!Account.user;
+  const has = (g) => !!(signedIn && o && (o.grants || []).includes(g));
+  const price = (sku) => window.QB?.priceText ? window.QB.priceText(sku) : "";
+  const cents = (sku) => (window.QB?._prices || {})[sku] || 0;
+  const onSale = (sku) => !info || (info.on && !!(info.products && info.products[sku] && info.products[sku].on));
+  const ownsAll = (sku) => !!STORE_GRANTS[sku] && STORE_GRANTS[sku].every(has);
+  const buy = (sku, label, cls) => ownsAll(sku) && sku !== "captain"
+    ? `<span class="st-owned">${ic("check", 15)}${sku === "starter" ? "You have it all" : "Yours"}</span>`
+    : !onSale(sku) ? `<button type="button" class="btn ${cls || ""}" disabled>Coming soon</button>`
+    : `<button type="button" class="btn btn-primary ${cls || ""}" data-store-buy="${sku}">${label || "Buy"}</button>`;
+  const plugIco = (p, size) => `<span class="st-ico" style="--c:${p.color}"><svg width="${size || 20}" height="${size || 20}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p.icon}</svg></span>`;
+  const sum4 = STORE_PLUGINS.reduce((n, p) => n + cents(p.sku), 0), usd = (n) => "$" + (n / 100).toFixed(2);
+  const myName = (Account.user && (Account.user.displayName || Account.user.handle)) || state.username || "Your name";
+  const neonNow = has("neon") ? (o.neon || null) : null, pick = _shop.neonPick || neonNow || "cyan";
+  const incl = (p) => `<li>${plugIco(p, 16)}<span>${escapeHtml(p.name)}</span>${has("plugin:" + p.id) ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
+  const neonLi = `<li><span class="st-ico st-ico-neon">${ic("sparkle", 16)}</span><span>Neon name ${neonName(myName, pick)}</span>${has("neon") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
+  c.innerHTML = `<div class="st-page">
+    <header class="st-hero">
+      <h1 class="st-title">Study tools, a name that glows, and a room of your own</h1>
+      <p class="st-lede">Everything here is a 1 time charge, kept with your onlinequiz account — in the app and on onlinequiz.net.</p>
+      <p class="st-acct">${signedIn ? `${ic("user", 14)} Buying as <b>${escapeHtml(Account.user.handle ? "@" + Account.user.handle : Account.user.email || "")}</b>`
+        : `${ic("user", 14)} <button type="button" class="acct-link" data-acct="signin">Sign in</button> or <button type="button" class="acct-link" data-acct="signup">create an account</button> to buy`}</p>
+    </header>
+    <section class="st-sec" aria-labelledby="st-h-bundles">
+      <h2 class="eyebrow" id="st-h-bundles">Bundles</h2>
+      <div class="st-bundles">
+        <article class="st-bundle" data-sku="starter">
+          <div class="st-b-head"><b class="st-b-name">Quizbowler Starter Bundle</b>${sum4 > cents("starter") ? `<span class="st-save">Save ${usd(sum4 - cents("starter"))}</span>` : ""}</div>
+          <div class="st-price"><b>${price("starter")}</b>${sum4 > cents("starter") ? `<s>${usd(sum4)}</s>` : ""}<small>1 time charge</small></div>
+          <p class="st-b-sub">All four study plugins, and a neon name everyone sees.</p>
+          <ul class="st-incl">${STORE_PLUGINS.map(incl).join("")}${neonLi}</ul>
+          ${buy("starter", "Buy the Starter Bundle", "btn-lg st-buy")}
+        </article>
+        <article class="st-bundle st-best" data-sku="captain">
+          <span class="st-ribbon">Best value</span>
+          <div class="st-b-head"><b class="st-b-name">Quizbowler Team Captain Bundle</b>${sum4 + cents("room") > cents("captain") ? `<span class="st-save">Save ${usd(sum4 + cents("room") - cents("captain"))}</span>` : ""}</div>
+          <div class="st-price"><b>${price("captain")}</b>${sum4 + cents("room") > cents("captain") ? `<s>${usd(sum4 + cents("room"))}</s>` : ""}<small>1 time charge</small></div>
+          <p class="st-b-sub">Everything in the Starter Bundle, plus a multiplayer room for your team.</p>
+          <ul class="st-incl">
+            <li><span class="st-ico st-ico-all">${ic("check", 16)}</span><span>Everything in the Starter Bundle<small class="st-li-sub">4 study plugins · neon name</small></span>${ownsAll("starter") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>
+            <li><span class="st-ico st-ico-room">${ic("home", 16)}</span><span>Your own room, with the name you choose</span></li>
+            <li><span class="st-ico st-ico-room">${ic("lock", 16)}</span><span>A password, members and admins you pick</span></li>
+            <li><span class="st-ico st-ico-room">${ic("review", 16)}</span><span>Never resets: scores, settings and chat stay</span></li>
+          </ul>
+          ${ownsAll("starter") ? buy("room", "Buy just the room · " + price("room"), "btn-lg st-buy") : buy("captain", "Buy the Team Captain Bundle", "btn-lg st-buy")}
+        </article>
+      </div>
+    </section>
+    <section class="st-sec" aria-labelledby="st-h-plugins">
+      <h2 class="eyebrow" id="st-h-plugins">Study plugins</h2>
+      <div class="st-grid">${STORE_PLUGINS.map((p) => `
+        <article class="st-card" data-sku="${p.sku}">
+          <div class="st-card-head">${plugIco(p, 22)}<b>${escapeHtml(p.name)}</b></div>
+          <p>${escapeHtml(p.text)}</p>
+          <div class="st-card-foot"><span class="st-card-price">${price(p.sku)}</span>${buy(p.sku, "Buy", "btn-sm")}</div>
+        </article>`).join("")}
+      </div>
+    </section>
+    <section class="st-sec" aria-labelledby="st-h-room">
+      <h2 class="eyebrow" id="st-h-room">Multiplayer</h2>
+      <article class="st-room" data-sku="room">
+        <span class="st-ico st-ico-room st-ico-lg">${ic("home", 26)}</span>
+        <div class="st-room-main"><b>Your Own Room</b>
+          <p>A private room with the name you choose, at onlinequiz.net/room/<i>name</i>. It never resets: scores, settings and chat stay. Lock it to members, give it a password, pick admins.</p></div>
+        <div class="st-room-buy"><span class="st-card-price">${price("room")}</span>${buy("room", "Buy a room")}</div>
+      </article>
+    </section>
+    <section class="st-sec" id="st-neon" aria-labelledby="st-h-neon">
+      <h2 class="eyebrow" id="st-h-neon">Neon name</h2>
+      <div class="st-neon">
+        <div class="st-neon-stage" aria-hidden="true"><span class="st-neon-big">${neonName(myName, pick)}</span><small>in rooms and on leaderboards</small></div>
+        <div class="st-neon-side">
+          <div class="st-swatches" role="radiogroup" aria-label="Neon colour">${Object.entries(NEON_COLORS).map(([k, v]) =>
+            `<button type="button" class="st-sw${pick === k ? " on" : ""}" role="radio" aria-checked="${pick === k}" data-neon="${k}" style="--neon:${v}" title="${k[0].toUpperCase() + k.slice(1)}" aria-label="${k}"></button>`).join("")}</div>
+          ${has("neon") ? `<p class="st-neon-note">${neonNow ? "Your name glows in <b>" + escapeHtml(neonNow) + "</b>." : "Your name doesn’t glow right now."}${neonNow ? ' <button type="button" class="acct-link" data-neon-off>Turn it off</button>' : ""}</p>`
+            : `<p class="st-neon-note">Comes with the <button type="button" class="acct-link" data-store-go="starter">Starter</button> and <button type="button" class="acct-link" data-store-go="captain">Team Captain</button> bundles. Try the colours here.</p>`}
+        </div>
+      </div>
+    </section>
+    <p class="st-fine">Questions about a purchase? <a href="mailto:${escapeHtml((info && info.support) || "support@onlinequiz.net")}">${escapeHtml((info && info.support) || "support@onlinequiz.net")}</a></p>
+  </div>`;
+  c.querySelectorAll("[data-store-buy]").forEach((b) => b.addEventListener("click", () => storeBuy(b.dataset.storeBuy, b)));
+  c.querySelectorAll("[data-store-go]").forEach((b) => b.addEventListener("click", () => openStore(b.dataset.storeGo)));
+  c.querySelectorAll("[data-neon]").forEach((b) => b.addEventListener("click", () => storeNeon(b.dataset.neon, b)));
+  c.querySelector("[data-neon-off]")?.addEventListener("click", (e) => storeNeon("", e.currentTarget));
+}
+async function storeBuy(sku, btn) {
+  if (!Account.user) { openAccount("signin", { reason: "Sign in to buy — what you buy is kept with your account." }); return; }
+  // a room (and the Team Captain Bundle's) needs its name first: multiplayer's Buy window
+  if (sku === "room" || sku === "captain") { window.QB?.shopBuyRoom?.("", sku); return; }
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Opening payment…";
+  let r = null;
+  try { r = await API.post("/api/shop/checkout", { sku }); } catch (e) {}
+  if (!r || r.error || !r.url) { btn.disabled = false; btn.textContent = label; failBubble(btn, (r && r.error) || "Couldn't start the payment — try again."); return; }
+  // the website goes to the payment page (and comes back to /shop/done); the app opens it in
+  // the browser and waits for the payment to land
+  if (IS_WEB) { location.href = r.url; return; }
+  window.QB._host.openUrl(r.url);
+  btn.disabled = false; btn.textContent = label;
+  window.QB?.shopWatch?.(r.order);
+}
+// the neon colour: saved at once (back as it was if the server says no)
+async function storeNeon(k, btn) {
+  const o = window.QB && window.QB._owned;
+  if (!o || !Account.user || !(o.grants || []).includes("neon")) { _shop.neonPick = k || null; renderStore(); return; }
+  const prev = o.neon || null;
+  _shop.neonPick = null; o.neon = k || null; renderStore();
+  let r = null;
+  try { r = await API.post("/api/account/profile", { neon: k || "" }); } catch (e) {}
+  if (!r || r.error || !r.user) {
+    o.neon = prev; renderStore();
+    const again = document.querySelector(`#store-container [data-neon="${k || prev || "cyan"}"]`) || document.querySelector("#st-neon");
+    failBubble(again, (r && r.error) || "Couldn't save that. Try again.");
+    return;
+  }
+  Account.user = r.user;
+  window.QB.setOwned({ ...o, neon: r.user.neon || null }, Account.user.email || Account.user.handle);
+  window.QB?.mpNewTicket?.();   // the next room you join shows the new colour
+}
+
 async function renderLeaderboards(note) {
   const c = document.getElementById("lb-container"); if (!c) return;
   // the account check runs alongside (it's a round trip) once the account is known
@@ -11927,7 +12069,7 @@ async function paintLeaderboards(c, d, board, note) {
   const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}"><span class="lb-rank num">${r.rank}</span>${av(r.displayName || r.handle)}` +
-    `<span class="fr-name"><b>${escapeHtml(r.displayName || r.handle)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
+    `<span class="fr-name"><b>${neonName(r.displayName || r.handle, r.neon)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>points</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.questions || 0).toLocaleString()}</b><small>questions</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small>powers</small></span>` +
@@ -12632,3 +12774,13 @@ window.QBSelect = QBSelect;
 
 init();
 QBSelect.start();
+
+// A box that scrolls under a fixed header (the Database's results, a plugin's page…) fades out at
+// its top edge once scrolled, instead of cutting the text off at a hard line. A box whose own header
+// scrolls inside it is left alone.
+document.addEventListener("scroll", (e) => {
+  const el = e.target;
+  if (!el || el === document || !el.classList || el === document.documentElement) return;
+  const on = el.scrollTop > 2 && !el.querySelector(":scope > .page-head, :scope > .top-bar");
+  if (on !== el.classList.contains("qb-scrolled")) el.classList.toggle("qb-scrolled", on);
+}, true);
