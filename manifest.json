@@ -1,5 +1,5 @@
 {
-  "version": "14.55",
+  "version": "14.56",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,12 +55,12 @@
     }
   ],
   "main": true,
-  "notes": "Multiplayer: the room code box suggests a new room — press Join to open it",
+  "notes": "The shop's order page tells you where your room is when you aren't signed in",
   "files": {
     "renderer/index.html": "e7f97dc73df0ca246701ea8f365f3e0fafb0782de70e184aaf2f09ba8bc8168a",
     "renderer/style.css": "0bb07f9fa2f28bee75516fe890d02c79c7f1a2ad3b7291c0249c40b85f1fbef0",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "863b8dfe797a1de038373e8be49f501909a193accb03251a59c633613ebd73e1",
+    "renderer/extensions.js": "1821c724c1d96b8ae9246f347260e8fb3951db03ddb967b886e22c5b6eaf003a",
     "renderer/app.js": "d1dfc814466b8a0d06e5b9f0e45719dd85c00cb92c1fa9221f76f3f793699b19",
     "plugins/achievement-glyphs.zip": "2d0b38e205eaa7bd4dbe4c85cbac268c6b761d1d0645188740927e7139f41e0a",
     "plugins/buzz-words.zip": "db51f8d7e00c14166f5b93ec46deaafa917d48588cb1d31c7734f9ead950fd36",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "45721e77eb5bb943d69572bf2bb178cad2a03e845d83249c101be7d0ad9b48b1",
     "plugins/packet-builder.zip": "337afd6fdf2316ce2383d330e40ece37d6e533dcf7d9f4b883b1081ac092255e"
   },
-  "signature": "dZ6LRuZCQQDvgIWH8jL9R7TS92/YEUbf8Y+IZ4y/EXz40Vo4g/ZlOg7nhULPJKcXFtLkFv/XkUeT/MfH/UqMBw=="
+  "signature": "PXkOLBs/DCAP+MQTuELjS182TnxnVYS+8bGm9yyTQRTxS5YmsUIP8kVIpwyIGpswV8DDIGTmqVtaCcyyXTJIAQ=="
 }

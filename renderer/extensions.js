@@ -3681,8 +3681,22 @@ function __qbMain(ctx) {
         box.querySelector("#shop-close").onclick = el._close;
         if (st === "expired" || st === "failed" || st === "replaced") clearInterval(el._poll);
       };
+      // the payment page sent someone back here without this account signed in (bought in the app,
+      // or another browser): their room is safe — say how to see it
+      var notMine = function () {
+        clearInterval(el._poll);
+        box.innerHTML = shopHead("Payment received", "Your room is kept with the account you bought it with") +
+          '<ul class="shop-perks shop-next"><li>Bought in the app? Go back to it — your room is under <b>Your rooms</b></li><li>Or sign in here with that account to open it</li></ul>' +
+          '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button></div>';
+        box.querySelector("#shop-close").onclick = el._close;
+      };
       paint(null);
-      var tick = function () { Promise.resolve(hostApi().get("/api/shop/order?id=" + encodeURIComponent(id))).then(function (r) { if (r && r.order) paint(r.order); }).catch(function () {}); };
+      var tick = function () {
+        Promise.resolve(hostApi().get("/api/shop/order?id=" + encodeURIComponent(id))).then(function (r) {
+          if (r && r.order) paint(r.order);
+          else if (r && (r.authRequired || /sign in|no such order/i.test(r.error || ""))) notMine();
+        }).catch(function () {});
+      };
       clearInterval(el._poll); el._poll = setInterval(tick, 3000); tick();
     }
     window.QB.mpBuy = function (name) { window.QB.showPage("multiplayer::lobby"); setTimeout(function () { if (!lobby) openBuy(name || ""); }, 300); };
