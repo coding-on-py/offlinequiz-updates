@@ -1,5 +1,5 @@
 {
-  "version": "14.51",
+  "version": "14.52",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,22 +55,22 @@
     }
   ],
   "main": true,
-  "notes": "Hide notes / pronunciations switch the question live; plugin data syncs with your account; buy a room of your own (Multiplayer)",
+  "notes": "Plugin guides show pictures of each plugin in use; the shop can take payments through Lemon Squeezy",
   "files": {
     "renderer/index.html": "e7f97dc73df0ca246701ea8f365f3e0fafb0782de70e184aaf2f09ba8bc8168a",
-    "renderer/style.css": "76aea1b5bf62d2d94ff9437168112cd415b977f1926056bc6b092b8d5e928860",
+    "renderer/style.css": "0bb07f9fa2f28bee75516fe890d02c79c7f1a2ad3b7291c0249c40b85f1fbef0",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "9727e59dbd8c2f0e78b8239b30bdbc54a7f97130686912959be04efec6ac38b1",
+    "renderer/extensions.js": "79d8081878b03d1d84f065813d7fb2a0f8b05ef26ac23dd55ab87a227efb2c61",
     "renderer/app.js": "f32db38b3ceb078afd7673dd91389b1f1da5577a5725d792c0cfe6548529871c",
-    "plugins/achievement-glyphs.zip": "397fb5091849d4b4fbe616d64b994890c41cd95f65ba91dda9095dcaf46b0286",
-    "plugins/buzz-words.zip": "1815e78cee81ad1ac22942045ab42cf46dd709ef9b6681a822b034c3907f8b2a",
-    "plugins/canon-tracker.zip": "ccd627a6c4b4050fc224d838741467e216fb03dfb8a43ba51948711a5329b1d2",
-    "plugins/coach-mode.zip": "d0582c147564ad2824d549701203166e9c9e53dc0430b55ac2f1742b7d6db2c1",
-    "plugins/fact-sheet.zip": "dd20929e539217772017e440291440fd347a399bd01e81a802282252fdf7430c",
-    "plugins/flashcards.zip": "dea1027f2abfa9146d50aa4ae740ab6706e1b1a9ec349b09d64240bc3f00f2df",
-    "plugins/folders.zip": "8ebdcc846025a07b128118b1d0b153373ecb3ddd8076a4bfcffda6182aab7256",
-    "plugins/keyword-freq.zip": "8ff9f8aed8e8722dfdc42905ea4b4eff0ba8c6bb07acd1642ec8c78193ed4c8f",
-    "plugins/packet-builder.zip": "fe1995e1c61f0637afe3b105b26fc2f77dac38c6a0aeb8986e0364266578c927"
+    "plugins/achievement-glyphs.zip": "2d0b38e205eaa7bd4dbe4c85cbac268c6b761d1d0645188740927e7139f41e0a",
+    "plugins/buzz-words.zip": "1846d675b325bb4f5b9d2226ddea5e8359439405c29304b833bcf5ae96d347fa",
+    "plugins/canon-tracker.zip": "36e74faea4e880bb773ce6afb136bbb9f73cfcf1fba50eb5a93f94c19631b944",
+    "plugins/coach-mode.zip": "63fdc9b26e180a1944c1908370c9312d39ca62f7e85d890124c5b18230d15c2a",
+    "plugins/fact-sheet.zip": "8fad2612e34dc15bcdf7005a715e44bffa3edc1f1cb8b6749fc0d9ffd1e14bfd",
+    "plugins/flashcards.zip": "7c1ad4a3598a095fd938e6e9091a8970750c42abae4119ae0dfa4c0ac5e65b31",
+    "plugins/folders.zip": "4c4b39e92e6d9a75c22174e614c3c17ca06db231b44d0e904c6e8f6185e9bd3a",
+    "plugins/keyword-freq.zip": "d3e3bd39b5b4da2680b7063950bf2fa8bbbc7389c709932f122918bf6fef3af4",
+    "plugins/packet-builder.zip": "337afd6fdf2316ce2383d330e40ece37d6e533dcf7d9f4b883b1081ac092255e"
   },
-  "signature": "mPWUCUZdcw7mElOkiDAo/d7305OOlIb+gdEk+fp3Kid5LM6HvP2IFfGWFu83NV0qp/hRVklePRD8bvUiTf7sAA=="
+  "signature": "vkdweTiO6i60sdxPwsOBsrIXlXCHS3ULmhre5+X9sZoTePq/oKVITma2Kk6sMiemtU7b2R+8o/Cd41GU9FPMDQ=="
 }

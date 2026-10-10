@@ -1937,10 +1937,54 @@ QB.registerTheme({
       return "<p>" + lines.map(guideInline).join("<br>") + "</p>";
     }).join("");
   }
-  function guideSectionHtml(sec) {
+  // A guide's pictures: mock-ups of the plugin's screens drawn with the .pgm-* kit (ui.css), each
+  // in a window frame with a caption — plugin.json guide sections' "shots": [{ html, caption,
+  // screen }]. They follow the theme, cost a few KB, and work offline. Only the kit's tags and
+  // classes and a few layout styles get through (cleanMock); nothing in them can be clicked.
+  const MOCK_TAGS = new Set("div span b i u em strong small p ul ol li br kbd table thead tbody tr th td svg path rect circle line polyline polygon g".split(" "));
+  const MOCK_SVG_ATTR = /^(viewbox|d|x|y|x1|y1|x2|y2|width|height|rx|ry|cx|cy|r|points|fill|stroke|stroke-width|stroke-linecap|stroke-linejoin|stroke-dasharray|opacity)$/i;
+  const MOCK_STYLE = /^(width|height|min-width|max-width|min-height|flex|flex-basis|flex-direction|gap|grid-template-columns|grid-column|text-align|justify-content|align-items|align-self|font-size|font-weight|opacity|margin|margin-top|margin-left|margin-right|margin-bottom|padding|position|top|left|right|bottom|letter-spacing|line-height|white-space|--[a-z-]+)$/;
+  function cleanMock(html) {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = String(html || "").slice(0, 20000);
+    const walk = (node) => {
+      for (const el of [...node.children]) {
+        const tag = el.tagName.toLowerCase();
+        if (!MOCK_TAGS.has(tag)) { el.remove(); continue; }
+        for (const a of [...el.attributes]) {
+          const n = a.name.toLowerCase();
+          if (n === "class") {
+            const keep = a.value.split(/\s+/).filter((c) => /^pgm-[a-z0-9-]+$/.test(c));
+            if (keep.length) el.setAttribute("class", keep.join(" ")); else el.removeAttribute("class");
+          } else if (n === "style") {
+            const keep = a.value.split(";").map((d) => d.trim()).filter((d) => {
+              const i = d.indexOf(":"); if (i < 1) return false;
+              const p = d.slice(0, i).trim().toLowerCase(), v = d.slice(i + 1);
+              return MOCK_STYLE.test(p) && !/url\(|expression|javascript|@import|\\|attr\(|var\(--[^)]*url/i.test(v);
+            });
+            if (keep.length) el.setAttribute("style", keep.join("; ")); else el.removeAttribute("style");
+          } else if ((n === "colspan" || n === "rowspan") && (tag === "td" || tag === "th")) {
+            if (!/^\d{1,2}$/.test(a.value)) el.removeAttribute(a.name);
+          } else if (!(el.namespaceURI === "http://www.w3.org/2000/svg" && MOCK_SVG_ATTR.test(n) && !/url\(|javascript/i.test(a.value))) el.removeAttribute(a.name);
+        }
+        walk(el);
+      }
+    };
+    walk(tpl.content);
+    return tpl.innerHTML;
+  }
+  function shotHtml(s, name) {
+    if (!s || typeof s.html !== "string") return "";
+    return '<figure class="pg-shot"><div class="pg-frame" aria-hidden="true" inert>' +
+      '<div class="pg-fbar"><i></i><i></i><i></i><span>' + esc(s.screen || name || "") + "</span></div>" +
+      '<div class="pgm">' + cleanMock(s.html) + "</div></div>" +
+      (s.caption ? "<figcaption>" + guideInline(s.caption) + "</figcaption>" : "") + "</figure>";
+  }
+  function guideSectionHtml(sec, name) {
     if (!sec || typeof sec !== "object") return "";
     let inner = "";
     if (sec.body) inner += guideBody(sec.body);
+    if (Array.isArray(sec.shots) && sec.shots.length) inner += '<div class="pg-shots">' + sec.shots.map((s) => shotHtml(s, name)).join("") + "</div>";
     if (Array.isArray(sec.steps) && sec.steps.length) inner += "<ol>" + sec.steps.map((x) => "<li>" + guideInline(x) + "</li>").join("") + "</ol>";
     if (Array.isArray(sec.keys) && sec.keys.length) inner += '<div class="pg-keys">' + sec.keys.map((k) => '<div class="pg-key"><kbd>' + esc(k[0]) + "</kbd><span>" + guideInline(k[1] || "") + "</span></div>").join("") + "</div>";
     return inner ? '<section class="pg-sec">' + (sec.title ? "<h3>" + esc(sec.title) + "</h3>" : "") + inner + "</section>" : "";
@@ -1958,7 +2002,7 @@ QB.registerTheme({
     el.id = "plugin-guide";
     el.className = "qb-overlay confirm-overlay pg-overlay";
     el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", name + " guide");
-    const sections = g && Array.isArray(g.sections) ? g.sections.map(guideSectionHtml).join("") : "";
+    const sections = g && Array.isArray(g.sections) ? g.sections.map((s) => guideSectionHtml(s, name)).join("") : "";
     el.innerHTML = '<div class="pg-box" role="document">' +
       '<header class="pg-head">' + piconHtml(src.icon ? src : (have || item), color, " pg-ico") +
         '<div class="pg-title"><h2>' + esc(name) + "</h2><small>" + (version ? "v" + esc(version) : "") + (author ? " · " + esc(author) : "") + " · " + esc(groupOf(id)) + "</small></div>" +
@@ -3573,7 +3617,7 @@ function __qbMain(ctx) {
           '<div class="shop-check" id="shop-check" aria-live="polite">3–24 letters, numbers and dashes. People join with it, or at <span class="shop-url">onlinequiz.net/room/<b id="shop-prev">…</b></span></div>' +
           '<ul class="shop-perks">' + BUY_PERKS.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") + "</ul>" +
           '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-no">Cancel</button><button type="submit" class="btn btn-primary" id="shop-pay" disabled>Continue to payment</button></div>' +
-          '<div class="shop-fine">You pay on Stripe’s secure page — your card never reaches onlinequiz.</div>' +
+          '<div class="shop-fine">You pay on ' + (shopInfo && shopInfo.provider === "lemon" ? "Lemon Squeezy" : "Stripe") + '’s secure page — your card never reaches onlinequiz.</div>' +
         "</form>");
       var inp = el.querySelector("#shop-name"), chk = el.querySelector("#shop-check"), pay = el.querySelector("#shop-pay"), prev = el.querySelector("#shop-prev");
       var gen = 0, okName = "";
