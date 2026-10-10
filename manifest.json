@@ -1,5 +1,5 @@
 {
-  "version": "14.49",
+  "version": "14.50",
   "renderer": [
     "index.html",
     "style.css",
@@ -14,54 +14,14 @@
       "file": "achievement-glyphs.zip"
     },
     {
-      "id": "achievement-lab",
-      "name": "Achievement Lab",
-      "file": "achievement-lab.zip"
-    },
-    {
-      "id": "advanced-freq",
-      "name": "Advanced Frequency Lists",
-      "file": "advanced-frequency-lists.zip"
-    },
-    {
-      "id": "answer-rules",
-      "name": "Answer Rules",
-      "file": "answer-rules.zip"
-    },
-    {
-      "id": "answerline-lab",
-      "name": "Answerline Lab",
-      "file": "answerline-lab.zip"
-    },
-    {
-      "id": "buzz-trainer",
-      "name": "Beat Your Buzz",
-      "file": "buzz-trainer.zip"
-    },
-    {
       "id": "buzz-words",
-      "name": "Buzz Words",
+      "name": "Buzzwords",
       "file": "buzz-words.zip"
     },
     {
       "id": "canon-tracker",
       "name": "Canon Tracker",
       "file": "canon-tracker.zip"
-    },
-    {
-      "id": "class-admin",
-      "name": "Class Dashboard",
-      "file": "class-admin.zip"
-    },
-    {
-      "id": "class-sync",
-      "name": "Class Sync",
-      "file": "class-sync.zip"
-    },
-    {
-      "id": "clue-recall",
-      "name": "Clue Recall",
-      "file": "clue-recall.zip"
     },
     {
       "id": "coach-mode",
@@ -92,39 +52,25 @@
       "id": "packet-builder",
       "name": "Packet Builder",
       "file": "packet-builder.zip"
-    },
-    {
-      "id": "power-facts",
-      "name": "Power Facts",
-      "file": "power-facts.zip"
     }
   ],
   "main": true,
-  "notes": "No more question-mark icon before a question in practice and multiplayer",
+  "notes": "Answers are checked instantly; plugins trimmed to nine, each with a how-to guide; tournament mode for game-server rooms",
   "files": {
-    "renderer/index.html": "6994f603608bccd4924f3de434e9d6d35add89a81d050044089f0758a59dbf40",
-    "renderer/style.css": "c2c38fbe1703fad82b04a422c3979867e37f37d05d12241cffce8628aa2d7aff",
+    "renderer/index.html": "e7f97dc73df0ca246701ea8f365f3e0fafb0782de70e184aaf2f09ba8bc8168a",
+    "renderer/style.css": "14d6dac005afe43c7fbab7bc87ca46c1b51fe77df64265ae25bcf8cd211b8f2e",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "3cd5eaf9d65333d17254e7ba265fd927dc1135cf8af0f3b2939c22c1d87d9b8c",
-    "renderer/app.js": "759e7408d4e152eb9f47745cbac82eba2c9e25a1aaf51ea19c5681569445eb6a",
-    "plugins/achievement-glyphs.zip": "5e1bacad701039416ab070f5451850814e9f7aef73c062c19b3c9fe02a63dade",
-    "plugins/achievement-lab.zip": "ff5be074b399fbcda81410cff92f9571aa85d329ca67b323d5603ef6b7139901",
-    "plugins/advanced-frequency-lists.zip": "5c0279952bac109b38651ac6a8faa95008a8c27b6ea84f5f4f00631efe308d14",
-    "plugins/answer-rules.zip": "8e90747e6e97112cbff8afcf9fcb35062b00b5d3142370e7bfb2f14a0886259f",
-    "plugins/answerline-lab.zip": "c3838e571003ce07b2208c20fb91d0fa4c868659a616d70d5a33e2d7b30b2a1c",
-    "plugins/buzz-trainer.zip": "d250c71340829b884ca0d61889c7e9acecd794cea7718b389d42252f918f1b2e",
-    "plugins/buzz-words.zip": "6b85fd16067d3fb76279f3967c127534a6dbd59d0a292d02314b8503ebe364ac",
-    "plugins/canon-tracker.zip": "4c84564f6a63727692ba30a999d72896e94d98068a9868f193b418058c78b193",
-    "plugins/class-admin.zip": "e7197a2a2ccb3aa2a40f03443ce0e7ad089a3f1c05d73639fc63d86547032838",
-    "plugins/class-sync.zip": "3905933b6eba20ac3dade861f994b3e872930cf56fe68ec94a9f206bde552c29",
-    "plugins/clue-recall.zip": "47e76915b554f9e8fb6607b9ba8d1d0b30362c1056a10b687444f5652b562a9f",
-    "plugins/coach-mode.zip": "21523ec8e518a08b3818f0533117e7073eafe9f2477d3f6b1efb2c21a3b1917d",
-    "plugins/fact-sheet.zip": "ae737e8d38fc435fb58572a21dead66c3163b646f4110ff7980195cca44ad5c1",
-    "plugins/flashcards.zip": "2b1f78ebfe1b48a269692191a0b47ac983ffb47792b47af4c24a8ec3180d9ed9",
-    "plugins/folders.zip": "093a56caa9f9f18ecdfb1dac8ccec94fe557199daf18ded198a44fcb2fa0786a",
-    "plugins/keyword-freq.zip": "0b992856d1a83942bc5776b77e9821525ab47244d2500e4da9d0fd88967fad1f",
-    "plugins/packet-builder.zip": "21948f7583a84f8e8e4496c8c1a33aa3a000195ca812cea913cd51ba28c7498e",
-    "plugins/power-facts.zip": "313fe5e9e6935ae63f254312c1522a1c50ea42c4473cccf6d4515b45380efd35"
+    "renderer/extensions.js": "d5c5fb52de0d79f228dbe1801ab3ec9b5b542c05170fb2e40c60983cb5ae3fe9",
+    "renderer/app.js": "1f48f1702798c2ebe234540b23da18f8a950709b57ecb6331dfdee4a457a688a",
+    "plugins/achievement-glyphs.zip": "397fb5091849d4b4fbe616d64b994890c41cd95f65ba91dda9095dcaf46b0286",
+    "plugins/buzz-words.zip": "1815e78cee81ad1ac22942045ab42cf46dd709ef9b6681a822b034c3907f8b2a",
+    "plugins/canon-tracker.zip": "ccd627a6c4b4050fc224d838741467e216fb03dfb8a43ba51948711a5329b1d2",
+    "plugins/coach-mode.zip": "d0582c147564ad2824d549701203166e9c9e53dc0430b55ac2f1742b7d6db2c1",
+    "plugins/fact-sheet.zip": "dd20929e539217772017e440291440fd347a399bd01e81a802282252fdf7430c",
+    "plugins/flashcards.zip": "dea1027f2abfa9146d50aa4ae740ab6706e1b1a9ec349b09d64240bc3f00f2df",
+    "plugins/folders.zip": "8ebdcc846025a07b128118b1d0b153373ecb3ddd8076a4bfcffda6182aab7256",
+    "plugins/keyword-freq.zip": "8ff9f8aed8e8722dfdc42905ea4b4eff0ba8c6bb07acd1642ec8c78193ed4c8f",
+    "plugins/packet-builder.zip": "fe1995e1c61f0637afe3b105b26fc2f77dac38c6a0aeb8986e0364266578c927"
   },
-  "signature": "PySJ+ri36NVJ0TNmbbZ+4bTMD1AKLfyMRP/7mIJzK/zBBcd6GljynfD2VHZd2XUynAdsxRw5eW5XHEI0mY7wCA=="
+  "signature": "clK39FbLvOKH9he8N0rVWoXj/lvTAKlXgnfLAzEntuLnKdvRz0MEndnwSp3ctxaAvPfU7EPaF65Ois4EivLLCw=="
 }

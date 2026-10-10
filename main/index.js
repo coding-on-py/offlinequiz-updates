@@ -80,11 +80,25 @@ export class App {
   }
 
   getTossup(id) {
-    return this.questionDb.getTossup(id);
+    return this._withHidden(this.questionDb.getTossup(id));
   }
 
   getBonus(id) {
-    return this.questionDb.getBonus(id);
+    return this._withHidden(this.questionDb.getBonus(id));
+  }
+
+  // The practice page judges answers itself (src/renderer/judge.js, built from answerChecker.js)
+  // and needs a question's hidden answers for that — so every question handed out carries them:
+  // `_hidden` (null when it has none). Judging here still reads them from the database.
+  _withHidden(q) {
+    if (q && typeof q === "object" && q.id != null && !Object.prototype.hasOwnProperty.call(q, "_hidden")) {
+      try { q._hidden = this.questionDb.getHiddenAnswers ? this.questionDb.getHiddenAnswers(q.id) : null; } catch { q._hidden = null; }
+    }
+    return q;
+  }
+  _rowsWithHidden(r) {
+    if (r && Array.isArray(r.rows)) r.rows.forEach((q) => this._withHidden(q));
+    return r;
   }
 
   // A saved (type, id) whose question may have changed type: 28 former tossup
@@ -110,12 +124,12 @@ export class App {
 
   queryTossups(filters) {
     const f = this._scopeToStarred(filters, "tossup");
-    return f ? this.questionDb.queryTossups(f) : { rows: [], total: 0 };
+    return f ? this._rowsWithHidden(this.questionDb.queryTossups(f)) : { rows: [], total: 0 };
   }
 
   queryBonuses(filters) {
     const f = this._scopeToStarred(filters, "bonus");
-    return f ? this.questionDb.queryBonuses(f) : { rows: [], total: 0 };
+    return f ? this._rowsWithHidden(this.questionDb.queryBonuses(f)) : { rows: [], total: 0 };
   }
 
   // Database browse/search honour starredOnly WITHOUT dropping the other
@@ -131,13 +145,13 @@ export class App {
   getRandomTossup(filters) {
     const resolved = this._resolveStarredFilter(filters, "tossup");
     if (resolved === null) return undefined;
-    return this.questionDb.getRandomTossup(resolved);
+    return this._withHidden(this.questionDb.getRandomTossup(resolved));
   }
 
   getRandomBonus(filters) {
     const resolved = this._resolveStarredFilter(filters, "bonus");
     if (resolved === null) return undefined;
-    return this.questionDb.getRandomBonus(resolved);
+    return this._withHidden(this.questionDb.getRandomBonus(resolved));
   }
 
   
@@ -207,7 +221,9 @@ export class App {
   }
 
   getPacketContent(setName, packetNumber) {
-    return this.questionDb.getPacketContent(setName, packetNumber);
+    const pc = this.questionDb.getPacketContent(setName, packetNumber);
+    if (pc) { (pc.tossups || []).forEach((q) => this._withHidden(q)); (pc.bonuses || []).forEach((q) => this._withHidden(q)); }
+    return pc;
   }
 
   getCategoryTree(type) {

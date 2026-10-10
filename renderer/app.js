@@ -465,7 +465,7 @@ function updateKeyLabels() {
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
   if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
-  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-streaks-home"]]
+  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-streaks-home"], ["#btn-admin-home"]]
     .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
@@ -836,6 +836,7 @@ function goTo(target) {
     case "friends": showScreen("friends"); renderFriends(); break;
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
     case "streaks": showScreen("streaks"); renderStreaks(); break;
+    case "admin": showScreen("admin"); renderAdmin(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -853,7 +854,7 @@ document.addEventListener("click", (e) => {
 // move between pages, and the tab title names the page. server.js answers these
 // paths with the app's page (WEB_PAGE_PATHS). The desktop app (file://) has none.
 const WEB_PATHS = { tossups: "practice-tossups", bonuses: "practice-bonuses", multiplayer: "multiplayer", search: "db-search", sets: "db-sets",
-  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks" };
+  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin" };
 let _webRouting = false;
 // the address of what is on screen now (null: leave the address alone)
 function webPathNow() {
@@ -869,6 +870,7 @@ function webPathNow() {
     case "friends-screen": return "/friends";
     case "leaderboards-screen": return "/leaderboards";
     case "streaks-screen": return "/streaks";
+    case "admin-screen": return "/admin";
     case "download-screen": return "/download";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
   }
@@ -878,7 +880,7 @@ function webPathNow() {
   return "/plugins/" + encodeURIComponent(pg.pluginId) + "/" + encodeURIComponent(pg.id);
 }
 // the home page's title — what search results show as the link (server.js sends the same)
-const WEB_HOME_TITLE = "onlinequiz — free quizbowl practice";
+const WEB_HOME_TITLE = "onlinequiz - Free Quizbowl Practice for Everyone";
 function webTitleSync() {
   const crumb = document.getElementById("tb-crumb"), t = crumb && !crumb.hidden ? (document.getElementById("tb-crumb-text")?.textContent || "").trim() : "";
   document.title = t ? t + " · onlinequiz" : WEB_HOME_TITLE;
@@ -1543,6 +1545,7 @@ function buildScreen(name) {
   else if (name === "extensions") window.QB?.renderScreen();
   else if (name === "friends") renderFriends();
   else if (name === "leaderboards") renderLeaderboards();
+  else if (name === "admin") renderAdmin();
 }
 function reviveScreen(name) {
   if (name === "database") {
@@ -1590,6 +1593,7 @@ function showScreen(name, opts) {
   // A settings modal left open would float its click-eating backdrop over the
   // next screen (the "Back did nothing / buttons stopped working" bug).
   try { closeSettingsOverlays(); } catch (e) {}
+  document.getElementById("plugin-guide")?.remove();   // a plugin's guide belongs to the Plugins page
   try { closeSetupDrawer(); } catch (e) {}
   try { flushPendingFilterSave(); } catch (e) {}   // while state.mode still names the outgoing tab
   const back = opts ? !!opts.back : _navBack;
@@ -5062,7 +5066,9 @@ function followReading(el, key, block) {
   const over = last.bottom - pending - limit;
   let d = 0;
   if (block) { if (over > 0) d = Math.min(over + 16, first.top - pending - box.top - 12); }
-  else if (over > 0 && over < lh * 4) d = over + lh * 3;
+  // reading: start one line early, so the line being read stays clear of the bar while the
+  // smooth scroll is still on its way (fast reading moves on during it)
+  else if (over + lh > 0 && over < lh * 4) d = over + lh * 4;
   if (d <= 0) return;
   // the question area grows by as much, so a bar pinned to the bottom (sticky, its last
   // item) stays pinned instead of docking mid-screen with the stats showing under it
@@ -5179,6 +5185,12 @@ async function judgeBonusPart(idx, answer) {
   const c = (state._bonusEval || [])[idx];
   if (c && c.key === key) return c.r;
   let r = null;
+  if (canJudgeHere(q)) {
+    r = window.QBJudge.evaluateBonusPart(answer, q, idx, state.settings.strictness, previous);
+    if (!r) r = window.QBAnswerChecker.evaluateAnswer(answer, state.bonusAnswersRaw?.[idx] || state.bonusAnswers?.[idx] || "", state.bonusAnswers?.[idx] || "", state.settings.strictness);
+    if (state.currentQuestion === q) (state._bonusEval ||= [])[idx] = { key, r };
+    return r;
+  }
   try {
     r = await API.post("/api/evaluate-bonus-part", { questionId: q.id, part: idx, answer, strictness: state.settings.strictness, previous });
     if (!r || r.error) r = null;
@@ -5257,6 +5269,19 @@ async function revealBonusPartAnswer(idx) {
   show(verdict, mark);
 }
 
+// the server scored a bonus differently (a different build): its score is the recorded one
+function reconcileBonus(q, was, srv) {
+  console.warn("[judge] the server scored bonus", q.id, "differently:", was.totalPoints, srv.totalPoints);
+  state.totalPoints += (srv.totalPoints || 0) - (was.totalPoints || 0);
+  state.correct += ((srv.totalPoints || 0) > 0 ? 1 : 0) - ((was.totalPoints || 0) > 0 ? 1 : 0);
+  if (state.currentQuestion === q && state._bonusResult === was && !(state._bonusOverrides || []).some((x) => x != null)) {
+    state._bonusResult = srv;
+    state._bonusJudged = (srv.parts || []).map((pt) => !!pt.correct);
+    displayBonusResult(srv, Array.from({ length: state.bonusPartCount || 3 }, (_, i) => state.bonusUserAnswers[i] || ""));
+  }
+  updateSessionStats(null);
+}
+
 async function submitBonusAnswers() {
   if (!state.currentQuestion || state.mode !== "bonuses") return;
   stopEventTimer();
@@ -5266,13 +5291,14 @@ async function submitBonusAnswers() {
   const answers = Array.from({ length: n }, (_, i) => state.bonusUserAnswers[i] || "");
 
   try {
-    const result = await API.post("/api/check-bonus", {
-      questionId: state.currentQuestion.id,
-      answers,
-      sessionId: state.sessionId,
-      strictness: state.settings.strictness, // same strictness as the per-part ✓/✗ verdicts
-      previous: Array.from({ length: n }, (_, i) => (state._bonusPromptFrom || [])[i] || null),
-    });
+    const q = state.currentQuestion, previous = Array.from({ length: n }, (_, i) => (state._bonusPromptFrom || [])[i] || null);
+    const body = { questionId: q.id, answers, sessionId: state.sessionId, strictness: state.settings.strictness, previous };   // same strictness as the per-part ✓/✗ verdicts
+    let result;
+    if (canJudgeHere(q)) {
+      const r = window.QBJudge.scoreBonusResult(answers, q, state.settings.strictness, null, previous);
+      result = { totalPoints: r.totalPoints, partsCorrect: r.partsCorrect, parts: r.parts, answers: (() => { try { return JSON.parse(q.answers_sanitized || "[]"); } catch { return []; } })() };
+      recordInBackground("/api/check-bonus", body).then((srv) => { if (srv && !srv.error && srv.totalPoints !== result.totalPoints) reconcileBonus(q, result, srv); });
+    } else result = await API.post("/api/check-bonus", body);
     state._bonusResult = result;
     state._bonusJudged = (result.parts || []).map((pt) => !!pt.correct);
     state._bonusOverrides = new Array(n).fill(null);
@@ -5656,6 +5682,61 @@ function clearPromptBanner() {
   document.getElementById("buzz-prompt-banner")?.remove();
 }
 
+// ── Client-side judging ──
+// The practice page judges an answer the moment it's given, with src/renderer/judge.js — the
+// server's own answerChecker.js + scoring.js (scripts/build-judge.mjs) — on the question it
+// already has (questions come with their answers and hidden answers, `_hidden`). The server
+// records the answer in the background, judging it again with the same code; should the two
+// ever disagree, the server's verdict (what's recorded) replaces the shown one. Questions
+// without `_hidden` (an older backend) are judged by the server as before.
+const canJudgeHere = (q) => !!(window.QBJudge && window.QBJudge.ready(q));
+// A recording in the background: retried while the connection is down (the website), with one
+// id the server answers again from memory instead of recording twice. A later override of
+// the same answer waits for it (state._recordP).
+function recordInBackground(path, body) {
+  const rid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const p = (async () => {
+    for (let i = 0; i < 5; i++) {
+      try { return await API.post(path, { ...body, rid }); }
+      catch (e) { if (i < 4) await new Promise((res) => setTimeout(res, [1500, 4000, 10000, 30000][i])); }
+    }
+    return null;
+  })();
+  const prev = state._recordP;
+  state._recordP = Promise.all([prev, p]).catch(() => {});
+  return p;
+}
+const afterRecording = () => state._recordP || Promise.resolve();
+function judgeTossupHere(answer) {
+  const q = state.currentQuestion, fullyRead = !!state.questionFullyRead, origPos = displayPosToOriginal(state.buzzPosition);
+  const previous = state.promptActive ? state._promptFrom : null, strictness = state.settings.strictness;
+  if (!state.promptActive) {
+    const ev = window.QBJudge.evaluateTossup(answer, q, strictness, fullyRead ? null : origPos, null);
+    if (ev && ev.status === "prompt") return { prompted: true, prompt: ev.prompt, antiprompt: !!ev.antiprompt, answer: q.answer_sanitized };
+  }
+  const r = window.QBJudge.scoreTossupResult(answer, q, origPos, fullyRead, strictness, previous);
+  const result = { correct: !!r.isCorrect, points: r.points || 0, isPower: !!r.isPower, celerity: r.celerity, answer: q.answer_sanitized, unsure: !r.isCorrect && !!r.unsure };
+  recordInBackground("/api/check-tossup", { questionId: q.id, answer, buzzPosition: origPos, sessionId: state.sessionId, fullyRead, strictness, allowPrompt: false, previous })
+    .then((srv) => { if (srv && !srv.error && !srv.prompted && (!!srv.correct !== result.correct || (srv.points || 0) !== result.points)) reconcileTossup(q, result, srv); });
+  return result;
+}
+// The server judged it differently (it can only with a different build): its verdict is the
+// one recorded, so the session's numbers and, while it's still showing, the result follow it.
+function reconcileTossup(q, was, srv) {
+  console.warn("[judge] the server judged", q.id, "differently:", was, srv);
+  const now = { correct: !!srv.correct, points: srv.points || 0, isPower: !!srv.isPower };
+  state.totalPoints += now.points - was.points;
+  state.powers += (now.isPower ? 1 : 0) - (was.isPower ? 1 : 0);
+  state.negs += (now.points < 0 ? 1 : 0) - (was.points < 0 ? 1 : 0);
+  state.correct += (now.correct ? 1 : 0) - (was.correct ? 1 : 0);
+  const h = [...state.sessionHistory].reverse().find((e) => e.id === q.id && e.type === "tossup");
+  if (h) Object.assign(h, now);
+  const lr = state.lastResult;
+  if (lr && lr.questionId === q.id && !state.resultOverridden) { Object.assign(lr, now, { unsure: !now.correct && !!srv.unsure }); if (state.currentQuestion === q && state.resultAreaVisible) renderTossupResult(); }
+  renderHistoryPanel();
+  updateSessionStats(null);
+}
+
 async function submitTossupAnswer(answer) {
   if (!state.currentQuestion || state.mode !== "tossups") return;
   state.resultAreaVisible = true;
@@ -5664,6 +5745,7 @@ async function submitTossupAnswer(answer) {
   try {
     const result = window.QB?.hasJudgingRules?.()
       ? await judgeWithPluginRules(answer)
+      : canJudgeHere(state.currentQuestion) ? judgeTossupHere(answer)
       : await API.post("/api/check-tossup", {
         questionId: state.currentQuestion.id,
         answer,
@@ -5726,7 +5808,9 @@ async function judgeWithPluginRules(answer) {
   const origPos = displayPosToOriginal(state.buzzPosition);
   let verdict;
   try {
-    const ev = await API.post("/api/evaluate-tossup", {
+    const ev = canJudgeHere(q)
+      ? window.QBJudge.evaluateTossup(answer, q, state.settings.strictness, fullyRead ? null : origPos, state.promptActive ? state._promptFrom : null)
+      : await API.post("/api/evaluate-tossup", {
       questionId: q.id,
       answer,
       strictness: state.settings.strictness,
@@ -6729,7 +6813,7 @@ function toggleResultOverride(markCorrect) {
   if (state.incorrectCelerityHistory.length > 10) state.incorrectCelerityHistory.shift();
 
   if (r.category && state.mode === "tossups") {
-    API.post("/api/check-tossup", {
+    afterRecording().then(() => API.post("/api/check-tossup", {
       questionId: r.questionId,
       answer: r.userAnswer,
       buzzPosition: r.origBuzzPosition ?? (r.buzzPosition || 0),
@@ -6738,7 +6822,7 @@ function toggleResultOverride(markCorrect) {
       correct: r.correct,
       isPower: r.isPower,
       points: r.points,
-    }).catch(() => {});
+    })).catch(() => {});
   }
 
   renderTossupResult();
@@ -6764,6 +6848,7 @@ async function applyBonusOverride(idx, force) {
   const prevPts = state._bonusResult ? state._bonusResult.totalPoints : 0;
   let result;
   try {
+    await afterRecording();
     result = await API.post("/api/check-bonus", {
       questionId: state.currentQuestion.id,
       answers: Array.from({ length: state.bonusPartCount || 3 }, (_, i) => state.bonusUserAnswers[i] || ""),
@@ -7345,6 +7430,7 @@ $("#btn-download-home")?.addEventListener("click", goBack);
 $("#btn-friends-home")?.addEventListener("click", goBack);
 $("#btn-leaderboards-home")?.addEventListener("click", goBack);
 $("#btn-streaks-home")?.addEventListener("click", goBack);
+$("#btn-admin-home")?.addEventListener("click", goBack);
 
 function renderResultPanels(resultCtx) {
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
@@ -9577,7 +9663,7 @@ function renderDbProviderTabs() {
   if (!wrap || !menu) return;
   const provs = window.QB?.getStarredProviders?.() || [];
   wrap.hidden = !provs.length;
-  menu.innerHTML = provs.map((p) => `<button type="button" class="pop-item" role="menuitem" data-prov="${escapeHtml(p.id)}">${ic("puzzle", 15)}<span>${escapeHtml(String(p.title || p.id).replace(/^STARRED\s+/i, ""))}</span></button>`).join("");
+  menu.innerHTML = provs.map((p) => `<button type="button" class="pop-item" role="menuitem" data-prov="${escapeHtml(p.id)}">${window.QB?.pluginIconHtml?.(p.pluginId, 15) || ""}<span>${escapeHtml(String(p.title || p.id).replace(/^STARRED\s+/i, ""))}</span></button>`).join("");
   syncDbTabActive();
 }
 
@@ -10838,6 +10924,8 @@ function init() {
       playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),
       keyDisplay: (action) => keyDisplay(action),
       confirm: (message, onYes, opts) => confirmDialog(message, onYes, opts),
+      animateRemove: (el) => animateRemove(el),
+      updateTopbar: () => updateTopbar(),
       // accounts (website gates; multiplayer names)
       needsAccount: () => needsAccount(),
       tip: (container, id, text, ref) => tipInto(container, id, text, ref),
@@ -10976,6 +11064,7 @@ function renderAccountMenu() {
     b.onclick = () => openAccount(Account.user ? "account" : "signin");
   }
   const fr = document.getElementById("tbm-friends"); if (fr) fr.hidden = false;
+  const adm = document.getElementById("tbm-admin"); if (adm) adm.hidden = !(IS_WEB && Account.user && Account.user.admin);
   const lbBtn = document.getElementById("tb-leaderboards"); if (lbBtn) lbBtn.hidden = false;
   const head = document.querySelector("#tb-profile-menu .tbm-who");
   if (head) {
@@ -11785,6 +11874,44 @@ async function paintLeaderboards(c, d, board, note) {
   c.querySelector("[data-lb-leave]")?.addEventListener("click", () => confirmDialog("Leave " + board.board.name + "?", async () => { const r = await act("/api/leaderboards/leave", { id: _lb.tab }); if (r) { _lb.tab = "global"; renderLeaderboards(); } }, { yes: "Leave" }));
   c.querySelector("[data-lb-invite]")?.addEventListener("click", () => { const h = document.getElementById("lb-invite-who")?.value; if (h) act("/api/leaderboards/invite", { id: _lb.tab, handle: h }, "Invited @" + h + " — they'll see it under Leaderboards."); });
   c.querySelectorAll("[data-lb-remove]").forEach((b) => b.onclick = () => confirmDialog("Remove @" + b.dataset.lbRemove + " from this leaderboard?", () => act("/api/leaderboards/remove", { id: _lb.tab, handle: b.dataset.lbRemove }), { yes: "Remove" }));
+}
+
+// ── Site stats (website; admins only — QB_ADMIN_HANDLES on the server) ──
+// Per day for the last 30: visitors, page views, signed-in accounts, sign-ups, answers on
+// the website, and the desktop app's syncs. The server counts (web/site-stats.mjs).
+const ADM_METRICS = [["visitors", "Visitors"], ["pageViews", "Page views"], ["accounts", "Signed in"], ["signups", "Sign-ups"], ["answers", "Answers on the site"], ["appUsers", "App users"], ["appAnswers", "Answers in the app"]];
+const _adm = { metric: "visitors", data: null };
+async function renderAdmin() {
+  const c = document.getElementById("admin-container"); if (!c) return;
+  if (!c.querySelector(".adm-page")) c.innerHTML = loadingBarHtml("Loading…");
+  let d;
+  try { d = await API.get("/api/admin/stats"); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
+  if (!document.querySelector("#admin-screen.active")) return;
+  if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml(d && d.error === "Not found" ? "Nothing here." : (d && d.error) || "Couldn't load the stats.")}</div>`; return; }
+  _adm.data = d;
+  paintAdmin(c);
+}
+function paintAdmin(c) {
+  const d = _adm.data; if (!d) return;
+  const days = d.days || [], today = days[days.length - 1] || {};
+  const num = (v) => Number(v || 0).toLocaleString();
+  const sum = (k, n) => days.slice(-n).reduce((s2, r) => s2 + (r[k] || 0), 0);
+  const label = (ADM_METRICS.find(([k]) => k === _adm.metric) || [])[1] || "";
+  const cards = ADM_METRICS.map(([k, l]) => `<button type="button" class="fr-card adm-card${_adm.metric === k ? " on" : ""}" data-adm="${k}" aria-pressed="${_adm.metric === k}"><small>${l}</small><b class="num">${num(today[k])}</b><span>${num(sum(k, 7))} · 7 days</span><span>${num(sum(k, 30))} · 30 days</span></button>`).join("");
+  const max = Math.max(1, ...days.map((r) => r[_adm.metric] || 0));
+  const bars = days.map((r) => `<div class="adm-bar${r.day === d.today ? " today" : ""}" title="${escapeHtml(r.day)}: ${num(r[_adm.metric])}"><i style="height:${Math.max(r[_adm.metric] ? 3 : 0, Math.round(((r[_adm.metric] || 0) / max) * 100))}%"></i><span>${escapeHtml(r.day.slice(8))}</span></div>`).join("");
+  const t = d.totals || {};
+  const totals = [["Accounts", t.accounts], ["With a username", t.withUsername], ["Google sign-ins", t.google], ["Friendships", t.friendships], ["Leaderboards made", t.leaderboards], ["Signed-out visitors kept", t.visitorFiles], ["Rooms open now", d.live ? d.live.rooms : null], ["Players in rooms now", d.live ? d.live.players : null]]
+    .map(([l, v]) => `<div class="adm-tot"><b class="num">${v == null ? "—" : num(v)}</b><small>${l}</small></div>`).join("");
+  const recent = days.slice(-14).reverse();
+  const table = `<table class="adm-table"><thead><tr><th>Day</th>${ADM_METRICS.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead><tbody>${recent.map((r) => `<tr><td>${escapeHtml(r.day)}</td>${ADM_METRICS.map(([k]) => `<td class="num">${num(r[k])}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  c.innerHTML = `<div class="adm-page">
+    <div class="adm-cards">${cards}</div>
+    <section class="fr-card adm-chart"><div class="adm-chart-head"><h2>${escapeHtml(label)}</h2><small>last 30 days</small></div><div class="adm-bars">${bars}</div></section>
+    <section class="fr-card adm-totals">${totals}</section>
+    <section class="fr-card adm-recent"><div class="adm-scroll">${table}</div></section>
+  </div>`;
+  c.querySelectorAll("[data-adm]").forEach((b) => b.onclick = () => { _adm.metric = b.dataset.adm; paintAdmin(c); });
 }
 
 // ── Friends ──
