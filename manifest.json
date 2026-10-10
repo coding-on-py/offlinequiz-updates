@@ -1,5 +1,5 @@
 {
-  "version": "14.52",
+  "version": "14.53",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,15 +55,15 @@
     }
   ],
   "main": true,
-  "notes": "Plugin guides show pictures of each plugin in use; the shop can take payments through Lemon Squeezy",
+  "notes": "Buzzwords is much faster: the scan runs where the questions are, and each set of questions is read only once",
   "files": {
     "renderer/index.html": "e7f97dc73df0ca246701ea8f365f3e0fafb0782de70e184aaf2f09ba8bc8168a",
     "renderer/style.css": "0bb07f9fa2f28bee75516fe890d02c79c7f1a2ad3b7291c0249c40b85f1fbef0",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "79d8081878b03d1d84f065813d7fb2a0f8b05ef26ac23dd55ab87a227efb2c61",
-    "renderer/app.js": "f32db38b3ceb078afd7673dd91389b1f1da5577a5725d792c0cfe6548529871c",
+    "renderer/app.js": "0e9d2911a8d9d61063b54e848ab906feb4c2e1a20fb8904a4a66b09670bc94c4",
     "plugins/achievement-glyphs.zip": "2d0b38e205eaa7bd4dbe4c85cbac268c6b761d1d0645188740927e7139f41e0a",
-    "plugins/buzz-words.zip": "1846d675b325bb4f5b9d2226ddea5e8359439405c29304b833bcf5ae96d347fa",
+    "plugins/buzz-words.zip": "1b9ed776ceebaf01d32f2551fc8d788066444a567ad2f74504bafb0a7f02f711",
     "plugins/canon-tracker.zip": "36e74faea4e880bb773ce6afb136bbb9f73cfcf1fba50eb5a93f94c19631b944",
     "plugins/coach-mode.zip": "63fdc9b26e180a1944c1908370c9312d39ca62f7e85d890124c5b18230d15c2a",
     "plugins/fact-sheet.zip": "8fad2612e34dc15bcdf7005a715e44bffa3edc1f1cb8b6749fc0d9ffd1e14bfd",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "d3e3bd39b5b4da2680b7063950bf2fa8bbbc7389c709932f122918bf6fef3af4",
     "plugins/packet-builder.zip": "337afd6fdf2316ce2383d330e40ece37d6e533dcf7d9f4b883b1081ac092255e"
   },
-  "signature": "vkdweTiO6i60sdxPwsOBsrIXlXCHS3ULmhre5+X9sZoTePq/oKVITma2Kk6sMiemtU7b2R+8o/Cd41GU9FPMDQ=="
+  "signature": "hVnhf5ZNokMAKvL37wpglhScV/78pjrd+DXwTCHk0VU/+Fs0BOEUUMYTCp5smkaHROo/k76bSZ+w8sSPe9wHCQ=="
 }

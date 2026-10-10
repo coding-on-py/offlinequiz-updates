@@ -8,7 +8,8 @@ import { computeStats, computeSessionBreakdown } from "./stats.js";
 import * as updater from "./updater.js";
 import { randomBytes, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, renameSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, renameSync, statSync, existsSync } from "node:fs";
+import vm from "node:vm";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -45,6 +46,133 @@ function apFold(s) {
     .replace(/ß/g, "ss").replace(/æ/g, "ae").replace(/œ/g, "oe").replace(/ø/g, "o").replace(/ð/g, "d").replace(/þ/g, "th").replace(/ł/g, "l")
     .replace(/[^a-z0-9]+/g, " ").trim();
 }
+
+
+// ── Buzzwords, done where the questions are ────────────────────────────────
+// The Buzzwords plugin used to fetch every question in its scope (≈7 MB a 2,500-question
+// page) and count in the page. buzzwordsApi does the same count here and sends back only
+// the candidates (the plugin keeps its instant knobs). It must read questions the way the
+// plugin did: the app's own reading text (questionPlainText, notes and pronunciation guides
+// out) is lifted from the renderer's app.js — like mpserver/qtext.mjs — then the plugin kit's
+// note / guide stripping, tokens and n-grams, ported as they are.
+const BW_VERSION = 1;
+const BW_APP_FNS = ["_ENT", "decodeEntities", "htmlStyleRuns", "NOTE_RUN_LABEL", "noteRunsFromHtml", "foldLikeSanitized", "cutNotesUsingHtml",
+  "NOTE_AUDIENCE", "noteMentionsPlayers", "stripModeratorNotes", "applyNoteFilter", "PRON_ACRONYMS", "PRON_KEEP_WORDS", "stripPronunciations", "questionPlainText"];
+const _bwLifted = new Map();
+function bwAppText(appJs) {
+  if (_bwLifted.has(appJs)) return _bwLifted.get(appJs);
+  const src = readFileSync(appJs, "utf8"), lines = src.split("\n");
+  const pick = (name) => {
+    const s = lines.findIndex((l) => l.startsWith(`function ${name}(`) || l.startsWith(`const ${name} =`));
+    if (s < 0) throw new Error("buzzwords: " + name + " not in app.js");
+    const fn = lines[s].startsWith("function ");
+    for (let i = s; i < lines.length; i++) if (fn ? lines[i] === "}" : /;\s*(\/\/.*)?$/.test(lines[i])) return lines.slice(s, i + 1).join("\n");
+    throw new Error("buzzwords: " + name + " has no end");
+  };
+  // pronunciation guides go once, in bwText (the plugin read the app's text with its default
+  // settings — notes cut, guides kept — then stripped the guides itself)
+  const box = { state: { settings: { hideNotes: true, hidePronunciations: false } } };
+  vm.createContext(box);
+  vm.runInContext(BW_APP_FNS.map(pick).join("\n\n") + "\n;globalThis.__bw = { questionPlainText, stripPronunciations };", box, { filename: "app.js (buzzwords)" });
+  _bwLifted.set(appJs, box.__bw);
+  return box.__bw;
+}
+// the plugin kit (plugins/buzz-words.zip impl.js __qbKit), as it is
+const BW_NOTE_LBL = /(?:note to (?:the )?(?:moderators?|readers?)\b|reader(?:'s)? note\b|moderator(?:'s)? note\b)/i;
+const BW_NOTE_LBL_G = /(?:note to (?:the )?(?:moderators?|readers?)\b|reader(?:'s)? note\b|moderator(?:'s)? note\b)\s*(?:#\s*\d+\s*)?(?:,[^:]{0,40})?:\s*/gi;
+const BW_NOTE_RUN = /^\s*[\[(<*]*\s*(?:note to (?:the )?(?:moderators?|readers?)\b|reader(?:'s)? note\b|moderator(?:'s)? note\b)/i;
+const BW_ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+function bwDecode(s) {
+  return String(s || "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+    if (e[0] === "#") { try { return String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)); } catch (x) { return m; } }
+    const v = BW_ENT[e.toLowerCase()]; return v == null ? m : v;
+  });
+}
+function bwNoteRuns(html) {
+  if (!html || html.indexOf("<") < 0) return [];
+  const runs = []; let it = 0, last = 0, m; const re = /<\/?([a-z]+)[^>]*>/gi;
+  const push = (t) => { if (!t) return; const p = runs[runs.length - 1], ital = it > 0; if (p && p.italic === ital) p.text += t; else runs.push({ text: t, italic: ital }); };
+  while ((m = re.exec(html))) {
+    push(bwDecode(html.slice(last, m.index)));
+    const tag = m[1].toLowerCase();
+    if (tag === "i" || tag === "em") it = Math.max(0, it + (m[0][1] === "/" ? -1 : 1));
+    last = re.lastIndex;
+  }
+  push(bwDecode(html.slice(last)));
+  return runs.filter((r) => r.italic && BW_NOTE_RUN.test(r.text)).map((r) => r.text.trim());
+}
+const bwFold = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, "-").replace(/…/g, "...").replace(/ /g, " ");
+const bwCut = (t, i, j) => t.slice(0, i).replace(/\s+$/, "") + (i > 0 && j < t.length ? " " : "") + t.slice(j).replace(/^\s+/, "");
+function bwStripNotes(t, html) {
+  if (!BW_NOTE_LBL.test(t)) return t;
+  for (const note of bwNoteRuns(html)) {
+    for (const c of [bwFold(note), note]) { const i = t.indexOf(c); if (i >= 0) { t = bwCut(t, i, i + c.length); break; } }
+  }
+  if (!BW_NOTE_LBL.test(t)) return t;
+  t = t.replace(/\s*[\[(]\s*(?:notes?\s+to\s+(?:the\s+)?(?:moderators?|readers?)|(?:moderators?|readers?)(?:'s)?\s+notes?)\b[^\])]*[\])]/gi, " ");
+  let m, guard = 0;
+  BW_NOTE_LBL_G.lastIndex = 0;
+  while ((m = BW_NOTE_LBL_G.exec(t)) && guard++ < 6) {
+    let s = m.index; const from = s + m[0].length, rest = t.slice(from, from + 300); let b = -1;
+    const w = rest.match(/^\S+\s+/), re = /[.!?]+["'”’)]*\s+|[a-z0-9"'”’)]\s+(?=[A-Z](?:[a-z'’]|\s))/g; let mm;
+    re.lastIndex = w ? w[0].length : 0;
+    while ((mm = re.exec(rest))) {
+      const stop = /^[.!?]/.test(mm[0]);
+      if (!stop && ((rest.slice(0, mm.index + 1).match(/"/g) || []).length % 2)) continue;
+      b = stop ? mm.index + mm[0].length : mm.index + 1; break;
+    }
+    while (s > 0 && /[\s*<\[(]/.test(t[s - 1])) s--;
+    t = bwCut(t, s, b >= 0 ? from + b : from);
+    BW_NOTE_LBL_G.lastIndex = s;
+  }
+  return t;
+}
+function bwText(q, fns) {
+  let t = null;
+  try { t = fns.questionPlainText(q, "question"); } catch (e) { t = null; }
+  if (typeof t !== "string") t = q.question_sanitized || "";
+  t = bwStripNotes(bwDecode(t), q.question);
+  // every guide rule needs a "[" or a "(" (one that isn't the power mark): most questions have none
+  if (/\[|\((?!\*\))/.test(t)) { try { t = fns.stripPronunciations(t); } catch (e) {} }
+  return String(t || "").replace(/\s*\(\s*["“][^"”()]*["”]\s*\)/g, "").replace(/\s{2,}/g, " ").trim();
+}
+const bwMainAnswer = (sani) => bwDecode(sani).split(/[\[(<]/)[0].trim().replace(/[;:,.]+$/, "");
+const bwTokens = (text) => (String(text || "").toLowerCase().match(/[\p{L}\p{N}'’]+/gu) || []).map((w) => w.replace(/['’]s$/, "")).filter(Boolean);
+function bwSlice(q, cv, fns) {
+  const text = bwText(q, fns);
+  if (cv.power) { const pi = text.indexOf("(*)"); return pi < 0 ? [] : bwTokens(text.slice(0, pi)); }
+  const words = bwTokens(text.replace(/\(\*\)/g, " "));
+  const n = words.length; if (!n) return [];
+  if (cv.lo <= 0 && cv.hi >= 100) return words;
+  const a = Math.round((cv.lo / 100) * n), b = Math.round((cv.hi / 100) * n);
+  return words.slice(a, Math.max(a + 1, b));
+}
+const BW_STOP = new Set(("a an the this that these those it its his her hers he she they them their theirs we us our you your i me my mine of in on at to for from with within without by as is are was were be been being am do does did done not no nor so or and but if then than because while during after before until once when where which who whom whose what why how all any both each few more most other some such only own same here there over under again further about above below between into through against up down out off very can will just should now points point name names named ftp identify gives give given made make makes making one two three four five six seven eight nine ten first second third often called also another may might must shall many much work works worked title titled known includes including include described describes describe used uses use using like unlike along man woman men women person people city country state nation work novel poem play opera symphony war battle king queen god goddess author authors poet poets composer composers writer writers artist artists painter sculptor novelist playwright philosopher thinker scientist character characters figure entity thing things wrote written writes have has had having").split(/\s+/));
+const BW_PERSON = new Set(["Person", "Fictional Character", "Deity or Mythic Being", "Legendary or Scriptural Figure"]);
+const BW_PLACE = new Set(["Place", "Place Type or Landform"]), BW_EVENT = new Set(["Event", "Period or Movement"]);
+const BW_GROUP = new Set(["Organization or Company", "Group, Dynasty or Family", "People or Ethnic Group", "Musical Group or Band"]);
+function bwType(tags) {
+  let t = null;
+  if (typeof tags === "string") { const m = /"answer_type"\s*:\s*\[\s*"((?:[^"\\]|\\.)*)"/.exec(tags); t = m ? m[1] : null; }
+  else if (tags && tags.answer_type) t = tags.answer_type[0];
+  if (!t) return "";
+  if (/^Work:/.test(t)) return "work";
+  return BW_PERSON.has(t) ? "person" : BW_PLACE.has(t) ? "place" : BW_EVENT.has(t) ? "event" : BW_GROUP.has(t) ? "group" : "thing";
+}
+// words, 2- and 3-word phrases: none starting or ending with a common word, none holding an
+// answer word, a 1-letter word or a number (each word's checks worked out once)
+function bwGrams(words, skip, emit) {
+  const n = words.length, stop = new Uint8Array(n), bad = new Uint8Array(n);
+  for (let i = 0; i < n; i++) { const w = words[i]; stop[i] = BW_STOP.has(w) ? 1 : 0; bad[i] = skip.has(w) || w.length < 2 || /^\d+$/.test(w) ? 1 : 0; }
+  for (let i = 0; i < n; i++) {
+    const w = words[i];
+    if (w.length >= 3 && !stop[i] && !bad[i]) emit(w);
+    if (i + 2 > n || stop[i] || bad[i]) continue;
+    if (!stop[i + 1] && !bad[i + 1]) emit(w + " " + words[i + 1]);
+    if (i + 3 <= n && !stop[i + 2] && !bad[i + 1] && !bad[i + 2]) emit(w + " " + words[i + 1] + " " + words[i + 2]);
+  }
+}
+function bwHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0) || 1; }
 
 export class App {
   
@@ -238,6 +366,114 @@ export class App {
   // /api/frequent-answers for both transports. Category/subcategory NAMES are
   // the old contract (plugins); otherwise nodeIds (or one nodeId) pick subtrees
   // and the list is paged: { answers, total, max }.
+  // GET /api/analysis/buzzwords: Buzzwords' scan over the tossups matching `filters`, words from
+  // the clue range { lo, hi } (percent) or { power } (before the power mark) →
+  // { v, n: questions read, answers: [name], types: [type per answer], cands: [[word, answer #,
+  // times with that answer, times seen]] } — every word or phrase seen 2+ times whose top answer
+  // has 60%+ of its sightings (the plugin's knobs filter from there). Cached per scope; it lets
+  // other requests through every few thousand questions (the app's backend stays responsive).
+  async buzzwordsApi(filters = {}, clue = {}) {
+    const cv = { lo: Math.max(0, Math.min(100, parseInt(clue.lo, 10) || 0)), hi: Math.max(0, Math.min(100, clue.hi == null || clue.hi === "" ? 100 : parseInt(clue.hi, 10))), power: clue.power === true || clue.power === "1" || clue.power === "true" };
+    if (isNaN(cv.hi)) cv.hi = 100;
+    if (cv.lo > cv.hi) [cv.lo, cv.hi] = [cv.hi, cv.lo];
+    const f = { ...filters }; delete f.limit; delete f.offset; delete f.random; delete f.sort;
+    const key = JSON.stringify([BW_VERSION, f, cv]);
+    this._bwCache = this._bwCache || new Map();
+    const hit = this._bwCache.get(key);
+    if (hit) { this._bwCache.delete(key); this._bwCache.set(key, hit); return hit; }
+    const disk = this._bwDisk(key);
+    if (disk) { this._bwCache.set(key, Promise.resolve(disk)); return disk; }
+    const appJs = join(this.rendererDir || join(__dirname, "..", "renderer"), "app.js");
+    const fns = bwAppText(existsSync(appJs) ? appJs : join(__dirname, "..", "renderer", "app.js"));
+    const p = this._buzzwords(f, cv, fns);
+    p.then((r) => this._bwDisk(key, r), () => {});
+    this._bwCache.set(key, p);
+    p.catch(() => { if (this._bwCache.get(key) === p) this._bwCache.delete(key); });
+    while (this._bwCache.size > 12) this._bwCache.delete(this._bwCache.keys().next().value);
+    return p;
+  }
+  // a scan kept on disk (the app: userData/bw-cache; the website's workers: their cache folder)
+  // for this question database build — the newest 40; another build's go
+  _bwDisk(key, value) {
+    if (!this.freqCacheDir) return null;
+    const dir = join(this.freqCacheDir, "bw-cache");
+    const build = String(this.getDbInfo().built || "v1").replace(/[^A-Za-z0-9_.-]/g, "_");
+    const prefix = `${build}-`, name = prefix + createHash("sha1").update(key).digest("hex").slice(0, 20) + ".json";
+    try {
+      if (value === undefined) { const r = JSON.parse(readFileSync(join(dir, name), "utf8")); return r && r.v === BW_VERSION && Array.isArray(r.cands) ? r : null; }
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, name + ".tmp"), JSON.stringify(value));
+      renameSync(join(dir, name + ".tmp"), join(dir, name));
+      const files = readdirSync(dir).filter((x) => x.endsWith(".json"));
+      for (const x of files) if (!x.startsWith(prefix)) { try { unlinkSync(join(dir, x)); } catch {} }
+      const mine = files.filter((x) => x.startsWith(prefix));
+      if (mine.length > 40) mine.map((x) => ({ x, t: statSync(join(dir, x)).mtimeMs })).sort((a, b) => a.t - b.t).slice(0, mine.length - 40).forEach((o) => { try { unlinkSync(join(dir, o.x)); } catch {} });
+    } catch { return null; }
+    return null;
+  }
+  async _buzzwords(f, cv, fns) {
+    const total = this.getCount("tossups", f);
+    let slots = 1 << 20; while (slots < total * 48 && slots < (1 << 24)) slots <<= 1;
+    // Q: the question a word was last counted in — each word counts once per question (the plugin
+    // kept a Set per question for that)
+    const H = new Uint32Array(slots), A = new Int32Array(slots), Q = new Int32Array(slots), MASK = slots - 1, LIMIT = Math.floor(slots * 0.75);
+    let used = 0, aid = 0, qn = 0;
+    const stats = new Map(), ansIds = new Map(), disp = [], types = [];
+    const see = (g) => {
+      const st = stats.get(g);
+      if (st !== undefined) {
+        if (st === 0 || st.q === qn) return;
+        st.q = qn;
+        st.t++;
+        if (st.m === null) {
+          if (st.ba === aid) { st.b++; return; }
+          st.m = [st.ba, st.b, aid, 1];
+        } else {
+          const m = st.m; let i = 0;
+          while (i < m.length && m[i] !== aid) i += 2;
+          if (i < m.length) { const c = ++m[i + 1]; if (c > st.b) { st.b = c; st.ba = aid; } } else m.push(aid, 1);
+        }
+        if (st.t >= 12 && st.b * 3 < st.t) stats.set(g, 0);
+        return;
+      }
+      const h = bwHash(g); let j = h & MASK;
+      while (H[j] !== 0) {
+        if (H[j] === h) {
+          if (Q[j] === qn) return;
+          const a0 = A[j]; stats.set(g, a0 === aid ? { t: 2, b: 2, ba: aid, m: null, q: qn } : { t: 2, b: 1, ba: a0, m: [a0, 1, aid, 1], q: qn }); return;
+        }
+        j = (j + 1) & MASK;
+      }
+      if (used < LIMIT) { H[j] = h; A[j] = aid; Q[j] = qn; used++; }
+    };
+    let n = 0;
+    for (const q of this.questionDb.iterateTossupText(f)) {
+      if (++n % 3000 === 0) await new Promise((r) => setImmediate(r));
+      const full = bwMainAnswer(q.answer_sanitized);
+      if (!full) continue;
+      const k = full.toLowerCase(); let id = ansIds.get(k);
+      if (id === undefined) { id = disp.length; ansIds.set(k, id); disp.push(full); types.push(null); }
+      aid = id;
+      const bt = bwType(q.tags);
+      if (bt) { const tt = types[id] || (types[id] = {}); tt[bt] = (tt[bt] || 0) + 1; }
+      qn++;
+      bwGrams(bwSlice(q, cv, fns), new Set(bwTokens(q.answer_sanitized)), see);
+    }
+    const cands = [], used2 = new Map(), answers = [], atypes = [];
+    stats.forEach((st, g) => {
+      if (st === 0 || st.t < 2 || st.b < 0.6 * st.t) return;
+      let ai = used2.get(st.ba);
+      if (ai === undefined) {
+        ai = answers.length; used2.set(st.ba, ai); answers.push(disp[st.ba]);
+        const tt = types[st.ba]; let best = "thing", bn = 0;
+        if (tt) for (const x in tt) if (tt[x] > bn) { bn = tt[x]; best = x; }
+        atypes.push(tt ? best : "");
+      }
+      cands.push([g, ai, st.b, st.t]);
+    });
+    return { v: BW_VERSION, n, answers, types: atypes, cands };
+  }
+
   frequentAnswersApi({ category, subcategory, alternateSubcategory, limit, qtype, nodeId, nodeIds, offset } = {}) {
     const lim = Math.max(1, Math.min(2000, parseInt(limit) || 50));
     const type = qtype === "bonus" || qtype === "both" ? qtype : "tossup";

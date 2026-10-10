@@ -64,6 +64,7 @@ const API = isElectron
         if (path === "/api/tossups/search") return window.qbreader.searchTossups(q.query || "", q);
         if (path === "/api/bonuses/search") return window.qbreader.searchBonuses(q.query || "", q);
         if (path === "/api/tossups/query") return window.qbreader.queryTossups(q);
+        if (path === "/api/analysis/buzzwords") { if (!window.qbreader.buzzwords) throw new Error("Unknown API route: " + path); return window.qbreader.buzzwords(q, { lo: q.lo, hi: q.hi, power: q.power }); }
         if (path === "/api/bonuses/query") return window.qbreader.queryBonuses(q);
         if (path.startsWith("/api/tossups/")) return window.qbreader.getTossup(path.split("/")[3]);
         if (path.startsWith("/api/bonuses/")) return window.qbreader.getBonus(path.split("/")[3]);

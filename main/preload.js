@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld("qbreader", {
 
   queryTossups: (filters) =>
     ipcRenderer.invoke("query-tossups", { filters }),
+  buzzwords: (filters, clue) =>
+    ipcRenderer.invoke("analysis-buzzwords", { filters, clue }),
 
   queryBonuses: (filters) =>
     ipcRenderer.invoke("query-bonuses", { filters }),

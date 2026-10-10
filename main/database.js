@@ -396,6 +396,13 @@ export class QuestionDatabase {
     return { where: clauses.length > 0 ? "WHERE " + clauses.join(" AND ") : "", params };
   }
 
+  // Every matching tossup's text and answer, one row at a time (Buzzwords' scan, index.js
+  // buzzwordsApi): just the columns it reads, no sorting.
+  iterateTossupText(filters = {}) {
+    const { where, params } = this._buildWhere(filters);
+    return this.db.prepare(`SELECT id, question, question_sanitized, answer_sanitized, tags FROM tossups ${where}`).iterate(params);
+  }
+
   queryTossups(filters = {}) {
     const limit = filters.limit || 50;
     const offset = filters.offset || 0;

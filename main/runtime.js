@@ -11,7 +11,7 @@
  * `env` object the bootstrap passes in, so this file resolves cleanly whether
  * it is loaded from inside the asar or from the overlay directory.
  */
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { pickDbPath } from "./updater.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
@@ -31,6 +31,9 @@ export async function start(env) {
     let openPath = dbPath;
     try { openPath = pickDbPath(dbPath, dbInstallPath); } catch { openPath = dbPath; }
     qbApp = new App({ dbPath: openPath, userDbPath, dbInstallPath, freqCacheDir: app.getPath("userData") }).init();
+    // the renderer files the window runs (an update's, else the bundled ones): Buzzwords' scan
+    // reads questions with that app.js's own text rules
+    try { qbApp.rendererDir = dirname((!isDev && appUpdater.overlayRendererIndex(OVERLAY_DIR)) || BUNDLED_INDEX); } catch (e) {}
     // Account calls go through Chromium's network stack (the window's session):
     // it trusts the system's certificates, so sign-in and sync also work behind
     // school filters that inspect HTTPS, where Node's own fetch fails.
@@ -183,6 +186,8 @@ export async function start(env) {
       return qbApp.searchBonuses(query, parseFilters(filters || {}));
     });
 
+    // Buzzwords' scan, in this process (index.js buzzwordsApi: cached, and it yields while it reads)
+    ipcMain.handle("analysis-buzzwords", (_e, { filters, clue }) => qbApp.buzzwordsApi(parseFilters(filters || {}), clue || {}));
     ipcMain.handle("query-tossups", (_e, { filters }) => {
       return qbApp.queryTossups(parseFilters(filters || {}));
     });
