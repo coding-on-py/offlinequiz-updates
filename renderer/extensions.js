@@ -2246,7 +2246,10 @@ QB.registerTheme({
  */
 (function () {
 function __qbMain(ctx) {
-    var isHost = false, myId = "";
+    var isHost = false, myId = "", srvHost = null, kickBans = [], devOf = {};
+    // the host of the room you're in: in a relay room the one running it; on the game server the one
+    // it says (the first in), or in a bought room its owner and admins
+    function amHost() { return serverMode ? (roomInfo ? roomInfo.role === "owner" || roomInfo.role === "admin" : !!myId && srvHost === myId) : isHost; }
     var ws = null, _relayConns = {};
     // Rooms are run by the game server (mpserver/, mp.onlinequiz.net): it plays
     // the host's part of this same protocol, so in a server room every app is a
@@ -2268,7 +2271,15 @@ function __qbMain(ctx) {
     // A signed-in player's hello carries a ticket from the website that proves their account
     // (members, admins and the owner get in by it); a room's password goes with it when one was
     // typed for that room. roomInfo: the room's own details (only in a bought room).
-    var myTicket = null, myTicketAt = 0, myPassword = "", myPasswordFor = "", roomInfo = null, roomOpErr = "", door = null, goJoin = null;
+    var myTicket = null, myTicketAt = 0, myPassword = "", myPasswordFor = "", roomInfo = null, roomOpErr = "", roomOpUndo = null, door = null, goJoin = null;
+    // a game-server room is shown only once it has let us in (its first "state"): until then the
+    // form stays, saying "Joining …" — or asking for the room's password on the same connection
+    var admitting = false;
+    function abandonJoin() {
+      admitting = false;
+      try { if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); } } catch (e) {}
+      ws = null; lobby = ""; markBusy(false);
+    }
     function acctOf() { var st = (ctx.host && ctx.host.getState && ctx.host.getState()) || {}; return st.account || null; }
     function hostApi() { return ctx.host && ctx.host.api; }
     async function getTicket() {
@@ -2277,8 +2288,13 @@ function __qbMain(ctx) {
       try { var r = await hostApi().post("/api/mp/ticket", {}); if (r && r.ticket) { myTicket = r.ticket; myTicketAt = Date.now(); return myTicket; } } catch (e) {}
       return null;
     }
+    // this browser / app, for the 30 minutes someone taken out of a room stays out (not their IP: a
+    // whole school shares one)
+    function deviceId() {
+      try { var v = localStorage.getItem("qb-mp-device"); if (!v) { v = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("qb-mp-device", v); } return v; } catch (e) { return ""; }
+    }
     function helloMsg() {
-      var m = { t: "hello", name: myName, spectate: mySpec, avatar: myAv(), handle: myHandle() };
+      var m = { t: "hello", name: myName, spectate: mySpec, avatar: myAv(), handle: myHandle(), device: deviceId() };
       if (myTicket) m.ticket = myTicket;
       if (myPassword && myPasswordFor === String(lobby).toLowerCase()) m.password = myPassword;
       return m;
@@ -2438,8 +2454,6 @@ function __qbMain(ctx) {
     // practice filter panel back so the Tossups screen is never left without it.
     ctx.on("screen:change", function () { setTimeout(function () { if (!active()) returnPanel(); }, 0); });
 
-    ctx.onHotkey("chat", function () { if (!active()) return; var ci = body && body.querySelector("#mp-chat-input"); if (ci) ci.focus(); });
-
     // The borrowed practice panel hides its practice-only sections in MP.
 
     function onKey(e) {
@@ -2473,7 +2487,17 @@ function __qbMain(ctx) {
       e.preventDefault(); e.stopPropagation(); toggleRoomSettings(false);
     }
     window.addEventListener("keydown", onDrawerEsc, true);
-    ctx._cleanup = function () { window.removeEventListener("keydown", onDrawerEsc, true); markBusy(false); returnPanel(); restoreSoloPanel(); document.removeEventListener("keydown", onKey); stopReveal(); stopAnswerTimer(); stopTick(); stopBuzzWindowTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); try { if (ws) ws.close(); } catch (e) {} };
+    // a click on a player in the room (the app's player menu): the host can take them out
+    var dropUserItems = ctx.host && ctx.host.addUserMenuItems ? ctx.host.addUserMenuItems(function (u) {
+      if (!active() || !u || !u.pid || u.pid === myId || !players[u.pid] || !amHost()) return [];
+      var nm = players[u.pid].name;
+      return [{ label: "Take out of the room", danger: true, onClick: function () {
+        var go = function () { kickPlayer(u.pid); };
+        if (ctx.host.confirm) ctx.host.confirm("Take " + nm + " out of the room?", go, { yes: "Take out", danger: true, detail: "They can't come back for 30 minutes." });
+        else go();
+      } }];
+    }) : null;
+    ctx._cleanup = function () { if (dropUserItems) dropUserItems(); window.removeEventListener("keydown", onDrawerEsc, true); markBusy(false); returnPanel(); restoreSoloPanel(); document.removeEventListener("keydown", onKey); stopReveal(); stopAnswerTimer(); stopTick(); stopBuzzWindowTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); try { if (ws) ws.close(); } catch (e) {} };
 
     // ── networking helpers (transport-agnostic) ──
     function sendRelay(o) { if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify(o)); } catch (e) {} } }
@@ -2497,6 +2521,21 @@ function __qbMain(ctx) {
       players[id] = { id: id, name: name || ("Player" + order.length), team: team || "", score: (players[id] && players[id].score) || 0, spec: !!spec, avatar: avatar || (players[id] && players[id].avatar) || "", handle: validHandle(handle) || (players[id] && players[id].handle) || "" };
     }
     function removePlayer(id) { delete players[id]; order = order.filter(function (x) { return x !== id; }); }
+    // the host takes someone out (a click on their name → Take out of the room): on the game server it
+    // does it; in a relay room the host's app does, and keeps them out for 30 minutes
+    function kickPlayer(pid) {
+      if (!pid || pid === myId || !players[pid]) return;
+      if (serverMode) { toHost({ t: "kick", id: pid }); return; }
+      if (!isHost) return;
+      var p = players[pid];
+      kickBans.push({ device: devOf[pid] || "", handle: p.handle || "", until: Date.now() + 30 * 60e3 });
+      try { relayConn(pid).send({ t: "kicked", text: "The host took you out of this room. You can come back in 30 minutes." }); } catch (e) {}
+      if (pendingBuzzer === pid) hostHandleAnswer(pid, "");   // their buzz ends like a blank answer, as on the game server
+      if (bonusState && bonusState.winner === pid) { bonusState = null; broadcast({ t: "bcancel" }); }
+      removePlayer(pid);
+      sysChat((players[myId] ? players[myId].name : "The host") + " took " + p.name + " out of the room");
+      pushState();
+    }
 
     // A visible banner when YOUR connection drops mid-game (lag-out).
     function showDisconnected() {
@@ -2588,7 +2627,12 @@ function __qbMain(ctx) {
       // Packet/set reading never carries across lobbies — always start at q1.
       setSig = ""; setIndex = 0; setQueue = null; impSig = ""; impIndex = 0;
       roomConfig = null; leftIntentionally = false;
-      roomInfo = null; roomOpErr = "";
+      roomInfo = null; roomOpErr = ""; showPw = false;
+      // who's signed in must be known first (a direct /multiplayer/<room> visit can get here sooner):
+      // a signed-in player never joins under a guest name
+      if (ctx.host && ctx.host.whenAccountKnown) { try { await Promise.race([ctx.host.whenAccountKnown(), new Promise(function (r) { setTimeout(r, 5000); })]); } catch (e) {} }
+      var stNow = (ctx.host && ctx.host.getState && ctx.host.getState()) || {};
+      if (stNow.web && stNow.account) myName = stNow.account.displayName || stNow.account.handle;
       await getTicket();   // a bought room lets its members in by their account
       // Fresh log: on (re)join the host replays every entry, so keeping the old
       // list would duplicate the entire session history.
@@ -2633,6 +2677,7 @@ function __qbMain(ctx) {
           } else {
             toHost(helloMsg());
           }
+          admitting = serverMode;
           render();
           return;
         }
@@ -2658,6 +2703,14 @@ function __qbMain(ctx) {
       sock.onclose = function () {
         if (!opened && fallback) { giveUp(); return; }
         if (!opened) setStatus("Couldn't reach the relay \u2014 check the URL (and that the worker is deployed).");
+        else if (admitting && ws === sock) {
+          // closed before it let us in (too many wrong passwords, the server restarting …)
+          admitting = false; lobby = ""; ws = null; markBusy(false);
+          if (door) door.live = false;
+          render();
+          if (!door) setStatus("Couldn't join that room \u2014 try again.");
+          return;
+        }
         else if (!leftIntentionally && lobby) showDisconnected();
         if (ws === sock) ws = null;
       };
@@ -2708,6 +2761,9 @@ function __qbMain(ctx) {
       var id = conn.peer;
       if (d.t === "hello") {
         if (settings.locked) { try { conn.send({ t: "locked" }); } catch (e) {} return; }
+        var now = Date.now(); kickBans = kickBans.filter(function (b) { return b.until > now; });
+        if (kickBans.some(function (b) { return (d.device && b.device === d.device) || (validHandle(d.handle) && b.handle === validHandle(d.handle)); })) { try { conn.send({ t: "kicked", text: "The host took you out of this room. You can come back in 30 minutes." }); } catch (e) {} return; }
+        if (d.device) devOf[id] = String(d.device).slice(0, 40);   // kept here, never sent to the others
         // Same name = same person, but only an OFFLINE seat can be reclaimed:
         // never the host's own entry, never a connected player's (a live name
         // collision gets a numbered name instead of stealing the seat).
@@ -3338,6 +3394,8 @@ function __qbMain(ctx) {
     // ── client: handle messages from host ──
     function onClientData(d) {
       if (d.t === "state") {
+        if (admitting) { admitting = false; door = null; render(); }   // let in: now the room shows
+        srvHost = d.host || null;
         players = {}; order = []; (d.players || []).forEach(function (p) { players[p.id] = p; order.push(p.id); });
         settings = d.settings || settings;
         match = d.match || null;
@@ -3384,8 +3442,14 @@ function __qbMain(ctx) {
       // must never steal it from a practice screen in the foreground.
       // a bought room: not let in (its password / members only / taken off the list)
       else if (d.t === "denied") { onDenied(d); }
+      else if (d.t === "kicked") { leftIntentionally = true; onDenied({ need: "member", kicked: true, text: d.text || "The host took you out of this room." }); }
       else if (d.t === "roominfo") { roomInfo = d; renderRoomInfo(); }
-      else if (d.t === "roomop") { roomOpErr = d.ok ? "" : (d.error || "That didn't work."); renderRoomInfo(); }
+      else if (d.t === "roomop") {
+        // a change shown ahead of the server (op below) is taken back when it says no
+        if (!d.ok && roomOpUndo) { roomInfo = roomOpUndo; }
+        roomOpUndo = null;
+        roomOpErr = d.ok ? "" : (d.error || "That didn't work."); renderRoomInfo();
+      }
       // the owner / an admin reset the room: a fresh game (seats stay, at 0)
       else if (d.t === "roomreset") { stopClientRead(); stopAutoSub(); current = null; ended = false; pendingBuzzer = null; bonusView = null; paused = false; sessionLog = []; logCollapsed = {}; chatHist = []; qCount = 0; match = null; if (active()) render(); }
       else if (d.t === "qreset") { stopClientRead(); stopAutoSub(); current = null; ended = false; pendingBuzzer = null; bonusView = null; paused = false; if (active()) render(); }
@@ -3489,20 +3553,31 @@ function __qbMain(ctx) {
     // ── rendering ──
     function render() {
       if (!body) return;
-      if (!lobby) renderForm(); else renderRoom();
+      if (!lobby || admitting) renderForm(); else renderRoom();
       updateTopBar();
       try { if (window.qbWebPathSync) window.qbWebPathSync(); } catch (e) {}   // the website's address: /multiplayer/<room>
     }
     function setStatus(m) { var s = body && body.querySelector("#mp-status"); if (s) s.textContent = m; }
 
+    // a player who isn't signed in (website) / hasn't named themselves (app): Player + four digits
+    var _guest = null;
+    function guestName() { return _guest || (_guest = "Player" + (1000 + Math.floor(Math.random() * 9000))); }
     function renderForm() {
       // The website: an account plays under its display name; a signed-out
-      // player is "unregistered" + digits (new each time). The app: the name
+      // player is "Player" + four digits (kept for this visit). The app: the name
       // last used here, else the account's display name, else the profile's.
       var st = (ctx.host && ctx.host.getState && ctx.host.getState()) || {};
       var acct = st.account || null, fixedName = !!st.web;
-      if (st.web) myName = acct ? (acct.displayName || acct.handle) : "unregistered" + (10000 + Math.floor(Math.random() * 90000));
-      else myName = ctx.getSetting("name") || (acct && acct.displayName) || st.username || ("Player" + Math.floor(Math.random() * 1000));
+      if (st.web) {
+        // never a name saved here before (an old guest one like "unregistered12345" would win)
+        myName = acct ? (acct.displayName || acct.handle) : guestName();
+        // drawn before the page knew who's signed in: draw it again once it does
+        if (!st.accountKnown && ctx.host && ctx.host.whenAccountKnown) ctx.host.whenAccountKnown().then(function () { if (body && !lobby && body.querySelector("#mp-name")) renderForm(); });
+      } else {
+        var saved = ctx.getSetting("name");
+        if (saved && /^unregistered\d*$/i.test(String(saved).trim())) saved = "";   // the old guest names
+        myName = saved || (acct && acct.displayName) || st.username || guestName();
+      }
       var initial = (String(myName).trim()[0] || "?").toUpperCase();
       var recent = recentRooms();
       // a new room's code, shown in grey in the box: Join/Create with nothing typed opens it
@@ -3519,7 +3594,15 @@ function __qbMain(ctx) {
           "</section>" +
           '<div class="mp-status" id="mp-status"></div>' +
           '<section class="mp-recent mp-mine" id="mp-my-rooms" hidden><h2 class="eyebrow">Your rooms</h2><div class="list" id="mp-my-list"></div></section>' +
-          '<div class="mp-shop" id="mp-shop" hidden><button type="button" class="btn mp-buy-btn" id="mp-buy"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Buy a room</button><span class="mp-shop-note">A room of your own that never resets — <b>$5</b></span></div>' +
+          // Buy a room, sold like its product picture: what you get, the price, the button
+          '<section class="mp-shop mp-promo" id="mp-shop" hidden>' +
+            '<div class="mp-promo-eyebrow">Rooms of your own</div>' +
+            '<h2 class="mp-promo-h">A multiplayer room <span>of your own</span></h2>' +
+            '<p class="mp-promo-sub">Your team\u2019s room, kept for good: practice together any time at onlinequiz.net/room/<i>name</i>.</p>' +
+            '<ul class="shop-perks mp-promo-perks">' + BUY_PERKS.map(function (p) { return "<li>" + p + "</li>"; }).join("") + "</ul>" +
+            '<div class="mp-promo-foot"><span class="mp-promo-price"><b id="mp-shop-price">' + priceText() + '</b><small>one payment \u00b7 no subscription</small></span>' +
+              '<button type="button" class="btn btn-primary mp-buy-btn" id="mp-buy">Buy a room</button></div>' +
+          '</section>' +
           '<section class="mp-recent mp-public" id="mp-public-rooms" hidden><h2 class="eyebrow">Public rooms <span class="qb-info" data-tip="Rooms whose players left them public (Room settings → Public room). Pick one to join.">i</span></h2><div class="list" id="mp-public-list"></div></section>' +
           (recent.length ? '<section class="mp-recent"><h2 class="eyebrow">Recent rooms</h2><div class="list">' + recent.map(function (r) {
             return '<button type="button" class="list-row clickable mp-recent-row" data-code="' + esc(r.code) + '"><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + '</b><span class="mp-rwho">' + esc(r.players ? r.players + (r.players === 1 ? " player" : " players") : "") + (r.host ? " · you hosted" : "") + '</span><span class="mp-rwhen">' + esc(whenLabel(r.at)) + '</span><span class="mp-rjoin">Rejoin ›</span></button>';
@@ -3534,6 +3617,7 @@ function __qbMain(ctx) {
       nameEl.addEventListener("change", function () { var v = nameEl.value.trim(); if (v) { myName = v; ctx.setSetting("name", v); var av = body.querySelector(".mp-who .avatar"); if (av) av.textContent = (v[0] || "?").toUpperCase(); } });
       var go = goJoin = function (code) {
         if (door && String(door.code).toLowerCase() !== String(code || "").trim().toLowerCase()) door = null;
+        if (admitting) abandonJoin();
         myName = (nameEl.value.trim()) || myName;
         if (!fixedName) ctx.setSetting("name", myName); // remember for next time (the app)
         lobby = String(code || "").trim();
@@ -3542,27 +3626,33 @@ function __qbMain(ctx) {
         join();
       };
       joinBtn.onclick = goTyped;
-      // the game server's public rooms, refreshed while this form shows
+      // the game server's public rooms: the preloaded list at once, then refreshed while this form shows
+      var paintPublic = function (d) {
+        var sec = body && body.querySelector("#mp-public-rooms");
+        if (!d || !Array.isArray(d.rooms) || !sec) return;
+        sec.hidden = false;
+        var list = sec.querySelector("#mp-public-list");
+        list.innerHTML = d.rooms.length ? d.rooms.map(function (r) {
+          var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - r.names.length) : "");
+          var state = (r.players === 1 ? "1 player" : r.players + " players") + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.questions ? " · Q" + r.questions : " · waiting");
+          return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
+        }).join("") : '<p class="mp-pub-empty">No public rooms right now — leave the code empty and press Join/Create Room to start one.</p>';
+        list.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
+      };
       var loadPublic = function () {
         var sec = body && body.querySelector("#mp-public-rooms");
         if (!sec) { clearInterval(pubTimer); pubTimer = null; return; }
-        var base = gameServerUrl();
-        if (!base || base === "off") return;
-        fetch(base.replace(/\/$/, "") + "/lobby/_rooms", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-          if (!d || !Array.isArray(d.rooms) || !body || !body.contains(sec)) return;
-          sec.hidden = false;
-          var list = sec.querySelector("#mp-public-list");
-          list.innerHTML = d.rooms.length ? d.rooms.map(function (r) {
-            var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - r.names.length) : "");
-            var state = (r.players === 1 ? "1 player" : r.players + " players") + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.questions ? " · Q" + r.questions : " · waiting");
-            return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
-          }).join("") : '<p class="mp-pub-empty">No public rooms right now — leave the code empty and press Join/Create Room to start one.</p>';
-          list.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
-        }).catch(function () {});
+        prePublic().then(paintPublic);
       };
+      if (pre.pub) paintPublic(pre.pub);
       clearInterval(pubTimer); pubTimer = setInterval(loadPublic, 5000); loadPublic();
       loadShop(body);
+      if (admitting && lobby) codeEl.value = lobby;
       if (door) showDoor();
+      else if (admitting) {
+        var stj = body.querySelector("#mp-status");
+        if (stj) { stj.innerHTML = '<span class="mp-joining">Joining <b>' + esc(String(lobby).toUpperCase()) + '</b>\u2026</span> <button type="button" class="btn btn-sm btn-ghost" id="mp-join-cancel">Cancel</button>'; stj.querySelector("#mp-join-cancel").onclick = function () { abandonJoin(); render(); }; }
+      }
       try { if (ctx.host && ctx.host.tip) ctx.host.tip(body.querySelector(".mp-lobby"), "mp-lobby"); } catch (e) {}
       body.querySelectorAll(".mp-recent-row").forEach(function (r) { r.onclick = function () { go(r.dataset.code); }; });
     }
@@ -3574,12 +3664,9 @@ function __qbMain(ctx) {
       var paint = function () {
         if (!body || !root || !body.contains(root)) return;
         var sh = root.querySelector("#mp-shop");
-        if (sh) { sh.hidden = !(shopInfo && shopInfo.on); var b = sh.querySelector("#mp-buy"); if (b) b.onclick = function () { openBuy(""); }; }
+        if (sh) { sh.hidden = !(shopInfo && shopInfo.on); var b = sh.querySelector("#mp-buy"); if (b) b.onclick = function () { openBuy(""); }; var pr = sh.querySelector("#mp-shop-price"); if (pr) pr.textContent = priceText(); }
       };
-      if (shopInfo) paint();
-      Promise.resolve(api.get("/api/shop/info")).then(function (d) { shopInfo = d && !d.error ? d : { on: false }; paint(); }).catch(function () {});
-      if (!acctOf()) return;
-      Promise.resolve(api.get("/api/shop/rooms")).then(function (d) {
+      var paintMine = function (d) {
         var sec = root.querySelector("#mp-my-rooms");
         if (!sec || !d || !Array.isArray(d.rooms) || !d.rooms.length || !body || !body.contains(sec)) return;
         sec.hidden = false;
@@ -3588,15 +3675,42 @@ function __qbMain(ctx) {
           return '<button type="button" class="list-row clickable mp-recent-row mp-mine-row" data-code="' + esc(r.name) + '"><b class="mp-rcode">' + esc(String(r.name).toUpperCase()) + '</b><span class="mp-rwho"><span class="badge">' + esc(ROLE_LABEL[r.role] || r.role) + "</span> " + esc(how) + '</span><span class="mp-rwhen">' + esc(r.players ? (r.players === 1 ? "1 here" : r.players + " here") : "") + '</span><span class="mp-rjoin">Join ›</span></button>';
         }).join("");
         sec.querySelectorAll(".mp-mine-row").forEach(function (b) { b.onclick = function () { if (goJoin) goJoin(b.dataset.code); }; });
-      }).catch(function () {});
+      };
+      // what the preload already has paints at once; the fresh copy follows
+      if (shopInfo) paint();
+      if (pre.mine && pre.mineFor === acctKey()) paintMine(pre.mine);
+      preShop().then(function () { paint(); if (pre.mine && pre.mineFor === acctKey()) paintMine(pre.mine); });
     }
+    // ── preloading: the lobby's lists, the shop and a room ticket are fetched a moment after the app
+    //    starts (and again once it knows who's signed in), so Multiplayer opens complete ──
+    var pre = { pub: null, mine: null, mineFor: "" };
+    function acctKey() { var a = acctOf(); return a ? String(a.handle || a.id || "me") : ""; }
+    function prePublic() {
+      var base = gameServerUrl();
+      if (!base || base === "off") return Promise.resolve(null);
+      return fetch(base.replace(/\/$/, "") + "/lobby/_rooms", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) { if (d && Array.isArray(d.rooms)) pre.pub = d; return pre.pub; }).catch(function () { return pre.pub; });
+    }
+    function preShop() {
+      var api = hostApi(); if (!api) return Promise.resolve();
+      var who = acctKey();
+      return Promise.all([
+        Promise.resolve(api.get("/api/shop/info")).then(function (d) { shopInfo = d && !d.error ? d : { on: false }; }).catch(function () {}),
+        who ? Promise.resolve(api.get("/api/shop/rooms")).then(function (d) { if (d && Array.isArray(d.rooms)) { pre.mine = d; pre.mineFor = who; } }).catch(function () {}) : null,
+      ]);
+    }
+    function preloadLobby() { prePublic(); preShop(); if (acctOf()) getTicket(); }
+    setTimeout(preloadLobby, 1200);
+    if (ctx.host && ctx.host.whenAccountKnown) ctx.host.whenAccountKnown().then(function () { if (acctOf()) { preShop(); getTicket(); } }).catch(function () {});
     // "Questions? support@…" — a mail link on the website; plain (selectable) text in the app
     function supportLine() {
       var s = (shopInfo && shopInfo.support) || "support@onlinequiz.net";
       var web = !window.qbreader && window.QB_WEB;
       return '<br>Questions? ' + (web ? '<a href="mailto:' + esc(s) + '">' + esc(s) + "</a>" : '<span class="shop-mail">' + esc(s) + "</span>");
     }
-    var BUY_PERKS = ["Never resets by itself — scores, settings and chat stay", "Members you add by username always get in", "A password for everyone else (or open it to anyone)", "Admins you choose, and a Reset button"];
+    // (markup: fixed text with the lead words in bold, as on the product picture)
+    var BUY_PERKS = ["<b>Never resets</b> by itself: scores, settings and chat stay", "<b>Members</b> you add by username always get in", "A <b>password</b> for everyone else, or open it to anyone", "<b>Admins</b> you choose, and a Reset button"];
+    function priceText() { var c = shopInfo && shopInfo.room && shopInfo.room.price ? shopInfo.room.price : 499; return "$" + (c / 100).toFixed(2); }
     function shopDialog(inner) {
       var old = document.getElementById("mp-buy-dlg"); if (old) old.remove();
       var el = document.createElement("div");
@@ -3618,15 +3732,17 @@ function __qbMain(ctx) {
         if (ctx.host && ctx.host.openAccount) ctx.host.openAccount("signin", { reason: "Sign in to buy a room — it's kept with your account." });
         return;
       }
-      var price = shopInfo && shopInfo.room ? shopInfo.room.price : 500;
       var el = shopDialog(
-        shopHead("Buy a room", '<b class="shop-price">$' + (price / 100).toFixed(2) + '</b> USD · paid once') +
+        shopHead("Buy a room", '<b class="shop-price">' + priceText() + '</b> USD · one payment, no subscription') +
+        // your room as it'll look, with the name you type
+        '<div class="shop-preview" aria-hidden="true"><div class="shop-pv-bar"><i></i><i></i><i></i><span>Multiplayer \u00b7 Room</span></div>' +
+          '<div class="shop-pv-body"><b class="shop-pv-code" id="shop-pv-code">YOUR-ROOM</b><span class="badge shop-pv-badge">Your room</span></div></div>' +
         '<form id="shop-form">' +
           '<label class="mp-field"><span>Room name</span><input id="shop-name" class="code-input" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. lincoln-hs" aria-describedby="shop-check"></label>' +
           '<div class="shop-check" id="shop-check" aria-live="polite">3–24 letters, numbers and dashes. People join with it, or at <span class="shop-url">onlinequiz.net/room/<b id="shop-prev">…</b></span></div>' +
-          '<ul class="shop-perks">' + BUY_PERKS.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") + "</ul>" +
+          '<ul class="shop-perks">' + BUY_PERKS.map(function (p) { return "<li>" + p + "</li>"; }).join("") + "</ul>" +
           '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-no">Cancel</button><button type="submit" class="btn btn-primary" id="shop-pay" disabled>Continue to payment</button></div>' +
-          '<div class="shop-fine">You pay on ' + (shopInfo && shopInfo.provider === "lemon" ? "Lemon Squeezy" : "Stripe") + '’s secure page — your card never reaches onlinequiz.' + supportLine() + '</div>' +
+          '<div class="shop-fine">You pay on ' + (shopInfo && shopInfo.provider === "lemon" ? "Lemon Squeezy" : "Stripe") + '’s secure page — your card never reaches OnlineQuiz.' + supportLine() + '</div>' +
         "</form>");
       var inp = el.querySelector("#shop-name"), chk = el.querySelector("#shop-check"), pay = el.querySelector("#shop-pay"), prev = el.querySelector("#shop-prev");
       var gen = 0, okName = "";
@@ -3635,6 +3751,7 @@ function __qbMain(ctx) {
         if (inp.value !== v) inp.value = v;
         okName = ""; pay.disabled = true;
         if (prev) prev.textContent = v || "…";
+        var pv = el.querySelector("#shop-pv-code"); if (pv) pv.textContent = (v || "your-room").toUpperCase();
         if (!v) { chk.className = "shop-check"; return; }
         var my = ++gen;
         chk.className = "shop-check busy"; chk.textContent = "Checking…";
@@ -3777,7 +3894,7 @@ function __qbMain(ctx) {
             '<button type="button" class="btn btn-ghost mp-leave-btn" id="mp-leave"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Leave</button>' +
             '<span class="rh-lbl">Room</span><b class="rh-code" id="mp-code">' + esc(String(lobby).toUpperCase()) + "</b>" +
             '<button type="button" class="btn btn-ghost btn-icon btn-sm" id="mp-copy" title="Copy room code" aria-label="Copy room code"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>' +
-            '<span class="badge rh-host" id="mp-hostbadge"' + (isHost ? "" : " hidden") + ">You host</span>" +
+            '<span class="badge rh-host" id="mp-hostbadge"' + (amHost() && !roomInfo ? "" : " hidden") + ">You host</span>" +
             '<span class="badge rh-own" id="mp-ownbadge" hidden></span>' +
             (mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
             '<span class="spacer"></span>' +
@@ -3869,6 +3986,7 @@ function __qbMain(ctx) {
 
     // ── a bought room: its Room tab (the owner and admins run it from here) ──
     var ACCESS_LABEL = { members: "Members only", password: "Password", anyone: "Anyone" };
+    var showPw = false;   // the Room tab's password shown in the clear (a new room: hidden again)
     var ROLE_LABEL = { owner: "Your room", admin: "Admin", member: "Member" };
     function renderRoomInfo() {
       if (!body) return;
@@ -3891,18 +4009,29 @@ function __qbMain(ctx) {
       el.innerHTML =
         '<div class="ri-head"><b class="ri-name">' + esc(String(R.name).toUpperCase()) + "</b>" + (R.role ? '<span class="badge">' + esc(ROLE_LABEL[R.role]) + "</span>" : "") + "</div>" +
         '<div class="ri-line">Owner <b data-user="' + esc(R.owner) + '">' + esc(R.owner || "—") + "</b></div>" +
-        '<div class="ri-sec"><div class="ri-lbl">Who can come in</div>' +
-          (mgr ? '<div class="ri-seg" role="radiogroup" aria-label="Who can come in">' + ["members", "password", "anyone"].map(function (a) {
-            return '<button type="button" class="ri-segbtn" role="radio" data-access="' + a + '" aria-checked="' + (R.access === a) + '">' + ACCESS_LABEL[a] + "</button>";
+        // the Database's segmented control (one look for every either/or); what each means is in the ⓘ
+        '<div class="ri-sec"><div class="ri-lbl">Who can come in <span class="qb-info" data-tip="Members only: the owner, admins and members. Password: members get straight in, anyone else types the password. Anyone: anyone with the room\u2019s name.">i</span></div>' +
+          (mgr ? '<div class="seg ri-access" role="group" aria-label="Who can come in">' + ["members", "password", "anyone"].map(function (a) {
+            return '<button type="button" data-access="' + a + '" aria-pressed="' + (R.access === a) + '">' + ACCESS_LABEL[a] + "</button>";
           }).join("") + "</div>" : '<div class="ri-line">' + esc(ACCESS_LABEL[R.access] || "") + "</div>") +
-          '<div class="ri-note">' + (R.access === "members" ? "Only the owner, admins and members." : R.access === "password" ? "Members get straight in; anyone else types the password." : "Anyone with the room's name.") + "</div>" +
+          // the owner and admins can read the password any time (Show), and copy it to share
+          (mgr && R.hasPassword ? '<div class="ri-pw"><span class="ri-pw-k">Password</span>' + (R.password != null
+            ? '<code class="ri-pw-v' + (showPw ? "" : " hidden-pw") + '">' + esc(showPw ? R.password : "\u2022".repeat(Math.max(6, Math.min(12, R.password.length)))) + "</code>" +
+              '<button type="button" class="btn btn-sm btn-ghost" id="ri-pw-show" aria-pressed="' + showPw + '">' + (showPw ? "Hide" : "Show") + '</button><button type="button" class="btn btn-sm btn-ghost" id="ri-pw-copy">Copy</button>'
+            : '<span class="ri-note">Set it again below to be able to see it here</span>') + "</div>" : "") +
           (mgr ? '<form class="ri-row" id="ri-pass"><input type="password" class="mode-input" data-k="pass" id="ri-pass-in" placeholder="' + (R.hasPassword ? "New password" : "Set a password") + '" maxlength="64" autocomplete="new-password" aria-label="Room password"><button class="btn btn-sm" type="submit">' + (R.hasPassword ? "Change" : "Set") + "</button>" +
             (R.hasPassword ? '<button type="button" class="btn btn-sm btn-ghost" id="ri-pass-clear">Remove</button>' : "") + "</form>" : "") +
         "</div>" +
         (mgr ? people("Members", R.members, "member", true) + people("Admins", R.admins, "admin", owner) : "") +
         (roomOpErr ? '<div class="ri-err" role="alert">' + esc(roomOpErr) + "</div>" : "") +
         (mgr ? '<div class="ri-sec ri-danger"><button type="button" class="btn btn-sm btn-danger" id="ri-reset">Reset room</button><div class="ri-note">Scores, the question log and chat start over. Members, admins, the password and settings stay.</div></div>' : "");
-      var op = function (o) { roomOpErr = ""; o.t = "roomop"; toHost(o); };
+      // Changes show at once (show(R) edits a copy of the room's info); the game server's
+      // answer confirms them, or its "no" puts the old info back with the reason.
+      var op = function (o, show) {
+        roomOpErr = "";
+        if (show) { roomOpUndo = roomInfo; roomInfo = JSON.parse(JSON.stringify(roomInfo)); show(roomInfo); renderRoomInfo(); }
+        o.t = "roomop"; toHost(o);
+      };
       el.querySelectorAll("[data-access]").forEach(function (b) {
         b.onclick = function () {
           var a = b.dataset.access;
@@ -3910,19 +4039,23 @@ function __qbMain(ctx) {
           if (a === "password" && !R.hasPassword) {
             var pi = el.querySelector("#ri-pass-in"), v = pi ? pi.value : "";
             if (!v) { roomOpErr = "Type a password first, then choose Password."; renderRoomInfo(); var p2 = el.querySelector("#ri-pass-in"); if (p2) p2.focus(); return; }
-            op({ op: "access", access: "password", password: v }); return;
+            op({ op: "access", access: "password", password: v }, function (X) { X.access = "password"; X.hasPassword = true; X.password = v; }); return;
           }
-          op({ op: "access", access: a });
+          op({ op: "access", access: a }, function (X) { X.access = a; });
         };
       });
       var pf = el.querySelector("#ri-pass");
-      if (pf) pf.onsubmit = function (e) { e.preventDefault(); var v = el.querySelector("#ri-pass-in").value; if (!v) return; op({ op: "password", password: v }); };
+      if (pf) pf.onsubmit = function (e) { e.preventDefault(); var v = el.querySelector("#ri-pass-in").value; if (!v) return; op({ op: "password", password: v }, function (X) { X.hasPassword = true; X.password = v; }); };
+      var pws = el.querySelector("#ri-pw-show");
+      if (pws) pws.onclick = function () { showPw = !showPw; renderRoomInfo(); };
+      var pwc = el.querySelector("#ri-pw-copy");
+      if (pwc) pwc.onclick = function () { if (window.qbCopyWithCheck) window.qbCopyWithCheck(pwc, R.password || ""); else { try { navigator.clipboard.writeText(R.password || ""); } catch (e) {} } };
       var pc = el.querySelector("#ri-pass-clear");
-      if (pc) pc.onclick = function () { op({ op: "password", password: null }); };
+      if (pc) pc.onclick = function () { op({ op: "password", password: null }, function (X) { X.hasPassword = false; X.password = null; if (X.access === "password") X.access = "members"; }); };
       el.querySelectorAll("form[data-add]").forEach(function (f) {
         f.onsubmit = function (e) { e.preventDefault(); var v = f.querySelector("input").value.trim(); if (!v) return; op({ op: "addRole", role: f.dataset.add, handle: v }); };
       });
-      el.querySelectorAll("[data-remove]").forEach(function (b) { b.onclick = function () { op({ op: "removeRole", uid: b.dataset.remove }); }; });
+      el.querySelectorAll("[data-remove]").forEach(function (b) { b.onclick = function () { var uid = b.dataset.remove; op({ op: "removeRole", uid: uid }, function (X) { var off = function (l) { return (l || []).filter(function (x) { return String(x.uid) !== uid; }); }; X.members = off(X.members); X.admins = off(X.admins); }); }; });
       var rs = el.querySelector("#ri-reset");
       if (rs) rs.onclick = function () {
         var go2 = function () { op({ op: "reset" }); };
@@ -3934,6 +4067,13 @@ function __qbMain(ctx) {
     // not let into a bought room: back to the form, which says what it takes
     function onDenied(d) {
       var code = lobby;
+      if (d.need === "password" && !d.kicked && admitting && ws) {
+        // the room needs its password: ask here, and send it on this same connection
+        door = { code: code, need: "password", wrong: !!d.wrong, signedIn: !!d.signedIn, live: true };
+        render();
+        return;
+      }
+      admitting = false;
       leave();
       door = { code: code, need: d.need, wrong: !!d.wrong, signedIn: !!d.signedIn, kicked: !!d.kicked, text: d.text || "" };
       showDoor();
@@ -3945,14 +4085,23 @@ function __qbMain(ctx) {
       if (D.need === "password") {
         st.innerHTML = '<form class="mp-door" id="mp-door"><div class="mp-door-t"><b>' + name + "</b> needs its password</div>" +
           (D.wrong ? '<div class="mp-door-err" role="alert">That password isn\u2019t right.</div>' : "") +
-          '<div class="mp-door-row"><input type="password" id="mp-door-pass" class="mode-input" maxlength="64" autocomplete="off" placeholder="Room password" aria-label="Room password"><button type="submit" class="btn btn-primary">Join</button></div>' +
+          '<div class="mp-door-row"><input type="password" id="mp-door-pass" class="mode-input" maxlength="64" autocomplete="off" placeholder="Room password" aria-label="Room password"><button type="submit" class="btn btn-primary">Join</button>' + (D.live ? '<button type="button" class="btn btn-ghost" id="mp-door-cancel">Cancel</button>' : "") + "</div>" +
           (D.signedIn ? "" : '<div class="mp-door-note">A member? <button type="button" class="btn btn-sm btn-ghost" data-acct="signin">Sign in</button> and you won\u2019t need it.</div>') + "</form>";
         var f = st.querySelector("#mp-door"), pi = st.querySelector("#mp-door-pass");
+        var dc = st.querySelector("#mp-door-cancel"); if (dc) dc.onclick = function () { door = null; abandonJoin(); render(); };
         setTimeout(function () { if (pi) pi.focus(); }, 30);
         f.onsubmit = function (e) {
           e.preventDefault();
           if (!pi.value) { pi.focus(); return; }
-          myPassword = pi.value; myPasswordFor = String(D.code).toLowerCase(); door = null;
+          myPassword = pi.value; myPasswordFor = String(D.code).toLowerCase();
+          if (D.live && admitting && ws) {
+            // still connected: the password goes in a new hello; the room shows when it lets us in
+            var sb = f.querySelector("button[type=submit]"); if (sb) { sb.disabled = true; sb.textContent = "Checking\u2026"; }
+            var er = f.querySelector(".mp-door-err"); if (er) er.remove();
+            toHost(helloMsg());
+            return;
+          }
+          door = null;
           if (goJoin) goJoin(D.code);
         };
       } else {
@@ -4100,7 +4249,7 @@ function __qbMain(ctx) {
       if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
       if (p) { p.hidden = !reading || mySpec || answering; p.textContent = paused ? "Resume" : "Pause"; }
       var qc = body.querySelector("#mp-qcount"); if (qc) qc.textContent = qCount ? "Question " + qCount : "";
-      var hb = body.querySelector("#mp-hostbadge"); if (hb) hb.hidden = !isHost;
+      var hb = body.querySelector("#mp-hostbadge"); if (hb) hb.hidden = !(amHost() && !roomInfo);   // a bought room shows its role badge instead
     }
 
     // Wire the MP control sections (lobby/you/timer/next) wherever they live.
@@ -4344,7 +4493,7 @@ function __qbMain(ctx) {
         var subHtml = p.off ? "offline" : p.spec ? "spectating"
           : you ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
           : (p.team ? "team " + esc(p.team) : (p.avatar ? esc(p.avatar) : "&nbsp;"));
-        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '"') + '><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
+        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
           '<span class="nm">' + nameHtml + "<span>" + subHtml + "</span></span>" +
           (p.spec ? "" : '<span class="sc num">' + (p.score || 0) + "</span>") + "</div>";
       };
@@ -4820,7 +4969,6 @@ function __qbMain(ctx) {
     version: "9.0.0",
     author: "OfflineQuiz",
     description: "Play together over a relay (works on any network) or P2P.",
-    hotkeys: [{ id: "chat", label: "Focus chat", default: "Enter" }],
     onEnable: __qbMain,
     onDisable: function (ctx) { if (ctx._cleanup) ctx._cleanup(); },
   });

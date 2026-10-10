@@ -368,8 +368,6 @@ const DEFAULT_HOTKEYS = {
   "end-session": "q",
   "star-question": "t",
   "pause-reveal": "p",
-  "mark-correct": "ArrowUp",
-  "mark-incorrect": "ArrowDown",
   "home": "Escape",
   "text-bigger": IS_MAC ? "Meta+=" : "Ctrl+=",
   "text-smaller": IS_MAC ? "Meta+-" : "Ctrl+-",
@@ -383,8 +381,6 @@ const HOTKEY_LABELS = {
   "end-session": "End session",
   "star-question": "Star question",
   "pause-reveal": "Pause / Resume text",
-  "mark-correct": "Mark answer correct",
-  "mark-incorrect": "Mark answer incorrect",
   "home": "Back",
   "text-bigger": "Bigger text",
   "text-smaller": "Smaller text",
@@ -573,13 +569,15 @@ function tagChipsHtml(q, where) {
   }
   return out.join("");
 }
-// Category + year badges, the source, then the tags — one row under a question.
+// Category + year badges, the source, then the tags — one row under a question. noCat leaves the
+// category and year out (practice: the info bar above the question already shows them).
 function questionMetaRowHtml(q, where, opts) {
   if (!q) return "";
   const o = opts || {};
   const src = o.src != null ? o.src : (q.set_name || "");
   const tags = tagChipsHtml(q, where);
-  return `<div class="qmeta-row">${catBadgeHtml(qPathOf(q))}${yearBadgeHtml(q.set_year)}${src ? `<span class="src">${escapeHtml(src)}</span>` : ""}${tags ? '<span class="vsep" aria-hidden="true"></span>' + tags : ""}</div>`;
+  const lead = (o.noCat ? "" : catBadgeHtml(qPathOf(q)) + yearBadgeHtml(q.set_year)) + (src ? `<span class="src">${escapeHtml(src)}</span>` : "");
+  return `<div class="qmeta-row">${lead}${tags ? (lead ? '<span class="vsep" aria-hidden="true"></span>' : "") + tags : ""}</div>`;
 }
 // Clicking any tag chip opens Database → Search with just that tag.
 document.addEventListener("click", (e) => {
@@ -1165,6 +1163,8 @@ function closeSetupDrawer() {
 function syncDrawerStart() {
   const b = document.getElementById("btn-drawer-start");
   if (b) b.textContent = state.sessionActive ? "Done" : "Start";
+  const e = document.getElementById("btn-end-session");   // End only while there's a session to end
+  if (e) e.hidden = !state.sessionActive;
 }
 document.getElementById("btn-open-setup")?.addEventListener("click", () => (isSetupDrawerOpen() ? closeSetupDrawer() : openSetupDrawer()));
 document.getElementById("btn-close-setup")?.addEventListener("click", closeSetupDrawer);
@@ -1254,7 +1254,8 @@ function renderSessionMini() {
 }
 document.getElementById("session-mini")?.addEventListener("click", (e) => { if (e.target.closest(".sm-row")) openHistoryOverlay(); });
 
-// ── after answering: category, year, source and the question's tags ──
+// ── after answering: the source and the question's tags (category and year once, in the info bar
+//    above the question — or here when that bar is turned off) ──
 function showResultActions(on) {
   const a = document.getElementById("result-actions");
   if (a) a.hidden = !on;
@@ -1267,7 +1268,7 @@ function renderResultTags(q) {
   if (!el) return;
   if (!q) { el.innerHTML = ""; return; }
   const src = [q.set_name, q.packet_number ? "packet " + q.packet_number : "", q.question_number ? "#" + q.question_number : ""].filter(Boolean).join(" \u00b7 ");
-  el.innerHTML = questionMetaRowHtml(q, "practice", { src });
+  el.innerHTML = questionMetaRowHtml(q, "practice", { src, noCat: state.settings.showQuestionMeta });
 }
 
 // ── Settings modal: sections on the left, one pane at a time ──
@@ -1869,14 +1870,6 @@ document.addEventListener("keydown", (e) => {
       togglePause();
     }
 
-    if (state.resultAreaVisible && state.mode === "tossups" && state.lastResult) {
-      if (matchesHotkey(e, "mark-correct")) { e.preventDefault(); toggleResultOverride(true); }
-      else if (matchesHotkey(e, "mark-incorrect")) { e.preventDefault(); toggleResultOverride(false); }
-    }
-    if (state.resultAreaVisible && state.mode === "bonuses" && state._bonusRecorded) {
-      if (matchesHotkey(e, "mark-correct")) { e.preventDefault(); applyBonusOverride(state._bonusLastIdx != null ? state._bonusLastIdx : 2, true); }
-      else if (matchesHotkey(e, "mark-incorrect")) { e.preventDefault(); applyBonusOverride(state._bonusLastIdx != null ? state._bonusLastIdx : 2, false); }
-    }
     if (e.key === "Enter" && state.resultAreaVisible && !isInput) {
       e.preventDefault();
       nextQuestion();
@@ -2165,9 +2158,11 @@ function openReviewMenu(items) {
   el.querySelector("#rv-view").onclick = () => { el.remove(); openReviewViewer(matching()); };
   el.querySelector("#rv-saved").onclick = () => { el.remove(); openItemReviewViewer(); };
   el.querySelector("#rv-clearall").onclick = () => {
-    confirmDialog(`Remove all ${items.length} questions from review? This can't be undone.`, async () => {
-      try { await API.post("/api/review/clear", {}); } catch {}
-      el.remove(); refreshReviewBadge();
+    confirmDialog(`Remove all ${items.length} questions from review? This can't be undone.`, () => {
+      const c = document.getElementById("review-count"), was = c ? c.textContent : "";
+      el.remove(); if (c) c.textContent = "";
+      API.post("/api/review/clear", {}).then((r) => { if (r && r.error) throw new Error(r.error); refreshReviewBadge(); })
+        .catch(() => { if (c) c.textContent = was; confirmDialog("Couldn't clear your review list. Try again.", () => {}, { yes: "OK", noCancel: true }); });
     }, { yes: "Remove all", danger: true });
   };
 }
@@ -2281,9 +2276,9 @@ async function openReviewViewer(items) {
   list.querySelectorAll(".rv-remove").forEach((b) => {
     b.addEventListener("click", async (ev) => {
       ev.stopPropagation();
-      try { await API.post("/api/review/dismiss", { questionId: b.dataset.qid }); } catch {}
-      el.querySelector(`[data-rvqid="${CSS.escape(b.dataset.qid)}"]`)?.remove();
-      refreshReviewBadge();
+      const card = el.querySelector(`[data-rvqid="${CSS.escape(b.dataset.qid)}"]`);
+      removeOptimistic(card, () => API.post("/api/review/dismiss", { questionId: b.dataset.qid }), { failText: "Couldn't remove it from review. Try again." })
+        .then(() => refreshReviewBadge());
     });
   });
   el.querySelector("#rv-collapse").onclick = () =>
@@ -5152,7 +5147,7 @@ function startBonusPart(idx) {
   const startTimer = () => {
     if (state.currentQuestion !== q || (state._bonusDone || [])[idx]) return;
     const t = state.settings.bonusTimer;
-    if (t > 0) startEventTimer(t, "Part " + (idx + 1), () => bonusPartTimeUp(idx));
+    if (t > 0) startEventTimer(t, "Part " + bonusPartLetter(idx), () => bonusPartTimeUp(idx));
   };
   readBonusText(textEl, (state._bonusPartTexts || [])[idx] != null ? state._bonusPartTexts[idx] : (textEl ? textEl.textContent : ""), startTimer);
 }
@@ -5243,7 +5238,7 @@ function promptBonusPart(idx, firstAnswer, r) {
   setTimeout(() => inp.focus(), 30);
   stopEventTimer();
   const t = state.settings.bonusTimer;
-  if (t > 0) startEventTimer(t, "Part " + (idx + 1), () => bonusPartTimeUp(idx));
+  if (t > 0) startEventTimer(t, "Part " + bonusPartLetter(idx), () => bonusPartTimeUp(idx));
 }
 
 // An answered part folds to one line — its letter, your answer, ✓ / ✗ — once the
@@ -5276,8 +5271,9 @@ async function revealBonusPartAnswer(idx) {
   const from = (state._bonusPromptFrom || [])[idx];
   const given = userAns ? escapeHtml(userAns) : '<span class="text-muted">(no answer)</span>';
   // .bp-mark repeats the verdict next to your answer: all a collapsed part shows (bonusPartCollapse)
-  const yourLine = (mark) => `<div class="bonus-your-answer">Your Answer: <strong>${from ? escapeHtml(from) + " → " + given : given}</strong>${mark || '<span class="bp-mark"></span>'}</div>`;
-  const show = (verdict, mark) => { el.innerHTML = `${yourLine(mark)}<div class="bp-ans-line">${verdict}ANSWER: <span class="bonus-answer-text">${answerLineHtml(rawAns, ans)}</span></div>`; el.classList.remove("hidden"); };
+  // the same two lines as a tossup's result: YOUR ANSWER, then ANSWER
+  const yourLine = (mark) => `<div class="bonus-your-answer"><span class="ra-k">Your answer</span><strong>${from ? escapeHtml(from) + " → " + given : given}</strong>${mark || '<span class="bp-mark"></span>'}</div>`;
+  const show = (verdict, mark) => { el.innerHTML = `${yourLine(mark)}<div class="bp-ans-line"><span class="ra-k">Answer</span>${verdict}<span class="bonus-answer-text">${answerLineHtml(rawAns, ans)}</span></div>`; el.classList.remove("hidden"); };
   bonusPartDone(idx);
   show("");
   let verdict = '<span class="bonus-verdict incorrect">✗ </span>', mark = bpMark("incorrect");
@@ -5285,7 +5281,7 @@ async function revealBonusPartAnswer(idx) {
     // A prompt left standing after the prompt round is not an accept.
     const r = await judgeBonusPart(idx, userAns);
     if (r && r.status === "accept") { verdict = '<span class="bonus-verdict correct">✓ </span>'; mark = bpMark("correct"); }
-    else if (r && r.unsure) { verdict = '<span class="bonus-verdict unsure">? </span><span class="qb-info bonus-unsure-tip" data-tip="This answer line accepts equivalents and your answer matched none of the listed ones. Click ? to mark it correct.">i</span> '; mark = bpMark("unsure"); }
+    else if (r && r.unsure) { verdict = '<span class="bonus-verdict unsure">? </span><span class="qb-info bonus-unsure-tip" data-tip="This answer line accepts equivalents, and your answer matched none of the ones it lists.">i</span> '; mark = bpMark("unsure"); }
   }
   show(verdict, mark);
 }
@@ -6165,8 +6161,9 @@ window.QB?.on?.("theme:change", () => { applyTheme(); applyDefaultAppearance(); 
 rebuildAppearanceOptions();
 applyDefaultAppearance();
 
-// opts: { yes, no, title, detail, danger, noCancel (a notice: just the one button) }.
-// Enter confirms, Esc / backdrop cancel.
+// opts: { yes, no, title, detail, danger, noCancel (a notice: just the one button),
+// alt: { label, danger, onClick } (a second action, under the first) }.
+// Enter confirms, Esc / backdrop cancel. Two buttons sit side by side; with alt they stack.
 function confirmDialog(message, onYes, opts) {
   opts = opts || {};
   document.getElementById("confirm-dialog")?.remove();
@@ -6176,12 +6173,19 @@ function confirmDialog(message, onYes, opts) {
   el.setAttribute("role", "alertdialog"); el.setAttribute("aria-modal", "true");
   el.innerHTML = `<div class="confirm-box">${opts.title ? `<div class="confirm-title">${escapeHtml(opts.title)}</div>` : ""}<div class="confirm-msg">${escapeHtml(message)}</div>` +
     (opts.detail ? `<div class="confirm-detail">${escapeHtml(opts.detail)}</div>` : "") +
-    `<div class="confirm-actions">${opts.noCancel ? "" : `<button class="btn btn-ghost" id="cf-no">${escapeHtml(opts.no || "Cancel")}</button>`}` +
-    `<button class="btn ${opts.danger ? "btn-danger" : "btn-primary"}" id="cf-yes">${escapeHtml(opts.yes || "Delete")}</button></div></div>`;
+    `<div class="confirm-actions${opts.alt ? " confirm-stack" : ""}">` +
+    (opts.alt
+      ? `<button class="btn ${opts.danger ? "btn-danger" : "btn-primary"}" id="cf-yes">${escapeHtml(opts.yes || "Delete")}</button>` +
+        `<button class="btn ${opts.alt.danger ? "btn-danger-ghost" : ""}" id="cf-alt">${escapeHtml(opts.alt.label)}</button>` +
+        `<button class="btn btn-ghost" id="cf-no">${escapeHtml(opts.no || "Cancel")}</button>`
+      : (opts.noCancel ? "" : `<button class="btn btn-ghost" id="cf-no">${escapeHtml(opts.no || "Cancel")}</button>`) +
+        `<button class="btn ${opts.danger ? "btn-danger" : "btn-primary"}" id="cf-yes">${escapeHtml(opts.yes || "Delete")}</button>`) +
+    `</div></div>`;
   const close = () => animateRemove(el);
   el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
   document.body.appendChild(el);
   el.querySelector("#cf-yes").onclick = () => { close(); try { onYes(); } catch (e) { console.error(e); } };
+  const alt = el.querySelector("#cf-alt"); if (alt) alt.onclick = () => { close(); try { opts.alt.onClick(); } catch (e) { console.error(e); } };
   const no = el.querySelector("#cf-no"); if (no) no.onclick = close;
 }
 // A one-line text question ("Name your leaderboard"): Enter or the button
@@ -6217,14 +6221,75 @@ function animateRemove(el) {
   el.addEventListener("animationend", (e) => { if (e.target === el) fin(); });
   setTimeout(fin, 260);
 }
-// End session asks first (the button and the hotkey); Enter confirms.
+// ── Optimistic actions: the screen changes the moment you act, the server catches up ──
+// removeOptimistic(rows, run): the row(s) fold away at once and run() does the work (a promise;
+// an { error } answer counts as failing). Done: they're dropped. Failed: they come back where
+// they were with a short note under them. Resolves to whether it worked.
+function removeOptimistic(rows, run, opts) {
+  opts = opts || {};
+  rows = (Array.isArray(rows) ? rows : [rows]).filter(Boolean);
+  rows.forEach(foldAway);
+  return Promise.resolve().then(run).then((r) => {
+    if (r && r.error) throw new Error(r.error);
+    rows.forEach((x) => x.remove());
+    return true;
+  }).catch(() => {
+    rows.forEach(unfold);
+    const text = opts.failText || "Couldn't delete it. Try again.";
+    const last = rows.filter((x) => x.isConnected).pop();
+    if (last) failNote(last, text); else confirmDialog(text, () => {}, { yes: "OK", noCancel: true });
+    return false;
+  });
+}
+function foldAway(el) {
+  if (!el || !el.isConnected) return;
+  el.style.height = el.getBoundingClientRect().height + "px"; el.style.overflow = "hidden";
+  el.classList.add("op-gone");
+  void el.offsetHeight;
+  el.style.height = "0px";
+  el._opT = setTimeout(() => { if (el.classList.contains("op-gone")) el.style.display = "none"; }, 200);
+}
+function unfold(el) {
+  if (!el) return;
+  clearTimeout(el._opT);
+  el.classList.remove("op-gone"); el.style.height = ""; el.style.overflow = ""; el.style.display = "";
+}
+// A short red line under something that just failed; it goes away by itself.
+function failNote(after, text) {
+  if (!after || !after.parentNode) return;
+  after.parentNode.querySelectorAll(":scope > .op-fail-note").forEach((n) => n.remove());
+  let n;
+  if (after.tagName === "TR") { n = document.createElement("tr"); n.innerHTML = `<td colspan="${after.children.length || 1}"></td>`; n.firstChild.textContent = text; }
+  else { n = document.createElement("div"); n.textContent = text; }
+  n.className = "op-fail-note"; n.setAttribute("role", "alert");
+  after.after(n);
+  setTimeout(() => { n.classList.add("op-out"); setTimeout(() => n.remove(), 320); }, 4500);
+}
+// End session asks first (the button and the hotkey); Enter confirms. Once something was
+// answered it can also end without saving: the session's answers are deleted, so it never
+// reaches Stats, Review or the streak.
 function confirmEndSession(after) {
   if (!state.sessionActive) { if (after) after(); return; }
   const heard = (state.sessionHistory || []).length, score = state.totalPoints || 0;
   confirmDialog("End this session?", () => { endSession(); if (after) after(); }, {
     yes: "End session", no: "Keep playing", danger: true,
     detail: heard ? `${heard} ${heard === 1 ? "question" : "questions"} · ${score} ${score === 1 ? "point" : "points"}` : "",
+    alt: heard && state.sessionId ? { label: "End without saving", danger: true, onClick: () => { discardSession(); if (after) after(); } } : null,
   });
+}
+// The screen moves on at once; the answers are deleted once the ones still being recorded are in.
+function discardSession() {
+  const sid = state.sessionId;
+  endSession();
+  resetEndedPracticeView();
+  afterRecording()
+    .then(() => API.delete("/api/sessions/" + encodeURIComponent(sid)))
+    .then(() => { refreshReviewBadge(); qbEmit("session:discard", { sessionId: sid }); })
+    .catch(() => confirmDialog("Couldn't delete this session's answers.", () => discardAgain(sid), { yes: "Try again", no: "Keep them", detail: "They stay in Stats until you delete the session there." }));
+}
+function discardAgain(sid) {
+  API.delete("/api/sessions/" + encodeURIComponent(sid)).then(() => refreshReviewBadge())
+    .catch(() => confirmDialog("Couldn't delete this session's answers.", () => {}, { yes: "OK", noCancel: true }));
 }
 
 function closeSaveMenu() {
@@ -6271,10 +6336,12 @@ function openSaveMenu(question, type, anchor) {
   const items = [];
   items.push({
     label: "Add to Review",
-    fn: async () => {
+    fn: () => {
       if (accountGate("Sign in to keep a review list.")) return;
-      await API.post("/api/review/manual", { questionId: question.id, add: true, type });
-      refreshReviewBadge();
+      // the menu's already closed; a failure says so by the + it came from
+      API.post("/api/review/manual", { questionId: question.id, add: true, type })
+        .then((r) => { if (r && r.error) throw new Error(r.error); refreshReviewBadge(); })
+        .catch(() => failBubble(anchor, "Couldn't add it to Review. Try again."));
     },
   });
   (window.QB?.getSaveActions?.(question, type) || []).forEach((a) => items.push({ label: a.label, fn: a.onClick }));
@@ -6604,7 +6671,8 @@ function renderHistoryPanel() {
 
   const source = _histEntries || state.sessionHistory;
   if (source.length === 0) {
-    list.innerHTML = "";
+    // the side panel stays bare; the history window says why it's empty
+    list.innerHTML = list.closest(".review-viewer") ? '<div class="db-empty">Nothing answered yet. Questions show up here once you answer them.</div>' : "";
     return;
   }
 
@@ -6627,7 +6695,7 @@ function renderHistoryPanel() {
       return true;
     });
   }
-  if (!entries.length) { list.innerHTML = '<div class="text-muted" style="padding:16px">No history entries match these filters.</div>'; return; }
+  if (!entries.length) { list.innerHTML = '<div class="db-empty">Nothing matches these filters.</div>'; return; }
   const isCompact = state.viewMode === "compact";
 
   list.innerHTML = entries.map((e, i) => {
@@ -6694,17 +6762,8 @@ document.addEventListener("click", async (e) => {
   if (accountGate("Sign in to star questions.")) return;
   const qId = star.dataset.qid, type = star.dataset.type || "tossup";
   if (!qId) return;
-  try {
-    const result = await API.post("/api/starred/toggle", { questionId: qId, type });
-    setStarredLocal(qId, type, result.starred);
-    // Keep the Database screen's star cache in sync so re-renders don't show
-    // stale stars (and a second click doesn't silently unstar).
-    if (_dbStarred) { const k = type + ":" + qId; if (result.starred) _dbStarred.add(k); else _dbStarred.delete(k); }
-    star.textContent = result.starred ? "★" : "☆";
-    star.classList.toggle("on", !!result.starred);
-    Sound.star();
-    renderHistoryPanel();
-  } catch {}
+  Sound.star();
+  starOptimistic(qId, type, star);
 });
 
 document.addEventListener("click", async (e) => {
@@ -6723,16 +6782,46 @@ document.addEventListener("click", async (e) => {
 
 async function toggleStarInHistory(qId, type, el) {
   if (accountGate("Sign in to star questions.")) return;
-  try {
-    const result = await API.post("/api/starred/toggle", { questionId: qId, type });
-    setStarredLocal(qId, type, result.starred);
-    if (_dbStarred) { const k = type + ":" + qId; if (result.starred) _dbStarred.add(k); else _dbStarred.delete(k); }
-    if (el) { el.textContent = result.starred ? "\u2605" : "\u2606"; el.classList.toggle("on", !!result.starred); }
-    state.sessionHistory.forEach(e => {
-      if (e.id === qId && e.type === type) e.starred = result.starred;
-    });
-    Sound.star();
-  } catch {}
+  Sound.star();
+  starOptimistic(qId, type, el);
+}
+// Stars change the moment they're clicked; the server catches up. If it says otherwise its
+// answer is shown, and if it can't be reached the star goes back with a short note.
+function starOptimistic(qId, type, el) {
+  const k = (type || "tossup") + ":" + qId;
+  const was = el ? el.classList.contains("on") || el.textContent.trim() === "\u2605" : !!(state.starredIds && state.starredIds.has(k));   // what's shown is what's toggled
+  applyStar(qId, type, !was);
+  return API.post("/api/starred/toggle", { questionId: qId, type }).then((r) => {
+    if (!r || r.error) throw new Error((r && r.error) || "no answer");
+    if (!!r.starred !== !was) applyStar(qId, type, !!r.starred);
+  }).catch(() => { applyStar(qId, type, was); failBubble(el, "Couldn't save the star. Try again."); });
+}
+function applyStar(qId, type, on) {
+  type = type || "tossup";
+  const k = type + ":" + qId;
+  setStarredLocal(qId, type, on);
+  // the Database screen's star cache too, so a re-render shows it (and a second click doesn't silently unstar)
+  if (_dbStarred) { if (on) _dbStarred.add(k); else _dbStarred.delete(k); }
+  document.querySelectorAll(`.qb-star[data-qid="${CSS.escape(String(qId))}"], .star-toggle[data-qid="${CSS.escape(String(qId))}"]`).forEach((s) => {
+    if ((s.dataset.type || "tossup") !== type) return;
+    s.textContent = on ? "\u2605" : "\u2606"; s.classList.toggle("on", on);
+  });
+  const q = state.currentQuestion;
+  if (q && String(q.id) === String(qId) && (state.mode === "tossups" ? "tossup" : "bonus") === type) updateStarIndicator(qId, type, on);
+  (state.sessionHistory || []).forEach((e) => { if (e.id === qId && (e.type || "tossup") === type) e.starred = on; });
+  renderHistoryPanel();
+}
+// A small note by a control whose change didn't go through; it fades by itself.
+function failBubble(el, text) {
+  if (!el || !el.isConnected) { confirmDialog(text, () => {}, { yes: "OK", noCancel: true }); return; }
+  document.querySelectorAll(".op-bubble").forEach((b) => b.remove());
+  const r = el.getBoundingClientRect(), b = document.createElement("div");
+  b.className = "op-bubble"; b.setAttribute("role", "alert"); b.textContent = text;
+  document.body.appendChild(b);
+  const w = b.offsetWidth;
+  b.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px";
+  b.style.top = (r.bottom + 8 + b.offsetHeight > innerHeight ? r.top - b.offsetHeight - 8 : r.bottom + 8) + "px";
+  setTimeout(() => { b.classList.add("op-out"); setTimeout(() => b.remove(), 320); }, 3000);
 }
 
 function renderTossupResult() {
@@ -6757,10 +6846,9 @@ function renderTossupResult() {
   }
 
   const celPct = ((1 - r.celerity) * 100).toFixed(1);
-  const unsure = r.unsure && !state.resultOverridden;
-  const markTip = keyDisplay("mark-correct") + " marks it correct, " + keyDisplay("mark-incorrect") + " marks it incorrect";
+  const unsure = r.unsure;
   answerDiv.innerHTML = `
-    <div class="ra-row"><span class="ra-k">Your answer</span><strong class="ra-you ${r.correct ? "ok" : "bad"}">${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">UNSURE</span>' : ''}${state.resultOverridden ? ' <span class="ra-over">overridden</span>' : ''}<span class="qb-info" data-tip="${escapeHtml(unsure ? "This answer line accepts equivalents and your answer matched none of the listed ones, so judge it yourself: " + markTip : markTip)}">i</span><span class="ra-keys"><kbd>${escapeHtml(keyDisplay("mark-correct"))}</kbd><kbd>${escapeHtml(keyDisplay("mark-incorrect"))}</kbd> change verdict</span></div>
+    <div class="ra-row"><span class="ra-k">Your answer</span><strong class="ra-you ${r.correct ? "ok" : "bad"}">${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">UNSURE</span><span class="qb-info" data-tip="This answer line accepts equivalents, and your answer matched none of the ones it lists.">i</span>' : ""}</div>
     <div class="ra-row"><span class="ra-k">Answer</span><span class="actual">${answerLineHtml(state.currentQuestion?.answer, r.answer || state.currentQuestion?.answer_sanitized || "")}</span></div>
     <div class="ra-row ra-cel"><span class="ra-k">Celerity</span><span>${celPct}% remaining</span></div>
   `;
@@ -6771,152 +6859,6 @@ function renderTossupResult() {
     try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {}
   }, 100);
 }
-
-function toggleResultOverride(markCorrect) {
-  if (!state.lastResult || !state.resultAreaVisible) return;
-  const r = state.lastResult;
-
-  if (r.correct === markCorrect && !state.resultOverridden) return;
-
-  const wasCorrect = r.correct;
-  const wasPower = r.isPower;
-  const wasPoints = r.points;
-  const celVal = 1 - r.celerity;
-
-  const incorrectPts = state.questionFullyRead ? 0 : -5;
-  const inPowerZone = state.prePowerEnd > 0 && r.buzzPosition != null && r.buzzPosition <= state.prePowerEnd;
-  r.correct = markCorrect;
-  r.isPower = markCorrect ? inPowerZone : false;
-  r.points = markCorrect ? (r.isPower ? 15 : 10) : incorrectPts;
-  state.resultOverridden = true;
-
-  if (state.mode === "tossups" && state.settings.bonusAfter) {
-    if (markCorrect && !wasCorrect) {
-      state._wantBonus = true;
-      state._bonusFromQ = state.currentQuestion;
-      const _mv = $("#mode-select")?.value;
-      state._pendingPairedBonus = _mv === "set" ? (state._currentPaired || null) : null;
-      _primePairBonus();
-    } else if (!markCorrect && wasCorrect) {
-      state._wantBonus = false;
-      state._pendingPairedBonus = null;
-    }
-  }
-
-  const histEntry = state.sessionHistory.find(e => e.id === r.questionId && e.correct !== markCorrect);
-  if (histEntry) {
-    histEntry.correct = markCorrect;
-    histEntry.isPower = markCorrect ? r.isPower : false;
-    histEntry.points = r.points;
-    renderHistoryPanel();
-  }
-
-  state.totalPoints += r.points - wasPoints;
-
-  if (!wasCorrect && markCorrect) {
-    state.correct++;
-    if (wasPoints < 0) state.negs = Math.max(0, state.negs - 1);
-  } else if (wasCorrect && !markCorrect) {
-    state.correct = Math.max(0, state.correct - 1);
-    if (r.points < 0) state.negs++;
-  }
-  if (!wasPower && r.isPower) state.powers++;
-  else if (wasPower && !r.isPower) state.powers = Math.max(0, state.powers - 1);
-
-  if (markCorrect) {
-    state.correctCelerityHistory.push(celVal);
-    state.incorrectCelerityHistory = state.incorrectCelerityHistory.filter(c => c !== celVal);
-  } else {
-    state.incorrectCelerityHistory.push(celVal);
-    state.correctCelerityHistory = state.correctCelerityHistory.filter(c => c !== celVal);
-  }
-  if (state.correctCelerityHistory.length > 10) state.correctCelerityHistory.shift();
-  if (state.incorrectCelerityHistory.length > 10) state.incorrectCelerityHistory.shift();
-
-  if (r.category && state.mode === "tossups") {
-    afterRecording().then(() => API.post("/api/check-tossup", {
-      questionId: r.questionId,
-      answer: r.userAnswer,
-      buzzPosition: r.origBuzzPosition ?? (r.buzzPosition || 0),
-      sessionId: state.sessionId,
-      overriding: true,
-      correct: r.correct,
-      isPower: r.isPower,
-      points: r.points,
-    })).catch(() => {});
-  }
-
-  renderTossupResult();
-  updateSessionStats();
-  Sound.toggle();
-}
-
-// ── bonus mark up / mark down ──────────────────────────────────────────────
-// After a bonus is recorded, any part's ✓/✗ verdict can be overruled — click
-// it, or use the mark-correct/incorrect hotkeys on the last revealed part.
-// The re-record goes through /api/check-bonus with an overrides array, which
-// upserts the same session row with the recomputed score.
-async function applyBonusOverride(idx, force) {
-  if (!state._bonusRecorded || !state.currentQuestion || state.mode !== "bonuses") return;
-  if (idx == null || idx < 0 || idx >= (state.bonusPartCount || 3)) return;
-  if (state._bonusBusy) return;
-  const judged = state._bonusJudged || [];
-  const shown = state._bonusOverrides[idx] != null ? state._bonusOverrides[idx] : judged[idx];
-  const next = force != null ? !!force : !shown;
-  if (next === shown) return;
-  state._bonusOverrides[idx] = next === !!judged[idx] ? null : next;
-  state._bonusBusy = true;
-  const prevPts = state._bonusResult ? state._bonusResult.totalPoints : 0;
-  let result;
-  try {
-    await afterRecording();
-    result = await API.post("/api/check-bonus", {
-      questionId: state.currentQuestion.id,
-      answers: Array.from({ length: state.bonusPartCount || 3 }, (_, i) => state.bonusUserAnswers[i] || ""),
-      sessionId: state.sessionId,
-      strictness: state.settings.strictness,
-      overrides: state._bonusOverrides.slice(),
-      previous: Array.from({ length: state.bonusPartCount || 3 }, (_, i) => (state._bonusPromptFrom || [])[i] || null),
-    });
-  } catch (e) {
-    state._bonusBusy = false;
-    return;
-  }
-  state._bonusBusy = false;
-  state._bonusResult = result;
-  state._bonusLastIdx = idx;
-
-  // verdict glyph
-  const holder = $("#bonus-answer-" + idx);
-  const vs = holder && holder.querySelector(".bonus-verdict");
-  if (vs) { vs.className = "bonus-verdict " + (next ? "correct" : "incorrect"); vs.textContent = next ? "✓ " : "✗ "; }
-  const mk = holder && holder.querySelector(".bp-mark"); if (mk) mk.outerHTML = bpMark(next ? "correct" : "incorrect");
-  holder?.querySelector(".bonus-unsure-tip")?.remove();
-
-  // banner
-  const overridden = state._bonusOverrides.some((o) => o != null);
-  const banner = $("#result-banner");
-  if (banner) {
-    banner.className = "result-banner " + bonusBannerClass(result);
-    banner.textContent = bonusBannerText(result) + (overridden ? " (overridden)" : "");
-  }
-
-  // running score + history entry
-  state.totalPoints += result.totalPoints - prevPts;
-  const hist = [...state.sessionHistory].reverse().find((e) => e.type === "bonus" && e.id === state.currentQuestion.id);
-  if (hist) { hist.points = result.totalPoints; hist.partsCorrect = result.partsCorrect; hist.correct = bonusAllCorrect(result); }
-  renderHistoryPanel();
-  updateSessionStats();
-  Sound.toggle();
-}
-
-document.addEventListener("click", (e) => {
-  const v = e.target.closest?.("#bonus-parts-area .bonus-verdict");
-  if (!v || state.mode !== "bonuses" || !state._bonusRecorded) return;
-  const holder = v.closest('[id^="bonus-answer-"]');
-  if (!holder) return;
-  applyBonusOverride(parseInt(holder.id.replace("bonus-answer-", ""), 10));
-});
 
 // Totals are out of the bonus's own maximum (its per-part values; 10 each
 // when unstated) and its own part count — not 30 and 3.
@@ -7341,6 +7283,7 @@ $("#btn-start-session").addEventListener("click", () => {
 });
 
 $("#btn-end-session").addEventListener("click", () => confirmEndSession(goHome));
+syncDrawerStart();
 
 function exportSessionHistory() {
   // Export whatever the overlay is currently showing, so a plugin-supplied
@@ -7496,20 +7439,7 @@ async function toggleStar() {
   Sound.star();
 
   const type = state.mode === "tossups" ? "tossup" : "bonus";
-  try {
-    const result = await API.post("/api/starred/toggle", {
-      questionId: q.id,
-      type,
-    });
-    setStarredLocal(q.id, type, result.starred);
-    updateStarIndicator(q.id, type, result.starred);
-    state.sessionHistory.forEach(e => {
-      if (e.id === q.id && e.type === type) e.starred = result.starred;
-    });
-    renderHistoryPanel();
-  } catch (e) {
-    console.error("Star toggle failed:", e);
-  }
+  starOptimistic(q.id, type, $("#star-indicator"));
 }
 
 function updateStarIndicator(questionId, type, starred) {
@@ -7910,6 +7840,12 @@ function qhDetailHtml(q, type) {
     '<div class="qh-ans">Answer: ' + answerLineHtml(q.answer, q.answer_sanitized || "") + "</div>";
 }
 let _statsRedraw = null;
+// The row goes at once; the totals catch up when the server has deleted it.
+function deleteSessionRow(id) {
+  const rows = [...document.querySelectorAll("#stats-container .session-row")].filter((r) => r.dataset.session === id);
+  removeOptimistic(rows, () => API.delete("/api/sessions/" + encodeURIComponent(id)), { failText: "Couldn't delete that session. Try again." })
+    .then((ok) => { if (ok) { if (state.statsSessionId === id) state.statsSessionId = null; loadStats(true); refreshReviewBadge(); } });
+}
 async function loadStats(preserveScroll = false) {
   _screenBuilt.add("stats");
   const screen = document.getElementById("stats-screen");
@@ -8331,10 +8267,7 @@ async function loadStats(preserveScroll = false) {
         ev.stopPropagation();
         const id = b.dataset.session;
         if (!id) return;
-        confirmDialog(`Delete the session "${formatSessionTitle(id)}"? Its stats are removed permanently.`, async () => {
-          try { await API.delete("/api/sessions/" + encodeURIComponent(id)); } catch (e) {}
-          loadStats(true);
-        });
+        confirmDialog(`Delete the session "${formatSessionTitle(id)}"? Its stats are removed permanently.`, () => deleteSessionRow(id), { yes: "Delete", danger: true });
       });
     });
     container.querySelectorAll(".session-row").forEach((row) => {
@@ -8345,7 +8278,7 @@ async function loadStats(preserveScroll = false) {
         window.QB.contextMenu(ev.clientX, ev.clientY, [
           { label: "Open session stats", onClick: () => { state.statsSessionId = id; loadStats(); } },
           { sep: true },
-          { label: "Delete session…", danger: true, onClick: () => confirmDialog(`Delete the session "${formatSessionTitle(id)}"? Its stats are removed permanently.`, async () => { try { await API.delete("/api/sessions/" + encodeURIComponent(id)); } catch (e) {} loadStats(true); }) },
+          { label: "Delete session…", danger: true, onClick: () => confirmDialog(`Delete the session "${formatSessionTitle(id)}"? Its stats are removed permanently.`, () => deleteSessionRow(id), { yes: "Delete", danger: true }) },
         ], { title: formatSessionTitle(id) });
       });
     });
@@ -8790,7 +8723,7 @@ async function checkForUpdatesUI() {
     const bg = await API.get("/api/db-update-status").catch(() => null);
     if (bg && ["checking", "downloading", "ready"].includes(bg.state)) {
       renderDbUpdateStatus(bg); watchDbUpdate();
-      btn.disabled = false; btn.textContent = "Check for Updates";
+      btn.disabled = false; btn.textContent = "Check for updates";
       return;
     }
     const info = await API.get("/api/check-update");
@@ -8818,7 +8751,7 @@ async function checkForUpdatesUI() {
   }
 
   btn.disabled = false;
-  btn.textContent = "Check for Updates";
+  btn.textContent = "Check for updates";
 }
 
 function progressBarHtml(id, label) {
@@ -8857,7 +8790,7 @@ function allHotkeyActions() {
 const HOTKEY_SCOPES = {
   "buzz": "practice", "start-skip": "practice", "next-question": "practice",
   "end-session": "practice", "star-question": "practice", "pause-reveal": "practice",
-  "mark-correct": "practice", "mark-incorrect": "practice",
+
   "home": "global",
 };
 function hotkeyScope(action) {
@@ -9041,23 +8974,24 @@ async function loadPlayer() {
     const achievementsHtml = buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs);
     maybeShowAchievementPopups(achData, pluginAchs, profileKey);
 
+    const earnedN = Object.values(achData || {}).filter((d) => d && d.earned).length + (pluginAchs || []).filter((p) => p.earned).length;
+    const totalN = Object.keys(achData || {}).length + (pluginAchs || []).length;
+    const handle = Account.user && Account.user.handle ? "@" + Account.user.handle : "";
+    const tile = (n, l, cls) => `<div class="pf-tile"><b class="num${cls ? " " + cls : ""}">${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
     container.innerHTML = `
-      <div class="player-header">
-        <div class="player-welcome">${state.username ? `Welcome, ${escapeHtml(state.username)}` : "Welcome"}</div>
-        <div class="player-avatar" id="player-avatar" title="Click to change avatar">${escapeHtml(avatar)}</div>
-        <div class="player-name-row">
-          <input type="text" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Set username..." maxlength="24" style="font-family:var(--font);font-size:14px;padding:4px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none;width:180px;text-align:center">
-        </div>
-        <div class="player-stats-row">
-          <div class="player-stat"><strong>${totalQ}</strong> questions</div>
-          <div class="player-stat"><strong>${powers}</strong> powers</div>
-          <div class="player-stat"><strong>${negs}</strong> negs</div>
-          <div class="player-stat"><strong>${sessions.length}</strong> sessions</div>
-        </div>
-      </div>
-      <div class="stats-section">
-        <div class="stats-section-title">ACHIEVEMENTS</div>
-        <div class="achievements-grid">${achievementsHtml}</div>
+      <div class="pf-page">
+        <section class="pf-card">
+          <button type="button" class="pf-avatar" id="player-avatar" title="Change your avatar" aria-label="Change your avatar">${escapeHtml(avatar)}</button>
+          <div class="pf-id">
+            <input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false">
+            <small class="pf-sub">${handle ? escapeHtml(handle) : Account.user ? "Signed in" : IS_WEB ? "Not signed in" : "On this computer"}</small>
+          </div>
+        </section>
+        <div class="pf-tiles">${tile(totalQ, "questions")}${tile(powers, "powers", "pf-pwr")}${tile(negs, "negs", "pf-neg")}${tile(sessions.length, "sessions")}</div>
+        <section class="pf-ach">
+          <div class="pf-ach-head"><h2 class="eyebrow">Achievements</h2><span class="pf-ach-n"><b class="num">${earnedN}</b> of ${totalN} earned</span></div>
+          <div class="achievements-grid">${achievementsHtml}</div>
+        </section>
       </div>
     `;
 
@@ -9068,8 +9002,6 @@ async function loadPlayer() {
       state.username = e.target.value.trim();
       lsSet("qb-username", state.username);
       pushAccountName(state.username);
-      const w = container.querySelector(".player-welcome");
-      if (w) w.textContent = state.username ? `Welcome, ${state.username}` : "Welcome";
     });
     // Flush immediately when leaving the field, so quitting right after a
     // rename can't lose it to the debounce window.
@@ -9353,10 +9285,9 @@ function renderAchievementCard(ach, data) {
     <div class="achievement-card ${earned ? "earned" : ""}">
       ${achievementIconHTML(ach)}
       <div class="achievement-info">
-        <div class="achievement-name">${escapeHtml(displayName)}</div>
+        <div class="achievement-top"><span class="achievement-name">${escapeHtml(displayName)}</span>${earned ? '<span class="achievement-done">Earned</span>' : `<span class="achievement-progress num">${Math.min(progress, threshold).toLocaleString()}/${threshold.toLocaleString()}</span>`}</div>
         <div class="achievement-desc">${escapeHtml(displayDesc)}</div>
-        <div class="achievement-bar"><div class="achievement-bar-fill" style="width:${pct}%"></div></div>
-        <div class="achievement-progress">${progress}/${threshold}</div>
+        ${earned ? "" : `<div class="achievement-bar"><div class="achievement-bar-fill" style="width:${pct}%"></div></div>`}
       </div>
     </div>`;
 }
@@ -9716,25 +9647,37 @@ function showAvatarPicker() {
   "╮(￣▽￣)╭", "＼(￣▽￣)／", "┐(￣ヘ￣)┌", "＼(＾▽＾)／", "ヽ(>∀<☆)ノ",
 ];
   let picker = document.getElementById("avatar-picker");
-  if (picker) { picker.remove(); return; }
+  if (picker) { closeAvatarPicker(); return; }
   const av = document.getElementById("player-avatar");
   if (!av) return;
+  // a popover under the avatar: every face in a cell of its own, the current one marked
   picker = document.createElement("div");
   picker.id = "avatar-picker";
   picker.className = "avatar-picker";
-  picker.innerHTML = kaomojis.map(k =>
-    `<span class="avatar-option" data-avatar="${k}">${k}</span>`
-  ).join("");
-  av.appendChild(picker);
-  picker.querySelectorAll(".avatar-option").forEach(opt => {
+  picker.setAttribute("role", "listbox"); picker.setAttribute("aria-label", "Avatars");
+  picker.innerHTML = `<div class="avatar-picker-h">Choose an avatar</div><div class="avatar-grid">` + kaomojis.map((k) =>
+    `<button type="button" class="avatar-option${k === state.avatar ? " on" : ""}" role="option" aria-selected="${k === state.avatar}" data-avatar="${escapeHtml(k)}">${escapeHtml(k)}</button>`
+  ).join("") + `</div>`;
+  document.body.appendChild(picker);
+  const r = av.getBoundingClientRect();
+  picker.style.left = Math.max(12, Math.min(innerWidth - picker.offsetWidth - 12, r.left)) + "px";
+  picker.style.top = Math.min(innerHeight - picker.offsetHeight - 12, r.bottom + 8) + "px";
+  picker.querySelectorAll(".avatar-option").forEach((opt) => {
     opt.addEventListener("click", (e) => {
       e.stopPropagation();
       state.avatar = opt.dataset.avatar;
       lsSet("qb-avatar", state.avatar);
-      picker.remove();
+      closeAvatarPicker();
       av.textContent = state.avatar;
     });
   });
+  setTimeout(() => { document.addEventListener("click", avatarPickerAway, true); document.addEventListener("keydown", avatarPickerEsc, true); window.addEventListener("scroll", closeAvatarPicker, true); }, 0);
+}
+function avatarPickerAway(e) { const p = document.getElementById("avatar-picker"); if (p && !p.contains(e.target) && !e.target.closest?.("#player-avatar")) closeAvatarPicker(); }
+function avatarPickerEsc(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAvatarPicker(); } }
+function closeAvatarPicker() {
+  document.removeEventListener("click", avatarPickerAway, true); document.removeEventListener("keydown", avatarPickerEsc, true); window.removeEventListener("scroll", closeAvatarPicker, true);
+  const p = document.getElementById("avatar-picker"); if (p) { p.removeAttribute("id"); animateRemove(p); }
 }
 
 let _dbWired = false;
@@ -9786,6 +9729,11 @@ function loadDatabase() {
     };
     document.getElementById("btn-db-compact")?.addEventListener("click", () => setAll(true));
     document.getElementById("btn-db-expand")?.addEventListener("click", () => setAll(false));
+    // Compact all / Expand all only where there are question cards to fold (not Sets, Frequency…)
+    const syncCardBtns = () => { const has = !!document.querySelector("#db-content .qcard"); ["btn-db-compact", "btn-db-expand"].forEach((id) => { const b = document.getElementById(id); if (b) b.hidden = !has; }); };
+    const dbc = document.getElementById("db-content");
+    if (dbc) new MutationObserver(() => { cancelAnimationFrame(syncCardBtns._r); syncCardBtns._r = requestAnimationFrame(syncCardBtns); }).observe(dbc, { childList: true, subtree: true });
+    syncCardBtns();
     document.querySelectorAll(".db-tabs .db-tab[data-tab]").forEach((t) => {
       t.addEventListener("click", () => {
         _dbTabFrom = null; // an explicit tab pick replaces any remembered origin
@@ -10906,7 +10854,7 @@ function initApp() {
   setTimeout(() => prefetchDefaults().catch(() => {}), IS_WEB ? 600 : 2500);
   checkMpReachable();
   catPresetsSync();
-  // the website has no name prompt: an account's display name, or "unregistered" in multiplayer
+  // the website has no name prompt: an account's display name, or "Player" + four digits in multiplayer
   if (!IS_WEB && !localStorage.getItem("qb-setup-done") && !state.username) {
     showSetupOverlay();
   }
@@ -10939,6 +10887,7 @@ function init() {
       api: API,
       getState: () => ({
         account: Account.user ? { handle: Account.user.handle, displayName: Account.user.displayName || Account.user.handle } : null,
+        accountKnown: !!Account.known,
         web: IS_WEB,
         mode: state.mode,
         sessionActive: state.sessionActive,
@@ -11021,6 +10970,7 @@ function init() {
       playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),
       keyDisplay: (action) => keyDisplay(action),
       confirm: (message, onYes, opts) => confirmDialog(message, onYes, opts),
+      addUserMenuItems: (fn) => { if (typeof fn !== "function") return () => {}; _userMenuExtras.add(fn); return () => _userMenuExtras.delete(fn); },
       animateRemove: (el) => animateRemove(el),
       updateTopbar: () => updateTopbar(),
       // accounts (website gates; multiplayer names)
@@ -11030,6 +10980,7 @@ function init() {
       // the shop (multiplayer's Buy a room): sign in first; open the payment page (the website
       // goes there, the app opens it in the person's browser — onlinequiz.net addresses only)
       openAccount: (mode, opts) => openAccount(mode, opts),
+      whenAccountKnown: () => accountKnownP,
       openUrl: (url) => { if (IS_WEB) location.href = url; else API.post("/api/cloud/open", { url }).catch(() => {}); },
       openSaveMenu: (question, type, anchor) => openSaveMenu(question, type, anchor),
       openItemSaveMenu: (spec, anchor) => openItemSaveMenu(spec, anchor),
@@ -11114,6 +11065,10 @@ function init() {
 // the account window, or a sign-in panel where the screen would be. Signing in
 // or out reloads the page — every user-scoped list comes from the new account.
 const Account = { available: false, user: null, required: false, app: false, google: false, lastSync: null, syncError: null, offline: false, known: false };
+// resolves once the first /api/account/me has answered (signed in or not): Multiplayer waits for
+// it so a signed-in player never joins a room under a guest name
+let _accountKnownDone = null;
+const accountKnownP = new Promise((r) => { _accountKnownDone = r; });
 const needsAccount = () => IS_WEB && Account.required && !Account.user;
 const myTz = () => -new Date().getTimezoneOffset();
 function accountGate(reason) {
@@ -11135,6 +11090,7 @@ async function refreshAccount(opts) {
     Account.google = !!(d && d.google);
   } catch (e) {}
   Account.known = true;
+  try { _accountKnownDone && _accountKnownDone(); } catch (e) {}
   _cloudOn = Account.app && !!Account.user;
   renderAccountMenu();
   applyAccountName();
@@ -11413,7 +11369,7 @@ function applyAccountName() {
     const inp = document.getElementById("set-username"); if (inp && document.activeElement !== inp) inp.value = dn;
   }
   renderGreeting(); renderTopbarProfile();
-  try { if (document.querySelector("#player-screen.active")) { const w = document.querySelector(".player-welcome"); if (w) w.textContent = state.username ? `Welcome, ${state.username}` : "Welcome"; } } catch (e) {}
+  try { const pi = document.getElementById("player-username-input"); if (pi && document.activeElement !== pi) pi.value = state.username || ""; } catch (e) {}
 }
 function pushAccountName(name) {
   name = String(name || "").trim();
@@ -11485,20 +11441,30 @@ document.addEventListener("click", (e) => {
   const el = userTarget(e.target); if (!el) return;
   if (String(window.getSelection() || "").trim().length > 1) return;   // selecting their name, not picking them
   e.preventDefault();
-  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "" });
+  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "", pid: el.dataset.mpPid || "" });
 });
 document.addEventListener("contextmenu", (e) => {
   const el = userTarget(e.target); if (!el || !window.QB?.contextMenu) return;
   e.preventDefault(); e.stopImmediatePropagation();
-  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "" });
+  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "", pid: el.dataset.mpPid || "" });
 }, true);
+// More for that menu from elsewhere (host.addUserMenuItems): multiplayer's host adds "Take out of
+// the room" for a player in it. fn(u) → menu items (or none).
+const _userMenuExtras = new Set();
+function userMenuExtras(u) {
+  const out = [];
+  for (const fn of _userMenuExtras) { try { const r = fn(u); if (Array.isArray(r) && r.length) out.push(...r); } catch (e) { console.error(e); } }
+  return out.length ? [{ sep: true }, ...out] : [];
+}
 async function openUserMenu(x, y, u) {
   const handle = String(u.handle || "").replace(/^@/, ""), name = u.name || (handle ? "@" + handle : "Player");
   const title = handle ? (u.name && u.name !== handle ? u.name + "  @" + handle : "@" + handle) : name;
+  const extra = userMenuExtras(u);
   if (!handle) {
     window.QB.contextMenu(x, y, [
       { label: "Not signed in — no profile", onClick: () => {}, hint: "" },
       { label: "Copy name", onClick: () => copyToClipboard(name) },
+      ...extra,
     ], { title });
     return;
   }
@@ -11509,6 +11475,7 @@ async function openUserMenu(x, y, u) {
       { label: "Your achievements", onClick: () => goTo("player") },
       { sep: true },
       { label: "Copy your username", onClick: () => copyToClipboard("@" + handle) },
+      ...extra,   // (your account in another seat — another device — can still be taken out by a host)
     ], { title: title + " (you)" });
     return;
   }
@@ -11533,7 +11500,7 @@ async function openUserMenu(x, y, u) {
       _lbCache.clear();
     } })), { title: "Invite @" + handle + " to" }) });
   }
-  items.push({ sep: true }, { label: "Copy username", onClick: () => copyToClipboard("@" + handle) });
+  items.push({ sep: true }, { label: "Copy username", onClick: () => copyToClipboard("@" + handle) }, ...extra);
   window.QB.contextMenu(x, y, items, { title });
 }
 // Their profile: who they are, their totals and achievements (worked out here from
@@ -11606,7 +11573,7 @@ function syncLbPublicRow() {
 }
 document.getElementById("opt-lb-public")?.addEventListener("change", async (e) => {
   const r = await API.post("/api/account/profile", { onLeaderboard: e.target.checked }).catch(() => null);
-  if (r && r.user) Account.user = r.user; else e.target.checked = !e.target.checked;
+  if (r && r.user) Account.user = r.user; else { e.target.checked = !e.target.checked; failBubble(e.target, "Couldn't save that. Try again."); }
 });
 
 // Every password box gets a show/hide eye (the account window, plugins…).
@@ -11923,7 +11890,7 @@ async function renderLeaderboards(note) {
   await paintLeaderboards(c, d, board, note);
 }
 async function paintLeaderboards(c, d, board, note) {
-  const tabs = [["global", "Global"], ...(d.boards || []).map((b) => [b.id, b.name])].map(([k, l]) => `<button type="button" class="db-tab${_lb.tab === k ? " active" : ""}" data-lb-tab="${escapeHtml(k)}">${escapeHtml(l)}</button>`).join("") +
+  const tabs = [["global", "Global"], ...(d.boards || []).filter((b) => !(_lb.gone && _lb.gone.has(b.id))).map((b) => [b.id, b.name])].map(([k, l]) => `<button type="button" class="db-tab${_lb.tab === k ? " active" : ""}" data-lb-tab="${escapeHtml(k)}">${escapeHtml(l)}</button>`).join("") +
     (d.signedIn ? '<button type="button" class="db-tab lb-new" data-lb-new>+ New leaderboard</button>' : "");
   const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
@@ -11969,13 +11936,27 @@ async function paintLeaderboards(c, d, board, note) {
   c.querySelectorAll("[data-lb-tab]").forEach((b) => b.onclick = () => { _lb.tab = b.dataset.lbTab; renderLeaderboards(); });
   c.querySelectorAll("[data-lb-period]").forEach((b) => b.onclick = () => { _lb.period = b.dataset.lbPeriod; renderLeaderboards(); });
   c.querySelectorAll("[data-lb-join]").forEach((b) => b.onclick = async () => { const r = await act("/api/leaderboards/respond", { id: b.dataset.lbJoin, accept: true }, "Joined."); if (r) { _lb.tab = b.dataset.lbJoin; renderLeaderboards("Joined."); } });
-  c.querySelectorAll("[data-lb-decline]").forEach((b) => b.onclick = () => act("/api/leaderboards/respond", { id: b.dataset.lbDecline, accept: false }));
+  c.querySelectorAll("[data-lb-decline]").forEach((b) => b.onclick = () => removeOptimistic(b.closest(".fr-req"), () => API.post("/api/leaderboards/respond", { id: b.dataset.lbDecline, accept: false }), { failText: "Couldn't decline that invite. Try again." }).then((ok) => { if (ok) { _lbCache.clear(); renderLeaderboards(" "); } }));
+  // Deleting or leaving a board: it's gone from the tabs at once and Global shows; if the
+  // server says no, the board comes back with the reason.
+  const dropBoard = (path, failText) => {
+    const id = _lb.tab;
+    (_lb.gone = _lb.gone || new Set()).add(id); _lb.tab = "global";
+    const cd = _lbCache.get(_lbUrl(_lb.period)); if (cd) paintLeaderboards(c, cd, null, "");
+    API.post(path, { id }).then((r) => { if (r && r.error) throw new Error(r.error); _lb.friends = null; _lbCache.clear(); return renderLeaderboards(" "); })
+      .then(() => _lb.gone.delete(id))
+      .catch((e) => { _lb.gone.delete(id); _lb.tab = id; _lbCache.clear(); renderLeaderboards(" ").then(() => msg(failText, true)); });
+  };
   c.querySelector("[data-lb-new]")?.addEventListener("click", () => promptDialog("Name your leaderboard", "", async (name) => { const r = await act("/api/leaderboards/create", { name }, "Made it — now invite your friends."); if (r && r.id) { _lb.tab = r.id; renderLeaderboards("Made it — now invite your friends."); } }, { placeholder: "e.g. Varsity practice", yes: "Create" }));
-  c.querySelector("[data-lb-rename]")?.addEventListener("click", () => promptDialog("Rename the leaderboard", board.board.name, (name) => act("/api/leaderboards/rename", { id: _lb.tab, name }, "Renamed."), { yes: "Save" }));
-  c.querySelector("[data-lb-delete]")?.addEventListener("click", () => confirmDialog("Delete " + board.board.name + " for everyone on it?", async () => { const r = await act("/api/leaderboards/delete", { id: _lb.tab }); if (r) { _lb.tab = "global"; renderLeaderboards(); } }, { yes: "Delete" }));
-  c.querySelector("[data-lb-leave]")?.addEventListener("click", () => confirmDialog("Leave " + board.board.name + "?", async () => { const r = await act("/api/leaderboards/leave", { id: _lb.tab }); if (r) { _lb.tab = "global"; renderLeaderboards(); } }, { yes: "Leave" }));
-  c.querySelector("[data-lb-invite]")?.addEventListener("click", () => { const h = document.getElementById("lb-invite-who")?.value; if (h) act("/api/leaderboards/invite", { id: _lb.tab, handle: h }, "Invited @" + h + " — they'll see it under Leaderboards."); });
-  c.querySelectorAll("[data-lb-remove]").forEach((b) => b.onclick = () => confirmDialog("Remove @" + b.dataset.lbRemove + " from this leaderboard?", () => act("/api/leaderboards/remove", { id: _lb.tab, handle: b.dataset.lbRemove }), { yes: "Remove" }));
+  c.querySelector("[data-lb-rename]")?.addEventListener("click", () => promptDialog("Rename the leaderboard", board.board.name, (name) => {
+    const was = board.board.name, t = c.querySelector(".lb-title b"), tab = c.querySelector(`[data-lb-tab="${CSS.escape(_lb.tab)}"]`);
+    if (t) t.textContent = name; if (tab) tab.textContent = name;   // shown at once
+    act("/api/leaderboards/rename", { id: _lb.tab, name }, "Renamed.").then((r) => { if (!r) { if (t) t.textContent = was; if (tab) tab.textContent = was; } });
+  }, { yes: "Save" }));
+  c.querySelector("[data-lb-delete]")?.addEventListener("click", () => confirmDialog("Delete " + board.board.name + " for everyone on it?", () => dropBoard("/api/leaderboards/delete", "Couldn't delete " + board.board.name + ". Try again."), { yes: "Delete", danger: true }));
+  c.querySelector("[data-lb-leave]")?.addEventListener("click", () => confirmDialog("Leave " + board.board.name + "?", () => dropBoard("/api/leaderboards/leave", "Couldn't leave " + board.board.name + ". Try again."), { yes: "Leave", danger: true }));
+  c.querySelector("[data-lb-invite]")?.addEventListener("click", () => { const h = document.getElementById("lb-invite-who")?.value; if (h) { msg("Inviting @" + h + "…"); act("/api/leaderboards/invite", { id: _lb.tab, handle: h }, "Invited @" + h + " — they'll see it under Leaderboards."); } });
+  c.querySelectorAll("[data-lb-remove]").forEach((b) => b.onclick = () => confirmDialog("Remove @" + b.dataset.lbRemove + " from this leaderboard?", () => removeOptimistic(b.closest(".lb-row"), () => API.post("/api/leaderboards/remove", { id: _lb.tab, handle: b.dataset.lbRemove }), { failText: "Couldn't remove @" + b.dataset.lbRemove + ". Try again." }).then((ok) => { if (ok) { _lbCache.clear(); renderLeaderboards(" "); } }), { yes: "Remove", danger: true }));
 }
 
 // ── Site stats (website; admins only — QB_ADMIN_HANDLES on the server) ──
@@ -12073,15 +12054,20 @@ async function renderFriends(note) {
     e.preventDefault();
     const h = document.getElementById("fr-handle").value.trim().replace(/^@/, "");
     if (!h) return;
+    const m = document.getElementById("fr-msg"); if (m) { m.textContent = "Sending a request to @" + h + "…"; m.classList.remove("err"); }
     act("/api/friends/request", { handle: h }, "Request sent to @" + h + ".");
   });
+  // Accept, decline and remove change the page at once; the server catches up (and a failure
+  // puts the row back with a note).
+  const drop = (row, path, body, okNote, failText) => removeOptimistic(row, () => API.post(path, body), { failText })
+    .then((ok) => { if (ok) renderFriends(okNote || ""); });
   document.getElementById("fr-copy").onclick = (e) => copyWithCheck(e.currentTarget, me.handle || "");
-  c.querySelectorAll("[data-fr-accept]").forEach((b) => b.onclick = () => act("/api/friends/respond", { handle: b.dataset.frAccept, accept: true }, "You and @" + b.dataset.frAccept + " are friends."));
-  c.querySelectorAll("[data-fr-decline]").forEach((b) => b.onclick = () => act("/api/friends/respond", { handle: b.dataset.frDecline, accept: false }));
+  c.querySelectorAll("[data-fr-accept]").forEach((b) => b.onclick = () => drop(b.closest(".fr-req"), "/api/friends/respond", { handle: b.dataset.frAccept, accept: true }, "You and @" + b.dataset.frAccept + " are friends.", "Couldn't accept that request. Try again."));
+  c.querySelectorAll("[data-fr-decline]").forEach((b) => b.onclick = () => drop(b.closest(".fr-req"), "/api/friends/respond", { handle: b.dataset.frDecline, accept: false }, "", "Couldn't decline that request. Try again."));
   c.querySelectorAll("[data-fr-remove]").forEach((b) => b.onclick = () => {
-    const h = b.dataset.frRemove, pending = !!b.closest(".fr-req");
-    if (pending) { act("/api/friends/remove", { handle: h }); return; }
-    confirmDialog("Remove @" + h + " from your friends?", () => act("/api/friends/remove", { handle: h }), { yes: "Remove" });
+    const h = b.dataset.frRemove, row = b.closest(".fr-req, .fr-row");
+    if (b.closest(".fr-req")) { drop(row, "/api/friends/remove", { handle: h }, "", "Couldn't cancel that request. Try again."); return; }
+    confirmDialog("Remove @" + h + " from your friends?", () => drop(row, "/api/friends/remove", { handle: h }, "", "Couldn't remove @" + h + ". Try again."), { yes: "Remove", danger: true });
   });
 }
 

@@ -1,5 +1,5 @@
 {
-  "version": "14.57",
+  "version": "14.58",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,22 +55,22 @@
     }
   ],
   "main": true,
-  "notes": "The shop shows where to write with questions: support@onlinequiz.net",
+  "notes": "End a session without saving it. Deleting things, stars and friend changes now happen instantly. A new Profile page. Room hosts can take players out. Bought rooms: the password can be shown and copied, rooms start private, and the price is $4.99. Plugin guide pictures redrawn to match the real screens. Many layout fixes.",
   "files": {
-    "renderer/index.html": "e7f97dc73df0ca246701ea8f365f3e0fafb0782de70e184aaf2f09ba8bc8168a",
-    "renderer/style.css": "5d33d1f02c766711f6e95fae322b72630d1cb127e7ec97cb60ed33ce0ab6f2ed",
+    "renderer/index.html": "03edf13f5a08444dca484cf25a1c203813a45ce694f8897c26c102931b78c2f1",
+    "renderer/style.css": "5b8caf419a9a59c5e43b6988eeadce885f26682fc887106946dd2790a5f8a864",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "1a7c69b72c6d07d7db3bbbc155a854bfd15a5217376221593ff739bfa42552e6",
-    "renderer/app.js": "d1dfc814466b8a0d06e5b9f0e45719dd85c00cb92c1fa9221f76f3f793699b19",
-    "plugins/achievement-glyphs.zip": "2d0b38e205eaa7bd4dbe4c85cbac268c6b761d1d0645188740927e7139f41e0a",
-    "plugins/buzz-words.zip": "db51f8d7e00c14166f5b93ec46deaafa917d48588cb1d31c7734f9ead950fd36",
-    "plugins/canon-tracker.zip": "36e74faea4e880bb773ce6afb136bbb9f73cfcf1fba50eb5a93f94c19631b944",
-    "plugins/coach-mode.zip": "63fdc9b26e180a1944c1908370c9312d39ca62f7e85d890124c5b18230d15c2a",
-    "plugins/fact-sheet.zip": "5c7b8023e8c11289fab48b2b42502cf13bd54168d9a0f1fea2943d9a3fc6c350",
-    "plugins/flashcards.zip": "7c1ad4a3598a095fd938e6e9091a8970750c42abae4119ae0dfa4c0ac5e65b31",
-    "plugins/folders.zip": "4c4b39e92e6d9a75c22174e614c3c17ca06db231b44d0e904c6e8f6185e9bd3a",
-    "plugins/keyword-freq.zip": "45721e77eb5bb943d69572bf2bb178cad2a03e845d83249c101be7d0ad9b48b1",
-    "plugins/packet-builder.zip": "337afd6fdf2316ce2383d330e40ece37d6e533dcf7d9f4b883b1081ac092255e"
+    "renderer/extensions.js": "7f002f682ea792740946a9d9ff2f2527682c80cd4f496a266f15582888b8f53f",
+    "renderer/app.js": "0e652a6673a171380a55e8cee11470c24c85246f5fc762557a32b4ad293f2afb",
+    "plugins/achievement-glyphs.zip": "8a4fd1632df36a70017618ce25e6e913207f6fdaede3d5a5dc8bed98669cfd7c",
+    "plugins/buzz-words.zip": "fb96b9b4b8c0bc654868eadba64bf20d5789ec062aa6d9523e1d77e6e9597119",
+    "plugins/canon-tracker.zip": "fdc2f1c541f9ea828801400f729ca00187982e6a2e97c0524bde3bd14cb72db5",
+    "plugins/coach-mode.zip": "cec1ba2c03ab55a19f1d09a7e225f111b3af17182a653f9bbadf286f5ea621c7",
+    "plugins/fact-sheet.zip": "e1564b171571828bf3e9b7dc9da973b6ea52afce90de541dba65cb3f9e67e896",
+    "plugins/flashcards.zip": "528f87bd37c2da7a1b67583f5a636da5bfe8898d435dec17432b81469b5753ee",
+    "plugins/folders.zip": "85bc0d14ee700297a1e6a8f902b943cbce87e6fd381e966bd6a84646de1d2c7b",
+    "plugins/keyword-freq.zip": "1442044528ffd61e05b6d74396589e541f33d0ceafbd3c72d9d69b4a60a28d5b",
+    "plugins/packet-builder.zip": "9deef2b87b428b796692d7ce316b930a5519c08071abaaa1565d1cb00532bdab"
   },
-  "signature": "zRG/Xk23m82ofcAgAO/d/YLiqHTmIBvCslZoWBIQV2cV+1PTjAea7aRNR944JXYnbZOBPyPdvGPlr9zm/MgcAQ=="
+  "signature": "cag7q3/f2k2xndwiPgk3WqXwnHH+FopweFxaIg36YYhXcEs9ALNlzjw/F2oPJHYzYpOBDIDEVqI/rRfiJBSTCg=="
 }
