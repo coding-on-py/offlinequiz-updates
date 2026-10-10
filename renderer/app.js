@@ -11009,6 +11009,13 @@ function init() {
       collapseFilterSections: () => collapseFilterSections(),
       initCollapsibles: (root) => initCollapsibles(root),
       limitList: (listEl, itemSel, key, first, step) => limitList(listEl, itemSel, key, first, step),
+      // the Database's pager, for plugins' paged lists: ‹ page strip [Page n of N ▾ jump] ›.
+      // pagerHtml(where: "top" | "bottom", page, pages) — the bottom one inside a .rfoot;
+      // wirePagers(root, go(page)) once per results element (a bottom click scrolls back to
+      // the .rhead); positionPagerStrips() after drawing centres the current page
+      pagerHtml: (where, page, pages) => dbPagerHtml(where, page, pages),
+      wirePagers: (root, go) => wireDbPagers(root, go),
+      positionPagerStrips: () => positionPagerStrips(),
       syncAppearanceSection: () => syncAppearanceSection(),
       searchDatabase: (opts) => searchDatabase(opts),
       playSetPacket: (setName, packetNumber, asBonuses) => playSetPacket(setName, packetNumber, asBonuses),
