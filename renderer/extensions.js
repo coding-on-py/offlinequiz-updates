@@ -3505,13 +3505,15 @@ function __qbMain(ctx) {
       else myName = ctx.getSetting("name") || (acct && acct.displayName) || st.username || ("Player" + Math.floor(Math.random() * 1000));
       var initial = (String(myName).trim()[0] || "?").toUpperCase();
       var recent = recentRooms();
+      // a new room's code, shown in grey in the box: Join/Create with nothing typed opens it
+      var suggested = newRoomCode();
       body.innerHTML =
         '<div class="mp-lobby">' +
           '<label class="mp-who"><span class="avatar">' + esc(initial) + '</span><span class="mp-who-txt"><span class="eyebrow">Playing as</span>' +
             '<input id="mp-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name"' + (fixedName ? " readonly" : "") + '></span>' +
             (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name — change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
           '<section class="mp-card mp-join-card">' +
-            '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="Type a code to join that room, or leave it empty for a new one. Share the code so others can join.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code"></label>' +
+            '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="The grey code is a new room, ready for you: press Join/Create Room to open it, or type another room\u2019s code to join that one. Share the code so others can join.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code" placeholder="' + esc(suggested) + '"></label>' +
             '<label class="checkbox-row"><input type="checkbox" id="mp-spectate"> Join as spectator</label>' +
             '<button type="button" class="btn btn-lg btn-go" id="mp-join">Join/Create Room</button>' +
           "</section>" +
@@ -3526,7 +3528,8 @@ function __qbMain(ctx) {
       var nameEl = body.querySelector("#mp-name"), codeEl = body.querySelector("#mp-lobby"), joinBtn = body.querySelector("#mp-join");
       // one button: a typed code joins that room (or opens it if nobody is
       // there yet); an empty box makes a new room with a fresh code
-      var goTyped = function () { go(codeEl.value.trim() || newRoomCode()); };
+      // nothing typed: the room shown in grey
+      var goTyped = function () { go(codeEl.value.trim() || suggested); };
       codeEl.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); goTyped(); } });
       nameEl.addEventListener("change", function () { var v = nameEl.value.trim(); if (v) { myName = v; ctx.setSetting("name", v); var av = body.querySelector(".mp-who .avatar"); if (av) av.textContent = (v[0] || "?").toUpperCase(); } });
       var go = goJoin = function (code) {
