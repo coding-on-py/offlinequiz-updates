@@ -4907,15 +4907,11 @@ html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%
 .st-room-main p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
 .st-room-buy { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; }
 
-.st-neon { display: flex; align-items: center; justify-content: center; min-height: 180px; padding: 28px 20px; border: 1px solid var(--line); border-radius: var(--r-lg); background: radial-gradient(120% 90% at 50% 40%, #12161f, #07090d); }
-.st-neon-wrap { max-width: 100%; }
-.st-neon-me { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 0 12px 0 0; border: 1px solid transparent; border-radius: var(--r); background: transparent; color: #e6edf3; font-family: var(--font); cursor: pointer; transition: border-color .15s ease, background-color .15s ease; }
-.st-neon-me:hover, .st-neon-me[aria-expanded="true"] { border-color: rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .04); }
+.st-neon-me { display: inline-flex; align-items: center; gap: 3px; margin: -3px 0; padding: 3px 5px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: inherit; font: inherit; cursor: pointer; transition: border-color .15s ease, background-color .15s ease; }
+.st-neon-me:hover, .st-neon-me[aria-expanded="true"] { border-color: var(--line); background: var(--surface-2); }
 .st-neon-me:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.st-neon-big { min-width: 0; overflow: clip; overflow-clip-margin: 36px; text-overflow: ellipsis; white-space: nowrap; padding: 14px 10px 14px 28px; font-size: 30px; font-weight: 800; }   /* the glow spills past the box */
-.st-neon .st-neon-big .neon-name { color: color-mix(in srgb, var(--neon) 30%, #fff); text-shadow: 0 0 1px var(--neon), 0 0 6px var(--neon), 0 0 16px color-mix(in srgb, var(--neon) 80%, transparent), 0 0 32px color-mix(in srgb, var(--neon) 50%, transparent); }
-.st-neon-caret { display: inline-grid; flex: none; color: #8b949e; transition: transform .17s var(--ease-out); }
-.st-neon-me[aria-expanded="true"] .st-neon-caret { transform: rotate(180deg); }
+.st-neon-me > svg { flex: none; color: var(--muted); transition: transform .17s var(--ease-out); }
+.st-neon-me[aria-expanded="true"] > svg { transform: rotate(180deg); }
 .st-neon-pop { left: 50%; width: 284px; margin-left: -142px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .st-swatches { display: grid; grid-template-columns: repeat(6, 32px); justify-content: center; gap: 12px; }
 .st-sw { width: 32px; height: 32px; padding: 0; border: 2px solid transparent; border-radius: 50%; background: var(--neon); box-shadow: 0 0 10px color-mix(in srgb, var(--neon) 55%, transparent); cursor: pointer; transition: transform .12s var(--ease-out); }
@@ -4924,7 +4920,6 @@ html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%
 .st-sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .st-neon-off { height: 34px; justify-content: center; border: 1px solid var(--line); }
 .st-neon-off.on { border-color: var(--accent); color: var(--strong); }
-.st-neon-get { width: 100%; justify-content: center; }
 .st-fine { margin: -14px 0 0; color: var(--muted); font-size: 12px; }
 .st-fine a { color: var(--accent); }
 @keyframes st-flash { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent); } }
@@ -4934,5 +4929,4 @@ html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%
   .st-room { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: start; gap: 14px; }
   .st-room-buy { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
   .st-title { font-size: 21px; }
-  .st-neon-big { font-size: 24px; padding-left: 18px; }
 }

@@ -11935,7 +11935,14 @@ function renderStore() {
   const neonNow = has("neon") ? (o.neon || null) : null, shown = has("neon") ? neonNow : _shop.neonPick || "cyan";
   const wasOpen = !!c.querySelector(".st-neon-pop:not([hidden])");
   const incl = (p) => `<li>${plugIco(p, 16)}<span>${escapeHtml(p.name)}</span>${has("plugin:" + p.id) ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
-  const neonLi = `<li><span class="st-ico st-ico-neon">${ic("sparkle", 16)}</span><span>Neon name <span class="st-neon-sample" data-fallback="cyan">${neonName(myName, shown || "cyan")}</span></span>${has("neon") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
+  // the Starter Bundle's neon line: your name glowing — pressing it opens the colours (a popover)
+  const neonLi = `<li><span class="st-ico st-ico-neon">${ic("sparkle", 16)}</span><span class="st-neon-line">Neon name <span class="pop-wrap st-neon-wrap">` +
+    `<button type="button" class="st-neon-me" aria-haspopup="dialog" aria-expanded="false" aria-label="Neon colour" title="Pick a colour"><span class="st-neon-sample">${neonName(myName, shown)}</span>${ic("down", 12)}</button>` +
+    `<div class="pop st-neon-pop" role="dialog" aria-label="Neon colour" hidden>` +
+      `<div class="st-swatches" role="radiogroup" aria-label="Neon colour">${Object.entries(NEON_COLORS).map(([k, v]) =>
+        `<button type="button" class="st-sw${shown === k ? " on" : ""}" role="radio" aria-checked="${shown === k}" data-neon="${k}" style="--neon:${v}" title="${k[0].toUpperCase() + k.slice(1)}" aria-label="${k}"></button>`).join("")}</div>` +
+      (has("neon") ? `<button type="button" class="pop-item st-neon-off${shown ? "" : " on"}" role="radio" aria-checked="${!shown}" data-neon="">${ic("x", 14)}Off</button>` : "") +
+    `</div></span></span>${has("neon") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
   c.innerHTML = `<div class="st-page">
     <header class="st-hero">
       <h1 class="st-title">Study tools, a name that glows, and a room of your own</h1>
@@ -11987,20 +11994,6 @@ function renderStore() {
         <div class="st-room-buy"><span class="st-card-price">${price("room")}</span>${buy("room", "Buy a room")}</div>
       </article>
     </section>
-    <section class="st-sec" id="st-neon" aria-labelledby="st-h-neon">
-      <h2 class="eyebrow" id="st-h-neon">Neon name <span class="qb-info" data-tip="Press your name to pick its colour. Others see it glow in multiplayer rooms and on leaderboards.">i</span></h2>
-      <div class="st-neon">
-        <div class="pop-wrap st-neon-wrap">
-          <button type="button" class="st-neon-me" aria-haspopup="dialog" aria-expanded="false" aria-label="Neon colour"><span class="st-neon-big st-neon-sample">${neonName(myName, shown)}</span><span class="st-neon-caret" aria-hidden="true">${ic("down", 16)}</span></button>
-          <div class="pop st-neon-pop" role="dialog" aria-label="Neon colour" hidden>
-            <div class="st-swatches" role="radiogroup" aria-label="Neon colour">${Object.entries(NEON_COLORS).map(([k, v]) =>
-              `<button type="button" class="st-sw${shown === k ? " on" : ""}" role="radio" aria-checked="${shown === k}" data-neon="${k}" style="--neon:${v}" title="${k[0].toUpperCase() + k.slice(1)}" aria-label="${k}"></button>`).join("")}</div>
-            ${has("neon") ? `<button type="button" class="pop-item st-neon-off${shown ? "" : " on"}" role="radio" aria-checked="${!shown}" data-neon="">${ic("x", 14)}Off</button>`
-              : `<button type="button" class="btn btn-primary btn-sm st-neon-get" data-store-go="starter">See bundles</button>`}
-          </div>
-        </div>
-      </div>
-    </section>
     <p class="st-fine">Questions about a purchase? <a href="mailto:${escapeHtml((info && info.support) || "support@onlinequiz.net")}">${escapeHtml((info && info.support) || "support@onlinequiz.net")}</a></p>
   </div>`;
   c.querySelectorAll("[data-store-buy]").forEach((b) => b.addEventListener("click", () => storeBuy(b.dataset.storeBuy, b)));
@@ -12018,7 +12011,6 @@ function renderStore() {
     };
     me.addEventListener("click", (e) => { e.stopPropagation(); const open = pop.hidden; show(open); if (open && e.detail === 0) (pop.querySelector(".st-sw.on") || pop.querySelector(".st-sw"))?.focus({ preventScroll: true }); });   // the keyboard: into the colours
     pop.querySelectorAll("[data-neon]").forEach((b) => b.addEventListener("click", () => storeNeon(b.dataset.neon, b)));
-    pop.querySelector("[data-store-go]")?.addEventListener("click", () => show(false));
     if (wasOpen) show(true);   // repainted while it was open
   }
 }
@@ -12043,7 +12035,7 @@ function storeMyName() { return (Account.user && (Account.user.displayName || Ac
 // the Store's samples of your name, and the picker's ticks, in colour k (none: plain)
 function paintNeon(k) {
   const c = document.getElementById("store-container"); if (!c) return;
-  c.querySelectorAll(".st-neon-sample").forEach((el) => { el.innerHTML = neonName(storeMyName(), k || el.dataset.fallback || null); });
+  c.querySelectorAll(".st-neon-sample").forEach((el) => { el.innerHTML = neonName(storeMyName(), k || null); });
   c.querySelectorAll(".st-neon-pop [data-neon]").forEach((b) => { const on = (b.dataset.neon || null) === (k || null); b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on)); });
 }
 async function storeNeon(k, btn) {
