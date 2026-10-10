@@ -1,5 +1,5 @@
 {
-  "version": "14.62",
+  "version": "14.63",
   "renderer": [
     "index.html",
     "style.css",
@@ -58,7 +58,7 @@
   "notes": "Minor bug fixes and UI improvements.",
   "files": {
     "renderer/index.html": "233ea1dcb28cbd7a84b48f6c845dcaf0de895c233e50e5fb0acfdde74a13afc8",
-    "renderer/style.css": "a3d866a43c8640b85dc7bcbc427c1ccd8a08841e5ccc0cf91ec9e17188448351",
+    "renderer/style.css": "5079b19f0d85753f30cae54fa5227c738901b7b383594273fc82a9a5346e07ab",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "7a64c49bbd2fc6efaeb9ee3ffd8d9d3c05d28d44e2d80b3637075229c7cf2e71",
     "renderer/app.js": "407da638fff69b86bc49da0a97eb56f59e5ca5862579f497539d980334281700",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "1442044528ffd61e05b6d74396589e541f33d0ceafbd3c72d9d69b4a60a28d5b",
     "plugins/packet-builder.zip": "c87f7b924d0c3c1dadbfab87d480573784013e2da23118918789381e3fac05e6"
   },
-  "signature": "6ybFpr96kVCNFN/ElJQVDmGkuzLossO8dE3AQfdjmo61xwnXR2U9T/CQJkwzczldCFSRssr9/6VYFrlgTQ+eBw=="
+  "signature": "0wG66fL5pOGoPrE83xymiqwb55u9etIyLnBmYF7Js3WDF0v8Bdw94/qO83nAV9S4GqlS9/X7bT65G8KdjDz7AQ=="
 }

@@ -3665,7 +3665,7 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .mp-player .avatar { flex: none; width: 36px; height: 36px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 800; font-size: 14px; }
 .mp-player .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .mp-player .nm b { color: var(--strong); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mp-player .nm span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-player .nm > span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* the line under the name (not a neon name inside it) */
 .mp-player .sc { color: var(--strong); font-weight: 800; font-size: 18px; }
 .mp-player.mp-you { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .mp-player.mp-off { opacity: 0.5; }
@@ -4852,6 +4852,9 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 #setup-username { height: 42px; font-size: 15px; text-align: center; }
 
 /* ── The Store (app.js renderStore) and the neon name ── */
+/* a neon name in a box that cuts long names off with "…": the glow spills out of it (overflow: clip
+   paints ink up to the clip margin; overflow: hidden cut the glow into a rectangle) */
+.fr-name b:has(> .neon-name), .mp-player .nm b:has(> .neon-name), .mp-player .nm .mp-edit:has(> .neon-name) { overflow: clip; overflow-clip-margin: 56px; }
 .neon-name { --neon: #22d3ee; color: color-mix(in srgb, var(--neon) 30%, #fff); text-shadow: 0 0 1px var(--neon), 0 0 6px var(--neon), 0 0 14px color-mix(in srgb, var(--neon) 75%, transparent), 0 0 26px color-mix(in srgb, var(--neon) 45%, transparent); }
 html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%, #000); text-shadow: 0 0 8px color-mix(in srgb, var(--neon) 55%, transparent), 0 0 18px color-mix(in srgb, var(--neon) 30%, transparent); }
 .tb-store { color: var(--strong); }
