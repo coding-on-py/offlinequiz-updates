@@ -96,7 +96,7 @@ const API = isElectron
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
-        if (/^\/api\/(account\/|friends$|leaderboards(\/board)?$|users\/profile$|shop\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
+        if (/^\/api\/(account\/|friends$|leaderboards(\/board|\/groups)?$|users\/profile$|shop\/|clubs(\/|$)|diag(\/|$))/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
         throw new Error("Unknown API route: " + path);
       },
       post(url, data) {
@@ -122,7 +122,7 @@ const API = isElectron
         if (path === "/api/import-questions") return window.qbreader.importQuestions(data.sets, data.tossups, data.bonuses);
         if (path === "/api/apply-update") return window.qbreader.applyUpdate(data.folderId);
         if (path === "/api/app-update-check") return window.qbreader.appUpdateCheck ? window.qbreader.appUpdateCheck() : { configured: false, updated: false, dev: true };
-        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
+        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/|clubs\/|diag\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
         throw new Error("Unknown API route: " + path);
       },
       delete(url) {
@@ -462,7 +462,7 @@ function updateKeyLabels() {
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
   if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
-  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-store-home"], ["#btn-streaks-home"], ["#btn-admin-home"]]
+  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-store-home"], ["#btn-streaks-home"], ["#btn-admin-home"], ["#btn-clubs-home"], ["#btn-dx-home"], ["#btn-irl-home"], ["#btn-report-home"]]
     .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
@@ -838,6 +838,8 @@ function goTo(target) {
     case "friends": showScreen("friends"); renderFriends(); break;
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
     case "store": showScreen("store"); renderStore(); refreshOwned(); break;
+    // Clubs & Team Diagnostic (clubs.js)
+    case "clubs": case "diagnostic": case "irl": case "report": showScreen(target); window.QBClubs?.onScreen(target); break;
     case "streaks": showScreen("streaks"); renderStreaks(); break;
     case "admin": _adm.tab = "stats"; showScreen("admin"); renderAdmin(); break;
     case "admin-users": _adm.tab = "users"; showScreen("admin"); renderAdmin(); break;
@@ -858,7 +860,7 @@ document.addEventListener("click", (e) => {
 // move between pages, and the tab title names the page. server.js answers these
 // paths with the app's page (WEB_PAGE_PATHS). The desktop app (file://) has none.
 const WEB_PATHS = { tossups: "practice-tossups", bonuses: "practice-bonuses", multiplayer: "multiplayer", search: "db-search", sets: "db-sets",
-  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin", store: "store" };
+  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin", store: "store" };   // (clubs, diagnostic, report: clubs.js route / webPath)
 let _webRouting = false;
 // the address of what is on screen now (null: leave the address alone)
 function webPathNow() {
@@ -877,6 +879,7 @@ function webPathNow() {
     case "streaks-screen": return "/streaks";
     case "admin-screen": return _adm.tab === "users" ? "/admin/users" : "/admin";
     case "download-screen": return "/download";
+    case "clubs-screen": case "diagnostic-screen": case "irl-screen": case "report-screen": return window.QBClubs ? window.QBClubs.webPath(a.id) : "/";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
   }
   const pg = ((window.QB && window.QB._pages) || []).find((p) => p.screenEl === a);
@@ -931,6 +934,8 @@ function webRoute(path) {
       if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
     } else if (a === "admin") {
       goTo(b === "users" ? "admin-users" : "admin");
+    } else if ((a === "clubs" || a === "diagnostic" || a === "report") && window.QBClubs) {
+      window.QBClubs.route(seg);
     } else if (a && WEB_PATHS[a]) {
       goTo(WEB_PATHS[a]);
     } else if (!document.querySelector("#title-screen.active")) goHome();
@@ -1573,6 +1578,7 @@ function buildScreen(name) {
   else if (name === "leaderboards") renderLeaderboards();
   else if (name === "store") renderStore();
   else if (name === "admin") renderAdmin();
+  else if (name === "clubs" || name === "diagnostic" || name === "irl" || name === "report") window.QBClubs?.onScreen(name);
 }
 function reviveScreen(name) {
   if (name === "database") {
@@ -7443,6 +7449,7 @@ $("#btn-leaderboards-home")?.addEventListener("click", goBack);
 $("#btn-store-home")?.addEventListener("click", goBack);
 $("#btn-streaks-home")?.addEventListener("click", goBack);
 $("#btn-admin-home")?.addEventListener("click", goBack);
+["#btn-clubs-home", "#btn-dx-home", "#btn-irl-home", "#btn-report-home"].forEach((id) => $(id)?.addEventListener("click", goBack));
 
 function renderResultPanels(resultCtx) {
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
@@ -11136,6 +11143,7 @@ function renderAccountMenu() {
   const adm = document.getElementById("tbm-admin"); if (adm) adm.hidden = !(IS_WEB && Account.user && Account.user.admin);
   const admU = document.getElementById("tbm-admin-users"); if (admU) admU.hidden = !(IS_WEB && Account.user && Account.user.admin);
   const lbBtn = document.getElementById("tb-leaderboards"); if (lbBtn) lbBtn.hidden = false;
+  const clBtn = document.getElementById("tb-clubs"); if (clBtn) clBtn.hidden = false;
   const head = document.querySelector("#tb-profile-menu .tbm-who");
   if (head) {
     let em = head.querySelector(".tbm-email");
@@ -11415,6 +11423,7 @@ function friendDots() {
 }
 function friendsSeen() { lsSet(FR_SEEN, JSON.stringify(_frIncoming.slice(0, 200))); friendDots(); }
 async function friendPoll() {
+  try { window.QBClubs?.poll(); } catch (e) {}   // Clubs' count: invites + join requests (clubs.js)
   if (!Account.user || !Account.user.handle || Account.offline) { _frIncoming = []; friendDots(); return; }
   try { const d = await API.get("/api/friends"); if (d && Array.isArray(d.incoming)) { _frIncoming = d.incoming.map((f) => f.handle); friendDots(); noteFriendRelations(d); } } catch (e) {}
 }
@@ -11871,7 +11880,16 @@ function paintStreaks(c) {
 // on the global leaderboard"), ranked by points. Your own leaderboards: make one, invite
 // friends (they accept), and race them. Periods: the last 7 days, 30 days, all
 // time. The numbers come from each account's synced practice (server lb_stats).
-const _lb = { tab: "global", period: "week", friends: null };
+const _lb = { tab: "global", period: "week", friends: null, kind: "individuals" };
+// Individuals (the global leaderboard and your own) / Teams / Organizations (clubs.js: Clubs' teams
+// and organizations ranked by average points per active member)
+function lbKindSeg() {
+  return '<div class="lb-kinds"><div class="seg" role="group" aria-label="Leaderboard">' + [["individuals", "Individuals"], ["teams", "Teams"], ["orgs", "Organizations"]].map(([k, l]) =>
+    `<button type="button" data-lb-kind="${k}" aria-pressed="${_lb.kind === k}">${l}</button>`).join("") + "</div>" + (_lb.kind !== "individuals" && window.QBClubs ? window.QBClubs.groupsTip() : "") + "</div>";
+}
+function wireLbKinds(c) {
+  c.querySelectorAll("[data-lb-kind]").forEach((b) => b.onclick = () => { if (_lb.kind === b.dataset.lbKind) return; _lb.kind = b.dataset.lbKind; renderLeaderboards(); });
+}
 // Preloaded while you're on the home page (preloadLeaderboards): the page paints
 // those numbers at once, then fetches fresh ones and repaints only if they changed.
 const _lbCache = new Map();   // url → response
@@ -12155,6 +12173,14 @@ async function renderLeaderboards(note) {
   // the account check runs alongside (it's a round trip) once the account is known
   if (!note) { const af = accountFresh(); if (!Account.known) await af; }
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need onlinequiz accounts, which aren't open yet.</p></div>`; return; }
+  if (_lb.kind !== "individuals" && window.QBClubs) {
+    const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
+    c.innerHTML = `<div class="lb-page"><div class="lb-bar">${lbKindSeg()}<div class="seg lb-periods" role="group" aria-label="Period">${periods}</div></div><div id="lb-groups"></div></div>`;
+    wireLbKinds(c);
+    c.querySelectorAll("[data-lb-period]").forEach((b) => b.onclick = () => { _lb.period = b.dataset.lbPeriod; renderLeaderboards(); });
+    window.QBClubs.renderGroups(c.querySelector("#lb-groups"), _lb.kind, _lb.period);
+    return;
+  }
   const url = _lbUrl(_lb.period);
   // preloaded numbers first (not after an edit: those must show the change)
   let shown = "";
@@ -12208,7 +12234,7 @@ async function paintLeaderboards(c, d, board, note) {
         ((board.invited || []).length ? `<p class="fr-empty">Invited: ${board.invited.map((x) => "@" + escapeHtml(x.handle)).join(", ")}</p>` : "") +
       `</section>`;
   }
-  c.innerHTML = `<div class="lb-page">` +
+  c.innerHTML = `<div class="lb-page">` + (window.QBClubs ? `<div class="lb-bar lb-kind-bar">${lbKindSeg()}</div>` : "") +
     (invites ? `<section class="fr-sec"><h2 class="eyebrow">Invites</h2><div class="fr-list">${invites}</div></section>` : "") +
     `<div class="lb-bar"><div class="db-tabs lb-tabs">${tabs}</div><div class="seg lb-periods" role="group" aria-label="Period">${periods}</div></div>` +
     `<div class="fr-msg" id="lb-msg" role="status">${note ? escapeHtml(note) : ""}</div>` + body + `</div>`;
@@ -12219,6 +12245,7 @@ async function paintLeaderboards(c, d, board, note) {
     if (r && r.error) { msg(r.error, true); return null; }
     _lb.friends = null; _lbCache.clear(); renderLeaderboards(okNote || ""); return r;
   };
+  wireLbKinds(c);
   c.querySelectorAll("[data-lb-tab]").forEach((b) => b.onclick = () => { _lb.tab = b.dataset.lbTab; renderLeaderboards(); });
   c.querySelectorAll("[data-lb-period]").forEach((b) => b.onclick = () => { _lb.period = b.dataset.lbPeriod; renderLeaderboards(); });
   c.querySelectorAll("[data-lb-join]").forEach((b) => b.onclick = async () => { const r = await act("/api/leaderboards/respond", { id: b.dataset.lbJoin, accept: true }, "Joined."); if (r) { _lb.tab = b.dataset.lbJoin; renderLeaderboards("Joined."); } });

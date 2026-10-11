@@ -1255,6 +1255,14 @@ export class App {
       if (!c) return { error: "Sign in first.", authRequired: true };
       return this._cloudFetch(method, path + (method === "GET" && body.qs ? "?" + body.qs : ""), method === "GET" ? null : body, c.token);
     }
+    // Clubs and team diagnostics (organizations, teams, reports) and the Teams / Organizations
+    // leaderboards: the account's, through the website
+    // (the Teams / Organizations rankings are public, as the global leaderboard is)
+    if (key === "GET /api/leaderboards/groups") return this._cloudFetch("GET", path + (body.qs ? "?" + body.qs : ""), null, c && c.token);
+    if (/^(GET|POST) \/api\/(clubs|diag)(\/[a-z-]+)*$/.test(key)) {
+      if (!c) return { error: "Sign in first.", authRequired: true };
+      return this._cloudFetch(method, path + (method === "GET" && body.qs ? "?" + body.qs : ""), method === "GET" ? null : body, c.token);
+    }
     if (key === "POST /api/account/profile" || key === "GET /api/friends" || /^POST \/api\/friends\/(request|respond|remove)$/.test(key)
       || key === "GET /api/leaderboards/board" || /^POST \/api\/leaderboards\/(create|invite|respond|leave|remove|rename|delete)$/.test(key)) {
       if (!c) return { error: "Sign in first.", authRequired: true };

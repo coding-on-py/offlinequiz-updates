@@ -2345,7 +2345,15 @@ function __qbMain(ctx) {
     var isHost = false, myId = "", srvHost = null, kickBans = [], devOf = {};
     // the host of the room you're in: in a relay room the one running it; on the game server the one
     // it says (the first in), or in a bought room its owner and admins
-    function amHost() { return serverMode ? (roomInfo ? roomInfo.role === "owner" || roomInfo.role === "admin" : !!myId && srvHost === myId) : isHost; }
+    function amHost() { if (inDiag()) return !!(dxInfo && dxInfo.amHost); return serverMode ? (roomInfo ? roomInfo.role === "owner" || roomInfo.role === "admin" : !!myId && srvHost === myId) : isHost; }
+    // ── a diagnostic room (Clubs → Team Diagnostic): a "dx-…" code on the game server, opened by
+    // the website for the players picked for it. dxInfo: the room's "diaginfo" (team, format, total,
+    // i, players / hosts by account, amHost = may run it now, host, waiting, done, settings);
+    // dxDone: its "diagdone" ({ diag, released }). Never the backup relay. ──
+    var dxInfo = null, dxDone = null, dxHidden = [];
+    function isDiagCode(c) { return /^dx-/i.test(String(c || "")); }
+    function inDiag() { return !!lobby && isDiagCode(lobby); }
+    function qbCall(name, arg) { try { if (window.QB && typeof window.QB[name] === "function") { window.QB[name](arg); return true; } } catch (e) {} return false; }
     var ws = null, _relayConns = {};
     // Rooms are run by the game server (mpserver/, mp.onlinequiz.net): it plays
     // the host's part of this same protocol, so in a server room every app is a
@@ -2580,9 +2588,17 @@ function __qbMain(ctx) {
     }
     function confirmLeave() {
       if (!lobby) return;
+      // a diagnostic room goes back to Clubs (its diagnostics); once it's over, without asking
+      if (inDiag()) {
+        if (dxDone) { leaveToClubs(); return; }
+        if (ctx.host && ctx.host.confirm) ctx.host.confirm("Leave the diagnostic room?", leaveToClubs, { yes: "Leave", detail: "Your score is kept. Come back from Clubs to keep playing." });
+        else if (window.confirm("Leave the diagnostic room?")) leaveToClubs();
+        return;
+      }
       if (ctx.host && ctx.host.confirm) ctx.host.confirm("Leave the lobby?", function () { leave(); }, { yes: "Leave" });
       else if (window.confirm("Leave the lobby?")) leave();
     }
+    function leaveToClubs() { leave(); qbCall("openClubs", "diagnostics"); }
     document.addEventListener("keydown", onKey);
     function onDrawerEsc(e) {
       if (e.key !== "Escape" || !active() || !borrowedPanel || !borrowedPanel.classList.contains("open")) return;
@@ -2593,7 +2609,7 @@ function __qbMain(ctx) {
     window.addEventListener("keydown", onDrawerEsc, true);
     // a click on a player in the room (the app's player menu): the host can take them out
     var dropUserItems = ctx.host && ctx.host.addUserMenuItems ? ctx.host.addUserMenuItems(function (u) {
-      if (!active() || !u || !u.pid || u.pid === myId || !players[u.pid] || !amHost()) return [];
+      if (!active() || !u || !u.pid || u.pid === myId || !players[u.pid] || !amHost() || inDiag()) return [];
       var nm = players[u.pid].name;
       return [{ label: "Take out of the room", danger: true, onClick: function () {
         var go = function () { kickPlayer(u.pid); };
@@ -2754,6 +2770,8 @@ function __qbMain(ctx) {
       setSig = ""; setIndex = 0; setQueue = null; impSig = ""; impIndex = 0;
       roomConfig = null; leftIntentionally = false;
       roomInfo = null; roomOpErr = ""; showPw = false; pwPending = false; pwDraft = null; pwErr = "";
+      if (!rejoining) { dxInfo = null; dxDone = null; }
+      if (isDiagCode(lobby)) mySpec = false;   // a diagnostic seats its players (its hosts watch) by account
       // who's signed in must be known first (a direct /multiplayer/<room> visit can get here sooner):
       // a signed-in player never joins under a guest name
       if (ctx.host && ctx.host.whenAccountKnown) { try { await Promise.race([ctx.host.whenAccountKnown(), new Promise(function (r) { setTimeout(r, 5000); })]); } catch (e) {} }
@@ -2781,8 +2799,15 @@ function __qbMain(ctx) {
       // a room on the game server that dropped: try the game server again (not the backup relay — that
       // would be an empty room of its own)
       if (rejoining && wasServer && srv && srv !== "off") joinRelay(srv, function () { serverMode = true; showDisconnected(); });
-      else if (srv && srv !== "off") joinRelay(srv, function () { joinRelay(relayUrl()); });
+      // a diagnostic room lives only on the game server: no backup relay (it would be an empty room)
+      else if (srv && srv !== "off") joinRelay(srv, isDiagCode(lobby) ? dxUnreachable : function () { joinRelay(relayUrl()); });
+      else if (isDiagCode(lobby)) dxUnreachable();
       else joinRelay(relayUrl());
+    }
+    function dxUnreachable() {
+      admitting = false; lobby = ""; ws = null; markBusy(false);
+      render();
+      setStatus("Couldn’t reach the diagnostic room — try again in a moment.");
     }
     // ── relay transport: one outbound WebSocket per player ──
     // `fallback` runs instead of an error when this server never answers.
@@ -3027,6 +3052,7 @@ function __qbMain(ctx) {
     // Any player may advance: after a question ends it's a plain "next"; mid-
     // question it's a SKIP and only allowed when skips are on (host included).
     function requestNext() {
+      if (inDiag()) { if (amHost() && !dxDone && !(dxInfo && dxInfo.done)) toHost({ t: "reqNext" }); return; }   // the host starts and goes on
       if (isHost) { hostNext(); return; }
       // weighted categories: the server draws each question from the asker's
       // fresh roll (every panel mirrors the room, so any roll is the same draw)
@@ -3554,6 +3580,7 @@ function __qbMain(ctx) {
           if (sj !== _lastSelJson) { _lastSelJson = sj; applyRemoteSel(d.roomSel); }
         } else if (d.roomFilters) applyRoomFiltersToPanel(d.roomFilters);
         renderScores(); renderSettings(); renderFilterSummary(); updateTopBar();
+        if (inDiag()) renderDiag();   // who's here (the waiting view)
       }
       else if (d.t === "chat") { addChat(d.name, d.text, d.sys, d.chan === "team"); }
       // server rooms: the question's text arrives a few seconds ahead of the
@@ -3593,6 +3620,10 @@ function __qbMain(ctx) {
       else if (d.t === "denied") { onDenied(d); }
       else if (d.t === "kicked") { leftIntentionally = true; onDenied({ need: "member", kicked: true, text: d.text || "The host took you out of this room." }); }
       else if (d.t === "roominfo") { roomInfo = d; renderRoomInfo(); }
+      // a diagnostic room: its details (sent before the first state, so the room is drawn as one),
+      // and how it ended once the website has the results
+      else if (d.t === "diaginfo") { dxInfo = d; renderDiag(); }
+      else if (d.t === "diagdone") { dxDone = { diag: d.diag || (dxInfo && dxInfo.diag) || "", released: !!d.released }; renderDiag(); }
       else if (d.t === "roomop") {
         // a change shown ahead of the server (op below) is taken back when it says no
         if (!d.ok && roomOpUndo) { roomInfo = roomOpUndo; }
@@ -3607,6 +3638,7 @@ function __qbMain(ctx) {
     // ── local actions (sent to host or handled if host) ──
     function requestBuzz() {
       if (!current || ended) return;
+      if (inDiag() && players[myId] && players[myId].spec) return;   // a diagnostic's host who isn't playing
       if (players[myId] && players[myId].spec) { ctx.toast("You're spectating \u2014 no buzzing", "error"); return; }
       if (settings.tournament && !(players[myId] && players[myId].team)) { setStatus("Join a team to play"); return; }
       ctx.playSound("buzz");
@@ -3632,7 +3664,7 @@ function __qbMain(ctx) {
       if (o.speed) clientStartRead(Math.min(current.text.length, o.idx + Math.floor((Date.now() - o.at) / o.speed)), o.speed);
       syncActions();
     }
-    function requestPause() { if (isHost) hostTogglePause(myId); else toHost({ t: "pause" }); }
+    function requestPause() { if (inDiag() && !amHost()) return; if (isHost) hostTogglePause(myId); else toHost({ t: "pause" }); }
     function submitAnswer(text) { if (isHost) hostHandleAnswer(myId, text); else toHost({ t: "answer", text: text }); }
     function changeName(name) { myName = name; try { ctx.setSetting("name", name); } catch (e) {} if (isHost) { var old = players[myId].name; players[myId].name = name; sysChat(old + " is now " + name); pushState(); } else toHost({ t: "setName", name: name }); }
     function changeTeam(team) { if (isHost) { players[myId].team = team; pushState(); } else toHost({ t: "setTeam", team: team }); }
@@ -3716,7 +3748,7 @@ function __qbMain(ctx) {
     function updateTopBar() {
       if (!page || !page.screenEl) return;
       var titleEl = page.screenEl.querySelector(".top-bar-title");
-      if (titleEl) titleEl.textContent = lobby ? ("Multiplayer · Room " + String(lobby).toUpperCase()) : "Multiplayer";
+      if (titleEl) titleEl.textContent = !lobby ? "Multiplayer" : inDiag() ? "Diagnostic" + (dxInfo && dxInfo.team ? " · " + dxInfo.team : "") : ("Multiplayer · Room " + String(lobby).toUpperCase());
       page.screenEl.classList.toggle("mp-in-room", !!lobby);
       try { if (ctx.host && ctx.host.refreshTopbar) ctx.host.refreshTopbar(); } catch (e) {}
       syncActions();
@@ -4125,7 +4157,7 @@ function __qbMain(ctx) {
     }
     function recentRooms() { try { var r = ctx.storage.get("recent"); return Array.isArray(r) ? r.slice(0, 6) : []; } catch (e) { return []; } }
     function rememberRoom() {
-      if (!lobby) return;
+      if (!lobby || isDiagCode(lobby)) return;   // a diagnostic room is opened from Clubs, not Recent rooms
       try {
         var list = recentRooms().filter(function (r) { return String(r.code).toLowerCase() !== lobby.toLowerCase(); });
         list.unshift({ code: lobby, at: Date.now(), players: order.filter(function (id) { return players[id] && !players[id].spec; }).length || 1, host: !!isHost });
@@ -4175,6 +4207,27 @@ function __qbMain(ctx) {
         "</div>";
     }
 
+    // A diagnostic room's settings: only Reading & timers (reading speed, strictness) and the two
+    // Game rules timers — the rest is fixed by the diagnostic. Its own sliders (the practice panel's
+    // own controls stay hidden and untouched); the room's values, moved by its host only.
+    function diagSectionsHtml() {
+      var s = (dxInfo && dxInfo.settings) || {};
+      var slider = function (id, label, tip, min, max, v, text) {
+        return '<div class="slider-group"><span class="sg-label">' + label + (tip ? ' <span class="qb-info" data-tip="' + esc(tip) + '">i</span>' : "") + '</span>' +
+          '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + esc(v) + '" aria-label="' + esc(label) + '"><span class="slider-value" id="' + id + '-val">' + esc(text) + "</span></div>";
+      };
+      var ms = s.revealSpeed != null ? s.revealSpeed : 25, lvl = window.qbSpeedLevel ? window.qbSpeedLevel(ms) : 13;
+      var strict = s.strictness != null ? s.strictness : 10, ans = s.answerSeconds || settings.answerSeconds || 10, bw = s.buzzWindow || settings.buzzWindow || 10;
+      return '<div class="filter-section mp-injected"><div class="filter-label">Reading &amp; timers</div>' +
+          slider("mp-dx-speed", "Reading speed", "How fast questions are read: 1 is the slowest and 50 the fastest; past 50 the whole question shows at once (Instant).", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
+          slider("mp-dx-strict", "Strictness", "How close a typed answer must be to the answer line. Higher is stricter.", 0, 20, strict, String(strict)) +
+        "</div>" +
+        '<div class="filter-section mp-injected"><div class="filter-label">Game rules</div>' +
+          slider("mp-ans", "Answer time", "Seconds to type an answer after buzzing (and for each bonus part).", 3, 30, ans, ans + "s") +
+          slider("mp-bwin", "Buzz window", "Seconds to buzz once the question finishes reading.", 3, 30, bw, bw + "s") +
+        "</div>";
+    }
+
     function renderRoom() {
       // Always return any borrowed panel before re-rendering (innerHTML wipes it).
       returnPanel();
@@ -4184,7 +4237,8 @@ function __qbMain(ctx) {
             '<button type="button" class="btn btn-ghost mp-leave-btn" id="mp-leave"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Leave</button>' +
             '<span class="rh-lbl">Room</span><b class="rh-code" id="mp-code">' + esc(String(lobby).toUpperCase()) + "</b>" +
             '<button type="button" class="btn btn-ghost btn-icon btn-sm" id="mp-copy" title="Copy room code" aria-label="Copy room code"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>' +
-            '<span class="badge rh-host" id="mp-hostbadge"' + (amHost() && !roomInfo ? "" : " hidden") + ">You host</span>" +
+            (inDiag() ? '<span class="badge rh-dx" id="mp-dxbadge">Diagnostic</span>' : "") +
+            '<span class="badge rh-host" id="mp-hostbadge"' + (hostBadgeOn() ? "" : " hidden") + ">You host</span>" +
             '<span class="badge rh-own" id="mp-ownbadge" hidden></span>' +
             (mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
             '<span class="spacer"></span>' +
@@ -4193,17 +4247,22 @@ function __qbMain(ctx) {
           "</div>" +
           '<div class="practice-layout mp-layout">' +
             '<main class="question-area">' +
-              '<div class="question-placeholder" id="mp-placeholder">' +
+              // a diagnostic room: who's here before the first question (its own status line too —
+              // the room's lobby section isn't in its settings)
+              (inDiag() ? '<div class="dx-wait" id="mp-dx-wait" hidden></div>' : "") +
+              '<div class="question-placeholder' + (inDiag() ? " hidden" : "") + '" id="mp-placeholder">' +
               "</div>" +
               '<div class="question-content hidden" id="mp-content">' +
                 '<div class="question-meta" id="mp-meta"></div>' +
                 '<div class="question-text room-q" id="mp-qtext"></div>' +
               "</div>" +
+              (inDiag() ? '<div class="mp-status" id="mp-status" role="status"></div>' : "") +
               '<div class="buzz-area hidden" id="mp-buzz"></div>' +
               '<div class="mp-actions" id="mp-actions">' +
                 '<button type="button" class="btn btn-go mp-buzz-btn" id="mp-buzz-btn" hidden>Buzz<kbd>Space</kbd></button>' +
                 '<button type="button" class="btn btn-primary mp-next-btn" id="mp-next-btn" hidden>Next<span aria-hidden="true">→</span></button>' +
                 '<button type="button" class="btn mp-pause-btn" id="mp-pause-btn" hidden>Pause</button>' +
+                (inDiag() ? '<button type="button" class="btn btn-primary" id="mp-dx-report" hidden>See the report</button><button type="button" class="btn btn-primary" id="mp-dx-clubs" hidden>Back to Clubs</button>' : "") +
               "</div>" +
               '<div class="result-area hidden" id="mp-result"></div>' +
               '<div class="history-panel mp-history" id="mp-history-panel" style="display:none">' +
@@ -4260,6 +4319,10 @@ function __qbMain(ctx) {
       body.querySelector("#mp-buzz-btn").onclick = function () { requestBuzz(); };
       body.querySelector("#mp-next-btn").onclick = function () { requestNext(); };
       body.querySelector("#mp-pause-btn").onclick = function () { requestPause(); };
+      var dxr = body.querySelector("#mp-dx-report");
+      if (dxr) dxr.onclick = function () { var id = (dxDone && dxDone.diag) || (dxInfo && dxInfo.diag) || ""; leave(); if (!qbCall("openDiagReport", id)) qbCall("openClubs", "diagnostics"); };
+      var dxc = body.querySelector("#mp-dx-clubs");
+      if (dxc) dxc.onclick = leaveToClubs;
 
       var histBtn = body.querySelector("#mp-history-open");
       if (histBtn) histBtn.onclick = openMpHistory;
@@ -4269,10 +4332,71 @@ function __qbMain(ctx) {
 
       renderScores(); renderSettings(); renderFilterSummary(); renderRoomInfo();
       if (current) { renderQuestion(); renderBuzzes(); }
+      if (bonusView && inDiag()) renderBonusArea(0);   // a diagnostic's bonuses-only round has no question to draw it under
       renderSessionLog();
+      renderDiag();
       syncActions();
     }
     var panelTab = "players", unreadChat = 0;
+    function hostBadgeOn() { return inDiag() ? !!(dxInfo && dxInfo.host) : amHost() && !roomInfo; }   // a bought room shows its role badge instead
+
+    // ── a diagnostic room: the waiting view, "Question N of M", the finished view, the drawer ──
+    var FORMAT_LABEL = { tu: "Tossups only", bo: "Bonuses only", tb: "Tossups + Bonuses" };
+    function dxNames(list) { return list.length <= 2 ? list.join(" and ") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1]; }
+    function renderDiag() {
+      if (!body || !inDiag() || !body.querySelector(".mp-room")) return;
+      var D = dxInfo, fin = !!(dxDone || (D && D.done));
+      // before the first question: the team, who's here and who isn't yet (Start is the host's)
+      var wait = body.querySelector("#mp-dx-wait");
+      if (wait) {
+        var showWait = !!(D && D.waiting && !current && !bonusView);
+        wait.hidden = !showWait;
+        if (showWait) {
+          var seats = (D.players || []).map(function (uid) { var hit = null; order.forEach(function (id) { var p = players[id]; if (!hit && p && p.uid === uid) hit = p; }); return hit; }).filter(Boolean);
+          var here = seats.filter(function (p) { return !p.off; }), missing = seats.filter(function (p) { return p.off; }).map(function (p) { return p.name; });
+          var n = D.format === "bo" ? D.total + (D.total === 1 ? " bonus" : " bonuses") : D.total + (D.total === 1 ? " tossup" : " tossups") + (D.format === "tb" ? " + bonuses" : "");
+          var meta = [D.title || (FORMAT_LABEL[D.format] || "") + " · " + n];
+          if (D.i > 0 && D.i < D.total) meta.push("picks up at question " + (D.i + 1));
+          if (missing.length) meta.push("waiting for " + dxNames(missing));
+          wait.innerHTML = '<p class="eyebrow">' + esc(D.team) + ' diagnostic</p>' +
+            '<p class="dx-wait-big"><b class="num">' + here.length + " of " + (D.players || []).length + "</b> here</p>" +
+            '<p class="dx-wait-meta">' + esc(meta.join(" · ")) + "</p>" +
+            (D.amHost ? "" : '<p class="dx-wait-meta">The host starts the diagnostic.</p>');
+        }
+      }
+      // the last question is over: the report (out now, or when everyone's done) — under the answer
+      var res = body.querySelector("#mp-result"), end = body.querySelector("#mp-dx-end");
+      if (!fin) { if (end) end.remove(); }
+      else if (res) {
+        if (!end) { end = document.createElement("div"); end.id = "mp-dx-end"; end.className = "dx-end"; res.appendChild(end); }
+        res.classList.remove("hidden");
+        end.innerHTML = !dxDone ? '<p class="dx-end-t"><b>That was the last question.</b> Saving the results…</p>'
+          : dxDone.released ? '<p class="dx-end-t"><b>That was the last question.</b> The report is ready.</p>'
+          : '<p class="dx-end-t"><b>You’re done.</b> The report comes out when everyone finishes or at the deadline.</p>';
+      }
+      syncDiagDrawer();
+      renderScores();
+      updateTopBar();
+    }
+    // the drawer shows the room's values; only a host moves them (everyone else: the ⓘ says why)
+    function syncDiagDrawer() {
+      var panel = borrowedPanel; if (!panel || !inDiag()) return;
+      var can = amHost(), s = (dxInfo && dxInfo.settings) || {};
+      var setRange = function (id, v, label) {
+        var el = panel.querySelector("#" + id); if (!el) return;
+        el.disabled = !can;
+        if (v == null || document.activeElement === el) return;
+        el.value = v;
+        var out = panel.querySelector("#" + id + "-val"); if (out) out.textContent = label;
+      };
+      if (s.revealSpeed != null) setRange("mp-dx-speed", window.qbSpeedLevel ? window.qbSpeedLevel(s.revealSpeed) : 13, window.qbSpeedLabel ? window.qbSpeedLabel(s.revealSpeed) : String(s.revealSpeed));
+      if (s.strictness != null) setRange("mp-dx-strict", s.strictness, String(s.strictness));
+      setRange("mp-ans", s.answerSeconds != null ? s.answerSeconds : settings.answerSeconds, (s.answerSeconds != null ? s.answerSeconds : settings.answerSeconds) + "s");
+      setRange("mp-bwin", s.buzzWindow != null ? s.buzzWindow : settings.buzzWindow, (s.buzzWindow != null ? s.buzzWindow : settings.buzzWindow) + "s");
+      var ft = panel.querySelector(".fp-title"), tip = ft && ft.querySelector(".mp-dx-tip");
+      if (ft && !can && !tip) { tip = document.createElement("span"); tip.className = "qb-info mp-dx-tip"; tip.setAttribute("data-tip", "Only the host can change these."); tip.textContent = "i"; ft.appendChild(document.createTextNode(" ")); ft.appendChild(tip); }
+      else if (tip && can) { if (tip.previousSibling && tip.previousSibling.nodeType === 3) tip.previousSibling.remove(); tip.remove(); }
+    }
 
     // ── a bought room: its Room tab (the owner and admins run it from here) ──
     var ACCESS_LABEL = { members: "Locked", password: "Password", anyone: "Open" };
@@ -4372,7 +4496,8 @@ function __qbMain(ctx) {
       }
       admitting = false;
       leave();
-      door = { code: code, need: d.need, wrong: !!d.wrong, signedIn: !!d.signedIn, kicked: !!d.kicked, text: d.text || "" };
+      // (a diagnostic room's door offers Sign in only when the room said this one isn't signed in)
+      door = { code: code, need: d.need, wrong: !!d.wrong, signedIn: d.signedIn == null && isDiagCode(code) ? true : !!d.signedIn, kicked: !!d.kicked, text: d.text || "" };
       showDoor();
     }
     function showDoor() {
@@ -4402,9 +4527,13 @@ function __qbMain(ctx) {
           if (goJoin) goJoin(D.code);
         };
       } else {
+        // a diagnostic room (closed, or not for this account): back to Clubs, where it's opened from
+        var dxDoor = isDiagCode(D.code) && !!(window.QB && typeof window.QB.openClubs === "function");
         st.innerHTML = '<div class="mp-door">' + (D.kicked ? esc(D.text || "You were taken off this room.") :
           "<b>" + name + "</b> is for its members. Ask its owner or an admin to add your username" + (D.signedIn ? "." : " — and sign in first.")) +
-          (D.signedIn ? "" : ' <button type="button" class="btn btn-sm" data-acct="signin">Sign in</button>') + "</div>";
+          (D.signedIn ? "" : ' <button type="button" class="btn btn-sm" data-acct="signin">Sign in</button>') +
+          (dxDoor ? ' <button type="button" class="btn btn-sm" id="mp-door-clubs">Back to Clubs</button>' : "") + "</div>";
+        var dcb = st.querySelector("#mp-door-clubs"); if (dcb) dcb.onclick = function () { door = null; render(); qbCall("openClubs", "diagnostics"); };
       }
     }
 
@@ -4542,6 +4671,24 @@ function __qbMain(ctx) {
       var b = body.querySelector("#mp-buzz-btn"), n = body.querySelector("#mp-next-btn"), p = body.querySelector("#mp-pause-btn");
       var reading = !!current && !ended && !bonusView;
       var answering = !!(body.querySelector("#mp-ans-input") || body.querySelector(".mp-binput"));
+      if (inDiag()) {
+        // a diagnostic: the host (or, with none here, any player) starts, goes on and pauses; the
+        // counter is "Question N of M"; once it's over, the report / Clubs
+        var can = amHost(), spec = !!(players[myId] && players[myId].spec), fin = !!(dxDone || (dxInfo && dxInfo.done)), waiting = !!(dxInfo && dxInfo.waiting);
+        if (b) { b.hidden = !reading || spec || answering || fin; b.disabled = !!pendingBuzzer; }
+        if (n) {
+          n.hidden = !dxInfo || !can || fin || reading || !!(bonusView && !bonusView.done);
+          var lbl = waiting ? "Start" : "Next";
+          if (n.firstChild && n.firstChild.nodeValue !== lbl) n.firstChild.nodeValue = lbl;
+        }
+        if (p) { p.hidden = !reading || !can || answering || fin; p.textContent = paused ? "Resume" : "Pause"; }
+        var qc2 = body.querySelector("#mp-qcount"); if (qc2) qc2.textContent = dxInfo && !waiting && dxInfo.total ? "Question " + Math.min(dxInfo.total, dxInfo.i + 1) + " of " + dxInfo.total : "";
+        var rp = body.querySelector("#mp-dx-report"), cb2 = body.querySelector("#mp-dx-clubs");
+        if (rp) rp.hidden = !(dxDone && dxDone.released);
+        if (cb2) cb2.hidden = !(dxDone && !dxDone.released);
+        var hb2 = body.querySelector("#mp-hostbadge"); if (hb2) hb2.hidden = !hostBadgeOn();
+        return;
+      }
       if (b) { b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer; }
       if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
       if (p) { p.hidden = !reading || mySpec || answering; p.textContent = paused ? "Resume" : "Pause"; }
@@ -4585,6 +4732,27 @@ function __qbMain(ctx) {
       var tny = body.querySelector("#mp-tourney");
       if (tny) tny.addEventListener("change", function (e) { changeSetting("tournament", e.target.checked); });
       var nx = body.querySelector("#mp-next"); if (nx) nx.onclick = function () { requestNext(); };
+      // a diagnostic room's reading speed (a level on the slider, ms per character in the room) and strictness
+      var dsp = body.querySelector("#mp-dx-speed");
+      if (dsp) {
+        var spLabel = function (v) { return window.qbSpeedMs && window.qbSpeedLabel ? window.qbSpeedLabel(window.qbSpeedMs(v)) : String(v); };
+        dsp.addEventListener("input", function () { var o = body.querySelector("#mp-dx-speed-val"); if (o) o.textContent = spLabel(dsp.value); });
+        dsp.addEventListener("change", function () {
+          if (!window.qbSpeedMs) return;
+          var ms = window.qbSpeedMs(dsp.value);
+          if (dxInfo && dxInfo.settings) dxInfo.settings.revealSpeed = ms;
+          toHost({ t: "setConfig", config: { revealSpeed: ms }, change: "changed reading speed to " + spLabel(dsp.value) });
+        });
+      }
+      var dst = body.querySelector("#mp-dx-strict");
+      if (dst) {
+        dst.addEventListener("input", function () { var o = body.querySelector("#mp-dx-strict-val"); if (o) o.textContent = dst.value; });
+        dst.addEventListener("change", function () {
+          var v = parseInt(dst.value, 10) || 0;
+          if (dxInfo && dxInfo.settings) dxInfo.settings.strictness = v;
+          toHost({ t: "setConfig", config: { strictness: v }, change: "changed strictness to " + v });
+        });
+      }
     }
 
     // Move the real practice filter panel into the multiplayer layout (host only).
@@ -4604,6 +4772,20 @@ function __qbMain(ctx) {
       borrowedPanel = panel;
       var ft = panel.querySelector(".fp-title"); if (ft) ft.textContent = "Room settings";
       var fs = panel.querySelector("#btn-drawer-start"); if (fs) fs.textContent = "Done";
+      if (inDiag()) {
+        // a diagnostic room: every practice section goes out of sight (put back in returnPanel);
+        // only its own two sections show
+        dxHidden = [];
+        [].forEach.call(panel.children, function (c) {
+          if (!c.classList.contains("filter-section") || c.classList.contains("mp-injected") || c.style.display === "none") return;
+          dxHidden.push([c, c.style.display]); c.style.display = "none";
+        });
+        var dsec = document.createElement("div"); dsec.innerHTML = diagSectionsHtml();
+        while (dsec.firstChild) panel.appendChild(dsec.firstChild);
+        wireControls();
+        syncDiagDrawer();
+        return;
+      }
       // inject MP sections: YOU + lobby at top, controls at bottom
       var top = document.createElement("div"); top.innerHTML = lobbySectionHtml();
       var head = panel.querySelector(":scope > .fp-head"), at = head ? head.nextSibling : panel.firstChild;
@@ -4740,6 +4922,7 @@ function __qbMain(ctx) {
       borrowedPanel.removeEventListener("change", onAnyFilterChange, true);
       borrowedPanel.removeEventListener("input", onAnyFilterChange, true);
       borrowedPanel.querySelectorAll(".mp-injected").forEach(function (n) { n.remove(); });
+      dxHidden.forEach(function (x) { x[0].style.display = x[1]; }); dxHidden = [];   // a diagnostic room hid the practice sections
       borrowedPanel.classList.remove("mp-borrowed");
       borrowedPanel.classList.remove("open");
       var ft = borrowedPanel.querySelector(".fp-title"); if (ft) ft.textContent = "Practice setup";
@@ -4784,13 +4967,16 @@ function __qbMain(ctx) {
       });
       var COLORS = ["#8957e5", "#1f6feb", "#bf4b8a", "#2ea043", "#d29922", "#0e7490", "#db6d28"];
       var colorOf = function (id) { var h = 0; for (var i = 0; i < String(id).length; i++) h = (h * 31 + String(id).charCodeAt(i)) >>> 0; return COLORS[h % COLORS.length]; };
+      // a diagnostic room: names are the accounts' and everyone is on the one team (nothing to edit);
+      // a picked player who hasn't come in yet is "not here yet"
+      var dx = inDiag(), dxWaiting = dx && !!(dxInfo && dxInfo.waiting);
       var row = function (p) {
         var you = p.id === myId;
         var initial = (String(p.name || "?").trim()[0] || "?").toUpperCase();
         var nm = neonNameHtml(p.name, p);   // a bought neon name glows
-        var nameHtml = you ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + nm + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + nm + "</b>";
-        var subHtml = p.off ? "offline" : p.spec ? "spectating"
-          : you ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
+        var nameHtml = you && !dx ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + nm + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + nm + (you ? " <small>(you)</small>" : "") + "</b>";
+        var subHtml = p.off ? (dxWaiting ? "not here yet" : "offline") : p.spec ? (dx ? "host" : "spectating")
+          : you && !dx ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
           : (p.team ? "team " + esc(p.team) : "&nbsp;");
         return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(neonOf(p) || "") + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.neonAvatar(neonOf(p))) || "background:" + (you ? "var(--accent-strong)" : colorOf(p.id))) + '">' + esc(initial) + '</span>' +
           '<span class="nm">' + nameHtml + "<span>" + subHtml + "</span></span>" +
@@ -4806,7 +4992,7 @@ function __qbMain(ctx) {
         }
         roster.forEach(function (p) { html += row(p); });
       });
-      if (specs.length) { html += '<div class="eyebrow" style="margin-top:8px">Spectators</div>'; specs.forEach(function (p) { html += row(p); }); }
+      if (specs.length) { html += '<div class="eyebrow" style="margin-top:8px">' + (dx ? (specs.length > 1 ? "Hosts" : "Host") : "Spectators") + "</div>"; specs.forEach(function (p) { html += row(p); }); }
       el.innerHTML = html || '<div class="text-muted">—</div>';
       var nb = el.querySelector(".mp-edit-name");
       if (nb) nb.onclick = function () { editInPlace(nb, (players[myId] || {}).name || myName, 24, "Your name", function (v) { if (v) { changeName(v); var mi = body.querySelector("#mp-myname"); if (mi) mi.value = v; } }); };
@@ -4837,6 +5023,7 @@ function __qbMain(ctx) {
       setTimeout(syncActions, 0);
       clearPauseUi();   // a new question must never inherit the paused grey
       var ph = body && body.querySelector("#mp-placeholder"); if (ph) ph.classList.add("hidden");
+      var wt = body && body.querySelector("#mp-dx-wait"); if (wt) wt.hidden = true;   // a diagnostic room: the waiting view goes
       var content = body && body.querySelector("#mp-content"); if (content) content.classList.remove("hidden");
       var meta = body && body.querySelector("#mp-meta"); if (meta) meta.textContent = "";   // category stays hidden while reading
       // a new question starts at the top, without the room a long one before it added (app.js followReading)
@@ -5065,6 +5252,7 @@ function __qbMain(ctx) {
     // separate panel and stays fully usable throughout. ──
     function submitBonusAnswer(text, k) { if (isHost) hostHandleBonusAnswer(myId, text, k); else toHost({ t: "banswer", text: text, k: k }); }
     function applyBonus(d) {
+      if (inDiag() && body) { var wt = body.querySelector("#mp-dx-wait"); if (wt) wt.hidden = true; }   // a bonuses-only diagnostic starts on a bonus
       var parts = d.parts || [];
       // Older hosts send no values: every part is worth 10.
       var values = parts.map(function (_, i) { var v = d.values && +d.values[i]; return v > 0 ? v : 10; });
@@ -5090,9 +5278,12 @@ function __qbMain(ctx) {
       res.className = "result-area";
       var el = res.querySelector("#mp-bonus");
       if (!el) { el = document.createElement("div"); el.id = "mp-bonus"; el.className = "mp-bonus"; res.appendChild(el); }
+      // no tossup result above it (a diagnostic's bonuses-only round): no dividing line either
+      var top = current ? "" : "0"; el.style.borderTop = top; el.style.paddingTop = top; el.style.marginTop = top;
       var mine = bonusView.winner === myId;
       var html = '<div class="filter-label">BONUS \u2014 ' + neonNameHtml(bonusView.name, players[bonusView.winner]) + (mine ? " (you)" : "") + " answers</div>" +
-        (bonusView.leadin ? '<div class="question-text" style="font-size:13px;min-height:0">' + esc(bonusView.leadin) + "</div>" : "");
+        // a diagnostic's bonuses-only round has no tossup above: its leadin reads like a question
+        (bonusView.leadin ? '<div class="question-text" style="' + (current ? "font-size:13px;" : "") + 'min-height:0">' + esc(bonusView.leadin) + "</div>" : "");
       for (var k = 0; k < bonusView.parts.length && k <= bonusView.k; k++) {
         html += '<div class="mp-bpart"><div class="bonus-part-text">[' + ((bonusView.values && bonusView.values[k]) || 10) + "] " + esc(bonusView.parts[k]) + "</div>";
         var r = bonusView.results[k];
@@ -5253,6 +5444,7 @@ function __qbMain(ctx) {
       ws = null; _relayConns = {};
       isHost = false; serverMode = false; current = null;
       players = {}; order = []; lobby = ""; qCount = 0; sessionLog = [];
+      dxInfo = null; dxDone = null;
       render();
     }
 
@@ -5282,6 +5474,1368 @@ function __qbMain(ctx) {
     onEnable: __qbMain,
     onDisable: function (ctx) { if (ctx._cleanup) ctx._cleanup(); },
   });
+})();
+
+
+;/* ── clubs.js (bundled by build-update) ── */
+// ═════════════════════════════════════════════════════════════════════════
+// CLUBS & TEAM DIAGNOSTIC — website and app (an onlinequiz account; the app
+// forwards /api/clubs* and /api/diag* to the website from the main process).
+//
+// Four screens (index.html):
+//   #clubs-screen       an organization (school / club): Teams, Members, Leaderboard,
+//                       Invites, Diagnostics — the invites waiting for you on top, and a
+//                       count on the top bar's Clubs button (invites + join requests)
+//   #diagnostic-screen  set a diagnostic up: team, players, format, where, questions,
+//                       difficulty (the packet is drawn by NAQT's distribution, server side)
+//   #irl-screen         IRL Reading: one person reads the packet aloud and records every
+//                       buzz (a marker dragged to the word) and every bonus part
+//   #report-screen      a released report: summary, coverage, what to practice, player cards
+// Rooms ("Together in a room", "Each on their own") are the game server's diagnostic
+// rooms (multiplayer.js); this file opens them with POST /api/diag/room + QB.mpJoin.
+// The server: web/clubs.mjs, web/diag-packet.mjs, web/diag-report.mjs (AGENTS.md "Clubs").
+//
+// Loaded before app.js (build-update folds it into extensions.js), so app.js's helpers
+// (API, Account, goTo, confirmDialog …) are reached only from inside functions, at run time.
+// Everything is inside this one function; window.QBClubs is what app.js calls.
+// ═════════════════════════════════════════════════════════════════════════
+(function () {
+  "use strict";
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const OFFLINE = "Couldn't reach onlinequiz.net. Check your internet connection.";
+
+  // ── icons (24×24 strokes, as app.js's ICON map) ──
+  const ICONS = {
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 010 7M18 15c2 .7 3.2 2.3 3.8 5"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-4 4.2-6 8-6s6.8 2 8 6"/>',
+    userplus: '<circle cx="10" cy="8" r="4"/><path d="M3 21c1.1-3.8 3.8-6 7-6 1.6 0 3 .5 4.2 1.4M19 14v6M16 17h6"/>',
+    userminus: '<circle cx="10" cy="8" r="4"/><path d="M3 21c1.1-3.8 3.8-6 7-6 1.6 0 3 .5 4.2 1.4M16 17h6"/>',
+    shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+    crown: '<path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z"/>',
+    target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
+    chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    check: '<path d="M5 12l5 5 9-10"/>',
+    x: '<path d="M6 6l12 12M18 6L6 18"/>',
+    more: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>',
+    refresh: '<path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/>',
+    radio: '<path d="M4.9 19.1a10 10 0 010-14.2M19.1 4.9a10 10 0 010 14.2M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4"/><circle cx="12" cy="12" r="2"/>',
+    up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+    down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+    play: '<path d="M7 4l13 8-13 8z"/>',
+    doc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h6"/>',
+    left: '<path d="M15 6l-6 6 6 6"/>',
+    right: '<path d="M9 6l6 6-6 6"/>',
+    grip: '<path d="M9 7l-5 5 5 5M15 7l5 5-5 5"/>',
+    pencil: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+    exit: '<path d="M15 4h4a1 1 0 011 1v14a1 1 0 01-1 1h-4M10 16l-4-4 4-4M6 12h10"/>',
+    swap: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+  };
+  const ico = (n, s, extra) => '<svg width="' + (s || 18) + '" height="' + (s || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || "") + ">" + (ICONS[n] || "") + "</svg>";
+  // the site's ⓘ: explanations live here, never as visible text
+  const info = (tip, label) => '<span class="qb-info" data-tip="' + esc(tip) + '" tabindex="0" role="img" aria-label="' + esc(label || "More info") + '">i</span>';
+
+  // ── the server ──
+  async function get(path) {
+    try { const r = await API.get(path); return r || { error: OFFLINE }; } catch (e) { return { error: e && e.message && !/fetch|network|timeout|abort/i.test(e.message) ? e.message : OFFLINE }; }
+  }
+  async function post(path, body) {
+    try { const r = await API.post(path, body || {}); return r || { error: OFFLINE }; } catch (e) { return { error: e && e.message && !/fetch|network|timeout|abort/i.test(e.message) ? e.message : OFFLINE }; }
+  }
+  const ls = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+  const signedIn = () => typeof Account !== "undefined" && !!(Account.user && Account.user.handle && !Account.offline);
+  const screenOn = (id) => !!document.querySelector("#" + id + ".active");
+
+  // ── state ──
+  const S = {
+    list: null,                       // GET /api/clubs
+    orgId: ls.get("qb-club-org") || "",
+    org: null,                        // GET /api/clubs/org (the one showing)
+    tab: "teams",
+    memFilter: "all", lbTeam: "all", lbPeriod: "week", lb: null,
+    invTeam: "",
+    dx: null,                         // the setup form
+    dxFor: null,                      // { org, team } asked for by a "Diagnostic" button
+    irl: null,                        // { id, packet, state, edit, saveT }
+    rep: null,                        // { id, d, cov: {}, pc: {} }
+  };
+
+  // ── names, avatars ──
+  const neonHtml = (html, neon) => (window.QB && window.QB.neonHtml ? window.QB.neonHtml(html, neon) : html);
+  const nm = (p) => p ? neonHtml(esc(p.name || (p.handle ? "@" + p.handle : "?")), p.neon) : "?";
+  const firstName = (p) => String((p && (p.name || p.handle)) || "?").split(/\s+/)[0];
+  const nmFirst = (p) => p ? neonHtml(esc(firstName(p)), p.neon) : "?";
+  const initial = (p) => esc(String((p && (p.name || p.handle)) || "?").replace(/^@/, "").charAt(0).toUpperCase() || "?");
+  function av(p, cls) {
+    const st = p && !p.na && window.QB && window.QB.neonAvatar ? window.QB.neonAvatar(p.neon) : "";
+    return '<span class="fr-av' + (cls ? " " + cls : "") + (p && p.na ? " na" : "") + '" aria-hidden="true"' + (st ? ' style="' + st + '"' : "") + ">" + initial(p) + "</span>";
+  }
+  const handleText = (p) => p.na ? "No account" : p.handle ? "@" + esc(p.handle) : "";
+  const plural = (n, a, b) => n + " " + (n === 1 ? a : b || a + "s");
+  const fmt = (n) => Number(n || 0).toLocaleString("en-US");
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const listNames = (ps) => { const n = ps.map(firstName); return n.length <= 2 ? n.join(" and ") : n.slice(0, -1).join(", ") + " and " + n[n.length - 1]; };
+  const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const dayText = (t) => { const d = new Date(t); return WD[d.getDay()] + " " + MON[d.getMonth()] + " " + d.getDate(); };
+  const timeText = (t) => { const d = new Date(t), h = d.getHours(), m = d.getMinutes(); return (h % 12 || 12) + ":" + String(m).padStart(2, "0") + " " + (h < 12 ? "AM" : "PM"); };
+  const whenText = (t) => {
+    const d = new Date(t), now = new Date(), days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5);
+    return (days === 0 ? "Today" : days === 1 ? "Tomorrow" : days === -1 ? "Yesterday" : dayText(t)) + ", " + timeText(t);
+  };
+  const ago = (t) => (typeof relTime === "function" ? relTime(t) : dayText(t));
+
+  // NAQT's twelve categories, in its order (the report and the setup's summary use it)
+  const CATS = ["Literature", "Science and Math", "Fine Arts", "History", "Geography", "Mythology", "Pop Culture Sports", "Social Science", "Philosophy", "Theology", "Current Events", "Miscellaneous"];
+  const SHORT = { "Science and Math": "Sci & Math", "Pop Culture Sports": "Pop Culture", "Social Science": "Social Sci", "Current Events": "Current Ev.", "Miscellaneous": "Misc" };
+  const catColor = (c) => (typeof rootColorOf === "function" ? rootColorOf(c) : "#8b949e");
+  const catChip = (c) => '<span class="cat-chip" style="--c:' + catColor(c) + '">' + esc(c) + "</span>";
+  const FORMATS = {
+    tu: { label: "Tossups only", tip: "Tossups and no bonuses. Play together in a room, each on your own before a deadline, or IRL Reading." },
+    bo: { label: "Bonuses only", tip: "Only bonuses. The whole team plays together, in a room or IRL Reading, and talks over every part." },
+    tb: { label: "Tossups + Bonuses", tip: "Like a real game: your team gets a bonus whenever it gets the tossup. Played together, in a room or IRL Reading." },
+  };
+  const PLACE = { room: "in a room", own: "on their own", irl: "IRL Reading" };
+  const DIFF_NAMES = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
+  const diffText = (d) => {
+    const a = (d || []).slice().sort((x, y) => x - y);
+    if (!a.length) return "all";
+    if (a.length === 1) return String(a[0]);
+    return a[a.length - 1] - a[0] === a.length - 1 ? a[0] + "–" + a[a.length - 1] : a.join(", ");
+  };
+  const TIP = {
+    na: "No onlinequiz account, so they can only play IRL Reading, where the reader records their buzzes.",
+    addName: "For a player with no onlinequiz account. They can play IRL Reading, where the reader records their buzzes, and can be replaced with their account later.",
+    replace: "They get an invite under Clubs. Once they accept, their account takes this player's place: the same teams and the same recorded results.",
+    invite: "They see the invite under Clubs, on the website and in the app. Pick a team to put them straight onto it.",
+    code: "Anyone with the code can join from Clubs, Join or create. A captain or admin then puts them on a team.",
+    approve: "When this is on, someone who joins with the code waits until an admin accepts them.",
+    roster: "The team's roster is picked. Changes here are for this diagnostic only; the roster stays the same.",
+    own: "Only Tossups only can be played on your own.",
+    irl: "In person: the team practices together in a real room, and one person reads the packet aloud from this page and records every buzz and bonus part. Works with all three formats.",
+    dist: "Every packet is drawn at random by NAQT's high school distribution, and drawn again when a category strays too far from it.",
+    avg: "Ranked by average points per active member (anyone who practiced in the period), so a big roster can't win by size alone. A team needs 3 active members and an organization 4 to be ranked.",
+    cov: "Team conversion is the share of tossups the team got. Strength: 70% or more. Middling: 30 to 69%. Gap: under 30%. Overlap: two or more players each got 40% or more of an area. Open a category to see its subcategories.",
+    plan: "In order: gaps first, then habits that cost points, then overlaps.",
+    bonus: "The team confers on every bonus, so bonus parts count for the team. Parts are labeled by their place in the bonus.",
+    got: "First correct buzz on each tossup. Bars are relative to the top scorer.",
+    locked: "The report is released to everyone at once when the diagnostic ends.",
+    lbOrg: "The same numbers as the global leaderboard: everyone's practice on onlinequiz. Players without an account aren't on it.",
+    transfer: "The new owner can make and remove admins and delete the organization. You become an admin.",
+  };
+  // ── the top bar's Clubs count: invites waiting for you + join requests you can answer ──
+  // Checked with friend requests (app.js friendPoll: sign-in, every minute, the window coming back).
+  function paintBadge(n) {
+    const b = document.getElementById("tb-clubs"), c = document.getElementById("tb-clubs-n");
+    if (!b || !c) return;
+    b.classList.toggle("has-n", n > 0);
+    c.textContent = n > 99 ? "99+" : String(n || 0);
+    b.setAttribute("aria-label", n > 0 ? "Clubs, " + plural(n, "request") : "Clubs");
+  }
+  async function poll() {
+    if (!signedIn()) { S.list = null; paintBadge(0); return; }
+    const d = await get("/api/clubs");
+    if (!d || d.error) return;
+    const was = JSON.stringify(S.list && [S.list.invites, S.list.requests, S.list.orgs]);
+    S.list = d; paintBadge(d.notify || 0);
+    // Clubs open: the organization again (members, teams and diagnostics change from other people)
+    if (screenOn("clubs-screen") && !document.querySelector("#clubs-screen .pop:not([hidden]), #cl-overlay, #prompt-dialog, #confirm-dialog")) {
+      if (was !== JSON.stringify([d.invites, d.requests, d.orgs])) renderClubs({ quiet: true }); else refresh();
+    }
+  }
+
+  function signInPanel(icon, text) {
+    return '<div class="acct-panel"><div class="acct-panel-ico">' + ico(icon, 26) + "</div><p>" + esc(text) + '</p><div class="acct-panel-btns"><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button><button type="button" class="btn" data-acct="signup">Create account</button></div></div>';
+  }
+  function plainPanel(icon, text, btns) {
+    return '<div class="acct-panel"><div class="acct-panel-ico">' + ico(icon, 26) + "</div><p>" + esc(text) + "</p>" + (btns ? '<div class="acct-panel-btns">' + btns + "</div>" : "") + "</div>";
+  }
+  // signed out, no username, accounts not open: the panel to show instead (null: go on)
+  async function gate(container, icon, what) {
+    if (typeof Account === "undefined") return true;
+    if (!Account.known && typeof accountFresh === "function") { try { await accountFresh(); } catch (e) {} }
+    if (!Account.available) { container.innerHTML = plainPanel(icon, what + " need onlinequiz accounts, which aren't open yet."); return true; }
+    if (!Account.user) { container.innerHTML = signInPanel(icon, what === "Clubs" ? "Clubs need an onlinequiz account. Sign in to create an organization or join your school's." : what + " need an onlinequiz account."); return true; }
+    if (!Account.user.handle) { container.innerHTML = plainPanel(icon, "Choose a username first.", '<button type="button" class="btn btn-primary" data-acct="account">Account</button>'); return true; }
+    return false;
+  }
+  // what scrolls a page: its screen (under the top bar), else the document
+  function scrollerOf(el) {
+    for (let e = el && el.parentElement; e && e !== document.body; e = e.parentElement) {
+      const o = getComputedStyle(e).overflowY;
+      if ((o === "auto" || o === "scroll") && e.scrollHeight > e.clientHeight) return e;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+  const loading = (label) => (typeof loadingBarHtml === "function" ? loadingBarHtml(label) : '<div class="db-empty">' + esc(label) + "</div>");
+
+  // ═══ CLUBS ═══
+  const TABS = ["teams", "members", "leaderboard", "invites", "diagnostics"];
+  const O = () => S.org && S.org.org;
+  const role = () => (O() ? O().role : null);
+  const isAdmin = () => role() === "owner" || role() === "admin";
+  const isOwner = () => role() === "owner";
+  const myMid = () => (O() ? O().myMid : null);
+  const people = () => (S.org ? S.org.members : []);
+  const P = (mid) => people().find((p) => p.mid === mid) || null;
+  const teams = () => (S.org ? S.org.teams : []);
+  const team = (id) => teams().find((t) => t.id === id) || null;
+  const teamsOf = (mid) => teams().filter((t) => t.roster.includes(mid));
+  const capOf = (t) => !!(t && t.captain && t.captain === myMid());
+  const canManageTeam = (t) => !!t && (isAdmin() || capOf(t));
+  const myCapTeams = () => teams().filter(capOf);
+  const canInvite = () => isAdmin() || myCapTeams().length > 0;
+  const canRunAny = () => isAdmin() || myCapTeams().length > 0;
+  const roleName = (r) => (r === "owner" ? "Owner" : r === "admin" ? "Admin" : "Member");
+
+  function setTab(t) {
+    S.tab = TABS.includes(t) ? t : "teams";
+  }
+  // open Clubs (on a tab; for one organization)
+  function open(tab, orgId) {
+    if (tab) setTab(tab);
+    if (orgId) { S.orgId = orgId; ls.set("qb-club-org", orgId); }
+    if (typeof goTo === "function") goTo("clubs");
+  }
+  async function renderClubs(opts) {
+    opts = opts || {};
+    const c = document.getElementById("clubs-container"); if (!c) return;
+    paintHeadButtons();
+    if (await gate(c, "users", "Clubs")) { paintHeadButtons(); return; }
+    // what we had, at once; then the server's
+    if (S.list && (S.org || !S.list.orgs.length)) paintClubs(c);
+    else if (!opts.quiet) c.innerHTML = loading("Loading clubs…");
+    const d = await get("/api/clubs");
+    if (!d || d.error) { if (!S.list) c.innerHTML = '<div class="db-empty">' + esc((d && d.error) || OFFLINE) + "</div>"; return; }
+    S.list = d; paintBadge(d.notify || 0);
+    if (!d.orgs.some((o) => o.id === S.orgId)) S.orgId = d.orgs.length ? d.orgs[0].id : "";
+    if (S.orgId) {
+      const o = await get("/api/clubs/org?id=" + encodeURIComponent(S.orgId));
+      if (o && !o.error) { S.org = o; ls.set("qb-club-org", S.orgId); }
+      else if (o && o.error) { S.org = null; }
+    } else S.org = null;
+    if (!screenOn("clubs-screen") && !opts.force) return;
+    paintClubs(c);
+  }
+  // the organization again after a change (the list too: names, counts, the badge)
+  async function refresh() {
+    const [d, o] = await Promise.all([get("/api/clubs"), S.orgId ? get("/api/clubs/org?id=" + encodeURIComponent(S.orgId)) : null]);
+    if (d && !d.error) { S.list = d; paintBadge(d.notify || 0); if (!d.orgs.some((x) => x.id === S.orgId)) { S.orgId = d.orgs.length ? d.orgs[0].id : ""; S.org = null; if (S.orgId) return refresh(); } }
+    if (o && !o.error) S.org = o;
+    if (!S.orgId) S.org = null;
+    const c = document.getElementById("clubs-container");
+    if (c && screenOn("clubs-screen")) paintClubs(c);
+  }
+  function paintHeadButtons() {
+    const j = document.getElementById("btn-clubs-join"), sw = document.getElementById("clubs-org-pick");
+    const on = signedIn() && S.list && S.list.orgs.length > 0;
+    if (j) j.hidden = !on;
+    if (sw) {
+      const orgs = (S.list && S.list.orgs) || [];
+      sw.hidden = !(signedIn() && orgs.length > 1);
+      const sel = sw.querySelector("select");
+      if (sel && orgs.length > 1) {
+        const want = orgs.map((o) => o.id + "|" + o.name).join(",");
+        if (sel.dataset.v !== want) { sel.innerHTML = orgs.map((o) => '<option value="' + esc(o.id) + '">' + esc(o.name) + "</option>").join(""); sel.dataset.v = want; }
+        if (sel.value !== S.orgId) { sel.value = S.orgId; sel.dispatchEvent(new Event("change")); }
+      }
+    }
+  }
+  function paintClubs(c) {
+    paintHeadButtons();
+    const L = S.list || { orgs: [], invites: [], requests: 0 };
+    const reqs = requestsHtml(L);
+    if (!L.orgs.length || !S.org) {
+      c.innerHTML = '<div class="cl-page">' + reqs + (L.orgs.length ? loading("Loading…") : plainPanel("users", "You're not in an organization yet.",
+        '<button type="button" class="btn btn-primary" data-cl="join">' + ico("key", 16) + 'Join with a code</button><button type="button" class="btn" data-cl="create">' + ico("plus", 16) + "Create an organization</button>")) + "</div>";
+      wireClubs(c);
+      return;
+    }
+    const o = O(), reqN = (S.org.requests || []).length;
+    const tabs = [["teams", "Teams", teams().length], ["members", "Members", people().length], ["leaderboard", "Leaderboard", ""], ["invites", "Invites", ""], ["diagnostics", "Diagnostics", ""]];
+    c.innerHTML = '<div class="cl-page">' + reqs + headHtml() +
+      '<div class="db-tabs cl-tabs" role="tablist" aria-label="Organization">' + tabs.map((t) =>
+        '<button type="button" role="tab" class="db-tab' + (S.tab === t[0] ? " active" : "") + '" data-cl-tab="' + t[0] + '" aria-selected="' + (S.tab === t[0]) + '">' + t[1] +
+        (t[2] === "req" ? '<span class="tab-n num" aria-label="' + plural(reqN, "join request") + '">' + reqN + "</span>" : t[2] !== "" ? '<span class="btn-num num">' + t[2] + "</span>" : "") + "</button>").join("") + "</div>" +
+      '<div class="fr-msg cl-msg" id="cl-msg" role="status"></div>' +
+      '<div id="cl-panel" role="tabpanel">' + tabHtml() + "</div></div>";
+    wireClubs(c);
+    afterTab(c);
+  }
+  // Requests, on top: invites waiting for me, the join requests I can answer (admins: this
+  // organization's), and reports released since I last looked
+  function requestsHtml(L) {
+    const inv = (L.invites || []), joins = S.org && isAdmin() ? (S.org.requests || []) : [];
+    const reps = (L.reports || []).filter((r) => !seenReports().includes(r.id));
+    if (!inv.length && !joins.length && !reps.length) return "";
+    const rows = inv.map((i) => {
+      const sub = [(i.by ? neonHtml(esc(i.by.name || i.by.handle), i.by.neon) + " invited you" : "Invited"), i.team ? "to " + esc(i.team) : "", ago(i.at)].filter(Boolean).join(" · ") +
+        (i.replaces ? '<br><span class="cl-replaces">' + ico("swap", 13) + " replaces " + esc(i.replaces) + info("Your account takes this player's place in the organization: the same teams and the same recorded results.", "About replacing a player") + "</span>" : "");
+      return '<div class="fr-row"><span class="club-tile sm" aria-hidden="true">' + esc(i.org.tag) + '</span><span class="fr-name"><b>' + esc(i.org.name) + "</b><small>" + sub + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-inv-no="' + esc(i.id) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-inv-yes="' + esc(i.id) + '">Accept</button></span></div>';
+    }).join("") + joins.map((r) =>
+      '<div class="fr-row" data-user="' + esc(r.handle) + '" data-user-name="' + esc(r.name || r.handle) + '" data-user-neon="' + esc(r.neon || "") + '">' + av({ name: r.name || r.handle, neon: r.neon }) + '<span class="fr-name"><b>' + neonHtml(esc(r.name || r.handle), r.neon) + "</b><small>@" + esc(r.handle) + " wants to join " + esc(O().name) + " · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-cl="req-no" data-h="' + esc(r.handle) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-cl="req-yes" data-h="' + esc(r.handle) + '">Accept</button></span></div>').join("") + reps.map((r) =>
+      '<div class="fr-row"><span class="dg-ico" aria-hidden="true">' + ico("doc", 18) + '</span><span class="fr-name"><b>' + esc(r.team) + " diagnostic</b><small>" + esc(r.orgName || "") + " · report ready · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-rep-seen="' + esc(r.id) + '">Dismiss</button><button type="button" class="btn btn-sm btn-primary" data-report="' + esc(r.id) + '">View report</button></span></div>').join("");
+    const n = inv.length + joins.length;
+    return '<section class="cl-req" aria-label="Requests"><h2 class="eyebrow">' + (n ? "Requests" : "New reports") + (n ? '<span class="tab-n num">' + n + "</span>" : "") + '</h2><div class="fr-list">' + rows + "</div></section>";
+  }
+  const seenReports = () => { try { return JSON.parse(ls.get("qb-dx-seen") || "[]") || []; } catch (e) { return []; } };
+  const markSeen = (id) => { const s = seenReports().filter((x) => x !== id); s.unshift(id); ls.set("qb-dx-seen", JSON.stringify(s.slice(0, 100))); };
+  function roleLine() {
+    const r = role(), caps = myCapTeams().map((t) => t.name), mine = teamsOf(myMid()).map((t) => t.name), parts = [];
+    if (r === "owner") parts.push("owner"); else if (r === "admin") parts.push("admin");
+    if (caps.length) parts.push(caps.join(" and ") + " captain");
+    if (!parts.length) parts.push(mine.length ? "on " + mine.join(" and ") : "member");
+    return "you: <b>" + esc(parts.join(", ")) + "</b>";
+  }
+  function headHtml() {
+    const o = O();
+    const items = isOwner()
+      ? '<button type="button" class="pop-item" role="menuitem" data-cl="rename-org">' + ico("pencil", 15) + 'Rename…</button><button type="button" class="pop-item" role="menuitem" data-cl="transfer">' + ico("crown", 15) + 'Transfer ownership…</button><div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="delete-org">' + ico("trash", 15) + "Delete organization</button>"
+      : '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
+    return '<div class="cl-card club-head"><span class="club-tile lg" aria-hidden="true">' + esc(o.tag) + '</span><div class="ch-text"><div class="ch-name"><h2>' + esc(o.name) + '</h2><span class="tag-chip">' + esc(o.tag) + "</span></div>" +
+      '<p class="ch-meta">' + plural(people().length, "member") + " · " + plural(teams().length, "team") + " · " + roleLine() + "</p></div>" +
+      '<div class="ch-actions">' + (canRunAny() && teams().length ? '<button type="button" class="btn btn-primary" data-cl="run">' + ico("target", 16) + "Run a diagnostic</button>" : "") +
+      '<button type="button" class="btn" data-cl-tab="invites">' + ico(canInvite() ? "userplus" : "key", 16) + (canInvite() ? "Invite" : "Invite code") + "</button>" +
+      '<div class="pop-wrap"><button type="button" class="btn btn-icon" data-menu="org" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(o.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div></div></div>";
+  }
+  function tabHtml() {
+    if (S.tab === "members") return membersHtml();
+    if (S.tab === "leaderboard") return orgLbHtml();
+    if (S.tab === "invites") return invitesHtml();
+    if (S.tab === "diagnostics") return diagListHtml();
+    return teamsHtml();
+  }
+  function afterTab(c) {
+    if (S.tab === "leaderboard") loadOrgLb();
+  }
+  function msg(text, err) { const m = document.getElementById("cl-msg"); if (m) { m.textContent = text || ""; m.classList.toggle("err", !!err); } }
+  // a change: the button waits, a refusal shows next to it, success repaints from the server
+  async function act(btn, path, body, done) {
+    if (btn) btn.disabled = true;
+    const r = await post(path, body);
+    if (btn) btn.disabled = false;
+    if (!r || r.error) {
+      // a dropdown's bubble goes under its visible trigger (the <select> itself is hidden)
+      const at = btn && btn.isConnected ? (btn.closest(".qb-select") || btn) : document.getElementById("cl-msg");
+      if (typeof failBubble === "function") failBubble(at, (r && r.error) || OFFLINE); else msg((r && r.error) || OFFLINE, true);
+      return null;
+    }
+    if (done) done(r);
+    await refresh();
+    return r;
+  }
+  // ── Teams: one card per team, then who's on none ──
+  function teamsHtml() {
+    const admin = isAdmin();
+    const bar = admin ? '<div class="cl-toolbar"><div class="end"><button type="button" class="btn btn-sm btn-primary" data-cl="new-team">' + ico("plus", 14) + "New team</button></div></div>" : "";
+    let cards = teams().map(teamCard).join("");
+    const noTeam = people().filter((p) => !teamsOf(p.mid).length);
+    const manageable = teams().filter(canManageTeam);
+    if (noTeam.length) cards += '<section class="cl-card tcard free" aria-label="Not on a team"><div class="tcard-head"><h3>Not on a team</h3><span class="count">' + plural(noTeam.length, "person", "people") + '</span></div><ul class="cl-roster">' + noTeam.map((p) =>
+      "<li>" + av(p, "sm") + '<span class="rn">' + nm(p) + (p.you ? " <small>(you)</small>" : "") + "</span>" + (p.na ? '<span class="rchips"><span class="tchip na">No account</span></span>' : "") +
+      (manageable.length ? '<select class="mode-input cl-act-sel" data-put="' + esc(p.mid) + '" aria-label="Add ' + esc(p.name) + ' to a team"><option value="">Add to team</option>' + manageable.map((t) => '<option value="' + esc(t.id) + '">' + esc(t.name) + "</option>").join("") + "</select>" : "") + "</li>").join("") + "</ul></section>";
+    if (!teams().length && !noTeam.length) cards = '<div class="cl-card"><p class="cl-none">No teams yet.</p></div>';
+    return bar + '<div class="teams-grid">' + cards + "</div>";
+  }
+  function teamCard(t) {
+    const can = canManageTeam(t), admin = isAdmin();
+    const roster = t.roster.slice().sort((a, b) => (b === t.captain) - (a === t.captain)).map(P).filter(Boolean);
+    const menu = can ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="team-' + esc(t.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(t.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' +
+      '<button type="button" class="pop-item" role="menuitem" data-cl="team-rename" data-team="' + esc(t.id) + '">' + ico("pencil", 15) + "Rename…</button>" +
+      (admin ? '<button type="button" class="pop-item danger" role="menuitem" data-cl="team-delete" data-team="' + esc(t.id) + '">' + ico("trash", 15) + "Delete team</button>" : "") + "</div></div>" : "";
+    const capP = t.captain ? P(t.captain) : null;
+    const cap = '<div class="tcard-cap"><span class="eyebrow">Captain</span>' + (admin && roster.length
+      ? '<select class="mode-input" data-cap="' + esc(t.id) + '" aria-label="Captain of ' + esc(t.name) + '"><option value="">No captain</option>' + roster.filter((p) => !p.na).map((p) => '<option value="' + esc(p.mid) + '"' + (p.mid === t.captain ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select>"
+      : capP ? '<span class="who">' + av(capP, "xs") + nm(capP) + "</span>" : '<span class="cl-none">None yet</span>') + "</div>";
+    const rows = roster.length ? roster.map((p) => {
+      const also = teamsOf(p.mid).filter((x) => x.id !== t.id);
+      return "<li>" + av(p, "sm") + '<span class="rn">' + nm(p) + (p.you ? " <small>(you)</small>" : "") + '</span><span class="rchips">' + (p.na ? '<span class="tchip na">No account</span>' : "") + (t.captain === p.mid ? '<span class="tchip cap">Captain</span>' : "") +
+        also.map((x) => '<span class="tchip">also ' + esc(x.name) + "</span>").join("") + "</span>" +
+        (can ? '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-cl="roster-off" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '" aria-label="Take ' + esc(p.name) + " off " + esc(t.name) + '">' + ico("x", 14) + "</button>" : "") + "</li>";
+    }).join("") : '<li><span class="cl-none">No players yet</span></li>';
+    const others = people().filter((p) => !t.roster.includes(p.mid));
+    const add = can ? '<div class="tcard-add">' + (others.length ? '<select class="mode-input cl-act-sel" data-add="' + esc(t.id) + '" aria-label="Add a player to ' + esc(t.name) + '"><option value="">Add player</option>' +
+      others.map((p) => { const ts = teamsOf(p.mid).map((x) => x.name); return '<option value="' + esc(p.mid) + '">' + esc(p.name) + (ts.length ? " (" + esc(ts.join(", ")) + ")" : p.na ? " (no account)" : "") + "</option>"; }).join("") + "</select>" : "") +
+      '<button type="button" class="btn btn-sm" data-cl="add-name" data-team="' + esc(t.id) + '">' + ico("user", 14) + "Add a name</button>" + info(TIP.addName, "About adding a name") + "</div>" : "";
+    const runnable = t.roster.some((m) => { const p = P(m); return p && !p.na; }) || t.roster.length;
+    const foot = '<div class="tcard-foot"><dl class="tstats"><div><dt>Avg this week</dt><dd>' + (t.avg != null && t.active ? fmt(t.avg) + " <small>pts</small>" : "—") + "</dd></div><div><dt>Last diagnostic</dt><dd>" +
+      (t.last ? (t.last.conv != null ? t.last.conv + "% " : "") + "<small>" + esc(dayText(t.last.at)) + "</small>" : "<small>None yet</small>") + "</dd></div></dl>" +
+      (can && runnable ? '<button type="button" class="btn btn-sm" data-cl="run" data-team="' + esc(t.id) + '">' + ico("target", 14) + "Diagnostic</button>" : "") + "</div>";
+    return '<section class="cl-card tcard" aria-label="' + esc(t.name) + '"><div class="tcard-head"><h3>' + esc(t.name) + '</h3><span class="count">' + plural(t.roster.length, "player") + "</span>" + menu + "</div>" + cap + '<ul class="cl-roster">' + rows + "</ul>" + add + foot + "</section>";
+  }
+
+  // ── Members: a grid, filtered by team ──
+  function membersHtml() {
+    const order = { owner: 0, admin: 1, member: 2 };
+    const noTeam = people().filter((p) => !teamsOf(p.mid).length);
+    const filters = [["all", "All", people().length]].concat(teams().map((t) => [t.id, t.name, t.roster.length])).concat([["none", "No team", noTeam.length]]);
+    if (!filters.some((f) => f[0] === S.memFilter)) S.memFilter = "all";
+    const list = people().filter((p) => S.memFilter === "all" ? true : S.memFilter === "none" ? !teamsOf(p.mid).length : (team(S.memFilter) || { roster: [] }).roster.includes(p.mid))
+      .sort((a, b) => order[a.role] - order[b.role] || (a.na - b.na) || String(a.name).localeCompare(String(b.name)));
+    return '<div class="cl-toolbar"><div class="seg cl-seg-scroll" role="group" aria-label="Show">' + filters.map((f) => '<button type="button" data-mem-filter="' + esc(f[0]) + '" aria-pressed="' + (S.memFilter === f[0]) + '">' + esc(f[1]) + ' <span class="num cl-dim">' + f[2] + "</span></button>").join("") + "</div></div>" +
+      '<div class="mem-list" role="table" aria-label="Members"><div class="mem-head" role="row"><span></span><span>Name</span><span>Teams</span><span>Role</span><span></span></div>' + (list.length ? list.map(memRow).join("") : '<div class="cl-empty">No one here.</div>') + "</div>";
+  }
+  function memRow(p) {
+    const ts = teamsOf(p.mid), anyManage = teams().some(canManageTeam), admin = isAdmin(), owner = isOwner();
+    const pend = (S.org.invites || []).find((i) => i.replaces === p.mid);
+    const chips = ts.length ? ts.map((t) => '<span class="tchip' + (t.captain === p.mid ? " cap" : "") + '">' + esc(t.name) + (t.captain === p.mid ? " · captain" : "") + "</span>").join("") : '<span class="none">No team</span>';
+    let items = "";
+    if (teams().length && anyManage) items += '<div class="pop-label">Teams</div>' + teams().map((t) => '<button type="button" class="pop-item" role="menuitemcheckbox" aria-checked="' + t.roster.includes(p.mid) + '" data-cl="toggle-team" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '"' + (canManageTeam(t) ? "" : " disabled") + '><span class="pi-check" aria-hidden="true"></span>' + esc(t.name) + "</button>").join("");
+    const sep = () => (items ? '<div class="pop-sep"></div>' : "");
+    if (p.na && (admin || ts.some(capOf))) items += sep() + '<button type="button" class="pop-item" role="menuitem" data-cl="mem-rename" data-mid="' + esc(p.mid) + '">' + ico("pencil", 15) + "Rename…</button>";
+    if (p.na && admin) items += (pend ? '<button type="button" class="pop-item" role="menuitem" data-cl="cancel-invite" data-id="' + esc(pend.id) + '">' + ico("x", 15) + "Cancel the invite to @" + esc(pend.handle) + "</button>" : '<button type="button" class="pop-item" role="menuitem" data-cl="replace" data-mid="' + esc(p.mid) + '">' + ico("userplus", 15) + "Replace with a username…</button>");
+    if (owner && !p.na && !p.you) items += sep() + (p.role === "admin" ? '<button type="button" class="pop-item" role="menuitem" data-cl="role" data-role="member" data-mid="' + esc(p.mid) + '">' + ico("shield", 15) + "Remove admin</button>" : '<button type="button" class="pop-item" role="menuitem" data-cl="role" data-role="admin" data-mid="' + esc(p.mid) + '">' + ico("shield", 15) + "Make admin</button>") +
+      '<button type="button" class="pop-item" role="menuitem" data-cl="transfer" data-mid="' + esc(p.mid) + '">' + ico("crown", 15) + "Make owner…</button>";
+    if (admin && !p.you && p.role === "member") items += sep() + '<button type="button" class="pop-item danger" role="menuitem" data-cl="remove" data-mid="' + esc(p.mid) + '">' + ico("userminus", 15) + "Remove from organization</button>";
+    if (p.you && !owner) items += sep() + '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
+    const menu = items ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="m-' + esc(p.mid) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ' + esc(p.name) + '">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div>" : "";
+    const sub = p.na ? (pend ? '<span class="cl-pend">' + ico("mail", 12) + " Invite sent to @" + esc(pend.handle) + "</span>" : "No account") + '<span class="joined"> · added ' + esc(dayText(p.joinedAt)) + "</span>"
+      : "@" + esc(p.handle) + '<span class="joined"> · joined ' + esc(dayText(p.joinedAt)) + "</span>";
+    return '<div class="mem-row' + (p.you ? " you" : "") + '" role="row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(p.neon || "") + '"' : "") + ">" + av(p) + '<div class="mem-name"><b>' + nm(p) + (p.you ? '<span class="badge cl-you">You</span>' : "") + "</b><small>" + sub + '</small></div><div class="mem-teams">' + chips + '</div><span class="cl-role ' + p.role + '">' + (p.role === "owner" ? ico("crown", 12) : "") + roleName(p.role) + '</span><div class="mem-act">' + menu + "</div></div>";
+  }
+
+  // ── Leaderboard: the members' practice (the global leaderboard's numbers), by team ──
+  function periodSeg(cur, attr) { return '<div class="seg" role="group" aria-label="Period">' + [["week", "This week"], ["month", "This month"], ["all", "All time"]].map((x) => '<button type="button" ' + attr + '="' + x[0] + '" aria-pressed="' + (cur === x[0]) + '">' + x[1] + "</button>").join("") + "</div>"; }
+  function lbRowHtml(r, rank) {
+    return '<div class="lb-row' + (r.you ? " lb-you" : "") + '" data-user="' + esc(r.handle || "") + '" data-user-name="' + esc(r.displayName || r.handle || "") + '" data-user-neon="' + esc(r.neon || "") + '"><span class="lb-rank num">' + rank + "</span>" + av({ name: r.displayName || r.handle, neon: r.neon }) +
+      '<span class="fr-name"><b>' + neonHtml(esc(r.displayName || r.handle), r.neon) + "</b>" + (r.you ? '<span class="badge cl-you">You</span>' : "") + "<small>@" + esc(r.handle) + (r.teams && r.teams.length ? " · " + esc(r.teams.join(", ")) : "") + "</small></span>" +
+      '<span class="fr-stat"><b class="num">' + fmt(r.points) + '</b><small>points</small></span><span class="fr-stat"><b class="num">' + fmt(r.questions) + '</b><small>questions</small></span><span class="fr-stat"><b class="num">' + fmt(r.powers) + '</b><small>powers</small></span><span class="fr-stat"><b class="num">' + (r.accuracy == null ? "—" : r.accuracy + "%") + "</b><small>accuracy</small></span></div>";
+  }
+  function orgLbHtml() {
+    if (S.lbTeam !== "all" && !team(S.lbTeam)) S.lbTeam = "all";
+    const filt = '<div class="seg cl-seg-scroll" role="group" aria-label="Show">' + [["all", "Everyone"]].concat(teams().map((t) => [t.id, t.name])).map((x) => '<button type="button" data-lb-team="' + esc(x[0]) + '" aria-pressed="' + (S.lbTeam === x[0]) + '">' + esc(x[1]) + "</button>").join("") + "</div>";
+    const key = S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod, d = S.lb && S.lb.key === key ? S.lb.d : null;
+    return '<div class="cl-toolbar">' + filt + '<div class="end">' + info(TIP.lbOrg, "What this leaderboard counts") + periodSeg(S.lbPeriod, "data-lb-period") + "</div></div>" +
+      '<div id="cl-lb">' + (d ? orgLbRows(d) : loading("Loading the leaderboard…")) + "</div>";
+  }
+  function orgLbRows(d) {
+    const rows = (d && d.rows) || [];
+    if (d && d.error) return '<div class="db-empty">' + esc(d.error) + "</div>";
+    return rows.length ? '<div class="fr-list lb-board">' + rows.map((r, i) => lbRowHtml(r, r.rank || i + 1)).join("") + "</div>" : '<div class="fr-list"><div class="cl-empty">No practice ' + ({ week: "this week", month: "this month", all: "yet" })[S.lbPeriod] + ".</div></div>";
+  }
+  async function loadOrgLb() {
+    const key = S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod;
+    const d = await get("/api/clubs/leaderboard?org=" + encodeURIComponent(S.orgId) + "&team=" + encodeURIComponent(S.lbTeam) + "&period=" + S.lbPeriod);
+    S.lb = { key, d };
+    const el = document.getElementById("cl-lb");
+    if (el && S.tab === "leaderboard" && key === S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod) el.innerHTML = orgLbRows(d);
+  }
+
+  // ── Invites: by username, the code, join requests, pending invites ──
+  function invitesHtml() {
+    const o = O(), admin = isAdmin(), inv = canInvite();
+    const codeCard = '<section class="cl-card" aria-label="Invite code"><h2 class="sec-title">Invite code' + info(TIP.code, "About the invite code") + "</h2>" +
+      '<div class="code-row"><code class="cl-code" id="cl-code">' + esc(o.code || "") + '</code><button type="button" class="btn" data-cl="copy-code">' + ico("copy", 16) + "<span>Copy</span></button>" +
+      (admin ? '<button type="button" class="btn btn-ghost" data-cl="new-code">' + ico("refresh", 16) + "New code</button>" : "") + "</div>" +
+      (admin ? '<label class="checkbox-row"><input type="checkbox" id="cl-approve"' + (o.approve ? " checked" : "") + ">Admins approve code joins" + info(TIP.approve, "About approving joins") + "</label>" : "") + "</section>";
+    if (!inv) return '<div class="inv-grid"><div class="inv-col">' + codeCard + "</div></div>";
+    const teamOpts = '<option value="">No team</option>' + (admin ? teams() : myCapTeams()).map((t) => '<option value="' + esc(t.id) + '"' + (S.invTeam === t.id ? " selected" : "") + ">" + esc(t.name) + "</option>").join("");
+    const row = (p, sub, acts) => '<div class="fr-row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name || p.handle) + '"' : "") + ">" + av(p) + '<span class="fr-name"><b>' + nm(p) + "</b><small>" + sub + '</small></span><span class="fr-act">' + acts + "</span></div>";
+    const pend = (S.org.invites || []).length ? S.org.invites.map((r) => {
+      const t = r.team && team(r.team), rep = r.replaces && P(r.replaces);
+      return row({ name: r.name || r.handle, handle: r.handle, neon: r.neon }, "@" + esc(r.handle) + (t ? " · " + esc(t.name) : "") + (rep ? " · replaces " + esc(rep.name) : "") + " · by " + (r.byMe ? "you" : esc(r.by || "")) + ", " + esc(ago(r.at)),
+        admin || r.byMe ? '<button type="button" class="btn btn-sm btn-ghost" data-cl="cancel-invite" data-id="' + esc(r.id) + '">Cancel</button>' : "");
+    }).join("") : '<div class="cl-empty">No pending invites</div>';
+    return '<div class="inv-grid"><div class="inv-col">' +
+      '<section class="cl-card" aria-label="Invite by username"><h2 class="sec-title">Invite by username' + info(TIP.invite, "About invites") + "</h2>" +
+      '<form id="cl-inv-form" class="inv-form" novalidate><span class="at-input"><span aria-hidden="true">@</span><input type="text" id="cl-inv-user" class="mode-input" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Username to invite"></span>' +
+      '<select class="mode-input" id="cl-inv-team" aria-label="Team">' + teamOpts + '</select><button type="submit" class="btn btn-primary">Invite</button></form>' +
+      '<p class="fr-msg" id="cl-inv-msg" role="status"></p></section>' + codeCard + '</div><div class="inv-col">' +
+      '<section class="sub-sec" aria-label="Pending invites"><h2 class="eyebrow">Pending invites</h2><div class="fr-list">' + pend + "</div></section></div></div>";
+  }
+
+  // ── Diagnostics: rooms open now, scheduled, being played on their own, IRL, reports ──
+  function diagListHtml() {
+    const list = (S.org.diagnostics || []);
+    const bar = canRunAny() && teams().length ? '<div class="cl-toolbar"><div class="end"><button type="button" class="btn btn-sm btn-primary" data-cl="run">' + ico("target", 14) + "Run a diagnostic</button></div></div>" : "";
+    if (!list.length) return bar + '<div class="fr-list"><div class="cl-empty">No diagnostics yet</div></div>';
+    const stat = (v, l) => '<span class="fr-stat"><b class="num">' + v + "</b><small>" + l + "</small></span>";
+    return bar + '<div class="fr-list">' + list.map((d) => {
+      const meta = FORMATS[d.format].label + " · " + (d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup")) + " · " + PLACE[d.place] + " · difficulty " + diffText(d.diff);
+      const title = esc(d.team) + " · " + esc(d.status === "done" && d.releasedAt ? dayText(d.releasedAt) : d.status === "scheduled" && d.startAt ? dayText(d.startAt) : dayText(d.createdAt));
+      const main = '<span class="dg-main"><b>' + title + "</b><small>" + esc(meta) + "</small></span>";
+      const menu = d.canManage && d.status !== "done" ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="d-' + esc(d.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden><button type="button" class="pop-item danger" role="menuitem" data-cl="dx-cancel" data-id="' + esc(d.id) + '">' + ico("trash", 15) + "Cancel diagnostic</button></div></div>" : "";
+      let side, icon = "doc";
+      if (d.status === "done") side = stat(d.players, d.players === 1 ? "player" : "players") + stat(d.conv == null ? "—" : d.conv + "%", "conversion") + '<span class="dx-chip good">Report ready</span><button type="button" class="btn btn-sm" data-report="' + esc(d.id) + '">View report</button>';
+      else if (d.place === "irl") { icon = "doc"; side = stat(d.players, "players") + stat("—", "") + '<span class="dx-chip mid">Being read</span>' + (d.canManage ? '<button type="button" class="btn btn-sm" data-irl="' + esc(d.id) + '">Continue reading</button>' : '<span class="dg-pad"></span>'); }
+      else if (d.place === "own") {
+        icon = "clock";
+        const pr = d.progress || { done: 0, total: d.players }, mine = d.myProgress;
+        const btn = mine && !mine.done ? '<button type="button" class="btn btn-sm btn-primary" data-play="' + esc(d.id) + '">' + (mine.i ? "Continue" : "Play") + "</button>"
+          : d.canManage ? '<button type="button" class="btn btn-sm" data-cl="release" data-id="' + esc(d.id) + '">' + ico("unlock", 14) + "Release now</button>" : '<span class="dg-pad"></span>';
+        side = stat(pr.done + "/" + pr.total, "done") + stat(d.dueAt ? esc(dayText(d.dueAt)) : "—", "deadline") + '<span class="dx-chip mid">' + (mine && mine.done ? "You're done" : "In progress") + "</span>" + btn;
+      } else {
+        icon = "radio";
+        const live = d.status === "live";
+        side = stat(d.players, "players") + stat(live ? "Now" : d.startAt ? esc(timeText(d.startAt)) : "—", live ? "open" : "starts") + '<span class="dx-chip ' + (live ? "ovl" : "few") + '">' + (live ? "Room open" : "Scheduled") + "</span>" +
+          (d.playing || d.canManage ? '<button type="button" class="btn btn-sm' + (live ? " btn-primary" : "") + '" data-room="' + esc(d.id) + '">' + (live ? "Join room" : "Open room") + "</button>" : '<span class="dg-pad"></span>');
+      }
+      return '<div class="dg-row"><span class="dg-ico">' + ico(icon, 18) + "</span>" + main + '<span class="dg-side">' + side + "</span>" + '<span class="dg-menu">' + menu + "</span></div>";
+    }).join("") + "</div>";
+  }
+  // ── menus (⋯): one open at a time; it opens upward when there's no room below ──
+  function closeMenus(except) {
+    $$(".cl-page .pop:not([hidden]), #clubs-screen .pop:not([hidden])").forEach((p) => {
+      if (p === except) return;
+      p.hidden = true;
+      const b = p.parentElement && p.parentElement.querySelector("[data-menu]"); if (b) b.setAttribute("aria-expanded", "false");
+    });
+  }
+  function toggleMenu(btn, kbd) {
+    const pop = btn.parentElement.querySelector(".pop"); if (!pop) return;
+    const opening = pop.hidden;
+    closeMenus(pop);
+    pop.hidden = !opening; btn.setAttribute("aria-expanded", String(opening));
+    if (!opening) return;
+    pop.classList.remove("up");
+    const r = pop.getBoundingClientRect(), br = btn.getBoundingClientRect();
+    if (r.bottom > innerHeight - 8 && br.top > r.height + 16) pop.classList.add("up");
+    // from the keyboard, the first item takes the focus (a mouse click leaves it on the button)
+    const first = kbd && pop.querySelector(".pop-item:not(:disabled)"); if (first) first.focus({ preventScroll: true });
+  }
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest || e.target.closest("[data-menu]") || e.target.closest(".pop")) return;
+    closeMenus();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.querySelector("#clubs-screen.active .pop:not([hidden])")) { e.stopPropagation(); closeMenus(); } }, true);
+
+  function wireClubs(c) {
+    c.onclick = (e) => {
+      const t = e.target.closest("button, [data-cl], [data-cl-tab]"); if (!t || t.disabled) return;
+      if (t.dataset.menu) { toggleMenu(t, e.detail === 0); return; }
+      // the tab at once from what's here, then the organization as it is now (others change it too)
+      if (t.dataset.clTab) { setTab(t.dataset.clTab); paintClubs(c); window.qbWebPathSync && window.qbWebPathSync(); refresh(); return; }
+      if (t.dataset.memFilter) { S.memFilter = t.dataset.memFilter; repaintPanel(); return; }
+      if (t.dataset.lbTeam) { S.lbTeam = t.dataset.lbTeam; repaintPanel(); return; }
+      if (t.dataset.lbPeriod) { S.lbPeriod = t.dataset.lbPeriod; repaintPanel(); return; }
+      if (t.dataset.invYes || t.dataset.invNo) { respondInvite(t, t.dataset.invYes || t.dataset.invNo, !!t.dataset.invYes); return; }
+      if (t.dataset.repSeen) { markSeen(t.dataset.repSeen); paintClubs(c); return; }
+      if (t.dataset.report) { markSeen(t.dataset.report); openReport(t.dataset.report); return; }
+      if (t.dataset.room) { openRoom(t, t.dataset.room); return; }
+      if (t.dataset.play) { openRoom(t, t.dataset.play); return; }
+      if (t.dataset.irl) { openIrl(t.dataset.irl); return; }
+      const a = t.dataset.cl; if (!a) return;
+      closeMenus();
+      clubAction(a, t);
+    };
+    c.onchange = (e) => {
+      const s = e.target;
+      if (s.id === "cl-approve") { act(s, "/api/clubs/settings", { org: S.orgId, approve: s.checked }); return; }
+      if (s.id === "cl-inv-team") { S.invTeam = s.value; return; }
+      if (s.dataset.cap != null) { act(s, "/api/clubs/team/captain", { org: S.orgId, team: s.dataset.cap, mid: s.value || null }); return; }
+      if (s.dataset.add != null && s.value) { const v = s.value; s.value = ""; act(s, "/api/clubs/team/roster", { org: S.orgId, team: s.dataset.add, mid: v, on: true }); return; }
+      if (s.dataset.put != null && s.value) { const v = s.value; s.value = ""; act(s, "/api/clubs/team/roster", { org: S.orgId, team: v, mid: s.dataset.put, on: true }); return; }
+    };
+    const f = c.querySelector("#cl-inv-form");
+    if (f) f.onsubmit = async (e) => {
+      e.preventDefault();
+      const inp = f.querySelector("#cl-inv-user"), h = String(inp.value || "").trim().replace(/^@/, "").toLowerCase(), out = document.getElementById("cl-inv-msg");
+      const say = (t, err) => { if (out) { out.textContent = t; out.classList.toggle("err", !!err); } };
+      if (!h) { say("Type a username first.", true); inp.focus(); return; }
+      const btn = f.querySelector("button[type=submit]"); btn.disabled = true;
+      const r = await post("/api/clubs/invite", { org: S.orgId, handle: h, team: S.invTeam || null });
+      btn.disabled = false;
+      if (!r || r.error) { say((r && r.error) || OFFLINE, true); return; }
+      inp.value = "";
+      await refresh();
+      const o2 = document.getElementById("cl-inv-msg"); if (o2) { o2.textContent = "Invited @" + h + "."; o2.classList.remove("err"); }
+      const i2 = document.getElementById("cl-inv-user"); if (i2) i2.focus();
+    };
+  }
+  function repaintPanel() {
+    const p = document.getElementById("cl-panel"); if (!p) return;
+    p.innerHTML = tabHtml();
+    afterTab(document.getElementById("clubs-container"));
+  }
+  async function respondInvite(btn, id, yes) {
+    btn.disabled = true;
+    const r = await post("/api/clubs/respond", { id, accept: yes });
+    btn.disabled = false;
+    if (!r || r.error) { failBubble(btn, (r && r.error) || OFFLINE); return; }
+    if (yes && r.orgId) { S.orgId = r.orgId; ls.set("qb-club-org", r.orgId); S.tab = "teams"; }
+    await refresh();
+  }
+  async function clubAction(a, t) {
+    const org = S.orgId, o = O();
+    const mid = t.dataset.mid, tid = t.dataset.team, p = mid ? P(mid) : null, tm = tid ? team(tid) : null;
+    switch (a) {
+      case "join": return joinCreateDialog("join");
+      case "create": return joinCreateDialog("create");
+      case "run": S.dxFor = { org, team: tid || null }; return goTo("diagnostic");
+      case "new-team": return promptDialog("New team", "", (name) => act(null, "/api/clubs/team/create", { org, name }), { placeholder: (["A team", "B team", "C team", "D team"][teams().length] || "Novice"), yes: "Create team", max: 24 });
+      case "team-rename": return promptDialog("Rename " + tm.name, tm.name, (name) => act(null, "/api/clubs/team/rename", { org, team: tid, name }), { yes: "Save", max: 24 });
+      case "team-delete": return confirmDialog("Delete " + tm.name + "? Its players stay in " + o.name + ".", () => act(null, "/api/clubs/team/delete", { org, team: tid }), { yes: "Delete", danger: true });
+      case "roster-off": return act(t, "/api/clubs/team/roster", { org, team: tid, mid, on: false });
+      case "toggle-team": return act(null, "/api/clubs/team/roster", { org, team: tid, mid, on: !tm.roster.includes(mid) });
+      case "add-name": return promptDialog("Add a player by name", "", (name) => act(null, "/api/clubs/member/add-name", { org, name, team: tid }), { placeholder: "Their name", yes: "Add", max: 40 });
+      case "mem-rename": return promptDialog("Rename " + p.name, p.name, (name) => act(null, "/api/clubs/member/rename", { org, mid, name }), { yes: "Save", max: 40 });
+      case "replace": return replaceDialog(p);
+      case "cancel-invite": return act(t, "/api/clubs/invite/cancel", { org, id: t.dataset.id });
+      case "role": return act(null, "/api/clubs/member/role", { org, mid, role: t.dataset.role });
+      case "transfer": return mid ? confirmTransfer(p) : transferDialog();
+      case "remove": return confirmDialog("Remove " + p.name + " from " + o.name + "?", () => act(null, "/api/clubs/member/remove", { org, mid }), { yes: "Remove", danger: true });
+      case "leave": return confirmDialog("Leave " + o.name + "?", () => act(null, "/api/clubs/leave", { org }, () => { S.org = null; ls.set("qb-club-org", ""); S.orgId = ""; }), { yes: "Leave", danger: true });
+      case "rename-org": return orgNameDialog();
+      case "delete-org": return confirmDialog("Delete " + o.name + " for everyone in it? Its teams, invites and diagnostic reports go too.", () => act(null, "/api/clubs/delete", { org }, () => { S.org = null; S.orgId = ""; ls.set("qb-club-org", ""); }), { yes: "Delete", danger: true });
+      case "copy-code": {
+        try { await navigator.clipboard.writeText(o.code); } catch (e) { const r = document.createRange(), el = document.getElementById("cl-code"); if (el) { r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } }
+        const sp = t.querySelector("span"); if (sp) { sp.textContent = "Copied"; setTimeout(() => { if (sp.isConnected) sp.textContent = "Copy"; }, 1600); }
+        return;
+      }
+      case "new-code": return confirmDialog("Make a new code? The old one stops working.", () => act(null, "/api/clubs/code", { org }), { yes: "New code" });
+      case "req-yes": case "req-no": return act(t, "/api/clubs/request", { org, handle: t.dataset.h, accept: a === "req-yes" });
+      case "release": return confirmDialog("Release the report now? Anyone who hasn't finished is counted on what they read.", () => act(null, "/api/diag/release", { id: t.dataset.id }), { yes: "Release now", danger: true });
+      case "dx-cancel": return confirmDialog("Cancel this diagnostic? What was played so far is dropped.", () => act(null, "/api/diag/cancel", { id: t.dataset.id }), { yes: "Cancel it", no: "Keep it", danger: true });
+    }
+  }
+  // a name-only player → an account: an invite that carries the player's place
+  function replaceDialog(p) {
+    promptDialog("Replace " + p.name + " with a username", "", async (h) => {
+      h = String(h).trim().replace(/^@/, "").toLowerCase();
+      const r = await act(null, "/api/clubs/invite", { org: S.orgId, handle: h, replaces: p.mid });
+      if (r) msg("Invite sent to @" + h + ". " + p.name + " is replaced when they accept.");
+    }, { placeholder: "@username", yes: "Send invite", max: 21 });
+    // the dialog's ⓘ: what accepting does
+    const t = document.querySelector("#prompt-dialog .confirm-title"); if (t) t.insertAdjacentHTML("beforeend", info(TIP.replace, "What replacing does"));
+  }
+  function confirmTransfer(p) {
+    confirmDialog("Transfer " + O().name + " to " + p.name + " (@" + p.handle + ")? You'll become an admin.", () => act(null, "/api/clubs/transfer", { org: S.orgId, mid: p.mid }, () => msg(p.name + " owns " + O().name + " now.")), { yes: "Transfer", title: "Transfer ownership" });
+  }
+  // the org menu's Transfer ownership…: pick a member with an account
+  function transferDialog() {
+    const cands = people().filter((p) => !p.na && !p.you);
+    if (!cands.length) { confirmDialog("Only members with an account can own " + O().name + ". Invite someone first.", () => {}, { yes: "OK", noCancel: true }); return; }
+    const el = overlay('<form class="confirm-box cl-modal"><div class="confirm-title">Transfer ownership' + info(TIP.transfer, "What the owner can do") + "</div>" +
+      '<label class="cl-field"><span class="cl-lbl">New owner</span><select class="mode-input" id="cl-tr-who">' + cands.map((p) => '<option value="' + esc(p.mid) + '">' + esc(p.name) + " (@" + esc(p.handle) + ")" + (p.role === "admin" ? " · admin" : "") + "</option>").join("") + "</select></label>" +
+      '<div class="confirm-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Continue</button></div></form>');
+    el.querySelector("form").onsubmit = (e) => { e.preventDefault(); const p = P(el.querySelector("#cl-tr-who").value); closeOverlay(el); if (p) confirmTransfer(p); };
+  }
+  function orgNameDialog() {
+    const o = O();
+    const el = overlay('<form class="confirm-box cl-modal"><div class="confirm-title">Rename the organization</div>' +
+      '<div class="two-in"><label class="cl-field"><span class="cl-lbl">Name</span><input class="mode-input" id="cl-on-name" maxlength="40" value="' + esc(o.name) + '" autocomplete="off"></label><label class="cl-field"><span class="cl-lbl">Tag</span><input class="mode-input" id="cl-on-tag" maxlength="5" value="' + esc(o.tag) + '" autocomplete="off"></label></div>' +
+      '<p class="fr-msg err" id="cl-on-msg" role="status"></p><div class="confirm-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>');
+    el.querySelector("form").onsubmit = async (e) => {
+      e.preventDefault();
+      const name = el.querySelector("#cl-on-name").value.trim(), tag = el.querySelector("#cl-on-tag").value.trim().toUpperCase();
+      const r = await post("/api/clubs/settings", { org: S.orgId, name, tag });
+      if (!r || r.error) { el.querySelector("#cl-on-msg").textContent = (r && r.error) || OFFLINE; return; }
+      closeOverlay(el); refresh();
+    };
+  }
+  // the Join or create window: a code, or a new organization (you own it)
+  function joinCreateDialog(focus) {
+    const el = overlay('<div class="confirm-box cl-modal cl-jc" role="document"><div class="cl-modal-head"><div class="confirm-title">Join or create an organization</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-x aria-label="Close">' + ico("x", 16) + "</button></div>" +
+      '<form class="cl-mform" id="cl-join-form" novalidate><h3 class="eyebrow">Join with a code' + info("Ask your coach or captain for the code, like LHS-7Q2K.", "About codes") + '</h3><div class="cl-field-row"><input type="text" id="cl-join-code" class="mode-input" placeholder="ABC-1234" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Invite code"><button type="submit" class="btn btn-primary">Join</button></div><p class="fr-msg" id="cl-join-msg" role="status"></p></form>' +
+      '<div class="cl-or">or</div>' +
+      '<form class="cl-mform" id="cl-create-form" novalidate><h3 class="eyebrow">Create an organization' + info("You'll be the owner. Add your teams next, then invite people.", "About creating an organization") + "</h3>" +
+      '<div class="two-in"><label class="cl-field"><span class="cl-lbl">School or club name</span><input type="text" id="cl-new-name" class="mode-input" placeholder="Harbor View High School" maxlength="40" autocomplete="off"></label><label class="cl-field"><span class="cl-lbl">Tag</span><input type="text" id="cl-new-tag" class="mode-input" placeholder="HVHS" maxlength="5" autocomplete="off" autocapitalize="characters"></label></div>' +
+      '<button type="submit" class="btn btn-primary cl-self-start">Create organization</button><p class="fr-msg" id="cl-create-msg" role="status"></p></form></div>');
+    const say = (id, t, err) => { const m = el.querySelector(id); m.textContent = t; m.classList.toggle("err", !!err); };
+    const nameIn = el.querySelector("#cl-new-name"), tagIn = el.querySelector("#cl-new-tag");
+    // a tag suggested from the name's initials until one is typed
+    nameIn.oninput = () => { if (tagIn.dataset.typed) return; tagIn.value = nameIn.value.split(/\s+/).filter((w) => /^[A-Za-z0-9]/.test(w) && !/^(of|the|and|for|at)$/i.test(w)).map((w) => w[0]).join("").toUpperCase().slice(0, 5); };
+    tagIn.oninput = () => { tagIn.dataset.typed = tagIn.value ? "1" : ""; tagIn.value = tagIn.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); };
+    el.querySelector("#cl-join-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const code = el.querySelector("#cl-join-code").value.trim().toUpperCase();
+      if (!code) { say("#cl-join-msg", "Type the code first.", true); return; }
+      const b = e.target.querySelector("button"); b.disabled = true;
+      const r = await post("/api/clubs/join", { code });
+      b.disabled = false;
+      if (!r || r.error) { say("#cl-join-msg", (r && r.error) || OFFLINE, true); return; }
+      if (r.requested) { say("#cl-join-msg", "Asked to join " + (r.name || "it") + ". An admin will let you in."); return; }
+      closeOverlay(el); S.orgId = r.id; ls.set("qb-club-org", r.id); S.tab = "teams"; await refresh();
+    };
+    el.querySelector("#cl-create-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const name = nameIn.value.trim(), tag = tagIn.value.trim();
+      if (!name) { say("#cl-create-msg", "Give it a name.", true); nameIn.focus(); return; }
+      if (!/^[A-Z0-9]{2,5}$/.test(tag)) { say("#cl-create-msg", "The tag is 2 to 5 letters or numbers.", true); tagIn.focus(); return; }
+      const b = e.target.querySelector("button[type=submit]"); b.disabled = true;
+      const r = await post("/api/clubs/create", { name, tag });
+      b.disabled = false;
+      if (!r || r.error) { say("#cl-create-msg", (r && r.error) || OFFLINE, true); return; }
+      closeOverlay(el); S.orgId = r.id; ls.set("qb-club-org", r.id); S.tab = "teams"; await refresh();
+    };
+    setTimeout(() => (focus === "create" ? nameIn : el.querySelector("#cl-join-code")).focus(), 30);
+  }
+  function overlay(html) {
+    document.getElementById("cl-overlay")?.remove();
+    const el = document.createElement("div");
+    el.id = "cl-overlay"; el.className = "qb-overlay confirm-overlay";
+    el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true");
+    el.innerHTML = html;
+    el.addEventListener("click", (e) => { if (e.target === el || e.target.closest("[data-x]")) closeOverlay(el); });
+    el.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeOverlay(el); } });
+    document.body.appendChild(el);
+    return el;
+  }
+  const closeOverlay = (el) => (typeof animateRemove === "function" ? animateRemove(el) : el.remove());
+
+  // a room (together, or my own run): the server opens it on the game server, then multiplayer joins it
+  async function openRoom(btn, id) {
+    if (btn) btn.disabled = true;
+    const r = await post("/api/diag/room", { id });
+    if (btn) btn.disabled = false;
+    if (!r || r.error || !r.code) { failBubble(btn, (r && r.error) || "The room couldn't open. Try again in a moment."); return; }
+    if (window.QB && window.QB.mpJoin) window.QB.mpJoin(r.code);
+  }
+  // ═══ DIAGNOSTIC SETUP ═══
+  function stepsHtml(cur) {
+    return '<ol class="cl-steps" aria-label="Diagnostic steps">' + [["setup", "Set up"], ["play", "Play"], ["report", "Report"]].map((s, i) =>
+      '<li><span class="cl-step"' + (cur === s[0] ? ' aria-current="step"' : "") + "><i>" + (i + 1) + "</i>" + s[1] + "</span></li>").join("") + "</ol>";
+  }
+  const accountOnly = (mids) => mids.filter((m) => { const p = P(m); return p && !p.na; });
+  function playersFor(target, place) {
+    const list = target === "org" ? people().map((p) => p.mid) : ((team(target) || { roster: [] }).roster.slice());
+    return place === "irl" ? list : accountOnly(list);
+  }
+  function defaultTarget() {
+    const mine = teams().filter((t) => canManageTeam(t) && t.roster.length);
+    if (mine.length) return mine[0].id;
+    return isAdmin() ? "org" : (teams()[0] ? teams()[0].id : "org");
+  }
+  const canRunTarget = (t) => (t === "org" ? isAdmin() : canManageTeam(team(t)));
+  // the next two weeks and the hours from 7 AM to 10 PM, for Later and the deadline
+  function dayOpts() {
+    const out = [], now = new Date();
+    for (let i = 0; i < 15; i++) { const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i); out.push({ v: d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(), l: i === 0 ? "Today" : i === 1 ? "Tomorrow" : dayText(d.getTime()) }); }
+    return out;
+  }
+  const HOURS = Array.from({ length: 16 }, (_, i) => i + 7);
+  const atOf = (day, hour) => { const [y, m, d] = String(day).split("-").map(Number); return new Date(y, m - 1, d, Number(hour) || 0).getTime(); };
+  function newDx(target) {
+    const t = target && canRunTarget(target) ? target : defaultTarget(), days = dayOpts();
+    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [3, 4, 5, 6] };
+  }
+  async function renderSetup() {
+    const c = document.getElementById("dx-container"); if (!c) return;
+    if (await gate(c, "target", "Team diagnostics")) return;
+    if (S.dxFor && S.dxFor.org && S.dxFor.org !== S.orgId) S.orgId = S.dxFor.org;
+    if (!S.org || S.org.org.id !== S.orgId) {
+      c.innerHTML = loading("Loading…");
+      if (!S.list) { const d = await get("/api/clubs"); if (d && !d.error) S.list = d; }
+      if (!S.orgId && S.list && S.list.orgs.length) S.orgId = S.list.orgs[0].id;
+      const o = S.orgId ? await get("/api/clubs/org?id=" + encodeURIComponent(S.orgId)) : null;
+      if (o && !o.error) S.org = o;
+    }
+    if (!S.org) { c.innerHTML = plainPanel("users", "Diagnostics are for an organization's teams. Join yours or create one first.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+    if (!canRunAny()) { c.innerHTML = stepsHtml("setup") + plainPanel("shield", "Team captains and admins set up diagnostics.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+    if (!S.dx || S.dx.org !== S.orgId || S.dxFor) { S.dx = newDx(S.dxFor && S.dxFor.team); S.dxFor = null; }
+    if (!canRunTarget(S.dx.target)) S.dx = newDx();
+    c.innerHTML = stepsHtml("setup") + setupHtml();
+    wireSetup(c);
+    syncSetup();
+  }
+  function setupHtml() {
+    const d = S.dx;
+    const targets = teams().map((t) => [t.id, t.name]).concat([["org", "Whole organization"]]);
+    let diff = ""; for (let i = 0; i <= 10; i++) diff += '<label title="' + esc(DIFF_NAMES[i]) + '"><input type="checkbox" data-diff="' + i + '"' + (d.diff.includes(i) ? " checked" : "") + "><span>" + i + "</span></label>";
+    return '<form id="dx-form" class="dx-grid" novalidate><div class="cl-card dx-main">' +
+      '<div class="fsec" role="group" aria-label="Team"><h2 class="fsec-label">Team' + info(TIP.roster, "About the roster") + '</h2><div class="fsec-body"><div class="seg cl-seg-scroll" role="group" aria-label="Team">' +
+        targets.map((x) => '<button type="button" data-target="' + esc(x[0]) + '" aria-pressed="' + (d.target === x[0]) + '"' + (canRunTarget(x[0]) ? "" : " disabled") + ">" + esc(x[1]) + "</button>").join("") + '</div><div id="dx-who"></div></div></div>' +
+      '<div class="fsec" role="group" aria-label="Format"><h2 class="fsec-label">Format</h2><div class="fsec-body"><div class="seg seg-even" role="group" aria-label="Format">' +
+        ["tu", "bo", "tb"].map((k) => '<button type="button" data-format="' + k + '" aria-pressed="' + (d.format === k) + '">' + FORMATS[k].label + info(FORMATS[k].tip, FORMATS[k].label) + "</button>").join("") + "</div></div></div>" +
+      '<div class="fsec" role="group" aria-label="Where"><h2 class="fsec-label">Where</h2><div class="fsec-body" id="dx-where"></div></div>' +
+      '<div class="fsec" role="group" aria-label="Questions"><h2 class="fsec-label">Questions' + info(TIP.dist, "How the packet is drawn") + '</h2><div class="fsec-body" id="dx-qty"></div></div>' +
+      '<div class="fsec" role="group" aria-label="Difficulty"><h2 class="fsec-label">Difficulty</h2><div class="fsec-body"><div class="diff-toggles" role="group" aria-label="Difficulty levels">' + diff + "</div></div></div>" +
+      '</div><aside class="dx-side"><div class="cl-card dx-summary"><h2 class="sec-title">Summary</h2><dl class="sum-list">' +
+      '<div><dt>Team</dt><dd id="dx-s-team"></dd></div><div><dt>Format</dt><dd id="dx-s-format"></dd></div><div><dt>Where</dt><dd id="dx-s-where"></dd></div><div><dt>Questions</dt><dd id="dx-s-q"></dd></div><div><dt>Difficulty</dt><dd id="dx-s-diff"></dd></div><div><dt>Time</dt><dd id="dx-s-time"></dd></div>' +
+      '</dl><button type="submit" class="btn btn-primary btn-md btn-full" id="dx-go">' + ico("play", 16) + '<span id="dx-go-lbl">Open the room</span></button><p class="fr-msg err" id="dx-msg" role="status"></p></div></aside></form>';
+  }
+  function pchip(p, on, locked) {
+    return '<label class="pchip' + (locked ? " off" : "") + '"><input type="checkbox" data-player="' + esc(p.mid) + '"' + (on && !locked ? " checked" : "") + (locked ? " disabled" : "") + ">" + av(p, "sm") + '<span class="pc-name">' + nm(p) + (p.you ? " (you)" : "") + "</span>" +
+      (p.na ? (locked ? ico("lock", 12) : "") + '<span class="tchip na">No account</span>' + (locked ? info(TIP.na, "Why they can't play this way") : "") : "") + "</label>";
+  }
+  function paintWho() {
+    const d = S.dx, el = document.getElementById("dx-who"); if (!el) return;
+    const on = (m) => d.players.includes(m), lock = (p) => p.na && d.place !== "irl";
+    const roster = d.target === "org" ? people() : ((team(d.target) || { roster: [] }).roster.map(P).filter(Boolean));
+    const others = d.target === "org" ? [] : people().filter((p) => !(team(d.target) || { roster: [] }).roster.includes(p.mid));
+    el.innerHTML = '<div class="pchips">' + (roster.length ? roster.map((p) => pchip(p, on(p.mid), lock(p))).join("") : '<span class="cl-none">No players on this team yet</span>') + "</div>" +
+      (others.length ? '<p class="cl-sub-label">Others</p><div class="pchips">' + others.map((p) => pchip(p, on(p.mid), lock(p))).join("") + "</div>" : "");
+  }
+  // players without an account come along only for IRL Reading
+  function adjustNA() {
+    const d = S.dx;
+    if (d.place === "irl") playersFor(d.target, "irl").forEach((m) => { const p = P(m); if (p && p.na && !d.players.includes(m)) d.players.push(m); });
+    else d.players = d.players.filter((m) => { const p = P(m); return p && !p.na; });
+  }
+  function paintWhere() {
+    const d = S.dx, ownOk = d.format === "tu", el = document.getElementById("dx-where"); if (!el) return;
+    if (!ownOk && d.place === "own") d.place = "room";
+    const days = dayOpts(), dsel = (id, v) => '<select class="mode-input" id="' + id + '" aria-label="Day">' + days.slice(id === "dx-due-day" ? 1 : 0).map((x) => '<option value="' + x.v + '"' + (x.v === v ? " selected" : "") + ">" + esc(x.l) + "</option>").join("") + "</select>";
+    const hsel = (id, v) => '<select class="mode-input cl-hour" id="' + id + '" aria-label="Time">' + HOURS.map((h) => '<option value="' + h + '"' + (h === v ? " selected" : "") + ">" + ((h % 12) || 12) + ":00 " + (h < 12 ? "AM" : "PM") + "</option>").join("") + "</select>";
+    let html = '<div class="seg seg-where" role="group" aria-label="Where">' +
+      '<button type="button" data-place="room" aria-pressed="' + (d.place === "room") + '">Together in a room</button>' +
+      '<button type="button" data-place="own" aria-pressed="' + (d.place === "own") + '"' + (ownOk ? "" : ' aria-disabled="true" class="locked"') + ">" + (ownOk ? "" : ico("lock", 13)) + "Each on their own" + (ownOk ? "" : info(TIP.own, "Why it's locked")) + "</button>" +
+      '<button type="button" data-place="irl" aria-pressed="' + (d.place === "irl") + '">IRL Reading' + info(TIP.irl, "About IRL Reading") + "</button></div>";
+    if (d.place === "room") html += '<div class="opt-row"><span class="cl-lbl">Starts</span><div class="seg" role="group" aria-label="Starts"><button type="button" data-when="now" aria-pressed="' + (d.when === "now") + '">Now</button><button type="button" data-when="later" aria-pressed="' + (d.when === "later") + '">Later</button></div>' +
+      (d.when === "later" ? dsel("dx-start-day", d.startDay) + hsel("dx-start-hour", d.startHour) : "") + "</div>";
+    else if (d.place === "own") html += '<div class="opt-row"><span class="cl-lbl">Deadline</span>' + dsel("dx-due-day", d.dueDay) + hsel("dx-due-hour", d.dueHour) + "</div>";
+    el.innerHTML = html;
+  }
+  function paintQty() {
+    const d = S.dx, el = document.getElementById("dx-qty"); if (!el) return;
+    const seg = (attr, vals, cur, label) => '<div class="seg" role="group" aria-label="' + label + '">' + vals.map((v) => '<button type="button" data-' + attr + '="' + v + '" aria-pressed="' + (cur === v) + '">' + v + "</button>").join("") + "</div>";
+    el.innerHTML = d.format === "bo" ? '<div class="opt-row"><span class="cl-lbl">Bonuses</span>' + seg("bo", [10, 20, 30], d.bo, "Bonuses") + "</div>"
+      : '<div class="opt-row"><span class="cl-lbl">Tossups</span>' + seg("tu", [20, 40, 60], d.tu, "Tossups") + (d.format === "tb" ? info("A bonus follows each tossup your team gets.", "About bonuses") : "") + "</div>";
+  }
+  function syncSetup() {
+    const d = S.dx;
+    $$("#dx-form [data-target]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.target === d.target)));
+    $$("#dx-form [data-format]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.format === d.format)));
+    paintWho(); paintWhere(); paintQty();
+    const tname = d.target === "org" ? "Whole organization" : (team(d.target) || {}).name || "Team";
+    const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+    set("dx-s-team", tname + " · " + plural(d.players.length, "player"));
+    set("dx-s-format", FORMATS[d.format].label);
+    set("dx-s-where", d.place === "own" ? "On their own, due " + whenText(atOf(d.dueDay, d.dueHour)) : d.place === "irl" ? "IRL Reading, read aloud in person" : "In a room, " + (d.when === "now" ? "now" : whenText(atOf(d.startDay, d.startHour))));
+    set("dx-s-q", d.format === "tb" ? d.tu + " tossups, bonuses as earned" : d.format === "bo" ? d.bo + " bonuses" : d.tu + " tossups");
+    set("dx-s-diff", d.diff.length ? diffText(d.diff) : "Pick at least one");
+    const mins = d.format === "bo" ? Math.round(d.bo * 1.5 / 5) * 5 : d.format === "tu" ? Math.round(d.tu * 0.75 / 5) * 5 : Math.round(d.tu * 1.45 / 5) * 5;
+    set("dx-s-time", "About " + mins + " minutes" + (d.place === "own" ? " each" : ""));
+    set("dx-go-lbl", d.place === "own" ? "Send it out" : d.place === "irl" ? "Open the packet" : d.when === "now" ? "Open the room" : "Schedule the room");
+  }
+  function wireSetup(c) {
+    const f = c.querySelector("#dx-form");
+    f.onclick = (e) => {
+      const b = e.target.closest("button"); if (!b || b.disabled || b.type === "submit") return;
+      const d = S.dx, ds = b.dataset;
+      if (ds.target) { d.target = ds.target; d.players = playersFor(d.target, d.place); }
+      else if (ds.format) { d.format = ds.format; if (d.format !== "tu" && d.place === "own") d.place = "room"; }
+      else if (ds.place) { if (b.getAttribute("aria-disabled") === "true") return; d.place = ds.place; adjustNA(); }
+      else if (ds.when) d.when = ds.when;
+      else if (ds.tu) d.tu = +ds.tu;
+      else if (ds.bo) d.bo = +ds.bo;
+      else return;
+      document.getElementById("dx-msg").textContent = "";
+      syncSetup();
+    };
+    f.onchange = (e) => {
+      const t = e.target, d = S.dx;
+      if (t.dataset.player) { const m = t.dataset.player; d.players = t.checked ? d.players.concat([m]) : d.players.filter((x) => x !== m); syncSetup(); return; }
+      if (t.dataset.diff != null) { const v = +t.dataset.diff; d.diff = t.checked ? d.diff.concat([v]).sort((a, b) => a - b) : d.diff.filter((x) => x !== v); syncSetup(); return; }
+      if (t.id === "dx-start-day") d.startDay = t.value; else if (t.id === "dx-start-hour") d.startHour = +t.value;
+      else if (t.id === "dx-due-day") d.dueDay = t.value; else if (t.id === "dx-due-hour") d.dueHour = +t.value;
+      else return;
+      syncSetup();
+    };
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const d = S.dx, m = document.getElementById("dx-msg"), btn = document.getElementById("dx-go");
+      const say = (t) => { m.textContent = t; };
+      if (!d.players.length) return say("Pick at least one player.");
+      if (!d.diff.length) return say("Pick at least one difficulty.");
+      const startAt = d.place === "room" && d.when === "later" ? atOf(d.startDay, d.startHour) : null, dueAt = d.place === "own" ? atOf(d.dueDay, d.dueHour) : null;
+      if (dueAt && dueAt < Date.now() + 10 * 60e3) return say("Pick a deadline later than that.");
+      btn.disabled = true; say("");
+      const r = await post("/api/diag/create", { org: d.org, team: d.target, players: d.players, format: d.format, place: d.place, startAt, dueAt, tu: d.tu, bo: d.bo, diff: d.diff });
+      if (!r || r.error) { btn.disabled = false; return say((r && r.error) || OFFLINE); }
+      S.dx = null;
+      if (d.place === "irl") { btn.disabled = false; return openIrl(r.id); }
+      if (d.place === "room" && !startAt) {
+        const rr = await post("/api/diag/room", { id: r.id });
+        btn.disabled = false;
+        if (rr && rr.code && window.QB && window.QB.mpJoin) { window.QB.mpJoin(rr.code); return; }
+        S.tab = "diagnostics"; open("diagnostics");
+        return;
+      }
+      btn.disabled = false;
+      open("diagnostics");
+    };
+  }
+  // ═══ IRL READING: one person reads the packet aloud and records what happens ═══
+  // A tossup's words are its text split on spaces; "(*)" is the power mark (not a word) — the
+  // server splits the same way when it scores the buzzes (web/clubs.mjs). k = words heard.
+  function tossupOf(q) {
+    const toks = String(q.text || "").split(/\s+/).filter(Boolean);
+    let n = 0, pw = 0, inPg = false;
+    const words = [];
+    toks.forEach((t) => {
+      if (t === "(*)") { pw = n; words.push({ pm: true }); return; }
+      const opens = /^\((["“]|&quot;)/.test(t), pg = inPg || opens;
+      if (opens) inPg = true;
+      if (inPg && /(["”])\)[.,;:!?]*$/.test(t)) inPg = false;
+      words.push({ t, i: n++, pg });
+    });
+    return { ...q, words, N: n, pw };
+  }
+  async function openIrl(id) {
+    S.irl = { id, packet: null, diag: null, state: null, edit: null, saveT: null, err: "" };
+    if (typeof goTo === "function") goTo("irl");
+  }
+  async function renderIrl() {
+    const c = document.getElementById("irl-container"); if (!c) return;
+    if (await gate(c, "doc", "Team diagnostics")) return;
+    const I = S.irl;
+    if (!I || !I.id) { c.innerHTML = plainPanel("doc", "No packet is open.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+    if (!I.packet) {
+      c.innerHTML = loading("Loading the packet…");
+      const [pk, dg] = await Promise.all([get("/api/diag/packet?id=" + encodeURIComponent(I.id)), get("/api/diag?id=" + encodeURIComponent(I.id))]);
+      if (S.irl !== I) return;
+      if (!pk || pk.error) { c.innerHTML = plainPanel("doc", (pk && pk.error) || OFFLINE, '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+      I.packet = { ...pk, tossups: (pk.tossups || []).map(tossupOf), bonuses: pk.bonuses || [] };
+      I.diag = dg && dg.diag ? dg.diag : null;
+      const st = pk.state && typeof pk.state === "object" ? pk.state : {};
+      I.state = { v: 1, buzzes: st.buzzes || {}, dead: st.dead || {}, parts: st.parts || {}, anyway: st.anyway || {} };
+      I.players = pk.players || (I.diag && I.diag.players) || [];
+    }
+    paintIrl(c);
+  }
+  function irlOrder() {
+    const I = S.irl, f = I.packet.format, T = I.packet.tossups, B = I.packet.bonuses, out = [];
+    if (f === "bo") B.forEach((b, j) => out.push({ kind: "bo", q: b, n: j + 1, i: j }));
+    else T.forEach((q, j) => { out.push({ kind: "tu", q, n: j + 1, i: j }); if (f === "tb" && B[j]) out.push({ kind: "bo", q: B[j], n: j + 1, i: j, after: q }); });
+    return out;
+  }
+  const irlPlayer = (mid) => (S.irl.players || []).find((p) => p.mid === mid) || null;
+  function buzzPts(q, b) { if (b.p === "opp") return 0; if (b.ok) return q.pw > 0 && b.k <= q.pw ? 15 : 10; return b.k < q.N ? -5 : 0; }
+  function tuState(q) {
+    const bz = S.irl.state.buzzes[q.i] || [], c = bz.find((b) => b.ok) || null, dead = !!S.irl.state.dead[q.i];
+    return { bz, correct: c, dead, done: !!c || dead, earned: !!(c && c.p !== "opp") };
+  }
+  const bonusEarned = (it) => (S.irl.packet.format === "bo" ? true : tuState(it.after).earned);
+  function irlScore(order) {
+    let sc = 0;
+    order.forEach((it) => {
+      if (it.kind === "tu") tuState(it.q).bz.forEach((b) => { sc += buzzPts(it.q, b); });
+      else if (bonusEarned(it)) (S.irl.state.parts[it.i] || []).forEach((v, j) => { if (v === 1) sc += (it.q.parts[j] && it.q.parts[j].value) || 10; });
+    });
+    return sc;
+  }
+  function irlCurrent(order) {
+    for (const it of order) {
+      if (it.kind === "tu") { if (!tuState(it.q).done) return it; }
+      else if (bonusEarned(it)) { const p = S.irl.state.parts[it.i] || []; if (it.q.parts.some((x, j) => p[j] !== 0 && p[j] !== 1)) return it; }
+    }
+    return null;
+  }
+  const signed = (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v);
+  // answer lines come from the server with only <b> <u> <i> <em> <strong>; anything else is escaped
+  const ansHtml = (h) => String(h || "").replace(/<(?!\/?(b|u|i|em|strong)>)/gi, "&lt;");
+  function wordsHtml(q, k, editing) {
+    return q.words.map((w) => w.pm ? '<span class="irl-pm">(*)</span>' : '<span class="w' + (w.pg ? " pg" : "") + (editing && w.i < k ? " heard" : "") + '" data-i="' + w.i + '">' + esc(w.t) + "</span>").join(" ");
+  }
+  function tossupCard(it, cur) {
+    const q = it.q, st = tuState(q), e = S.irl.edit && S.irl.edit.i === q.i ? S.irl.edit : null;
+    let pts = 0; st.bz.forEach((b) => { pts += buzzPts(q, b); });
+    const status = st.correct ? (st.correct.p === "opp" ? '<span class="dx-chip few">Other team</span>' : '<span class="dx-chip good">' + nmFirst(irlPlayer(st.correct.p)) + "</span>") : st.dead ? '<span class="dx-chip few">Nobody</span>' : "";
+    const shown = st.bz.map((b, j) => ({ b, j })).filter((x) => !(e && e.idx === x.j));
+    const rows = shown.length ? '<div class="bz-list">' + shown.map((x) => {
+      const b = x.b, pv = buzzPts(q, b), p = irlPlayer(b.p);
+      return '<div class="bz-item"><span class="who">' + (b.p === "opp" ? '<span class="fr-av xs na" aria-hidden="true">O</span><span>Other team</span>' : av(p, "xs") + "<span>" + nm(p) + "</span>") + '</span><span class="where num">word ' + b.k + " of " + q.N + "</span>" +
+        (b.ok ? '<span class="dx-chip good">Correct</span>' : '<span class="dx-chip gap">Wrong</span>') + '<span class="pts ' + (b.p === "opp" ? "zero" : pv > 0 ? "pos" : pv < 0 ? "neg" : "zero") + '">' + (b.p === "opp" ? "—" : signed(pv)) + "</span>" +
+        '<span class="bz-acts"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-irl="edit" data-q="' + q.i + '" data-j="' + x.j + '" aria-label="Edit this buzz">' + ico("pencil", 14) + '</button><button type="button" class="btn btn-ghost btn-icon btn-sm" data-irl="del" data-q="' + q.i + '" data-j="' + x.j + '" aria-label="Delete this buzz">' + ico("trash", 14) + "</button></span></div>";
+    }).join("") + "</div>" : "";
+    const acts = e ? "" : !st.done ? '<div class="irl-actions"><button type="button" class="btn btn-primary" data-irl="add" data-q="' + q.i + '">' + ico("plus", 15) + 'Add buzz</button><button type="button" class="btn" data-irl="dead" data-q="' + q.i + '">Nobody got it</button></div>'
+      : st.dead ? '<div class="irl-actions"><button type="button" class="btn btn-sm btn-ghost" data-irl="undead" data-q="' + q.i + '">Undo</button></div>' : "";
+    return '<section class="cl-card irl-q' + (cur ? " current" : "") + '" id="irl-t-' + q.i + '" aria-label="Tossup ' + it.n + '"><div class="irl-qh"><span class="irl-num">Tossup ' + it.n + "</span>" + catChip(q.cat) + status + (st.bz.length ? '<span class="irl-pts ' + (pts > 0 ? "pos" : pts < 0 ? "neg" : "") + '">' + signed(pts) + "</span>" : "") + "</div>" +
+      '<p class="irl-text' + (e ? " editing" : "") + '" data-q="' + q.i + '">' + wordsHtml(q, e ? e.k : 0, !!e) + (e ? '<span class="bz-mark" aria-hidden="true"></span><button type="button" class="bz-handle" role="slider" aria-label="Where they buzzed" aria-valuemin="0" aria-valuemax="' + q.N + '" aria-valuenow="' + e.k + '">' + ico("grip", 12) + "</button>" : "") + "</p>" +
+      '<p class="irl-ans"><span class="cl-lbl">Answer</span>' + ansHtml(q.answer) + "</p>" + rows + acts + (e ? editorHtml(it) : "") + "</section>";
+  }
+  function editorHtml(it) {
+    const e = S.irl.edit;
+    const chips = (S.irl.players || []).map((p) => '<label class="pchip"><input type="radio" name="bz-player" value="' + esc(p.mid) + '"' + (e.p === p.mid ? " checked" : "") + ">" + av(p, "sm") + '<span class="pc-name">' + nmFirst(p) + "</span></label>").join("") +
+      '<label class="pchip"><input type="radio" name="bz-player" value="opp"' + (e.p === "opp" ? " checked" : "") + '><span class="fr-av sm na" aria-hidden="true">O</span><span class="pc-name">Other team / opponent</span></label>';
+    return '<div class="bz-edit" role="group" aria-label="Buzz on tossup ' + it.n + '"><p class="bz-pos" id="bz-pos" aria-live="polite"></p>' +
+      '<div class="bz-field" role="radiogroup" aria-label="Player"><span class="cl-lbl">Player</span><div class="pchips">' + chips + "</div></div>" +
+      '<div class="bz-field"><span class="cl-lbl">Result</span><div class="seg" role="group" aria-label="Result"><button type="button" class="ok" data-bz-ok="1" aria-pressed="' + (e.ok === true) + '">Correct</button><button type="button" class="no" data-bz-ok="0" aria-pressed="' + (e.ok === false) + '">Wrong</button></div><span class="bz-pts" id="bz-pts"></span></div>' +
+      '<p class="fr-msg err" id="bz-msg" role="status"></p><div class="bz-foot"><button type="button" class="btn" data-irl="cancel">Cancel</button><button type="button" class="btn btn-primary" data-irl="save">' + (e.idx != null ? "Save changes" : "Save buzz") + "</button></div></div>";
+  }
+  function bonusCard(it, cur) {
+    const b = it.q, earned = bonusEarned(it), after = S.irl.packet.format === "bo" ? null : tuState(it.after), anyway = !!S.irl.state.anyway[it.i];
+    let head = '<div class="irl-qh"><span class="irl-num">Bonus ' + it.n + "</span>" + catChip(b.cat);
+    if (!earned && !anyway) {
+      return '<section class="cl-card irl-q" id="irl-b-' + it.i + '" aria-label="Bonus ' + it.n + '">' + head + "</div>" +
+        '<div class="irl-skip">' + (after && after.done ? '<span>Not earned: skip</span><button type="button" class="btn btn-sm btn-ghost" data-irl="anyway" data-q="' + it.i + '">Read anyway</button>' + info("For practice: it doesn't count toward the score or the report.", "About reading it anyway") : "<span>Earned if your team gets tossup " + it.n + "</span>") + "</div></section>";
+    }
+    const parts = S.irl.state.parts[it.i] || [];
+    let got = 0, marked = 0;
+    parts.forEach((v, j) => { if (v === 1) got += (b.parts[j] && b.parts[j].value) || 10; if (v === 0 || v === 1) marked++; });
+    head += earned ? (marked ? '<span class="irl-pts' + (got ? " pos" : "") + '">' + signed(got) + "</span>" : "") : '<span class="dx-chip few">Doesn\'t count</span><button type="button" class="btn btn-sm btn-ghost cl-push" data-irl="anyway" data-q="' + it.i + '">Hide</button>';
+    return '<section class="cl-card irl-q' + (cur ? " current" : "") + '" id="irl-b-' + it.i + '" aria-label="Bonus ' + it.n + '">' + head + "</div>" + '<p class="irl-lead">' + esc(b.leadin) + "</p>" +
+      b.parts.map((pt, j) => {
+        const v = parts[j];
+        return '<div class="irl-part"><span class="pn">' + (j + 1) + "</span><div><p>" + esc(pt.text) + '</p><p class="bp-ans"><span class="cl-lbl">Answer</span>' + ansHtml(pt.answer) + "</p></div>" +
+          (earned ? '<div class="seg" role="group" aria-label="Part ' + (j + 1) + '"><button type="button" class="ok" data-irl="part" data-q="' + it.i + '" data-part="' + j + '" data-v="1" aria-pressed="' + (v === 1) + '">Got it</button><button type="button" class="no" data-irl="part" data-q="' + it.i + '" data-part="' + j + '" data-v="0" aria-pressed="' + (v === 0) + '">Missed</button></div>' : "") + "</div>";
+      }).join("") + "</section>";
+  }
+  function paintIrl(c) {
+    const I = S.irl, order = irlOrder(), cur = irlCurrent(order), score = irlScore(order), total = order.filter((x) => x.kind === (I.packet.format === "bo" ? "bo" : "tu")).length;
+    const d = I.diag || {};
+    const eyebrow = [d.team, FORMATS[I.packet.format] && FORMATS[I.packet.format].label, d.diff ? "difficulty " + diffText(d.diff) : ""].filter(Boolean).join(" · ");
+    const sc = scrollerOf(c), y = sc.scrollTop;
+    c.innerHTML = '<div class="cl-page">' + (eyebrow ? '<p class="eyebrow irl-eyebrow">' + esc(eyebrow) + "</p>" : "") +
+      '<div class="irl-bar"><button type="button" class="irl-now" data-irl="jump"' + (cur ? "" : " disabled") + "><b>" + (cur ? (cur.kind === "tu" ? "Tossup " : "Bonus ") + cur.n + " of " + total : "All recorded") + "</b><small>" + (cur ? "Up next" : "Ready to finish") + "</small></button>" +
+      '<span class="irl-save' + (I.err ? " err" : "") + '" id="irl-save" role="status">' + esc(I.err || "") + "</span>" +
+      '<div class="irl-score"><b class="num">' + score + '</b><small>team score</small></div><button type="button" class="btn btn-primary irl-finish" data-irl="finish">Finish' + ico("right", 15) + "</button></div>" +
+      '<div class="irl-list">' + order.map((it) => (it.kind === "tu" ? tossupCard(it, it === cur) : bonusCard(it, it === cur))).join("") +
+      '<div class="cl-card irl-q irl-end"><button type="button" class="btn btn-primary" data-irl="finish">Finish and release the report</button></div></div></div>';
+    sc.scrollTop = y;
+    wireIrl(c);
+    requestAnimationFrame(() => { placeAllMarks(); updateEditor(); });
+  }
+  // the reader's record, saved as it goes (a reload or another device picks up where it was)
+  function saveIrl() {
+    const I = S.irl; if (!I) return;
+    clearTimeout(I.saveT);
+    I.saveT = setTimeout(async () => {
+      const r = await post("/api/diag/irl", { id: I.id, state: I.state });
+      const bad = !r || r.error;
+      I.err = bad ? "Not saved: " + ((r && r.error) || "no connection") : "";
+      const el = document.getElementById("irl-save"); if (el) { el.textContent = I.err; el.classList.toggle("err", !!I.err); }
+      if (bad) I.saveT = setTimeout(saveIrl, 8000);
+    }, 600);
+  }
+  const editQ = () => { const e = S.irl && S.irl.edit; return e ? S.irl.packet.tossups[e.i] : null; };
+  // where a buzz after k words sits: between word k-1 and word k (or after the last word)
+  function boundary(p, k) {
+    const ws = $$(".w", p), pr = p.getBoundingClientRect(), n = ws.length;
+    if (!n) return { x: 0, y: 0, h: 20 };
+    const R = (w) => w.getClientRects()[0] || w.getBoundingClientRect();
+    if (k <= 0) { const a = R(ws[0]); return { x: a.left - pr.left - 3, y: a.top - pr.top, h: a.height }; }
+    if (k >= n) { const z = R(ws[n - 1]); return { x: z.right - pr.left + 3, y: z.top - pr.top, h: z.height }; }
+    const prev = R(ws[k - 1]), cur = R(ws[k]);
+    if (Math.abs(prev.top - cur.top) < 4) return { x: (prev.right + cur.left) / 2 - pr.left, y: cur.top - pr.top, h: cur.height };
+    return { x: cur.left - pr.left - 3, y: cur.top - pr.top, h: cur.height };
+  }
+  // the word boundary nearest a point: the closest line first, then the closest gap on it
+  function kFromPoint(p, x, y) {
+    const rects = $$(".w", p).map((w) => w.getClientRects()[0] || w.getBoundingClientRect());
+    const dyOf = (r) => (y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0);
+    let minDy = Infinity; rects.forEach((r) => { minDy = Math.min(minDy, dyOf(r)); });
+    let bestK = 0, bestD = Infinity;
+    rects.forEach((r, i) => { if (dyOf(r) > minDy + 1) return; const dl = Math.abs(x - r.left), dr = Math.abs(x - r.right); if (dl < bestD) { bestD = dl; bestK = i; } if (dr < bestD) { bestD = dr; bestK = i + 1; } });
+    return bestK;
+  }
+  function placeMarks(p, q) {
+    $$(".bz-tick", p).forEach((x) => x.remove());
+    const e = S.irl.edit && S.irl.edit.i === q.i ? S.irl.edit : null;
+    (S.irl.state.buzzes[q.i] || []).forEach((b, j) => {
+      if (e && e.idx === j) return;
+      const r = boundary(p, b.k), t = document.createElement("span");
+      t.className = "bz-tick " + (b.p === "opp" ? "opp" : b.ok ? "good" : "bad"); t.setAttribute("aria-hidden", "true");
+      t.style.left = r.x + "px"; t.style.top = (r.y - 2) + "px"; t.style.height = (r.h + 4) + "px";
+      t.innerHTML = "<i>" + (b.p === "opp" ? "O" : initial(irlPlayer(b.p))) + "</i>";
+      p.appendChild(t);
+    });
+    if (e) {
+      const r = boundary(p, e.k), mk = $(".bz-mark", p), hd = $(".bz-handle", p);
+      if (mk) { mk.style.left = r.x + "px"; mk.style.top = (r.y - 3) + "px"; mk.style.height = (r.h + 6) + "px"; }
+      if (hd) { hd.style.left = r.x + "px"; hd.style.top = (r.y + r.h + 1) + "px"; }
+    }
+  }
+  function placeAllMarks() { if (!S.irl || !S.irl.packet || !screenOn("irl-screen")) return; $$("#irl-container .irl-text").forEach((p) => { const q = S.irl.packet.tossups[+p.dataset.q]; if (q) placeMarks(p, q); }); }
+  function updateEditor() {
+    const q = editQ(); if (!q) return;
+    const e = S.irl.edit, p = $('#irl-container .irl-text[data-q="' + q.i + '"]'); if (!p) return;
+    const main = "Buzzed at word " + e.k + " of " + q.N + " (" + pct(e.k, q.N) + "%)", rel = e.k >= q.N ? "after the question ended" : q.pw > 0 ? (e.k <= q.pw ? "before the power mark" : "after the power mark") : "";
+    const pos = document.getElementById("bz-pos"); if (pos) pos.innerHTML = esc(main) + (rel ? ' <small><span class="sep">· </span>' + rel + "</small>" : "");
+    $$(".w", p).forEach((w) => w.classList.toggle("heard", +w.dataset.i < e.k));
+    const pe = document.getElementById("bz-pts");
+    if (pe) { const v = e.p && e.ok != null ? buzzPts(q, e) : null; pe.textContent = v == null ? "" : e.p === "opp" ? "0 for your team" : signed(v) + " points"; pe.className = "bz-pts " + (v > 0 && e.p !== "opp" ? "dlt-good" : v < 0 ? "dlt-bad" : "dlt-flat"); }
+    const hd = $(".bz-handle", p); if (hd) { hd.setAttribute("aria-valuenow", String(e.k)); hd.setAttribute("aria-valuetext", main + (rel ? ", " + rel : "")); }
+    placeMarks(p, q);
+  }
+  function setK(k) { const q = editQ(); if (!q) return; S.irl.edit.k = Math.max(0, Math.min(q.N, k)); updateEditor(); }
+  // drag the marker: a mouse anywhere on the text, or the handle with a mouse, finger or pen; a tap on the text jumps it
+  let drag = null;
+  document.addEventListener("pointerdown", (e) => {
+    if (e.button || !screenOn("irl-screen")) return;
+    const hd = e.target.closest && e.target.closest(".bz-handle"), tx = !hd && e.target.closest && e.target.closest(".irl-text.editing");
+    if (!hd && !tx) return;
+    if (tx && e.pointerType !== "mouse") return;   // a finger on the text may be scrolling; a tap (click) places the marker instead
+    const p = hd ? hd.closest(".irl-text") : tx; if (!editQ()) return;
+    e.preventDefault();
+    let oy = 0; if (hd) { const mk = $(".bz-mark", p); if (mk) { const mr = mk.getBoundingClientRect(); oy = mr.top + mr.height / 2 - e.clientY; } }
+    drag = { p, id: e.pointerId, oy, el: hd || p };
+    try { drag.el.setPointerCapture(e.pointerId); } catch (x) {}
+    if (tx) setK(kFromPoint(p, e.clientX, e.clientY));
+    const h2 = $(".bz-handle", p); if (h2) h2.focus({ preventScroll: true });
+  });
+  document.addEventListener("pointermove", (e) => { if (!drag || e.pointerId !== drag.id) return; e.preventDefault(); setK(kFromPoint(drag.p, e.clientX, e.clientY + drag.oy)); });
+  ["pointerup", "pointercancel"].forEach((ty) => document.addEventListener(ty, (e) => { if (drag && e.pointerId === drag.id) drag = null; }));
+  document.addEventListener("click", (e) => {
+    if (!screenOn("irl-screen")) return;
+    const tx = e.target.closest && e.target.closest(".irl-text.editing");
+    if (tx && !e.target.closest(".bz-handle")) setK(kFromPoint(tx, e.clientX, e.clientY));
+  });
+  document.addEventListener("keydown", (e) => {
+    const hd = e.target.closest && e.target.closest(".bz-handle"); if (!hd || !editQ()) return;
+    const k = S.irl.edit.k, q = editQ();
+    const to = e.key === "ArrowLeft" || e.key === "ArrowDown" ? k - 1 : e.key === "ArrowRight" || e.key === "ArrowUp" ? k + 1 : e.key === "Home" ? 0 : e.key === "End" ? q.N : e.key === "PageUp" ? k + 5 : e.key === "PageDown" ? k - 5 : null;
+    if (to == null) return;
+    e.preventDefault(); e.stopPropagation(); setK(to);
+  }, true);
+  addEventListener("resize", () => { if (S.irl && S.irl.packet && screenOn("irl-screen")) placeAllMarks(); });
+  function focusHandle() { const hd = $("#irl-container .bz-handle"); if (hd) { hd.focus({ preventScroll: true }); const card = hd.closest(".irl-q"); if (card) card.scrollIntoView({ block: "nearest" }); } }
+  const smooth = () => (matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
+  function wireIrl(c) {
+    c.onclick = async (e) => {
+      const b = e.target.closest("button"); if (!b || b.disabled) return;
+      const I = S.irl; if (!I || !I.packet) return;
+      if (b.dataset.bzOk != null) { if (I.edit) { I.edit.ok = b.dataset.bzOk === "1"; $$("#irl-container [data-bz-ok]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); const m = document.getElementById("bz-msg"); if (m) m.textContent = ""; updateEditor(); } return; }
+      const a = b.dataset.irl; if (!a) return;
+      const qi = b.dataset.q != null ? +b.dataset.q : null, q = qi != null ? I.packet.tossups[qi] : null, st = I.state, order = irlOrder();
+      const keyOf = (i) => String(i);
+      if (a === "add") { const bz = st.buzzes[keyOf(qi)] || [], lastK = bz.length ? bz[bz.length - 1].k : 0; I.edit = { i: qi, idx: null, k: bz.length ? Math.min(q.N, lastK + 4) : Math.round(q.N * 0.55), p: null, ok: null }; paintIrl(c); focusHandle(); return; }
+      if (a === "edit") { const bb = st.buzzes[keyOf(qi)][+b.dataset.j]; I.edit = { i: qi, idx: +b.dataset.j, k: bb.k, p: bb.p, ok: bb.ok }; paintIrl(c); focusHandle(); return; }
+      if (a === "del") { st.buzzes[keyOf(qi)].splice(+b.dataset.j, 1); I.edit = null; saveIrl(); paintIrl(c); return; }
+      if (a === "cancel") { const cq = I.edit ? I.edit.i : null; I.edit = null; paintIrl(c); const ab = cq != null && $('#irl-container [data-irl="add"][data-q="' + cq + '"]'); if (ab) ab.focus({ preventScroll: true }); return; }
+      if (a === "save") {
+        const ed = I.edit; if (!ed) return;
+        const sel = $('#irl-container input[name="bz-player"]:checked'); if (sel) ed.p = sel.value;
+        const m = document.getElementById("bz-msg");
+        if (!ed.p) { m.textContent = "Pick who buzzed."; return; }
+        if (ed.ok == null) { m.textContent = "Mark it correct or wrong."; return; }
+        const list = st.buzzes[keyOf(ed.i)] = st.buzzes[keyOf(ed.i)] || [];
+        if (ed.ok && list.some((x, j) => x.ok && j !== ed.idx)) { m.textContent = "This tossup already has a correct buzz. Edit or delete that one first."; return; }
+        const rec = { p: ed.p, k: ed.k, ok: ed.ok };
+        if (ed.idx != null) list[ed.idx] = rec; else list.push(rec);
+        list.sort((x, y) => x.k - y.k);
+        delete st.dead[keyOf(ed.i)];
+        const saved = ed.i; I.edit = null; saveIrl(); paintIrl(c);
+        const nx = irlCurrent(irlOrder()), card = nx ? document.getElementById((nx.kind === "tu" ? "irl-t-" : "irl-b-") + nx.i) : null;
+        if (card && rec.ok) card.scrollIntoView({ behavior: smooth(), block: "start" }); else { const c2 = document.getElementById("irl-t-" + saved); if (c2) c2.scrollIntoView({ block: "nearest" }); }
+        return;
+      }
+      if (a === "dead") { st.dead[keyOf(qi)] = true; I.edit = null; saveIrl(); paintIrl(c); return; }
+      if (a === "undead") { delete st.dead[keyOf(qi)]; saveIrl(); paintIrl(c); return; }
+      if (a === "part") { const arr = st.parts[keyOf(qi)] = st.parts[keyOf(qi)] || [], pi = +b.dataset.part, v = +b.dataset.v; arr[pi] = arr[pi] === v ? null : v; saveIrl(); paintIrl(c); const same = $('#irl-container [data-irl="part"][data-q="' + qi + '"][data-part="' + pi + '"][data-v="' + v + '"]'); if (same) same.focus({ preventScroll: true }); return; }
+      if (a === "anyway") { st.anyway[keyOf(qi)] = !st.anyway[keyOf(qi)]; saveIrl(); paintIrl(c); return; }
+      if (a === "jump") { const cu = irlCurrent(order); if (cu) { const cd = document.getElementById((cu.kind === "tu" ? "irl-t-" : "irl-b-") + cu.i); if (cd) cd.scrollIntoView({ behavior: smooth(), block: "start" }); } return; }
+      if (a === "finish") {
+        const left = irlCurrent(order);
+        confirmDialog(left ? "Finish now? Questions not recorded yet count as not reached." : "Finish and release the report?", async () => {
+          clearTimeout(I.saveT);
+          const r = await post("/api/diag/finish", { id: I.id, state: I.state });
+          if (!r || r.error) { failBubble(document.querySelector("#irl-container .irl-finish"), (r && r.error) || OFFLINE); return; }
+          S.irl = null; openReport(I.id);
+        }, { yes: "Finish", title: "Release the report" });
+      }
+    };
+    c.onchange = (e) => { const t = e.target; if (t.name === "bz-player" && S.irl && S.irl.edit) { S.irl.edit.p = t.value; const m = document.getElementById("bz-msg"); if (m) m.textContent = ""; updateEditor(); } };
+  }
+  // ═══ REPORT ═══
+  function openReport(id) {
+    S.rep = { id, d: null, cov: {}, pc: {} };
+    markSeen(id);
+    if (typeof goTo === "function") goTo("report");
+  }
+  async function renderReport() {
+    const c = document.getElementById("rp-container"); if (!c) return;
+    if (await gate(c, "chart", "Team diagnostics")) return;
+    const R = S.rep;
+    if (!R || !R.id) { c.innerHTML = plainPanel("chart", "No report is open.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+    if (!R.d) {
+      c.innerHTML = loading("Loading the report…");
+      const d = await get("/api/diag/report?id=" + encodeURIComponent(R.id));
+      if (S.rep !== R) return;
+      if (!d || d.error) { c.innerHTML = plainPanel("chart", (d && d.error) || OFFLINE, '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+      if (d.locked) { c.innerHTML = plainPanel("lock", "This report isn't released yet. It opens for everyone at once when the diagnostic ends.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+      R.d = d.report || d;
+    }
+    paintReport(c);
+  }
+  const level = (p) => (p >= 70 ? "good" : p >= 30 ? "mid" : "gap");
+  const ST_LABEL = { good: "Strength", mid: "Middling", gap: "Gap", ovl: "Overlap", few: "Too few" };
+  const KIND_CHIP = { gap: '<span class="dx-chip gap">Gap</span>', habit: '<span class="dx-chip mid">Habit</span>', ovl: '<span class="dx-chip ovl">Overlap</span>', mid: '<span class="dx-chip mid">Middling</span>', few: '<span class="dx-chip few">Too few</span>' };
+  const bar = (p, cls) => '<span class="cl-bar"><i class="' + (cls || level(p)) + '" style="width:' + Math.max(0, Math.min(100, p)) + '%"></i></span>';
+  const brow = (label, p, f, cls) => '<div class="brow"><span class="l">' + label + "</span>" + bar(p, cls) + '<span class="p">' + p + '%</span><span class="f">' + (f || "") + "</span></div>";
+  function paintReport(c) {
+    const R = S.rep, d = R.d, ppl = d.people || {}, meH = signedIn() ? Account.user.handle : "";
+    const who = (mid) => ppl[mid] ? { ...ppl[mid], mid, you: !!(meH && ppl[mid].handle === meH) } : { name: "Former member", mid, na: true, former: true };
+    const s = d.summary || {}, prev = s.prev || null, hasTu = d.format !== "bo", hasBo = d.format !== "tu";
+    const date = d.date ? dayText(d.date) : "";
+    const delta = (now, was, unit, invert) => {
+      if (!prev) return "";
+      if (was == null || now == null) return '<span class="dlt dlt-flat">—</span>';
+      const x = Math.round((now - was) * 10) / 10;
+      if (!x) return '<span class="dlt dlt-flat">Same</span>';
+      const good = invert ? x < 0 : x > 0;
+      return '<span class="dlt ' + (good ? "dlt-good" : "dlt-bad") + '">' + ico(x > 0 ? "up" : "down", 13) + (x > 0 ? "+" : "−") + Math.abs(x) + (unit || "") + "</span>";
+    };
+    const tiles = [];
+    if (hasTu) {
+      tiles.push(["Questions", fmt(s.tuRead + (hasBo ? s.bonuses || 0 : 0)), hasBo ? plural(s.tuRead, "tossup") + ", " + plural(s.bonuses || 0, "bonus", "bonuses") : plural(s.tuRead, "tossup"), ""]);
+      tiles.push(["Conversion", (s.conv == null ? 0 : s.conv) + "%", s.got + " of " + plural(s.tuRead, "tossup"), delta(s.conv, prev && prev.conv, " pts")]);
+      tiles.push(["Powers", fmt(s.powers), s.powerPlayers ? plural(s.powerPlayers, "player") : "none", delta(s.powers, prev && prev.powers)]);
+      tiles.push(["Negs", fmt(s.negs), s.negTopCat ? s.negTopN + " on " + s.negTopCat : s.negs ? "spread out" : "none", delta(s.negs, prev && prev.negs, "", true)]);
+      tiles.push(["Buzz depth", s.depth == null ? "—" : s.depth + "%", "of the question", delta(s.depth, prev && prev.depth, " pts", true)]);
+    }
+    if (hasBo) tiles.push(["Bonuses", s.ppb == null ? "—" : s.ppb.toFixed(1), "points per bonus", delta(s.ppb, prev && prev.ppb)]);
+    if (!hasTu) tiles.unshift(["Bonuses heard", fmt(s.bonuses || 0), "", ""]);
+    const seeAll = (d.cards || []).some((x) => !who(x.mid).you);
+    const meta = [FORMATS[d.format] && FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), "NAQT distribution", plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
+    const jump = [["rp-summary", "Summary"], hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], ["rp-plan", "Practice"], ["rp-players", seeAll ? "Players" : "Your card"]];
+    let html = '<div class="cl-page rp-page"><div class="rp-head"><div><p class="eyebrow">' + esc([d.org && d.org.name, d.team].filter(Boolean).join(" · ")) + "</p><h1>" + esc(date) + " diagnostic" + info("Released to every player at once" + (d.date ? ", " + whenText(d.date) : "") + ".", "When this report was released") + '</h1><p class="rp-meta">' + esc(meta) + "</p></div>" +
+      '<div class="ph-right"><button type="button" class="btn" data-go-clubs="diagnostics">' + ico("doc", 16) + "All reports</button></div></div>" +
+      '<nav class="rp-jump" aria-label="Report sections">' + jump.map((j) => '<button type="button" class="db-tab" data-jump="' + j[0] + '">' + j[1] + "</button>").join("") + "</nav>";
+    // summary
+    const trend = (d.trend || []).length >= 2 ? '<div class="cl-trend"><span class="eyebrow">' + esc(d.team) + " conversion</span>" + trendSvg(d.trend) + "</div>" : "";
+    html += '<section class="rp-sec" id="rp-summary" aria-label="Summary"><div class="rp-sec-head"><h2>Summary</h2>' + (prev ? info("Compared with " + esc(d.team) + "'s " + (prev.date ? dayText(prev.date) : "previous") + " diagnostic, same format and difficulty.", "What the changes compare with") : "") + "</div>" +
+      '<div class="cl-tiles" style="--n:' + tiles.length + '">' + tiles.map((t) => '<div class="cl-tile"><span class="eyebrow">' + t[0] + '</span><span class="v">' + esc(t[1]) + '</span><span class="s">' + esc(t[2]) + "</span>" + (t[3] ? '<span class="dl">' + t[3] + "</span>" : "") + "</div>").join("") + "</div>" +
+      (d.verdict || trend ? '<div class="cl-card verdict' + (trend ? "" : " solo") + '"><p>' + esc(d.verdict || "") + "</p>" + trend + "</div>" : "");
+    const got = (d.got || []).filter((g) => g.n > 0), maxGot = Math.max(1, ...got.map((g) => g.n));
+    const partsCard = hasBo && (s.parts || []).length ? '<div class="cl-card"><h3 class="eyebrow">Bonus parts' + info(TIP.bonus, "About bonus parts") + "</h3>" + s.parts.map((b) => brow(esc(b.label), pct(b.got, b.n), b.got + "/" + b.n)).join("") +
+      '<p class="pc-line rp-ppb"><b>' + (s.ppb == null ? "—" : s.ppb.toFixed(1)) + "</b> points per bonus on " + plural(s.bonuses || 0, "bonus", "bonuses") + (prev && prev.ppb != null ? " · " + (prev.date ? dayText(prev.date) : "before") + ": " + prev.ppb.toFixed(1) : "") + "</p></div>" : "";
+    const gotCard = hasTu ? '<div class="cl-card"><h3 class="eyebrow">Who got the tossups' + info(d.place === "own" ? "Tossups each player answered correctly. Bars are relative to the top scorer." : TIP.got, "About this chart") + "</h3>" +
+      (got.length ? got.map((g) => '<div class="brow"><span class="l">' + nmFirst(who(g.mid)) + "</span>" + bar(pct(g.n, maxGot), "acc") + '<span class="p">' + g.n + '</span><span class="f">' + pct(g.n, s.got || 1) + "%</span></div>").join("") : '<p class="cl-none">Nobody got a tossup.</p>') + "</div>" : "";
+    if (partsCard || gotCard) html += '<div class="split2">' + (partsCard || "") + (gotCard || "") + "</div>";
+    html += "</section>";
+    // coverage (or, bonuses only, conversion by category)
+    if (hasTu) html += '<section class="rp-sec" id="rp-coverage" aria-label="Coverage"><div class="rp-sec-head"><h2>Coverage</h2>' + info(TIP.cov, "How coverage is labeled") + "</div>" + covHtml(d, who) + "</section>";
+    else html += '<section class="rp-sec" id="rp-coverage" aria-label="Categories"><div class="rp-sec-head"><h2>Categories</h2></div><div class="cl-card">' + (d.bonusCats || []).map((b) => brow('<span class="dot-c" style="--c:' + catColor(b.cat) + '"></span>' + esc(SHORT[b.cat] || b.cat), Math.round(100 * (b.ppb || 0) / 30), (b.ppb || 0).toFixed(1) + " ppb", "acc")).join("") + "</div></section>";
+    // what to practice
+    const plan = d.plan || [];
+    html += '<section class="rp-sec" id="rp-plan" aria-label="What to practice"><div class="rp-sec-head"><h2>What to practice</h2>' + info(TIP.plan, "How the plan is ordered") + "</div>" +
+      (plan.length ? '<ol class="cl-plan">' + plan.map((p, i) => '<li class="plan-item"><span class="prio ' + p.lvl + '">' + (p.lvl === "high" ? "High" : p.lvl === "med" ? "Medium" : "Low") + '</span><div class="pi-body"><h3>' + esc(p.title) + (KIND_CHIP[p.kind] || "") + "</h3><p>" + esc(p.body) + '</p><p class="pi-assign">' + (p.mid ? nm(who(p.mid)) + " · " : "") + esc((p.sub ? p.cat + ", " + p.sub : p.cat) + " · difficulty " + diffText(d.diff)) + "</p></div>" +
+        '<div class="pi-foot"><button type="button" class="btn btn-sm btn-primary" data-practice="' + i + '">' + ico("play", 14) + "Practice this</button></div></li>").join("") + "</ol>"
+        : '<div class="fr-list"><div class="cl-empty">Nothing stands out. Run another diagnostic at a harder difficulty.</div></div>') + "</section>";
+    // players
+    // you first, then by tossups got and points
+    const cards = (d.cards || []).slice().sort((a, b) => (who(b.mid).you - who(a.mid).you) || (b.got - a.got) || (b.points - a.points)).map((x) => playerCard(x, d, who)).join("");
+    html += '<section class="rp-sec" id="rp-players" aria-label="Players"><div class="rp-sec-head"><h2>' + (seeAll ? "Players" : "Your card") + "</h2>" + (seeAll ? "" : info("The team's captain and the organization's admins see every player's card.", "Who sees every card")) + '</div><div class="pcards">' + (cards || '<div class="cl-card pc-note"><p>You didn\'t play in this one.</p></div>') + "</div></section></div>";
+    c.innerHTML = html;
+    c.onclick = (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      if (b.dataset.jump) { const t = document.getElementById(b.dataset.jump); if (t) t.scrollIntoView({ behavior: smooth(), block: "start" }); return; }
+      if (b.dataset.cov) { R.cov[b.dataset.cov] = !R.cov[b.dataset.cov]; const sub = document.getElementById("cov-sub-" + b.dataset.cov); if (sub) sub.hidden = !R.cov[b.dataset.cov]; b.setAttribute("aria-expanded", String(!!R.cov[b.dataset.cov])); return; }
+      if (b.dataset.pc) { R.pc[b.dataset.pc] = !R.pc[b.dataset.pc]; const card = b.closest(".pcard"); if (card) card.classList.toggle("open", !!R.pc[b.dataset.pc]); b.textContent = R.pc[b.dataset.pc] ? "Less" : "More"; b.setAttribute("aria-expanded", String(!!R.pc[b.dataset.pc])); return; }
+      if (b.dataset.goClubs) { open(b.dataset.goClubs); return; }
+      if (b.dataset.practice != null) { const p = plan[+b.dataset.practice]; if (p) practiceArea(p.cat, p.sub, d.diff); }
+    };
+  }
+  function covHtml(d, who) {
+    const rows = d.coverage || [];
+    if (!rows.length) return '<div class="fr-list"><div class="cl-empty">No tossups were read.</div></div>';
+    const whoHtml = (r) => !r.who || !r.who.length ? '<span class="nobody">Nobody</span>' + (r.tried ? '<span class="cl-dim">' + esc(firstName(who(r.tried))) + " buzzed</span>" : "")
+      : r.who.slice(0, 2).map((w) => '<span class="w">' + av(who(w[0]), "xs") + nmFirst(who(w[0])) + "<small>" + w[1] + "</small></span>").join("");
+    const cells = (r) => '<span class="cov-conv">' + bar(r.pct) + '<span class="p">' + r.pct + '%</span><span class="f">' + r.team + "/" + r.n + '</span></span><span class="cov-who">' + whoHtml(r) + '</span><span class="cov-status"><span class="dx-chip ' + r.status + '">' + ST_LABEL[r.status] + "</span></span>";
+    const prevLbl = d.summary && d.summary.prev && d.summary.prev.date ? "vs " + dayText(d.summary.prev.date).replace(/^\w+ /, "") : "Change";
+    return '<div class="cov" role="table" aria-label="Team coverage"><div class="cov-row head" role="row"><span>Category</span><span>Conversion</span><span>Got them</span><span>Status</span><span>' + esc(prevLbl) + "</span></div>" +
+      rows.map((r, i) => {
+        const open = !!S.rep.cov[i], subs = r.subs || [], hasSubs = subs.length > 0;
+        const area = hasSubs ? '<button type="button" class="cov-toggle" data-cov="' + i + '" aria-expanded="' + open + '" aria-controls="cov-sub-' + i + '"><span class="chev" aria-hidden="true"></span><span class="dot" style="--c:' + catColor(r.cat) + '"></span><span class="nm">' + esc(r.cat) + "</span></button>"
+          : '<span class="cov-toggle static"><span class="chev" aria-hidden="true"></span><span class="dot" style="--c:' + catColor(r.cat) + '"></span><span class="nm">' + esc(r.cat) + "</span></span>";
+        const dl = r.n >= 2 && r.prevPct != null ? (() => { const x = r.pct - r.prevPct; return !x ? '<span class="dlt dlt-flat">0</span>' : '<span class="dlt ' + (x > 0 ? "dlt-good" : "dlt-bad") + '">' + (x > 0 ? "+" : "−") + Math.abs(x) + "</span>"; })() : "";
+        return '<div class="cov-row" role="row"><span class="cov-area">' + area + "</span>" + cells(r) + '<span class="cov-delta">' + dl + "</span></div>" +
+          (hasSubs ? '<div class="cov-subs" id="cov-sub-' + i + '"' + (open ? "" : " hidden") + ">" + subs.map((sb) => '<div class="cov-row" role="row"><span class="cov-area"><span>' + esc(sb.name) + "</span></span>" + cells(sb) + '<span class="cov-delta"></span></div>').join("") + "</div>" : "");
+      }).join("") + "</div>";
+  }
+  function trendSvg(pts) {
+    pts = pts.slice(-5);
+    const vals = pts.map((p) => p.conv), lo = Math.max(0, Math.min(40, Math.floor((Math.min(...vals) - 10) / 10) * 10)), hi = Math.min(100, Math.max(lo + 30, Math.ceil((Math.max(...vals) + 10) / 10) * 10));
+    const y = (v) => 100 - ((v - lo) / (hi - lo)) * 88, x0 = 70, x1 = 260, xs = pts.map((_, i) => (pts.length === 1 ? (x0 + x1) / 2 : x0 + (i * (x1 - x0)) / (pts.length - 1)));
+    const line = pts.map((p, i) => (i ? "L" : "M") + xs[i] + " " + y(p.conv)).join(" "), mid = Math.round((lo + hi) / 2 / 10) * 10;
+    return '<svg viewBox="0 0 300 128" role="img" aria-label="Conversion over the last ' + pts.length + " diagnostics: " + vals.map((v) => v + "%").join(", ") + '">' +
+      [hi, mid].map((v) => '<line class="t-grid" x1="44" x2="290" y1="' + y(v) + '" y2="' + y(v) + '"/><text class="t-lbl" x="38" y="' + (y(v) + 4) + '" text-anchor="end">' + v + "%</text>").join("") + '<line class="t-grid" x1="44" x2="290" y1="100" y2="100"/>' +
+      '<path class="t-area" d="' + line + " L" + xs[xs.length - 1] + " 100 L" + xs[0] + ' 100 Z"/><path class="t-line" d="' + line + '"/>' +
+      pts.map((p, i) => '<circle class="t-pt' + (i === pts.length - 1 ? " last" : "") + '" cx="' + xs[i] + '" cy="' + y(p.conv) + '" r="' + (i === pts.length - 1 ? 5 : 4) + '"/><text class="t-val" x="' + xs[i] + '" y="' + (y(p.conv) - 11) + '" text-anchor="middle">' + p.conv + '%</text><text class="t-lbl" x="' + xs[i] + '" y="120" text-anchor="middle">' + esc(dayText(p.date).replace(/^\w+ /, "")) + "</text>").join("") + "</svg>";
+  }
+  function playerCard(x, d, who) {
+    const p = who(x.mid), open = !!S.rep.pc[x.mid], s = d.summary || {}, cap = p.captain;
+    const trend = x.prev ? (() => {
+      const dc = x.got - x.prev.got, dd = x.prev.depth != null && x.depth != null ? x.prev.depth - x.depth : null;
+      return "vs last time: " + (dc > 0 ? "+" + dc : dc < 0 ? "−" + Math.abs(dc) : "same") + (Math.abs(dc) === 1 ? " tossup" : " tossups") + (dd == null ? "" : " · " + (dd > 0 ? dd + " pts earlier" : dd < 0 ? Math.abs(dd) + " pts later" : "same depth"));
+    })() : "";
+    const hasTu = d.format !== "bo";
+    return '<article class="cl-card pcard' + (open ? " open" : "") + '" aria-label="' + esc(p.name) + '"><header class="pc-head">' + av(p) + '<div class="pc-who"><b>' + nm(p) + "</b><small>" + (cap ? "Captain" : p.former ? "Former member" : handleText(p)) + "</small></div>" + (p.you ? '<span class="badge cl-you">You</span>' : "") +
+      (hasTu ? '<button type="button" class="btn btn-ghost btn-sm pc-toggle" data-pc="' + esc(x.mid) + '" aria-expanded="' + open + '">' + (open ? "Less" : "More") + "</button>" : "") + "</header>" +
+      (hasTu ? '<dl class="pc-stats"><div><dt>Tossups</dt><dd>' + x.got + "<small>/" + (s.got || 0) + "</small></dd></div><div><dt>Powers</dt><dd>" + x.powers + '</dd></div><div><dt>Neg rate</dt><dd class="' + (x.negRate > 30 ? "warn" : "") + '">' + (x.buzzes ? x.negRate + "%" : "—") + "</dd></div><div><dt>Points</dt><dd>" + x.points + "</dd></div></dl>" +
+        '<div class="pc-more"><div class="pc-sec"><h3 class="eyebrow">Buzz depth</h3>' + (x.depth != null ? '<span class="depth-track" aria-hidden="true">' + (s.depth != null ? '<i class="team" style="left:' + s.depth + '%"></i>' : "") + '<i class="me" style="left:' + x.depth + '%"></i></span><div class="depth-scale" aria-hidden="true"><span>start</span><span>end</span></div><p class="pc-line">At <b>' + x.depth + "%</b> on average." + (s.depth != null ? " Team: " + s.depth + "%." : "") + "</p>" : '<p class="pc-line cl-dim">No correct buzzes.</p>') + "</div>" +
+        '<div class="pc-sec"><h3 class="eyebrow">Share of the team\'s tossups</h3>' + ((x.scored || []).length ? x.scored.map((sc) => brow(esc(SHORT[sc[0]] || sc[0]), pct(sc[1], sc[2]), sc[1] + "/" + sc[2], "acc")).join("") : '<p class="pc-line cl-dim">None yet.</p>') + "</div>" +
+        '<div class="pc-sec"><h3 class="eyebrow">Negs</h3><p class="pc-line' + (x.negsIn ? "" : " cl-dim") + '">' + (x.negsIn ? esc(x.negsIn) : "None") + "</p></div>" + (trend ? '<p class="pc-trend">' + esc(trend) + "</p>" : "") + "</div>"
+        : '<p class="pc-line cl-dim">Bonuses are scored for the team.</p>') + "</article>";
+  }
+  // "Practice this": tossup practice with that category and the diagnostic's difficulties ticked
+  async function practiceArea(cat, sub, diff) {
+    goTo("practice-tossups");
+    try {
+      const tree = await fetchCatTree("tossups");
+      const root = tree.byPath.get(cat), node = sub ? tree.byPath.get(cat + " > " + sub) : null;
+      if (!root) return;
+      for (let i = 0; i < 60 && !document.querySelector("#category-filters .cat-node"); i++) await new Promise((r) => setTimeout(r, 50));
+      applyCatState({ v: 1, ids: node ? [root.id, node.id] : [root.id], auto: node ? [root.id] : [], weights: {} }, { initial: true });
+      if (Array.isArray(diff) && diff.length) $$("#difficulty-filters .diff-checkbox").forEach((cb) => { cb.checked = diff.includes(Number(cb.value)); });
+      saveFilterState();
+      if (typeof refreshCategorySummary === "function") refreshCategorySummary();
+    } catch (e) { console.error("practice this:", e); }
+  }
+  // ═══ LEADERBOARDS: Teams and Organizations (Individuals stays app.js's) ═══
+  async function renderGroups(box, kind, period) {
+    const key = kind + "|" + period;
+    if (S.groups && S.groups.key === key) box.innerHTML = groupsHtml(S.groups.d, kind);
+    else box.innerHTML = loading("Loading the leaderboard…");
+    const d = await get("/api/leaderboards/groups?kind=" + kind + "&period=" + period);
+    S.groups = { key, d };
+    if (box.isConnected) box.innerHTML = groupsHtml(d, kind);
+  }
+  function groupsHtml(d, kind) {
+    if (!d || d.error) return '<div class="db-empty">' + esc((d && d.error) || OFFLINE) + "</div>";
+    const rows = d.rows || [];
+    if (!rows.length) return '<div class="db-empty">No ' + (kind === "teams" ? "team" : "organization") + " is ranked yet.</div>";
+    const stat = (v, l) => '<span class="fr-stat"><b class="num">' + v + "</b><small>" + l + "</small></span>";
+    let html = "", last = 0;
+    rows.forEach((e) => {
+      if (e.rank > last + 1 && last) html += '<div class="lb-gap">…</div>';
+      last = e.rank;
+      html += kind === "teams"
+        ? '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.team) + "</b>" + (e.mine ? '<span class="badge cl-you">Your team</span>' : "") + "<small>" + esc(e.org) + "</small></span>" +
+          stat(e.active + (e.roster !== e.active ? '<small class="num"> /' + e.roster + "</small>" : ""), "active") + stat(fmt(e.avg), "avg / member") + stat(fmt(e.total), "total points") + stat(e.acc == null ? "—" : e.acc + "%", "accuracy") + "</div>"
+        : '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.name) + "</b>" + (e.mine ? '<span class="badge cl-you">Yours</span>' : "") + "<small>" + e.active + " of " + e.members + " active</small></span>" +
+          stat(e.teams, e.teams === 1 ? "team" : "teams") + stat(e.members, "members") + stat(fmt(e.avg), "avg / member") + stat(fmt(e.total), "total points") + "</div>";
+    });
+    return '<div class="fr-list lb-board">' + html + "</div>";
+  }
+  const groupsTip = () => info(TIP.avg, "How teams and organizations are ranked");
+
+  // ═══ wiring ═══
+  function onScreen(name) {
+    if (name === "clubs") renderClubs();
+    else if (name === "diagnostic") renderSetup();
+    else if (name === "irl") renderIrl();
+    else if (name === "report") renderReport();
+  }
+  document.addEventListener("change", (e) => {
+    const s = e.target; if (!s || s.id !== "clubs-org-sel") return;
+    if (s.value && s.value !== S.orgId) { S.orgId = s.value; ls.set("qb-club-org", s.value); S.org = null; S.lb = null; renderClubs(); }
+  });
+  document.addEventListener("click", (e) => { const b = e.target.closest && e.target.closest("#btn-clubs-join"); if (b) joinCreateDialog("join"); });
+  // the address of what's showing (app.js webPathNow) and opening one (webRoute)
+  function webPath(screenId) {
+    if (screenId === "clubs-screen") return "/clubs" + (S.tab && S.tab !== "teams" ? "/" + S.tab : "");
+    if (screenId === "diagnostic-screen") return "/diagnostic";
+    if (screenId === "irl-screen") return S.irl && S.irl.id ? "/diagnostic/irl/" + encodeURIComponent(S.irl.id) : "/clubs/diagnostics";
+    if (screenId === "report-screen") return S.rep && S.rep.id ? "/report/" + encodeURIComponent(S.rep.id) : "/clubs/diagnostics";
+    return null;
+  }
+  function route(seg) {
+    const [a, b, c] = seg;
+    if (a === "clubs") { open(b || "teams"); return true; }
+    if (a === "diagnostic" && b === "irl" && c) { openIrl(c); return true; }
+    if (a === "diagnostic") { if (typeof goTo === "function") goTo("diagnostic"); return true; }
+    if (a === "report" && b) { openReport(b); return true; }
+    return false;
+  }
+  window.QBClubs = { poll, paintBadge, onScreen, open, openIrl, openReport, webPath, route, renderGroups, groupsTip, renderClubs };
+  if (window.QB) {
+    window.QB.openClubs = (tab) => open(tab || "diagnostics");
+    window.QB.openDiagReport = (id) => openReport(id);
+  }
 })();
 
 
