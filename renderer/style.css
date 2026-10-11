@@ -3684,7 +3684,7 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .mp-logrow { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--r); background: var(--bg); }
 .mp-logrow .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .mp-logrow .nm b { color: var(--strong); font-weight: 500; }
-.mp-logrow .nm span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-logrow .nm > span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mp-log-empty { padding: 6px 2px; font-size: 13px; }
 .mp-history { border: 0; padding: 0; background: none; }
 .mp-timer-bar { height: 5px; border-radius: 3px; background: var(--raised); border: 0; overflow: hidden; margin-top: 6px; }
@@ -4854,7 +4854,13 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 /* ── The Store (app.js renderStore) and the neon name ── */
 /* a neon name in a box that cuts long names off with "…": the glow spills out of it (overflow: clip
    paints ink up to the clip margin; overflow: hidden cut the glow into a rectangle) */
-.fr-name b:has(> .neon-name), .mp-player .nm b:has(> .neon-name), .mp-player .nm .mp-edit:has(> .neon-name) { overflow: clip; overflow-clip-margin: 56px; }
+.fr-name b:has(> .neon-name), .mp-player .nm b:has(> .neon-name), .mp-player .nm .mp-edit:has(> .neon-name),
+.mp-logrow .nm b:has(> .neon-name), .tbm-who b:has(> .neon-name), .up-who b:has(> .neon-name) { overflow: clip; overflow-clip-margin: 56px; }
+/* a neon name in a text box (QB.neonField): the glowing copy over it, until the box is focused */
+.neon-ghost { position: absolute; display: flex; align-items: center; white-space: pre; overflow: clip; overflow-clip-margin: 56px; text-overflow: ellipsis; pointer-events: none; }
+input.neon-in:not(:focus) { color: transparent; }
+input.neon-in:focus { color: color-mix(in srgb, var(--neon) 45%, var(--strong)); }
+input.neon-in:focus + .neon-ghost { display: none; }
 .neon-name { --neon: #22d3ee; color: color-mix(in srgb, var(--neon) 30%, #fff); text-shadow: 0 0 1px var(--neon), 0 0 6px var(--neon), 0 0 14px color-mix(in srgb, var(--neon) 75%, transparent), 0 0 26px color-mix(in srgb, var(--neon) 45%, transparent); }
 html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%, #000); text-shadow: 0 0 8px color-mix(in srgb, var(--neon) 55%, transparent), 0 0 18px color-mix(in srgb, var(--neon) 30%, transparent); }
 .tb-store { color: var(--strong); }

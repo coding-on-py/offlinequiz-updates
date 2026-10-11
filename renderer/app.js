@@ -982,7 +982,7 @@ function updateTopbar() {
 function renderTopbarProfile() {
   const initial = (String(state.username || "").trim()[0] || "?").toUpperCase();
   ["tb-avatar", "tbm-avatar"].forEach((id) => { const av = document.getElementById(id); if (av) av.textContent = initial; });
-  const nm = document.getElementById("tbm-name"); if (nm) nm.textContent = state.username || "Player";
+  const nm = document.getElementById("tbm-name"); if (nm) nm.innerHTML = neonName(state.username || "Player", myNeon());
   renderAccountMenu();
   const prof = document.getElementById("tb-profile");
   if (prof) prof.title = state.username || "Profile";
@@ -990,7 +990,7 @@ function renderTopbarProfile() {
 function renderGreeting() {
   const g = document.getElementById("title-greeting");
   if (!g) return;
-  g.innerHTML = state.username ? `Welcome back, <b>${escapeHtml(state.username)}</b>` : "Welcome";
+  g.innerHTML = state.username ? `Welcome back, <b>${neonName(state.username, myNeon())}</b>` : "Welcome";
 }
 function renderStreak(n) {
   const b = document.getElementById("tb-streak"), c = document.getElementById("tb-streak-n");
@@ -1310,7 +1310,7 @@ function showSettingsSection(sec) {
   if (sec === "tags") renderTagSettings();
   if (sec === "hotkeys") renderHotkeySettings();
   if (sec === "sound") syncSoundControls();
-  if (sec === "profile") { const n = document.getElementById("set-username"); if (n) n.value = state.username || ""; }
+  if (sec === "profile") { const n = document.getElementById("set-username"); if (n) { n.value = state.username || ""; window.QB?.neonField?.(n, myNeon()); } }
   if (sec === "appearance") { const tn = document.getElementById("set-theme-name"); if (tn) tn.textContent = activeTheme()?.name || "Default"; }
   const body = document.getElementById("set-body"); if (body) body.scrollTop = 0;
 }
@@ -9035,6 +9035,7 @@ async function loadPlayer() {
     `;
 
     initCollapsibles(container);
+    window.QB?.neonField?.($("#player-username-input"), myNeon());   // a bought neon name glows here too
 
     $("#player-username-input")?.addEventListener("input", (e) => {
       state.username = e.target.value.trim();
@@ -11123,7 +11124,7 @@ function renderAccountMenu() {
     let em = head.querySelector(".tbm-email");
     if (!em) { em = document.createElement("small"); em.className = "tbm-email"; head.appendChild(em); }
     em.textContent = Account.user ? (Account.user.handle ? "@" + Account.user.handle : Account.user.email) : "";
-    const nm = head.querySelector("b"); if (nm && Account.user && IS_WEB) nm.textContent = Account.user.displayName || Account.user.handle || "Player";
+    const nm = head.querySelector("b"); if (nm && Account.user && IS_WEB) nm.innerHTML = neonName(Account.user.displayName || Account.user.handle || "Player", myNeon());
     em.hidden = !Account.user;
   }
 }
@@ -11224,12 +11225,12 @@ function openAccount(mode, opts) {
     else if (m === "profile") html = head(u.handle ? "Edit profile" : "Finish setting up", u.handle ? "" : "Choose a username — friends add you by it.") +
       `<form class="acct-form">${handleField(o.keepHandle != null ? o.keepHandle : (u.handle || ""))}${displayField(o.keepDisplay != null ? o.keepDisplay : (u.displayName || ""))}${err}<button type="submit" class="btn btn-primary btn-md">Save</button></form>` + (u.handle ? `<div class="acct-links">${link("account", "Back")}</div>` : "");
     else if (m === "applink") html = Account.user
-      ? head("Connect the OfflineQuiz app", `Sign the app in as <b>${escapeHtml(u.displayName || u.handle || u.email || "")}</b>${u.handle ? " (@" + escapeHtml(u.handle) + ")" : ""}? Its stats and stars will sync with this account.`) + err +
+      ? head("Connect the OfflineQuiz app", `Sign the app in as <b>${neonName(u.displayName || u.handle || u.email || "", u.neon)}</b>${u.handle ? " (@" + escapeHtml(u.handle) + ")" : ""}? Its stats and stars will sync with this account.`) + err +
         `<div class="acct-actions"><button type="button" class="btn" data-to="close">Not now</button><button type="button" class="btn btn-primary" data-to="approve">Connect app</button></div>`
       : head("Connect the OfflineQuiz app", "Sign in first — then connect the app.") + googleBtn() + `<div class="acct-actions"><button type="button" class="btn" data-to="signup">Create account</button><button type="button" class="btn btn-primary" data-to="signin">Sign in</button></div>`;
     else if (m === "applinked") html = head("The app is signed in", "You can go back to OfflineQuiz — it syncs with this account from now on.") + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
     else if (m === "account") html = head("Account") + okLine + err +
-      `<div class="acct-rows"><div class="acct-row"><span class="fr-av">${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${escapeHtml(u.displayName || u.handle || "")}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
+      `<div class="acct-rows"><div class="acct-row"><span class="fr-av">${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${neonName(u.displayName || u.handle || "", u.neon)}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
       `<div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}${u.google ? '<small>Signs in with Google</small>' : ""}</span></div>` +
       (Account.app ? `<div class="acct-row">${ic("review", 16)}<span class="acct-v" id="acct-sync-line">${escapeHtml(syncLineText())}</span><button type="button" class="btn btn-sm" id="acct-sync-now">Sync now</button></div>` : "") +
       `</div><div class="acct-actions"><button type="button" class="btn" id="acct-logout">Sign out</button><button type="button" class="btn" data-to="leaderboards">Leaderboards</button><button type="button" class="btn" data-to="friends">Friends</button><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
@@ -11361,10 +11362,10 @@ function applyAccountName() {
     if (!dn || Account.offline || state.username === dn || pushAccountName._t) return;   // a typed name on its way wins
     state.username = dn; lsSet("qb-username", dn);
     try { pushProfileSettings(); } catch (e) {}
-    const inp = document.getElementById("set-username"); if (inp && document.activeElement !== inp) inp.value = dn;
+    const inp = document.getElementById("set-username"); if (inp && document.activeElement !== inp) { inp.value = dn; window.QB?.neonField?.(inp, myNeon()); }
   }
   renderGreeting(); renderTopbarProfile();
-  try { const pi = document.getElementById("player-username-input"); if (pi && document.activeElement !== pi) pi.value = state.username || ""; } catch (e) {}
+  try { const pi = document.getElementById("player-username-input"); if (pi && document.activeElement !== pi) { pi.value = state.username || ""; window.QB?.neonField?.(pi, myNeon()); } } catch (e) {}
 }
 function pushAccountName(name) {
   name = String(name || "").trim();
@@ -11436,12 +11437,12 @@ document.addEventListener("click", (e) => {
   const el = userTarget(e.target); if (!el) return;
   if (String(window.getSelection() || "").trim().length > 1) return;   // selecting their name, not picking them
   e.preventDefault();
-  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "", pid: el.dataset.mpPid || "" });
+  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "", pid: el.dataset.mpPid || "", neon: el.dataset.userNeon || "" });
 });
 document.addEventListener("contextmenu", (e) => {
   const el = userTarget(e.target); if (!el || !window.QB?.contextMenu) return;
   e.preventDefault(); e.stopImmediatePropagation();
-  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "", pid: el.dataset.mpPid || "" });
+  openUserMenu(e.clientX, e.clientY, { handle: el.dataset.user || "", name: el.dataset.userName || "", pid: el.dataset.mpPid || "", neon: el.dataset.userNeon || "" });
 }, true);
 // More for that menu from elsewhere (host.addUserMenuItems): multiplayer's host adds "Take out of
 // the room" for a player in it. fn(u) → menu items (or none).
@@ -11454,13 +11455,15 @@ function userMenuExtras(u) {
 async function openUserMenu(x, y, u) {
   const handle = String(u.handle || "").replace(/^@/, ""), name = u.name || (handle ? "@" + handle : "Player");
   const title = handle ? (u.name && u.name !== handle ? u.name + "  @" + handle : "@" + handle) : name;
+  // their neon name glows in the menu's title too
+  const titleHtml = window.QB?.NEON?.[u.neon] ? (handle ? (u.name && u.name !== handle ? neonName(u.name, u.neon) + "  @" + escapeHtml(handle) : neonName("@" + handle, u.neon)) : neonName(name, u.neon)) : "";
   const extra = userMenuExtras(u);
   if (!handle) {
     window.QB.contextMenu(x, y, [
       { label: "Not signed in — no profile", onClick: () => {}, hint: "" },
       { label: "Copy name", onClick: () => copyToClipboard(name) },
       ...extra,
-    ], { title });
+    ], { title, titleHtml });
     return;
   }
   const me = Account.user && Account.user.handle;
@@ -11471,7 +11474,7 @@ async function openUserMenu(x, y, u) {
       { sep: true },
       { label: "Copy your username", onClick: () => copyToClipboard("@" + handle) },
       ...extra,   // (your account in another seat — another device — can still be taken out by a host)
-    ], { title: title + " (you)" });
+    ], { title: title + " (you)", titleHtml: titleHtml ? titleHtml + " (you)" : "" });
     return;
   }
   // how you stand with them: what the friends list said (a quick look if it's old)
@@ -11496,7 +11499,7 @@ async function openUserMenu(x, y, u) {
     } })), { title: "Invite @" + handle + " to" }) });
   }
   items.push({ sep: true }, { label: "Copy username", onClick: () => copyToClipboard("@" + handle) }, ...extra);
-  window.QB.contextMenu(x, y, items, { title });
+  window.QB.contextMenu(x, y, items, { title, titleHtml });
 }
 // Their profile: who they are, their totals and achievements (worked out here from
 // what the server sends, exactly as your own are), and the friend button.
@@ -11517,7 +11520,7 @@ async function openUserProfile(handle, shownName) {
   if (!document.body.contains(el)) return;
   const body = el.querySelector(".up-body");
   if (!d || d.error) { body.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't load that profile.")}</div>`; return; }
-  el.querySelector(".up-who b").textContent = d.displayName || d.handle;
+  el.querySelector(".up-who b").innerHTML = neonName(d.displayName || d.handle, d.neon);
   el.querySelector(".up-av").textContent = String(d.displayName || d.handle || "?")[0].toUpperCase();
   const rel = d.relation;
   const friendBtn = d.you ? "" : !d.signedIn ? '<button type="button" class="btn btn-sm" data-up="signin">Sign in to add friends</button>'
@@ -11869,6 +11872,15 @@ function preloadLeaderboards() {
 // load with the account (and again when the page opens), so it paints at once.
 const NEON_COLORS = (window.QB && window.QB.NEON) || {};   // the twelve colours (extensions.js)
 // a name as others see it: glowing in its colour when the account has one
+const myNeon = () => (window.QB && window.QB.myNeon ? window.QB.myNeon() : null);   // yours, once bought
+// your name everywhere it shows, after the colour (or what you own) changed
+function repaintMyNeon() {
+  try { renderTopbarProfile(); renderGreeting(); } catch (e) {}
+  ["player-username-input", "set-username", "mp-name"].forEach((id) => { const i = document.getElementById(id); if (i) window.QB?.neonField?.(i, myNeon()); });
+  if (document.querySelector("#friends-screen.active")) renderFriends();
+  window.QB?._emit?.("neon:changed", myNeon());
+}
+window.QB?.on?.("owned:changed", () => repaintMyNeon());
 const neonName = (text, neon) => window.QB && window.QB.neonHtml ? window.QB.neonHtml(escapeHtml(text), neon) : escapeHtml(text);
 const STORE_PLUGINS = [
   { sku: "kwfreq", id: "keyword-freq", name: "Keyword Frequency", color: "#58a6ff", icon: '<path d="M4 4v16"/><path d="M8 7h12M8 12h8M8 17h4"/>',
@@ -12085,14 +12097,14 @@ async function paintLeaderboards(c, d, board, note) {
     (d.signedIn ? '<button type="button" class="db-tab lb-new" data-lb-new>+ New leaderboard</button>' : "");
   const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
-  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}"><span class="lb-rank num">${r.rank}</span>${av(r.displayName || r.handle)}` +
+  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${av(r.displayName || r.handle)}` +
     `<span class="fr-name"><b>${neonName(r.displayName || r.handle, r.neon)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>points</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.questions || 0).toLocaleString()}</b><small>questions</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small>powers</small></span>` +
     `<span class="fr-stat"><b class="num">${r.accuracy == null ? "—" : r.accuracy + "%"}</b><small>accuracy</small></span>` +
     `<span class="fr-act">${removable && !r.you ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-lb-remove="${escapeHtml(r.handle)}" title="Remove from this leaderboard" aria-label="Remove @${escapeHtml(r.handle)}">${ic("trash", 15)}</button>` : ""}</span></div>`;
-  const invites = (d.invites || []).map((i) => `<div class="fr-req">${av(i.name)}<span class="fr-name"><b>${escapeHtml(i.name)}</b><small>${i.from ? escapeHtml(i.from.displayName) + " invited you · " : ""}${i.members} ${i.members === 1 ? "member" : "members"}</small></span><button type="button" class="btn btn-sm" data-lb-decline="${escapeHtml(i.id)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-lb-join="${escapeHtml(i.id)}">Join</button></div>`).join("");
+  const invites = (d.invites || []).map((i) => `<div class="fr-req">${av(i.name)}<span class="fr-name"><b>${escapeHtml(i.name)}</b><small>${i.from ? neonName(i.from.displayName, i.from.neon) + " invited you · " : ""}${i.members} ${i.members === 1 ? "member" : "members"}</small></span><button type="button" class="btn btn-sm" data-lb-decline="${escapeHtml(i.id)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-lb-join="${escapeHtml(i.id)}">Join</button></div>`).join("");
   let body;
   if (!board) {
     const rows = d.global || [], me = d.me && !rows.some((r) => r.you) ? d.me : null;
@@ -12104,7 +12116,7 @@ async function paintLeaderboards(c, d, board, note) {
     try { const f = await API.get("/api/friends"); _lb.friends = (f && Array.isArray(f.friends)) ? f.friends : (_lb.friends || []); } catch (e) { _lb.friends = _lb.friends || []; }
     const onBoard = new Set([...board.rows.map((r) => r.handle), ...(board.invited || []).map((r) => r.handle)]);
     const canInvite = _lb.friends.filter((f) => !onBoard.has(f.handle));
-    body = `<div class="lb-head"><div class="lb-title"><b>${escapeHtml(b.name)}</b><small>${b.owner ? "Made by " + escapeHtml(b.owner.displayName) : ""} · ${board.rows.length} ${board.rows.length === 1 ? "member" : "members"}</small></div>` +
+    body = `<div class="lb-head"><div class="lb-title"><b>${escapeHtml(b.name)}</b><small>${b.owner ? "Made by " + neonName(b.owner.displayName, b.owner.neon) : ""} · ${board.rows.length} ${board.rows.length === 1 ? "member" : "members"}</small></div>` +
       (b.mine ? `<button type="button" class="btn btn-sm" data-lb-rename>Rename</button><button type="button" class="btn btn-sm" data-lb-delete>Delete</button>` : `<button type="button" class="btn btn-sm" data-lb-leave>Leave</button>`) + `</div>` +
       `<div class="fr-list lb-board">${board.rows.map((r) => row(r, b.mine)).join("")}</div>` +
       `<section class="fr-card lb-invite"><h2 class="eyebrow">Invite friends</h2>` +
@@ -12215,15 +12227,15 @@ async function renderFriends(note) {
   const board = rows.map((f, i) => {
     const s = f.summary || {}, w = s.week || {};
     const nm = f.you ? (Account.user && Account.user.displayName) || f.handle : f.displayName || f.handle;
-    return `<div class="fr-row${f.you ? " fr-you" : ""}" data-user="${escapeHtml(f.handle || "")}" data-user-name="${escapeHtml(nm || "")}"><span class="fr-rank num">${i + 1}</span>${av(nm)}<span class="fr-name"><b>${escapeHtml(nm || "")}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
+    return `<div class="fr-row${f.you ? " fr-you" : ""}" data-user="${escapeHtml(f.handle || "")}" data-user-name="${escapeHtml(nm || "")}" data-user-neon="${escapeHtml((f.you ? myNeon() : f.neon) || "")}"><span class="fr-rank num">${i + 1}</span>${av(nm)}<span class="fr-name"><b>${neonName(nm || "", f.you ? myNeon() : f.neon)}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
       `<span class="fr-stat"><b class="num">${num(w.questions)}</b><small>this week</small></span>` +
       `<span class="fr-stat"><b class="num">${w.accuracy == null ? "—" : w.accuracy + "%"}</b><small>accuracy</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.today)}</b><small>today</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.streak)}</b><small>day streak</small></span>` +
       (f.you ? '<span class="fr-act"></span>' : `<span class="fr-act"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fr-remove="${escapeHtml(f.handle)}" title="Remove friend" aria-label="Remove @${escapeHtml(f.handle)}">${ic("trash", 15)}</button></span>`) + "</div>";
   }).join("");
-  const reqs = (d.incoming || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}">${av(f.displayName || f.handle)}<span class="fr-name"><b>${escapeHtml(f.displayName || f.handle)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
-  const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}">${av(f.displayName || f.handle)}<span class="fr-name"><b>${escapeHtml(f.displayName || f.handle)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
+  const reqs = (d.incoming || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${av(f.displayName || f.handle)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
+  const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${av(f.displayName || f.handle)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
   c.innerHTML = `<div class="fr-page">` +
     `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button></div>` +
       `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Friend's username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +

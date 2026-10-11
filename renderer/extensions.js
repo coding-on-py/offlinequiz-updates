@@ -477,7 +477,9 @@
     if (opts && opts.title) {
       const h = document.createElement("div");
       h.className = "qb-ctx-title";
-      h.textContent = String(opts.title).length > 46 ? String(opts.title).slice(0, 45) + "…" : String(opts.title);
+      // titleHtml: the same title, already escaped, with markup (a neon name)
+      if (opts.titleHtml) h.innerHTML = opts.titleHtml;
+      else h.textContent = String(opts.title).length > 46 ? String(opts.title).slice(0, 45) + "…" : String(opts.title);
       el.appendChild(h);
     }
     let lastSep = true;
@@ -959,6 +961,35 @@
   QB.NEON = { cyan: "#22d3ee", blue: "#4d8dff", indigo: "#7c7dff", violet: "#a95cff", magenta: "#e64bff", pink: "#ff4fa8",
     red: "#ff4545", orange: "#ff8a1f", gold: "#ffcc1a", lime: "#a6ff1a", green: "#2ee36e", teal: "#19e0c0" };
   QB.neonHtml = (html, neon) => QB.NEON[neon] ? '<span class="neon-name" style="--neon:' + QB.NEON[neon] + '">' + html + "</span>" : html;
+  // your own colour, when the signed-in account has the neon name (else null)
+  QB.myNeon = () => { const o = QB._owned; return o && o.signedIn && (o.grants || []).includes("neon") && QB.NEON[o.neon] ? o.neon : null; };
+  // A name typed in a text box glows too: an input clips its own text (the glow came out a
+  // rectangle), so a glowing copy lies over it — the box's text hidden — until it's focused for
+  // editing. Call again after setting the box's value from code (it re-syncs); neon null undoes it.
+  QB.neonField = (inp, neon) => {
+    if (!inp || !inp.parentElement) return;
+    let g = inp._neonGhost;
+    if (!QB.NEON[neon]) { inp.classList.remove("neon-in"); if (g) { g.remove(); inp._neonGhost = null; } return; }
+    if (!g) {
+      g = document.createElement("span");
+      g.className = "neon-ghost neon-name"; g.setAttribute("aria-hidden", "true");
+      inp.after(g); inp._neonGhost = g;
+      const host = inp.parentElement;
+      if (getComputedStyle(host).position === "static") host.style.position = "relative";
+      g._place = () => {
+        if (!g.isConnected) return;
+        const cs = getComputedStyle(inp), padL = parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth), padR = parseFloat(cs.paddingRight) + parseFloat(cs.borderRightWidth);
+        Object.assign(g.style, { left: inp.offsetLeft + padL + "px", top: inp.offsetTop + "px", height: inp.offsetHeight + "px", maxWidth: Math.max(0, inp.offsetWidth - padL - padR) + "px",
+          fontFamily: cs.fontFamily, fontSize: cs.fontSize, fontWeight: cs.fontWeight, letterSpacing: cs.letterSpacing });
+      };
+      inp.addEventListener("input", () => { g.textContent = inp.value; });
+      if (window.ResizeObserver) new ResizeObserver(() => g._place()).observe(inp);
+    }
+    inp.classList.add("neon-in");
+    g.style.setProperty("--neon", QB.NEON[neon]); inp.style.setProperty("--neon", QB.NEON[neon]);
+    g.textContent = inp.value;
+    g._place();
+  };
   QB.owns = (what) => !!(QB._owned && (QB._owned.grants || []).includes(what));
   function standDown(p) {
     try { if (p._manifest && typeof p._manifest.onDisable === "function" && p._ctx) p._manifest.onDisable(p._ctx); } catch (e) { console.error(e); }
@@ -968,10 +999,17 @@
   // o: /api/shop/owned's answer; who: the account it's for (a plugin it just bought gets added and turned on)
   QB.setOwned = (o, who) => {
     if (!o || o.error || !Array.isArray(o.grants)) return;
-    const prev = QB._owned;
     QB._owned = { grants: o.grants.slice(), paywall: Array.isArray(o.paywall) ? o.paywall.slice() : [], neon: o.neon || null, signedIn: !!o.signedIn, admin: !!o.admin, who: who || null };
-    const fresh = prev && prev.who && prev.who === who ? Object.keys(QB.PAID).filter((id) => QB._owned.grants.includes("plugin:" + id) && !(prev.grants || []).includes("plugin:" + id)) : [];
-    fresh.forEach((id) => { const p = QB._plugins.find((x) => x.id === id); if (!p) addBought(id); else if (!p._enabledRuntime && !QB._pluginsHeld) QB.enablePlugin(id); });
+    // a bought plugin is added and turned on once in each browser / app the account signs in to
+    // (taking it out later sticks: qb-bought-added remembers it was added here)
+    if (who && o.signedIn) {
+      let added = {}; try { added = JSON.parse(localStorage.getItem("qb-bought-added") || "{}") || {}; } catch {}
+      const mine = added[who] || [], fresh = Object.keys(QB.PAID).filter((id) => QB._owned.grants.includes("plugin:" + id) && !mine.includes(id));
+      if (fresh.length) {
+        added[who] = mine.concat(fresh); try { localStorage.setItem("qb-bought-added", JSON.stringify(added)); } catch {}
+        fresh.forEach((id) => { const p = QB._plugins.find((x) => x.id === id); if (!p) addBought(id); else if (!p._enabledRuntime && !QB._pluginsHeld) QB.enablePlugin(id); });
+      }
+    }
     try { localStorage.setItem("qb-owned", JSON.stringify(QB._owned)); } catch {}
     let changed = false;
     QB._plugins.forEach((p) => {
@@ -2319,6 +2357,12 @@ function __qbMain(ctx) {
     function myAv() { return ""; }   // (the emoji avatars are gone: a player is their initial)
     // your onlinequiz username when signed in: other players can open your profile / add you
     function myHandle() { try { return (window.qbAccountHandle && window.qbAccountHandle()) || ""; } catch (e) { return ""; } }
+    // A player's name as it shows everywhere in a room: glowing in their neon colour. The game
+    // server says who has one (from the website's ticket, never the app's word); you: your own
+    // (so in a relay room too).
+    function neonOf(p) { return (p && p.neon) || (p && p.id === myId && window.QB.myNeon ? window.QB.myNeon() : null); }
+    function neonNameHtml(name, p) { return window.QB.neonHtml ? window.QB.neonHtml(esc(name), neonOf(p)) : esc(name); }
+    function playerNamed(n) { var hit = null; order.forEach(function (id) { var p = players[id]; if (!hit && p && p.name === n) hit = p; }); return hit; }
     // ── bought rooms (the shop: web/shop.mjs, mpserver/owned.mjs) ──
     // A signed-in player's hello carries a ticket from the website that proves their account
     // (members, admins and the owner get in by it); a room's password goes with it when one was
@@ -3630,13 +3674,15 @@ function __qbMain(ctx) {
     // Chat history lives in this array, not just the DOM — renderRoom rebuilds
     // the page (host promotion, rejoin, resize) and replays it, so messages
     // survive every re-render.
-    var chatHist = [];
+    var chatHist = [], chatUnresolved = {};
     function paintChatMsg(el, c) {
       var r = document.createElement("div");
       r.className = "mp-chat-msg" + (c.s ? " mp-chat-sys" : "") + (c.m ? " mp-chat-team" : "");
       var who = null;
       if (!c.s && c.n && c.n !== ((players[myId] || {}).name || myName)) order.forEach(function (id) { var p = players[id]; if (!who && p && p.name === c.n) who = p; });
-      var nameHtml = who ? '<strong class="mp-chat-name" data-user="' + esc(who.handle || "") + '" data-user-name="' + esc(who.name) + '">' + esc(c.n) + ":</strong> " : "<strong>" + esc(c.n) + ":</strong> ";
+      var mine = !c.s && c.n && c.n === ((players[myId] || {}).name || myName), nm = neonNameHtml(c.n || "", who || (mine ? players[myId] || { id: myId } : null));
+      if (!who && !mine && !c.s && c.n) chatUnresolved[c.n] = 1;   // the room's earlier chat comes before its players: painted again once they're here
+      var nameHtml = who ? '<strong class="mp-chat-name" data-user="' + esc(who.handle || "") + '" data-user-name="' + esc(who.name) + '" data-user-neon="' + esc(neonOf(who) || "") + '">' + nm + ":</strong> " : "<strong>" + nm + ":</strong> ";
       r.innerHTML = c.s ? esc(c.x) : (c.m ? '<span class="mp-chat-teamtag">TEAM</span> ' : "") + nameHtml + esc(c.x);
       el.appendChild(r);
     }
@@ -3654,6 +3700,7 @@ function __qbMain(ctx) {
     }
     function replayChat() {
       var el = body && body.querySelector("#mp-chat"); if (!el) return;
+      chatUnresolved = {};
       el.innerHTML = "";
       chatHist.forEach(function (c) { paintChatMsg(el, c); });
       el.scrollTop = el.scrollHeight;
@@ -3724,6 +3771,7 @@ function __qbMain(ctx) {
           ownRoomHtml() +
         "</div>";
       var nameEl = body.querySelector("#mp-name"), codeEl = body.querySelector("#mp-lobby"), joinBtn = body.querySelector("#mp-join");
+      if (window.QB.neonField && window.QB.myNeon) window.QB.neonField(nameEl, window.QB.myNeon());   // "Playing as" your neon name
       // one button: a typed code joins that room (or opens it if nobody is
       // there yet); an empty box makes a new room with a fresh code
       // nothing typed: the room shown in grey
@@ -4058,6 +4106,7 @@ function __qbMain(ctx) {
     window.QB.shopBuyRoom = function (name, sku) { openBuy(name || "", sku); };
     window.QB.shopWatch = function (id) { watchOrder(id, null, ""); };
     window.QB.mpNewTicket = function () { myTicket = null; myTicketAt = 0; };   // the neon colour changed
+    if (window.QB.on) window.QB.on("neon:changed", function () { if (lobby) renderScores(); });   // your row (the room hears it on the next join)
 
     // Room codes: four characters, no look-alikes (0/O, 1/I/L).
     function newRoomCode() {
@@ -4392,7 +4441,7 @@ function __qbMain(ctx) {
       var head = '<div class="ms-teams">' + (tally.teams.length ? tally.teams.map(function (tm) { return '<div class="ms-team"><b class="num">' + ((tally.t[tm] || {}).pts || 0) + "</b><span>" + esc(tm) + "</span></div>"; }).join("") : '<div class="ms-empty">No teams yet</div>') + "</div>";
       var info = match && match.set ? '<div class="ms-info">' + esc(match.set) + " · Packet " + esc(match.packet) + (match.over ? " · Final" : match.rows.length ? " · Tossup " + match.rows.length + "/" + (match.total || "?") : "") + "</div>" : "";
       var rows = match && match.rows.length ? match.rows.slice().reverse().map(function (r) {
-        var chips = r.buzzes.map(function (b) { return '<span class="ms-chip ' + (b.pts > 0 ? "pos" : b.pts < 0 ? "neg" : "") + '">' + esc(b.name) + " " + signed(b.pts) + "</span>"; }).join("");
+        var chips = r.buzzes.map(function (b) { return '<span class="ms-chip ' + (b.pts > 0 ? "pos" : b.pts < 0 ? "neg" : "") + '">' + neonNameHtml(b.name, playerNamed(b.name)) + " " + signed(b.pts) + "</span>"; }).join("");
         if (!chips && r.answer) chips = '<span class="ms-chip dead">Dead</span>';
         var bonus = r.bonus ? '<span class="ms-chip bon">Bonus ' + r.bonus.pts + "</span>" : "";
         return '<div class="ms-row"><span class="ms-n num">' + r.n + '</span><span class="ms-body"><span class="ms-chips">' + chips + bonus + "</span>" + (r.answer ? "<small>" + esc(r.answer) + "</small>" : "") + "</span></div>";
@@ -4440,7 +4489,7 @@ function __qbMain(ctx) {
       var teamsHtml = d.teams.map(function (tm) { var x = d.tally.t[tm] || {}; return '<div class="ms-big"><b class="num">' + (x.pts || 0) + "</b><span>" + esc(tm) + "</span><small>" + (x.bHeard ? (x.bPts / x.bHeard).toFixed(1) + " per bonus" : "") + "</small></div>"; }).join("");
       var thead = "<tr><th>#</th><th>Answer</th>" + d.teams.map(function (tm) { return '<th colspan="3">' + esc(tm) + "</th>"; }).join("") + "</tr><tr><th></th><th></th>" + d.teams.map(function () { return "<th>TU</th><th>B</th><th>Total</th>"; }).join("") + "</tr>";
       var tbody = d.table.map(function (r) { return "<tr>" + r.map(function (c, i) { return "<td" + (i === 1 ? ' class="ms-ans"' : "") + ">" + esc(c) + "</td>"; }).join("") + "</tr>"; }).join("") || '<tr><td colspan="' + (2 + d.teams.length * 3) + '">No tossups yet</td></tr>';
-      var pl = d.players.map(function (x) { return "<tr><td>" + esc(x.name) + "</td><td>" + esc(x.team) + "</td><td>" + x.p + "</td><td>" + x.g + "</td><td>" + x.n + "</td><td>" + x.pts + "</td></tr>"; }).join("");
+      var pl = d.players.map(function (x) { return "<tr><td>" + neonNameHtml(x.name, playerNamed(x.name)) + "</td><td>" + esc(x.team) + "</td><td>" + x.p + "</td><td>" + x.g + "</td><td>" + x.n + "</td><td>" + x.pts + "</td></tr>"; }).join("");
       el.innerHTML = '<div class="ms-box" role="document">' +
         '<header class="ms-head"><div><h2>' + (match.over ? "Final" : "Scoresheet") + "</h2><small>" + esc(match.set || "") + (match.packet != null ? " · Packet " + esc(match.packet) : "") + (match.rows.length && !match.over ? " · Tossup " + match.rows.length + "/" + (match.total || "?") : "") + "</small></div>" +
           '<span class="ms-actions"><button type="button" class="btn btn-sm" data-ms="copy">Copy</button><button type="button" class="btn btn-sm" data-ms="csv">CSV</button><button type="button" class="btn btn-ghost btn-icon btn-sm" data-ms="close" aria-label="Close">\u2715</button></span></header>' +
@@ -4715,6 +4764,7 @@ function __qbMain(ctx) {
       inp.addEventListener("blur", function () { finish(true); });
     }
     function renderScores() {
+      if (order.some(function (id) { return players[id] && chatUnresolved[players[id].name]; })) replayChat();   // their names (and neon) in the chat
       var el = body && body.querySelector("#mp-scores"); if (!el) return;
       if (scoresEditing) { scoresDirty = true; return; }
       var teams = {}, specs = [];
@@ -4728,12 +4778,12 @@ function __qbMain(ctx) {
       var row = function (p) {
         var you = p.id === myId;
         var initial = (String(p.name || "?").trim()[0] || "?").toUpperCase();
-        var nm = window.QB.neonHtml ? window.QB.neonHtml(esc(p.name), p.neon) : esc(p.name);   // a bought neon name glows
+        var nm = neonNameHtml(p.name, p);   // a bought neon name glows
         var nameHtml = you ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + nm + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + nm + "</b>";
         var subHtml = p.off ? "offline" : p.spec ? "spectating"
           : you ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
           : (p.team ? "team " + esc(p.team) : "&nbsp;");
-        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
+        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(neonOf(p) || "") + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
           '<span class="nm">' + nameHtml + "<span>" + subHtml + "</span></span>" +
           (p.spec ? "" : '<span class="sc num">' + (p.score || 0) + "</span>") + "</div>";
       };
@@ -4865,7 +4915,7 @@ function __qbMain(ctx) {
         if (!provisional) armAutoSub(inp, deadline, submitAnswer);
       } else {
         buzz.className = "buzz-area";
-        buzz.innerHTML = '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span> <em id="mp-live-ph">' + esc(name) + " is answering…</em><span id=\"mp-live\" class=\"mp-live\"></span></div>" +
+        buzz.innerHTML = '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span> <em id="mp-live-ph">' + neonNameHtml(name, players[id] || playerNamed(name)) + " is answering…</em><span id=\"mp-live\" class=\"mp-live\"></span></div>" +
           '<div class="buzz-hints"><span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
       }
@@ -4888,7 +4938,7 @@ function __qbMain(ctx) {
         armAutoSub(inp, deadline || answerDeadline, submitAnswer);
       } else {
         buzz.className = "buzz-area";
-        buzz.innerHTML = '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span> <em id="mp-live-ph">' + esc(name) + " is being prompted…</em><span id=\"mp-live\" class=\"mp-live\"></span></div>" +
+        buzz.innerHTML = '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span> <em id="mp-live-ph">' + neonNameHtml(name, players[id] || playerNamed(name)) + " is being prompted…</em><span id=\"mp-live\" class=\"mp-live\"></span></div>" +
           '<div class="buzz-hints"><span style="color:var(--yellow);font-weight:700">PROMPT' + (ask ? ":</span> " + esc(ask) : "</span>") + ' <span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
       }
@@ -4987,7 +5037,7 @@ function __qbMain(ctx) {
       if (d.ended) {
         res.className = "result-area";
         var banner = d.correct
-          ? '<div class="result-banner correct">' + esc(d.name) + " — +" + d.points + " pts</div>"
+          ? '<div class="result-banner correct">' + neonNameHtml(d.name, players[d.id] || playerNamed(d.name)) + " — +" + d.points + " pts</div>"
           : d.noBuzz
             ? '<div class="result-banner incorrect">Time! Nobody buzzed.</div>'
             : '<div class="result-banner incorrect">Nobody got it — everyone is locked out</div>';
@@ -5032,7 +5082,7 @@ function __qbMain(ctx) {
       var el = res.querySelector("#mp-bonus");
       if (!el) { el = document.createElement("div"); el.id = "mp-bonus"; el.className = "mp-bonus"; res.appendChild(el); }
       var mine = bonusView.winner === myId;
-      var html = '<div class="filter-label">BONUS \u2014 ' + esc(bonusView.name) + (mine ? " (you)" : "") + " answers</div>" +
+      var html = '<div class="filter-label">BONUS \u2014 ' + neonNameHtml(bonusView.name, players[bonusView.winner]) + (mine ? " (you)" : "") + " answers</div>" +
         (bonusView.leadin ? '<div class="question-text" style="font-size:13px;min-height:0">' + esc(bonusView.leadin) + "</div>" : "");
       for (var k = 0; k < bonusView.parts.length && k <= bonusView.k; k++) {
         html += '<div class="mp-bpart"><div class="bonus-part-text">[' + ((bonusView.values && bonusView.values[k]) || 10) + "] " + esc(bonusView.parts[k]) + "</div>";
@@ -5043,7 +5093,7 @@ function __qbMain(ctx) {
         } else if (k === bonusView.k && !bonusView.done) {
           html += mine
             ? '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span><input type="text" class="mp-binput" placeholder="your answer\u2026 (Enter)" autocomplete="off" autocorrect="off" spellcheck="false"></div>'
-            : '<div class="text-muted" style="font-size:12px"><em id="mp-live-ph">' + esc(bonusView.name) + " is answering\u2026</em><span id=\"mp-live\" class=\"mp-live\"></span></div>";
+            : '<div class="text-muted" style="font-size:12px"><em id="mp-live-ph">' + neonNameHtml(bonusView.name, players[bonusView.winner]) + " is answering\u2026</em><span id=\"mp-live\" class=\"mp-live\"></span></div>";
           html += '<div class="buzz-hints"><span id="mp-timer"></span></div><div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         }
         html += "</div>";
@@ -5097,7 +5147,7 @@ function __qbMain(ctx) {
       if (!buzzHistory.length) { el.innerHTML = '<div class="text-muted mp-log-empty">No buzzes yet this question</div>'; syncActions(); return; }
       el.innerHTML = buzzHistory.map(function (b) {
         var col = b.correct ? ((b.points || 0) >= 15 ? "var(--yellow)" : "var(--green)") : (b.points < 0 ? "var(--red)" : "var(--muted)");
-        return '<div class="mp-logrow"><span class="nm"><b>' + esc(b.name) + '</b><span>' + esc(b.given || "(no answer)") + '</span></span><b class="num" style="color:' + col + '">' + (b.points > 0 ? "+" : "") + (b.points || 0) + "</b></div>";
+        return '<div class="mp-logrow"><span class="nm"><b>' + neonNameHtml(b.name, players[b.id] || playerNamed(b.name)) + '</b><span>' + esc(b.given || "(no answer)") + '</span></span><b class="num" style="color:' + col + '">' + (b.points > 0 ? "+" : "") + (b.points || 0) + "</b></div>";
       }).join("");
       syncActions();
     }
