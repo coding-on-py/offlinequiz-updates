@@ -839,7 +839,8 @@ function goTo(target) {
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
     case "store": showScreen("store"); renderStore(); refreshOwned(); break;
     case "streaks": showScreen("streaks"); renderStreaks(); break;
-    case "admin": showScreen("admin"); renderAdmin(); break;
+    case "admin": _adm.tab = "stats"; showScreen("admin"); renderAdmin(); break;
+    case "admin-users": _adm.tab = "users"; showScreen("admin"); renderAdmin(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -874,7 +875,7 @@ function webPathNow() {
     case "leaderboards-screen": return "/leaderboards";
     case "store-screen": return "/store";
     case "streaks-screen": return "/streaks";
-    case "admin-screen": return "/admin";
+    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : "/admin";
     case "download-screen": return "/download";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
   }
@@ -928,6 +929,8 @@ function webRoute(path) {
     } else if (a === "plugins") {
       goTo("plugins");
       if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
+    } else if (a === "admin") {
+      goTo(b === "users" ? "admin-users" : "admin");
     } else if (a && WEB_PATHS[a]) {
       goTo(WEB_PATHS[a]);
     } else if (!document.querySelector("#title-screen.active")) goHome();
@@ -981,7 +984,7 @@ function updateTopbar() {
 }
 function renderTopbarProfile() {
   const initial = (String(state.username || "").trim()[0] || "?").toUpperCase();
-  ["tb-avatar", "tbm-avatar"].forEach((id) => { const av = document.getElementById(id); if (av) av.textContent = initial; });
+  ["tb-avatar", "tbm-avatar"].forEach((id) => { const av = document.getElementById(id); if (av) { av.textContent = initial; paintAvatar(av, myNeon()); } });
   const nm = document.getElementById("tbm-name"); if (nm) nm.innerHTML = neonName(state.username || "Player", myNeon());
   renderAccountMenu();
   const prof = document.getElementById("tb-profile");
@@ -9020,7 +9023,7 @@ async function loadPlayer() {
     container.innerHTML = `
       <div class="pf-page">
         <section class="pf-card">
-          <span class="pf-avatar" aria-hidden="true">${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
+          <span class="pf-avatar" aria-hidden="true"${avatarStyle(myNeon())}>${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
           <div class="pf-id">
             <div class="pf-name-row"><input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false"></div>
             <small class="pf-sub">${handle ? escapeHtml(handle) : Account.user ? "Signed in" : IS_WEB ? "Not signed in" : "On this computer"}</small>
@@ -11126,6 +11129,7 @@ function renderAccountMenu() {
   }
   const fr = document.getElementById("tbm-friends"); if (fr) fr.hidden = false;
   const adm = document.getElementById("tbm-admin"); if (adm) adm.hidden = !(IS_WEB && Account.user && Account.user.admin);
+  const admU = document.getElementById("tbm-admin-users"); if (admU) admU.hidden = !(IS_WEB && Account.user && Account.user.admin);
   const lbBtn = document.getElementById("tb-leaderboards"); if (lbBtn) lbBtn.hidden = false;
   const head = document.querySelector("#tb-profile-menu .tbm-who");
   if (head) {
@@ -11238,7 +11242,7 @@ function openAccount(mode, opts) {
       : head("Connect the OfflineQuiz app", "Sign in first — then connect the app.") + googleBtn() + `<div class="acct-actions"><button type="button" class="btn" data-to="signup">Create account</button><button type="button" class="btn btn-primary" data-to="signin">Sign in</button></div>`;
     else if (m === "applinked") html = head("The app is signed in", "You can go back to OfflineQuiz — it syncs with this account from now on.") + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
     else if (m === "account") html = head("Account") + okLine + err +
-      `<div class="acct-rows"><div class="acct-row"><span class="fr-av">${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${neonName(u.displayName || u.handle || "", u.neon)}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
+      `<div class="acct-rows"><div class="acct-row"><span class="fr-av"${avatarStyle(u.neon)}>${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${neonName(u.displayName || u.handle || "", u.neon)}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
       `<div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}${u.google ? '<small>Signs in with Google</small>' : ""}</span></div>` +
       (Account.app ? `<div class="acct-row">${ic("review", 16)}<span class="acct-v" id="acct-sync-line">${escapeHtml(syncLineText())}</span><button type="button" class="btn btn-sm" id="acct-sync-now">Sync now</button></div>` : "") +
       `</div><div class="acct-actions"><button type="button" class="btn" id="acct-logout">Sign out</button><button type="button" class="btn" data-to="leaderboards">Leaderboards</button><button type="button" class="btn" data-to="friends">Friends</button><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
@@ -11470,15 +11474,13 @@ function userMenuExtras(u) {
 async function openUserMenu(x, y, u) {
   const handle = String(u.handle || "").replace(/^@/, ""), name = u.name || (handle ? "@" + handle : "Player");
   const title = handle ? (u.name && u.name !== handle ? u.name + "  @" + handle : "@" + handle) : name;
-  // their neon name glows in the menu's title too
-  const titleHtml = window.QB?.NEON?.[u.neon] ? (handle ? (u.name && u.name !== handle ? neonName(u.name, u.neon) + "  @" + escapeHtml(handle) : neonName("@" + handle, u.neon)) : neonName(name, u.neon)) : "";
   const extra = userMenuExtras(u);
   if (!handle) {
     window.QB.contextMenu(x, y, [
       { label: "Not signed in — no profile", onClick: () => {}, hint: "" },
       { label: "Copy name", onClick: () => copyToClipboard(name) },
       ...extra,
-    ], { title, titleHtml });
+    ], { title });
     return;
   }
   const me = Account.user && Account.user.handle;
@@ -11489,7 +11491,7 @@ async function openUserMenu(x, y, u) {
       { sep: true },
       { label: "Copy your username", onClick: () => copyToClipboard("@" + handle) },
       ...extra,   // (your account in another seat — another device — can still be taken out by a host)
-    ], { title: title + " (you)", titleHtml: titleHtml ? titleHtml + " (you)" : "" });
+    ], { title: title + " (you)" });
     return;
   }
   // how you stand with them: what the friends list said (a quick look if it's old)
@@ -11514,7 +11516,7 @@ async function openUserMenu(x, y, u) {
     } })), { title: "Invite @" + handle + " to" }) });
   }
   items.push({ sep: true }, { label: "Copy username", onClick: () => copyToClipboard("@" + handle) }, ...extra);
-  window.QB.contextMenu(x, y, items, { title, titleHtml });
+  window.QB.contextMenu(x, y, items, { title });
 }
 // Their profile: who they are, their totals and achievements (worked out here from
 // what the server sends, exactly as your own are), and the friend button.
@@ -11537,6 +11539,7 @@ async function openUserProfile(handle, shownName) {
   if (!d || d.error) { body.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't load that profile.")}</div>`; return; }
   el.querySelector(".up-who b").innerHTML = neonName(d.displayName || d.handle, d.neon);
   el.querySelector(".up-av").textContent = String(d.displayName || d.handle || "?")[0].toUpperCase();
+  paintAvatar(el.querySelector(".up-av"), d.neon);
   const rel = d.relation;
   const friendBtn = d.you ? "" : !d.signedIn ? '<button type="button" class="btn btn-sm" data-up="signin">Sign in to add friends</button>'
     : !d.canFriend ? '<button type="button" class="btn btn-sm" data-up="handle">Choose a username to add friends</button>'
@@ -11888,11 +11891,15 @@ function preloadLeaderboards() {
 const NEON_COLORS = (window.QB && window.QB.NEON) || {};   // the twelve colours (extensions.js)
 // a name as others see it: glowing in its colour when the account has one
 const myNeon = () => (window.QB && window.QB.myNeon ? window.QB.myNeon() : null);   // yours, once bought
+// an avatar circle takes the neon colour: ` style="…"` for markup, paintAvatar for a drawn one
+const avatarStyle = (neon) => { const st = window.QB?.neonAvatar?.(neon) || ""; return st ? ` style="${st}"` : ""; };
+function paintAvatar(el, neon) { if (!el) return; const st = window.QB?.neonAvatar?.(neon) || ""; el.style.cssText = st; }
 // your name everywhere it shows, after the colour (or what you own) changed
 function repaintMyNeon() {
   try { renderTopbarProfile(); renderGreeting(); } catch (e) {}
   ["player-username-input", "set-username", "mp-name"].forEach((id) => { const i = document.getElementById(id); if (i) window.QB?.neonField?.(i, myNeon()); });
   paintProfileNeon();
+  paintAvatar(document.querySelector("#player-screen .pf-avatar"), myNeon());
   if (document.querySelector("#friends-screen.active")) renderFriends();
   window.QB?._emit?.("neon:changed", myNeon());
 }
@@ -12167,7 +12174,8 @@ async function paintLeaderboards(c, d, board, note) {
     (d.signedIn ? '<button type="button" class="db-tab lb-new" data-lb-new>+ New leaderboard</button>' : "");
   const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
-  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${av(r.displayName || r.handle)}` +
+  const avN = (h, n) => `<span class="fr-av"${avatarStyle(n)}>${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
+  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${avN(r.displayName || r.handle, r.neon)}` +
     `<span class="fr-name"><b>${neonName(r.displayName || r.handle, r.neon)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>points</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.questions || 0).toLocaleString()}</b><small>questions</small></span>` +
@@ -12236,9 +12244,143 @@ async function paintLeaderboards(c, d, board, note) {
 // Per day for the last 30: visitors, page views, signed-in accounts, sign-ups, answers on
 // the website, and the desktop app's syncs. The server counts (web/site-stats.mjs).
 const ADM_METRICS = [["visitors", "Visitors"], ["pageViews", "Page views"], ["accounts", "Signed in"], ["signups", "Sign-ups"], ["answers", "Answers on the site"], ["appUsers", "App users"], ["appAnswers", "Answers in the app"]];
-const _adm = { metric: "visitors", data: null };
+const _adm = { metric: "visitors", data: null, tab: "stats" };
+// ── Site stats → Users (admins): any account by username — its products (switch each one, or give a
+// whole product, rooms included), its profile, its rooms, its orders and what it keeps here ──
+const ADM_GRANT_NAMES = { "plugin:keyword-freq": "Keyword Frequency", "plugin:canon-tracker": "Canon Tracker", "plugin:buzz-words": "Buzzwords", "plugin:fact-sheet": "Fact Sheet", neon: "Neon name" };
+const _admu = { q: "", list: null, id: null, d: null, gen: 0 };
+const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"]].map(([k, l]) =>
+  `<button type="button" class="db-tab${(_adm.tab || "stats") === k ? " active" : ""}" role="tab" aria-selected="${(_adm.tab || "stats") === k}" data-adm-tab="${k}">${l}</button>`).join("")}</div>`;
+function wireAdmTabs(c) {
+  c.querySelectorAll("[data-adm-tab]").forEach((b) => b.onclick = () => { _adm.tab = b.dataset.admTab; renderAdmin(); window.qbWebPathSync?.(); });
+}
+const admAv = (name, neon) => `<span class="fr-av"${avatarStyle(neon)}>${escapeHtml(String(name || "?")[0].toUpperCase())}</span>`;
+const admWhen = (t) => (t ? new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—");
+function paintAdminUsers(c) {
+  c.innerHTML = `<div class="adm-page">${admTabsHtml()}
+    <div class="adm-users">
+      <aside class="adm-find">
+        <form id="adm-find" class="adm-search" autocomplete="off"><input id="adm-q" class="mode-input" placeholder="Username, name or email" value="${escapeHtml(_admu.q)}" aria-label="Find an account" spellcheck="false" autocapitalize="off"></form>
+        <div class="adm-results" id="adm-results"></div>
+      </aside>
+      <section class="adm-user" id="adm-user"></section>
+    </div></div>`;
+  wireAdmTabs(c);
+  const q = c.querySelector("#adm-q");
+  q.addEventListener("input", () => { _admu.q = q.value; clearTimeout(_admu.t); _admu.t = setTimeout(admSearch, 220); });
+  c.querySelector("#adm-find").addEventListener("submit", (e) => { e.preventDefault(); clearTimeout(_admu.t); admSearch(); });
+  paintAdmResults(); paintAdmUser();
+  if (!_admu.list && !_admu.q) setTimeout(() => q.focus(), 0);
+}
+async function admSearch() {
+  const my = ++_admu.gen, q = _admu.q.trim();
+  if (!q) { _admu.list = null; paintAdmResults(); return; }
+  let d = null; try { d = await API.get("/api/admin/users?q=" + encodeURIComponent(q)); } catch (e) {}
+  if (my !== _admu.gen) return;
+  _admu.list = d && Array.isArray(d.users) ? d.users : [];
+  paintAdmResults();
+}
+function paintAdmResults() {
+  const el = document.getElementById("adm-results"); if (!el) return;
+  if (!_admu.list) { el.innerHTML = ""; return; }
+  el.innerHTML = _admu.list.length ? _admu.list.map((u) => `<button type="button" class="adm-urow${u.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(u.id)}">${admAv(u.displayName || u.handle || u.email, u.neon)}<span class="adm-uname"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b><small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : ""}${escapeHtml(u.email || "")}</small></span></button>`).join("")
+    : '<p class="adm-none">No accounts match.</p>';
+  el.querySelectorAll("[data-adm-user]").forEach((b) => b.onclick = () => admOpen(b.dataset.admUser));
+}
+async function admOpen(id, keep) {
+  _admu.id = id; if (!keep) _admu.d = null;
+  paintAdmResults(); paintAdmUser();
+  let d = null; try { d = await API.get("/api/admin/user?id=" + encodeURIComponent(id)); } catch (e) {}
+  if (_admu.id !== id) return;
+  _admu.d = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that account." };
+  paintAdmUser();
+}
+function paintAdmUser() {
+  const el = document.getElementById("adm-user"); if (!el) return;
+  if (!_admu.id) { el.innerHTML = '<p class="adm-none">Find an account to see and change what it has.</p>'; return; }
+  const d = _admu.d;
+  if (!d) { el.innerHTML = loadingBarHtml(""); return; }
+  if (d.error) { el.innerHTML = `<div class="db-empty">${escapeHtml(d.error)}</div>`; return; }
+  const u = d.user, owned = new Map(d.grants.map((g) => [g.what, g]));
+  const given = new Set((d.orders || []).filter((o) => o.note === "given by the admin").map((o) => o.id));
+  const src = (g) => !g ? "" : g.order === "admin" || given.has(g.order) ? "given by you" : g.order ? "bought" : "";
+  const grantRows = d.allGrants.map((w) => { const g = owned.get(w), on = !!g || u.admin;
+    return `<label class="adm-grant"><span><b>${escapeHtml(ADM_GRANT_NAMES[w] || w)}</b><small>${u.admin ? "admin account: has everything" : on ? src(g) : "doesn't have it"}</small></span>` +
+      `<span class="ext-switch"><input type="checkbox" data-adm-grant="${escapeHtml(w)}"${on ? " checked" : ""}${u.admin ? " disabled" : ""} aria-label="${escapeHtml(ADM_GRANT_NAMES[w] || w)}"><span class="ext-slider"></span></span></label>`; }).join("");
+  const skus = Object.entries(d.catalog).map(([k, c]) => `<option value="${k}" data-room="${c.room ? 1 : ""}">${escapeHtml(c.name)} ($${(c.price / 100).toFixed(2)})</option>`).join("");
+  const rooms = (d.rooms || []).map((r) => `<div class="adm-room"><span><b class="num">${escapeHtml(String(r.name).toUpperCase())}</b><small>${escapeHtml(r.role)} · ${escapeHtml(r.access === "members" ? "Locked" : r.access === "password" ? "Password" : "Open")} · ${r.players || 0} players</small></span>` +
+    (r.role === "owner" ? `<form class="adm-move" data-adm-move="${escapeHtml(r.name)}"><input class="mode-input" placeholder="New owner's username" aria-label="New owner of ${escapeHtml(r.name)}"><button type="submit" class="btn btn-sm">Transfer</button></form><button type="button" class="btn btn-sm btn-danger-ghost" data-adm-drop="${escapeHtml(r.name)}">Remove</button>` : "") + "</div>").join("");
+  const orders = (d.orders || []).map((o) => `<tr><td>${escapeHtml(admWhen(o.createdAt))}</td><td>${escapeHtml((d.catalog[o.kind] || {}).name || o.kind)}</td><td>${escapeHtml(o.item ? o.item.toUpperCase() : "")}</td><td class="num">$${(o.amount / 100).toFixed(2)}</td><td><span class="adm-st adm-st-${escapeHtml(o.status)}">${escapeHtml(o.status)}</span></td><td>${escapeHtml(o.note || "")}</td></tr>`).join("");
+  const dd = d.data || {};
+  const plug = (dd.plugin || []).map((p) => `<tr><td>${escapeHtml(p.plugin)}</td><td>${escapeHtml(p.key)}</td><td class="num">${Number(p.bytes).toLocaleString()} B</td><td class="adm-prev">${escapeHtml(p.preview)}</td><td><button type="button" class="btn btn-sm btn-ghost" data-adm-clear="${escapeHtml(JSON.stringify([p.profile, p.plugin, p.key]))}">Clear</button></td></tr>`).join("");
+  const neonOpts = `<option value="">Off</option>` + Object.keys(NEON_COLORS).map((k) => `<option value="${k}"${u.neon === k ? " selected" : ""}>${k[0].toUpperCase() + k.slice(1)}</option>`).join("");
+  el.innerHTML = `
+    <div class="fr-card adm-uhead">${admAv(u.displayName || u.handle || u.email, u.neon)}
+      <div class="adm-uhead-txt"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b>
+        <small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : "no username · "}${escapeHtml(u.email || "")}</small>
+        <small>Joined ${escapeHtml(admWhen(u.createdAt))} · last sign-in ${escapeHtml(admWhen(u.lastLogin))} · ${d.friends} ${d.friends === 1 ? "friend" : "friends"}</small></div>
+      <span class="adm-badges">${u.admin ? '<span class="badge">Admin</span>' : ""}${u.verified ? '<span class="badge">Verified</span>' : '<span class="badge">Not verified</span>'}${u.google ? '<span class="badge">Google</span>' : ""}</span></div>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Profile</h3>
+      <form id="adm-profile" class="adm-form">
+        <label class="mode-field"><span>Display name</span><input id="adm-dn" class="mode-input" maxlength="24" value="${escapeHtml(u.displayName || "")}"></label>
+        <label class="mode-field"><span>Username</span><input id="adm-handle" class="mode-input" maxlength="21" value="${escapeHtml(u.handle || "")}" autocapitalize="off" spellcheck="false"></label>
+        <label class="mode-field"><span>Neon colour</span><select id="adm-neon" class="mode-input">${neonOpts}</select></label>
+        <label class="checkbox-row"><input type="checkbox" id="adm-lb"${u.onLeaderboard ? " checked" : ""}> On the global leaderboard</label>
+        <div class="adm-formfoot"><button type="submit" class="btn btn-primary btn-sm">Save</button><span class="adm-msg" id="adm-profile-msg" role="status"></span></div>
+      </form></section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Products</h3>
+      <div class="adm-grants">${grantRows}</div>
+      <form id="adm-give" class="adm-give"><select id="adm-sku" class="mode-input" aria-label="Product">${skus}</select><input id="adm-room" class="mode-input" placeholder="Room name" maxlength="24" hidden aria-label="Room name" autocapitalize="off" spellcheck="false"><button type="submit" class="btn btn-sm btn-primary">Give for free</button><span class="adm-msg" id="adm-give-msg" role="status"></span></form></section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Rooms</h3>${d.roomsReached ? (rooms || '<p class="adm-none">No rooms.</p>') : '<p class="adm-none">The game server can\'t be reached right now.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Orders</h3>${orders ? `<div class="adm-scroll"><table class="adm-table"><thead><tr><th>Date</th><th>Product</th><th>Room</th><th>Paid</th><th>Status</th><th>Note</th></tr></thead><tbody>${orders}</tbody></table></div>` : '<p class="adm-none">No orders.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Stored on the server</h3>
+      ${dd.error ? `<p class="adm-none">${escapeHtml(dd.error)}</p>` : `<div class="adm-tots">${[["Answers", dd.answers], ["Sessions", dd.sessions], ["Stars", dd.starred], ["Profiles", dd.profiles], ["Plugin entries", (dd.plugin || []).length]].map(([l, v]) => `<div class="adm-tot"><b class="num">${Number(v || 0).toLocaleString()}</b><small>${l}</small></div>`).join("")}</div>
+      ${plug ? `<div class="adm-scroll"><table class="adm-table adm-plug"><thead><tr><th>Plugin</th><th>Key</th><th>Size</th><th>Starts with</th><th></th></tr></thead><tbody>${plug}</tbody></table></div>` : ""}`}</section>`;
+  // ── wiring ──
+  const id = u.id;
+  el.querySelector("#adm-profile").onsubmit = async (e) => {
+    e.preventDefault(); const msg = el.querySelector("#adm-profile-msg"); msg.textContent = "Saving…";
+    let r = null; try { r = await API.post("/api/admin/profile", { id, displayName: el.querySelector("#adm-dn").value.trim(), handle: el.querySelector("#adm-handle").value.trim(), neon: el.querySelector("#adm-neon").value, onLeaderboard: el.querySelector("#adm-lb").checked }); } catch (e2) {}
+    msg.textContent = r && r.ok ? "Saved" : (r && r.error) || "Couldn't save that.";
+    if (r && r.ok) admOpen(id, true);
+  };
+  el.querySelectorAll("[data-adm-grant]").forEach((cb) => cb.addEventListener("change", async () => {
+    const on = cb.checked; let r = null;
+    try { r = await API.post("/api/admin/grant", { id, what: cb.dataset.admGrant, on }); } catch (e) {}
+    if (!r || !r.ok) { cb.checked = !on; failBubble(cb.closest(".adm-grant"), (r && r.error) || "Couldn't change that."); return; }
+    admOpen(id, true);
+  }));
+  const sku = el.querySelector("#adm-sku"), room = el.querySelector("#adm-room");
+  const syncRoom = () => { room.hidden = !sku.selectedOptions[0]?.dataset.room; };
+  sku.addEventListener("change", syncRoom); syncRoom();
+  el.querySelector("#adm-give").onsubmit = async (e) => {
+    e.preventDefault(); const msg = el.querySelector("#adm-give-msg"); msg.textContent = "Giving…";
+    let r = null; try { r = await API.post("/api/admin/give", { id, sku: sku.value, name: room.hidden ? "" : room.value.trim() }); } catch (e2) {}
+    if (!r || !r.ok) { msg.textContent = (r && r.error) || "Couldn't give that."; return; }
+    msg.textContent = "Given"; admOpen(id, true);
+  };
+  el.querySelectorAll("[data-adm-drop]").forEach((b) => b.onclick = () => confirmDialog("Remove the room " + b.dataset.admDrop.toUpperCase() + "? Everyone in it is shown out, and its members and settings are gone.", async () => {
+    let r = null; try { r = await API.post("/api/admin/room", { action: "remove", name: b.dataset.admDrop }); } catch (e) {}
+    if (!r || !r.ok) { failBubble(b, (r && r.error) || "Couldn't remove it."); return; }
+    admOpen(id, true);
+  }, { yes: "Remove", danger: true }));
+  el.querySelectorAll("[data-adm-move]").forEach((f) => f.onsubmit = async (e) => {
+    e.preventDefault(); const to = f.querySelector("input").value.trim().replace(/^@/, ""); if (!to) return;
+    let r = null; try { r = await API.post("/api/admin/room", { action: "transfer", name: f.dataset.admMove, to }); } catch (e2) {}
+    if (!r || !r.ok) { failBubble(f.querySelector("input"), (r && r.error) || "Couldn't transfer it."); return; }
+    admOpen(id, true);
+  });
+  el.querySelectorAll("[data-adm-clear]").forEach((b) => b.onclick = () => { const [profile, plugin, key] = JSON.parse(b.dataset.admClear);
+    confirmDialog("Clear " + plugin + " → " + key + " for this account?", async () => {
+      let r = null; try { r = await API.post("/api/admin/plugin-data/clear", { id, profile, plugin, key }); } catch (e) {}
+      if (!r || !r.ok) { failBubble(b, (r && r.error) || "Couldn't clear it."); return; }
+      admOpen(id, true);
+    }, { yes: "Clear", danger: true }); });
+}
+
 async function renderAdmin() {
   const c = document.getElementById("admin-container"); if (!c) return;
+  if (_adm.tab === "users") { paintAdminUsers(c); return; }
   if (!c.querySelector(".adm-page")) c.innerHTML = loadingBarHtml("Loading…");
   let d;
   try { d = await API.get("/api/admin/stats"); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
@@ -12261,13 +12403,14 @@ function paintAdmin(c) {
     .map(([l, v]) => `<div class="adm-tot"><b class="num">${v == null ? "—" : num(v)}</b><small>${l}</small></div>`).join("");
   const recent = days.slice(-14).reverse();
   const table = `<table class="adm-table"><thead><tr><th>Day</th>${ADM_METRICS.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead><tbody>${recent.map((r) => `<tr><td>${escapeHtml(r.day)}</td>${ADM_METRICS.map(([k]) => `<td class="num">${num(r[k])}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  c.innerHTML = `<div class="adm-page">
+  c.innerHTML = `<div class="adm-page">${admTabsHtml()}
     <div class="adm-cards">${cards}</div>
     <section class="fr-card adm-chart"><div class="adm-chart-head"><h2>${escapeHtml(label)}</h2><small>last 30 days</small></div><div class="adm-bars">${bars}</div></section>
     <section class="fr-card adm-totals">${totals}</section>
     <section class="fr-card adm-recent"><div class="adm-scroll">${table}</div></section>
   </div>`;
   c.querySelectorAll("[data-adm]").forEach((b) => b.onclick = () => { _adm.metric = b.dataset.adm; paintAdmin(c); });
+  wireAdmTabs(c);
 }
 
 // ── Friends ──
@@ -12292,20 +12435,21 @@ async function renderFriends(note) {
   if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't load friends.")}</div>`; return; }
   const me = d.me || {};
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
+  const avN = (h, n) => `<span class="fr-av"${avatarStyle(n)}>${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const rows = [{ ...me, you: true }, ...(d.friends || [])].sort((a, b) => ((b.summary || {}).week || {}).questions - ((a.summary || {}).week || {}).questions || String(a.handle).localeCompare(String(b.handle)));
   const num = (v) => (v == null ? "—" : Number(v).toLocaleString());
   const board = rows.map((f, i) => {
     const s = f.summary || {}, w = s.week || {};
     const nm = f.you ? (Account.user && Account.user.displayName) || f.handle : f.displayName || f.handle;
-    return `<div class="fr-row${f.you ? " fr-you" : ""}" data-user="${escapeHtml(f.handle || "")}" data-user-name="${escapeHtml(nm || "")}" data-user-neon="${escapeHtml((f.you ? myNeon() : f.neon) || "")}"><span class="fr-rank num">${i + 1}</span>${av(nm)}<span class="fr-name"><b>${neonName(nm || "", f.you ? myNeon() : f.neon)}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
+    return `<div class="fr-row${f.you ? " fr-you" : ""}" data-user="${escapeHtml(f.handle || "")}" data-user-name="${escapeHtml(nm || "")}" data-user-neon="${escapeHtml((f.you ? myNeon() : f.neon) || "")}"><span class="fr-rank num">${i + 1}</span>${avN(nm, f.you ? myNeon() : f.neon)}<span class="fr-name"><b>${neonName(nm || "", f.you ? myNeon() : f.neon)}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
       `<span class="fr-stat"><b class="num">${num(w.questions)}</b><small>this week</small></span>` +
       `<span class="fr-stat"><b class="num">${w.accuracy == null ? "—" : w.accuracy + "%"}</b><small>accuracy</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.today)}</b><small>today</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.streak)}</b><small>day streak</small></span>` +
       (f.you ? '<span class="fr-act"></span>' : `<span class="fr-act"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fr-remove="${escapeHtml(f.handle)}" title="Remove friend" aria-label="Remove @${escapeHtml(f.handle)}">${ic("trash", 15)}</button></span>`) + "</div>";
   }).join("");
-  const reqs = (d.incoming || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${av(f.displayName || f.handle)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
-  const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${av(f.displayName || f.handle)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
+  const reqs = (d.incoming || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
+  const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
   c.innerHTML = `<div class="fr-page">` +
     `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button></div>` +
       `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Friend's username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +

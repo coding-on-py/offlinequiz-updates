@@ -961,6 +961,12 @@
   QB.NEON = { cyan: "#22d3ee", blue: "#4d8dff", indigo: "#7c7dff", violet: "#a95cff", magenta: "#e64bff", pink: "#ff4fa8",
     red: "#ff4545", orange: "#ff8a1f", gold: "#ffcc1a", lime: "#a6ff1a", green: "#2ee36e", teal: "#19e0c0" };
   QB.neonHtml = (html, neon) => QB.NEON[neon] ? '<span class="neon-name" style="--neon:' + QB.NEON[neon] + '">' + html + "</span>" : html;
+  // an avatar circle in the neon colour (its letter dark or white, whichever reads): inline CSS, or ""
+  QB.neonAvatar = (neon) => {
+    const c = QB.NEON[neon]; if (!c) return "";
+    const n = parseInt(c.slice(1), 16), lum = (0.2126 * (n >> 16 & 255) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255;
+    return "background:" + c + ";color:" + (lum > 0.6 ? "#0d1117" : "#fff") + ";box-shadow:0 0 10px " + c + "66";
+  };
   // your own colour, when the signed-in account has the neon name (else null)
   QB.myNeon = () => { const o = QB._owned; return o && o.signedIn && (o.grants || []).includes("neon") && QB.NEON[o.neon] ? o.neon : null; };
   // A name typed in a text box glows too: an input clips its own text (the glow came out a
@@ -3751,7 +3757,7 @@ function __qbMain(ctx) {
       body.innerHTML =
         '<div class="mp-lobby">' +
           '<div class="mp-lobby-main">' +
-          '<label class="mp-who"><span class="avatar">' + esc(initial) + '</span><span class="mp-who-txt"><span class="eyebrow">Playing as</span>' +
+          '<label class="mp-who"><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.myNeon && window.QB.neonAvatar(window.QB.myNeon())) || "") + '">' + esc(initial) + '</span><span class="mp-who-txt"><span class="eyebrow">Playing as</span>' +
             '<input id="mp-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name"' + (fixedName ? " readonly" : "") + '></span>' +
             (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name — change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
           '<section class="mp-card mp-join-card">' +
@@ -4786,7 +4792,7 @@ function __qbMain(ctx) {
         var subHtml = p.off ? "offline" : p.spec ? "spectating"
           : you ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
           : (p.team ? "team " + esc(p.team) : "&nbsp;");
-        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(neonOf(p) || "") + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="background:' + (you ? "var(--accent-strong)" : colorOf(p.id)) + '">' + esc(initial) + '</span>' +
+        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(neonOf(p) || "") + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.neonAvatar(neonOf(p))) || "background:" + (you ? "var(--accent-strong)" : colorOf(p.id))) + '">' + esc(initial) + '</span>' +
           '<span class="nm">' + nameHtml + "<span>" + subHtml + "</span></span>" +
           (p.spec ? "" : '<span class="sc num">' + (p.score || 0) + "</span>") + "</div>";
       };

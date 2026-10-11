@@ -425,6 +425,26 @@ export class UserData {
     return { ok: true };
   }
 
+  // The site's admin: what this account keeps (answers, stars, plugin data), and clearing one
+  // plugin entry — set to null, so the change syncs to the app like any other.
+  adminSummary() {
+    const one = (sql) => Number((this.db.prepare(sql).get() || {}).n || 0);
+    const plugin = [];
+    for (const r of this.db.prepare("SELECT key, length(value) AS n, substr(value, 1, 160) AS head FROM config WHERE key LIKE 'plug:%' ORDER BY key").all()) {
+      const m = /^plug:([^:]+):([^:]+):(.+)$/.exec(r.key);
+      if (!m || r.head === "null") continue;
+      plugin.push({ profile: m[1], plugin: m[2], key: m[3], bytes: Number(r.n) || 0, preview: r.head });
+    }
+    return { profiles: one("SELECT COUNT(*) AS n FROM profiles"), starred: one("SELECT COUNT(*) AS n FROM starred"),
+      answers: one("SELECT COUNT(*) AS n FROM sessions"), sessions: one("SELECT COUNT(DISTINCT session_id) AS n FROM sessions"), plugin };
+  }
+  adminClearPluginData(profile, pluginId, key) {
+    const k = "plug:" + profile + ":" + pluginId + ":" + key;
+    if (this.getConfig(k) == null) return { error: "Nothing stored there." };
+    this.setConfig(k, "null");
+    return { ok: true };
+  }
+
   pluginSql(pluginId, sql, params) {
     const src = String(sql || "");
     const safeId = String(pluginId || "").replace(/[^a-zA-Z0-9_-]/g, "");
