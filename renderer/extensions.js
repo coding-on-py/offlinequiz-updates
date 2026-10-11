@@ -4056,20 +4056,23 @@ function __qbMain(ctx) {
         var st = o && o.status;
         if (st === "fulfilled") {
           clearInterval(el._poll);
+          if (el._done) return;   // (a poll already in flight lands here too: celebrate once)
+          el._done = true;
           if (ctx.host && ctx.host.refreshOwned) ctx.host.refreshOwned();   // a bundle's plugins and neon name
-          if (!o.item) {
-            box.innerHTML = shopHead("Thank you!", "<b>" + esc(productName(o.kind)) + "</b> is yours", true) +
-              '<ul class="shop-perks shop-next">' + boughtLines(o.kind) + "</ul>" +
-              '<div class="confirm-actions"><button type="button" class="btn btn-primary" id="shop-close">Done</button></div>';
-            box.querySelector("#shop-close").onclick = el._close;
-            return;
-          }
-          box.innerHTML = shopHead("Your room is ready", "<b>" + esc(String(o.item).toUpperCase()) + "</b> is yours — onlinequiz.net/room/" + esc(o.item)) +
-            '<ul class="shop-perks shop-next"><li>Set a password or add members in the room’s <b>Room</b> tab</li><li>Share its name (or link) with your team</li>' +
-              (o.kind === "captain" ? "<li>Your four study plugins are on, and your neon name is in the <b>Store</b></li>" : "") + "</ul>" +
-            '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" id="shop-go">Go to my room</button></div>';
+          // Purchase complete: a big check, what it was, what to do next — and confetti
+          var room = !!o.item;
+          box.innerHTML = '<div class="shop-done">' +
+            '<span class="shop-done-badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>' +
+            '<div class="confirm-title">Purchase complete!</div>' +
+            '<div class="shop-sub">' + (room ? "<b>" + esc(String(o.item).toUpperCase()) + "</b> is yours — onlinequiz.net/room/" + esc(o.item) + (o.kind === "captain" ? "<br>with the <b>Team Captain Bundle</b>" : "")
+              : "<b>" + esc(productName(o.kind)) + "</b> is yours") + "</div>" +
+            '<ul class="shop-perks shop-next">' + (room ? "<li>Set a password or add members in the room’s <b>Room</b> tab</li><li>Share its name (or link) with your team</li>" +
+              (o.kind === "captain" ? "<li>Your four study plugins are on, and your neon name is in the <b>Store</b></li>" : "") : boughtLines(o.kind)) + "</ul>" +
+            '<div class="confirm-actions">' + (room ? '<button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" id="shop-go">Go to my room</button>'
+              : '<button type="button" class="btn btn-primary" id="shop-close">Done</button>') + "</div></div>";
           box.querySelector("#shop-close").onclick = el._close;
-          box.querySelector("#shop-go").onclick = function () { el._close(); if (window.QB && window.QB.mpJoin) window.QB.mpJoin(o.item); };
+          var go = box.querySelector("#shop-go"); if (go) go.onclick = function () { el._close(); if (window.QB && window.QB.mpJoin) window.QB.mpJoin(o.item); };
+          if (ctx.host && ctx.host.confetti) ctx.host.confetti(box);
           return;
         }
         var msg = st === "paid" ? (o.item ? "Payment received — setting up your room…" : "Payment received — adding it to your account…") : st === "expired" || st === "failed" || st === "replaced" ? "That payment didn’t go through. Nothing was charged." : "Waiting for your payment" + (!window.QB_WEB ? " — finish it in your browser." : "…");

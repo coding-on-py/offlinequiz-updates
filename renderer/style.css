@@ -4677,6 +4677,14 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 .pf-avatar:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
 .pf-avatar:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
 .pf-id { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.pf-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pf-name-row .pf-name { field-sizing: content; width: auto; min-width: 6ch; max-width: min(100%, 360px); }   /* as wide as the name: the ✦ sits by it */
+.pf-neon-btn { --neon: var(--muted); display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--surface-2); color: var(--neon); cursor: pointer; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--neon) 70%, transparent)); transition: border-color .15s ease, transform .12s var(--ease-out); }
+.pf-neon-btn:hover, .pf-neon-btn[aria-expanded="true"] { border-color: var(--neon); }
+.pf-neon-btn.off { color: var(--muted); filter: none; }
+.pf-neon-btn.off:hover, .pf-neon-btn.off[aria-expanded="true"] { border-color: var(--line-strong); }
+.pf-neon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-neon-wrap .st-neon-pop { left: -8px; right: auto; margin-left: 0; }   /* from the ✦ rightward (wireNeonPop keeps it in the window) */
 .pf-name { width: min(100%, 360px); padding: 4px 8px; margin-left: -8px; border: 1px solid transparent; border-radius: var(--r); background: transparent; color: var(--strong); font-family: var(--font); font-size: 22px; font-weight: 700; outline: none; transition: border-color 120ms ease, background 120ms ease; }
 .pf-name:hover { border-color: var(--line); }
 .pf-name:focus { border-color: var(--accent); background: var(--sunken); }
@@ -4829,12 +4837,19 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 .stk-mon-end { direction: rtl; }
 .stk-sub { display: flex; flex-direction: column; gap: 2px; }
 .stk-sub b { color: var(--text); font-weight: 600; }
-/* scrolled boxes under a fixed header fade at the top (app.js adds .qb-scrolled) */
-/* (not a box holding the borrowed settings panel: a mask would clip its fixed parts) */
-:is(.db-content, .review-viewer-list, .pg-scroll).qb-scrolled {
+/* Everything that scrolls fades out at its top edge once scrolled (app.js adds .qb-scrolled) —
+   pages under the top bar, lists, panels, windows — instead of cutting off at a hard line. Not a
+   text box, and not a box holding the settings panel (a mask would clip its fixed category picker):
+   the panel's own fade sits under its pinned head (below). */
+.qb-scrolled:not(textarea, input, select, .filters-panel):not(:has(.filters-panel)) {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
   mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
 }
+:is(#practice-screen, .mp-room) .filters-panel .fp-head::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 24px; pointer-events: none;
+  background: linear-gradient(var(--surface), transparent); opacity: 0; transition: opacity .15s ease;
+}
+:is(#practice-screen, .mp-room) .filters-panel.qb-scrolled .fp-head::after { opacity: 1; }
 .qcard-foot { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
 .qcard-foot > .ra-k { flex: 0 0 auto; }
 /* Profile: your initial in a circle (the emoji avatars are gone) */
@@ -4939,3 +4954,17 @@ html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%
   .st-room-buy { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
   .st-title { font-size: 21px; }
 }
+
+/* Purchase complete (multiplayer.js watchOrder) — and confetti over it (app.js confettiBurst) */
+.shop-done { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.shop-done .confirm-title { font-size: 20px; }
+.shop-done .shop-perks { align-self: stretch; text-align: left; }
+.shop-done .confirm-actions { align-self: stretch; }
+.shop-done-badge { display: grid; place-items: center; width: 68px; height: 68px; margin: 4px 0 2px; border-radius: 50%; background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 8%, transparent); }
+@media (prefers-reduced-motion: no-preference) {
+  .shop-done-badge { animation: qb-done-pop 520ms cubic-bezier(.2, 1.4, .4, 1) both; }
+  .shop-done-badge svg path { stroke-dasharray: 24; stroke-dashoffset: 24; animation: qb-done-tick 420ms 220ms ease-out forwards; }
+}
+@keyframes qb-done-pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes qb-done-tick { to { stroke-dashoffset: 0; } }
+.qb-confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 10060; pointer-events: none; }

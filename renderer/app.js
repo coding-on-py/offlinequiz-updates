@@ -1343,7 +1343,7 @@ document.getElementById("set-username")?.addEventListener("change", (e) => {
   if (!v) { e.target.value = state.username || ""; return; }
   state.username = v; lsSet("qb-username", v);
   renderGreeting(); renderTopbarProfile();
-  pushAccountName(v);   // signed in: the account (website, other devices) gets it too
+  pushAccountName(v, e.target);   // signed in: the account (website, other devices) gets it too
 });
 document.getElementById("btn-open-profile")?.addEventListener("click", () => { closeSettingsOverlays(); goTo("player"); });
 document.getElementById("btn-browse-themes")?.addEventListener("click", () => { closeSettingsOverlays(); goTo("plugins-themes"); });
@@ -9022,7 +9022,7 @@ async function loadPlayer() {
         <section class="pf-card">
           <span class="pf-avatar" aria-hidden="true">${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
           <div class="pf-id">
-            <input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false">
+            <div class="pf-name-row"><input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false"></div>
             <small class="pf-sub">${handle ? escapeHtml(handle) : Account.user ? "Signed in" : IS_WEB ? "Not signed in" : "On this computer"}</small>
           </div>
         </section>
@@ -9036,15 +9036,22 @@ async function loadPlayer() {
 
     initCollapsibles(container);
     window.QB?.neonField?.($("#player-username-input"), myNeon());   // a bought neon name glows here too
+    paintProfileNeon();   // …and its colour is picked here too
 
     $("#player-username-input")?.addEventListener("input", (e) => {
       state.username = e.target.value.trim();
       lsSet("qb-username", state.username);
-      pushAccountName(state.username);
+      const av = container.querySelector(".pf-avatar"); if (av) av.textContent = ((state.username || "Player")[0] || "P").toUpperCase();
+      renderGreeting(); renderTopbarProfile();
+      pushAccountName(state.username, e.target);
     });
     // Flush immediately when leaving the field, so quitting right after a
-    // rename can't lose it to the debounce window.
-    $("#player-username-input")?.addEventListener("blur", () => { clearTimeout(_profileSyncTimer); pushProfileSettings(); });
+    // rename can't lose it to the debounce window. Left empty: the name comes back.
+    $("#player-username-input")?.addEventListener("blur", (e) => {
+      if (!e.target.value.trim()) { const back = (Account.user && (Account.user.displayName || Account.user.handle)) || lsGet("qb-username") || "Player"; e.target.value = back; state.username = back; lsSet("qb-username", back); renderGreeting(); renderTopbarProfile(); window.QB?.neonField?.(e.target, myNeon()); }
+      clearTimeout(_profileSyncTimer); pushProfileSettings();
+      if (Account.user && !pushAccountName._t) applyAccountName();   // shows the name as the account keeps it
+    });
 
   } catch (e) {
     container.innerHTML = `<div class="text-muted">Failed to load player data</div>`;
@@ -10975,6 +10982,7 @@ function init() {
       openUrl: (url) => { if (IS_WEB) location.href = url; else API.post("/api/cloud/open", { url }).catch(() => {}); },
       // the Store: open it (at a product); what the account owns, fetched again (after a purchase)
       openStore: (sku) => openStore(sku),
+      confetti: (el) => confettiBurst(el),
       refreshOwned: () => refreshOwned(),
       openSaveMenu: (question, type, anchor) => openSaveMenu(question, type, anchor),
       openItemSaveMenu: (spec, anchor) => openItemSaveMenu(spec, anchor),
@@ -11124,7 +11132,7 @@ function renderAccountMenu() {
     let em = head.querySelector(".tbm-email");
     if (!em) { em = document.createElement("small"); em.className = "tbm-email"; head.appendChild(em); }
     em.textContent = Account.user ? (Account.user.handle ? "@" + Account.user.handle : Account.user.email) : "";
-    const nm = head.querySelector("b"); if (nm && Account.user && IS_WEB) nm.innerHTML = neonName(Account.user.displayName || Account.user.handle || "Player", myNeon());
+    const nm = head.querySelector("b"); if (nm && Account.user && IS_WEB) nm.innerHTML = neonName(state.username || Account.user.displayName || Account.user.handle || "Player", myNeon());   // (a rename shows as it's typed)
     em.hidden = !Account.user;
   }
 }
@@ -11355,9 +11363,11 @@ function openAccount(mode, opts) {
 // the app while it's signed in — so a name set on the website, in the app or in
 // another tab shows everywhere (accountFresh: on focus and every minute). A name
 // typed in the app goes to the account (pushAccountName).
+// Signed in, your name IS the account's display name — Profile, Settings → Profile, the top bar,
+// Multiplayer and the website all show (and change) the one name. A rename on its way wins.
 function applyAccountName() {
   const dn = Account.user ? (Account.user.displayName || Account.user.handle || "") : "";
-  if (IS_WEB) state.username = dn;
+  if (IS_WEB) { if (pushAccountName._t) return; state.username = dn; }
   else {
     if (!dn || Account.offline || state.username === dn || pushAccountName._t) return;   // a typed name on its way wins
     state.username = dn; lsSet("qb-username", dn);
@@ -11367,13 +11377,18 @@ function applyAccountName() {
   renderGreeting(); renderTopbarProfile();
   try { const pi = document.getElementById("player-username-input"); if (pi && document.activeElement !== pi) { pi.value = state.username || ""; window.QB?.neonField?.(pi, myNeon()); } } catch (e) {}
 }
-function pushAccountName(name) {
+function pushAccountName(name, field) {
   name = String(name || "").trim();
-  if (IS_WEB || !Account.user || Account.offline || !name || (Account.user.displayName || "") === name) return;
+  if (!Account.user || Account.offline || !name || (Account.user.displayName || "") === name) return;
   clearTimeout(pushAccountName._t);
   pushAccountName._t = setTimeout(async () => {
-    try { const r = await API.post("/api/account/profile", { displayName: name }); if (r && r.user) { Account.user = r.user; renderAccountMenu(); } } catch (e) {}
+    let r = null;
+    try { r = await API.post("/api/account/profile", { displayName: name }); } catch (e) {}
     pushAccountName._t = null;
+    if (r && r.user) { Account.user = r.user; renderAccountMenu(); applyAccountName(); return; }   // (as the account has it: trimmed, cleaned)
+    // refused (or no connection): the account's name comes back where it was typed
+    if (r && r.error && field && field.isConnected) failBubble(field, r.error);
+    applyAccountName();
   }, 700);
 }
 // A friend request not looked at yet: a blue dot on the avatar and on Friends in
@@ -11877,6 +11892,7 @@ const myNeon = () => (window.QB && window.QB.myNeon ? window.QB.myNeon() : null)
 function repaintMyNeon() {
   try { renderTopbarProfile(); renderGreeting(); } catch (e) {}
   ["player-username-input", "set-username", "mp-name"].forEach((id) => { const i = document.getElementById(id); if (i) window.QB?.neonField?.(i, myNeon()); });
+  paintProfileNeon();
   if (document.querySelector("#friends-screen.active")) renderFriends();
   window.QB?._emit?.("neon:changed", myNeon());
 }
@@ -11918,6 +11934,37 @@ function refreshOwned() {
   }).catch(() => {}).finally(() => { _shop.ownedP = null; });
   return _shop.ownedP;
 }
+// Confetti over the whole window, bursting from an element (a purchase that went through). A canvas
+// on top that clicks pass through; about three seconds, then it's gone. None with reduced motion.
+function confettiBurst(from) {
+  confettiBurst.n = (confettiBurst.n || 0) + 1;   // (tests: it went off)
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const W = innerWidth, H = innerHeight, dpr = Math.min(2, devicePixelRatio || 1);
+  const cv = document.createElement("canvas");
+  cv.className = "qb-confetti"; cv.setAttribute("aria-hidden", "true");
+  cv.width = W * dpr; cv.height = H * dpr;
+  document.body.appendChild(cv);
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const r = from && from.getBoundingClientRect ? from.getBoundingClientRect() : null;
+  const ox = r ? r.left + r.width / 2 : W / 2, oy = r ? r.top + 60 : H / 3;
+  const COLORS = ["#58a6ff", "#3fb950", "#e3b341", "#f778ba", "#bc8cff", "#22d3ee", "#ff8a1f", "#ff4fa8"];
+  const ps = [];
+  const piece = (x, y, vx, vy, i) => ({ x, y, vx, vy, w: 6 + Math.random() * 5, h: 9 + Math.random() * 7, rot: Math.random() * 6.3, vr: (Math.random() - 0.5) * 0.3, tilt: Math.random() * 6.3, c: COLORS[i % COLORS.length] });
+  for (let i = 0; i < 150; i++) { const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.2, sp = 7 + Math.random() * 10; ps.push(piece(ox, oy, Math.cos(a) * sp, Math.sin(a) * sp, i)); }
+  for (let i = 0; i < 90; i++) ps.push(piece(Math.random() * W, -20 - Math.random() * H * 0.5, (Math.random() - 0.5) * 2, 2 + Math.random() * 3, i));
+  const t0 = performance.now(), DUR = 3200;
+  const step = (now) => {
+    const t = now - t0, fade = t > DUR - 700 ? Math.max(0, (DUR - t) / 700) : 1;
+    g.clearRect(0, 0, W, H);
+    for (const p of ps) {
+      p.vy = Math.min(p.vy + 0.24, 6.5); p.vx *= 0.985; p.x += p.vx + Math.sin(p.tilt) * 0.6; p.y += p.vy; p.rot += p.vr; p.tilt += 0.08;
+      const sq = Math.abs(Math.cos(p.tilt));
+      g.save(); g.globalAlpha = fade; g.translate(p.x, p.y); g.rotate(p.rot); g.fillStyle = p.c; g.fillRect(-p.w / 2, (-p.h / 2) * sq, p.w, p.h * sq); g.restore();
+    }
+    if (t < DUR && cv.isConnected) requestAnimationFrame(step); else cv.remove();
+  };
+  requestAnimationFrame(step);
+}
 function openStore(sku) {
   goTo("store");
   if (!sku) return;
@@ -11950,11 +11997,8 @@ function renderStore() {
   // the Starter Bundle's neon line: your name glowing — pressing it opens the colours (a popover)
   const neonLi = `<li><span class="st-ico st-ico-neon">${ic("sparkle", 16)}</span><span class="st-neon-line">Neon name <span class="pop-wrap st-neon-wrap">` +
     `<button type="button" class="st-neon-me" aria-haspopup="dialog" aria-expanded="false" aria-label="Neon colour" title="Pick a colour"><span class="st-neon-sample">${neonName(myName, shown)}</span>${ic("down", 12)}</button>` +
-    `<div class="pop st-neon-pop" role="dialog" aria-label="Neon colour" hidden>` +
-      `<div class="st-swatches" role="radiogroup" aria-label="Neon colour">${Object.entries(NEON_COLORS).map(([k, v]) =>
-        `<button type="button" class="st-sw${shown === k ? " on" : ""}" role="radio" aria-checked="${shown === k}" data-neon="${k}" style="--neon:${v}" title="${k[0].toUpperCase() + k.slice(1)}" aria-label="${k}"></button>`).join("")}</div>` +
-      (has("neon") ? `<button type="button" class="pop-item st-neon-off${shown ? "" : " on"}" role="radio" aria-checked="${!shown}" data-neon="">${ic("x", 14)}Off</button>` : "") +
-    `</div></span></span>${has("neon") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
+    neonPopHtml(shown, has("neon")) +
+    `</span></span>${has("neon") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
   c.innerHTML = `<div class="st-page">
     <header class="st-hero">
       <h1 class="st-title">Study tools, a name that glows, and a room of your own</h1>
@@ -12012,19 +12056,44 @@ function renderStore() {
   c.querySelectorAll("[data-store-go]").forEach((b) => b.addEventListener("click", () => openStore(b.dataset.storeGo)));
   // the colour picker: a popover from your name (it stays open while colours are tried)
   const me = c.querySelector(".st-neon-me"), pop = c.querySelector(".st-neon-pop");
-  if (me && pop) {
-    const show = (open) => {
-      if (open) {
-        closeAllPops();
-        const r = me.getBoundingClientRect();   // up when the page's end leaves no room below
-        pop.classList.toggle("up", window.innerHeight - r.bottom < 200 && r.top > 200);
-      }
-      pop.hidden = !open; me.setAttribute("aria-expanded", String(open));
-    };
-    me.addEventListener("click", (e) => { e.stopPropagation(); const open = pop.hidden; show(open); if (open && e.detail === 0) (pop.querySelector(".st-sw.on") || pop.querySelector(".st-sw"))?.focus({ preventScroll: true }); });   // the keyboard: into the colours
-    pop.querySelectorAll("[data-neon]").forEach((b) => b.addEventListener("click", () => storeNeon(b.dataset.neon, b)));
-    if (wasOpen) show(true);   // repainted while it was open
+  if (me && pop) wireNeonPop(me, pop, wasOpen);
+}
+// The neon colour picker — the Store's bundle card (from your glowing name) and Profile (the ✦ by
+// your name): the twelve colours (+ Off for an owner) in a popover. A pick shows at once and saves.
+function neonPopHtml(shown, owned) {
+  return `<div class="pop st-neon-pop" role="dialog" aria-label="Neon colour" hidden>` +
+    `<div class="st-swatches" role="radiogroup" aria-label="Neon colour">${Object.entries(NEON_COLORS).map(([k, v]) =>
+      `<button type="button" class="st-sw${shown === k ? " on" : ""}" role="radio" aria-checked="${shown === k}" data-neon="${k}" style="--neon:${v}" title="${k[0].toUpperCase() + k.slice(1)}" aria-label="${k}"></button>`).join("")}</div>` +
+    (owned ? `<button type="button" class="pop-item st-neon-off${shown ? "" : " on"}" role="radio" aria-checked="${!shown}" data-neon="">${ic("x", 14)}Off</button>` : "") +
+  `</div>`;
+}
+function wireNeonPop(me, pop, startOpen) {
+  const show = (open) => {
+    if (open) {
+      closeAllPops();
+      const r = me.getBoundingClientRect();   // up when the window's end leaves no room below
+      pop.classList.toggle("up", window.innerHeight - r.bottom < 200 && r.top > 200);
+      // Profile's: from the ✦ rightward, slid back where the window ends (inside it on a phone)
+      if (me.classList.contains("pf-neon-btn")) { const want = Math.max(12, Math.min(r.left - 8, window.innerWidth - 12 - 284)); pop.style.left = Math.round(want - r.left) + "px"; }
+    }
+    pop.hidden = !open; me.setAttribute("aria-expanded", String(open));
+  };
+  me.addEventListener("click", (e) => { e.stopPropagation(); const open = pop.hidden; show(open); if (open && e.detail === 0) (pop.querySelector(".st-sw.on") || pop.querySelector(".st-sw"))?.focus({ preventScroll: true }); });   // the keyboard: into the colours
+  pop.querySelectorAll("[data-neon]").forEach((b) => b.addEventListener("click", () => storeNeon(b.dataset.neon, b)));
+  if (startOpen) show(true);   // repainted while it was open
+}
+// Profile: the ✦ by your name (an account with the neon name)
+function ownsNeon() { const o = window.QB && window.QB._owned; return !!(Account.user && o && o.signedIn && (o.grants || []).includes("neon")); }
+function paintProfileNeon() {
+  const row = document.querySelector("#player-screen .pf-name-row"); if (!row) return;
+  const have = row.querySelector(".pf-neon-wrap"), own = ownsNeon(), n = own ? ((window.QB._owned || {}).neon || null) : null;
+  if (!own) { have?.remove(); return; }
+  if (!have) {
+    row.insertAdjacentHTML("beforeend", `<span class="pop-wrap pf-neon-wrap"><button type="button" class="pf-neon-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Name glow" title="Name glow">${ic("sparkle", 16)}</button>${neonPopHtml(n, true)}</span>`);
+    const w = row.querySelector(".pf-neon-wrap");
+    wireNeonPop(w.querySelector(".pf-neon-btn"), w.querySelector(".st-neon-pop"), false);
   }
+  paintNeon(n);
 }
 async function storeBuy(sku, btn) {
   if (!Account.user) { openAccount("signin", { reason: "Sign in to buy — what you buy is kept with your account." }); return; }
@@ -12046,20 +12115,21 @@ async function storeBuy(sku, btn) {
 function storeMyName() { return (Account.user && (Account.user.displayName || Account.user.handle)) || state.username || "Your name"; }
 // the Store's samples of your name, and the picker's ticks, in colour k (none: plain)
 function paintNeon(k) {
+  document.querySelectorAll(".st-neon-pop [data-neon]").forEach((b) => { const on = (b.dataset.neon || null) === (k || null); b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on)); });
+  document.querySelectorAll(".pf-neon-btn").forEach((b) => { b.classList.toggle("off", !NEON_COLORS[k]); if (NEON_COLORS[k]) b.style.setProperty("--neon", NEON_COLORS[k]); else b.style.removeProperty("--neon"); });
   const c = document.getElementById("store-container"); if (!c) return;
   c.querySelectorAll(".st-neon-sample").forEach((el) => { el.innerHTML = neonName(storeMyName(), k || null); });
-  c.querySelectorAll(".st-neon-pop [data-neon]").forEach((b) => { const on = (b.dataset.neon || null) === (k || null); b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on)); });
 }
 async function storeNeon(k, btn) {
   const o = window.QB && window.QB._owned;
   if (!o || !Account.user || !(o.grants || []).includes("neon")) { _shop.neonPick = k || "cyan"; paintNeon(_shop.neonPick); return; }   // trying the colours
   const prev = o.neon || null;
   if ((k || null) === prev) return;
-  o.neon = k || null; paintNeon(k);
+  o.neon = k || null; paintNeon(k); repaintMyNeon();
   let r = null;
   try { r = await API.post("/api/account/profile", { neon: k || "" }); } catch (e) {}
   if (!r || r.error || !r.user) {
-    o.neon = prev; paintNeon(prev);
+    o.neon = prev; paintNeon(prev); repaintMyNeon();
     failBubble(btn, (r && r.error) || "Couldn't save that. Try again.");
     return;
   }
@@ -12804,12 +12874,11 @@ window.QBSelect = QBSelect;
 init();
 QBSelect.start();
 
-// A box that scrolls under a fixed header (the Database's results, a plugin's page…) fades out at
-// its top edge once scrolled, instead of cutting the text off at a hard line. A box whose own header
-// scrolls inside it is left alone.
+// Anything that scrolls (a page under the top bar, the Database's results, a list, a window…) fades
+// out at its top edge once scrolled, instead of cutting the text off at a hard line (ui.css).
 document.addEventListener("scroll", (e) => {
   const el = e.target;
   if (!el || el === document || !el.classList || el === document.documentElement) return;
-  const on = el.scrollTop > 2 && !el.querySelector(":scope > .page-head, :scope > .top-bar");
+  const on = el.scrollTop > 2;
   if (on !== el.classList.contains("qb-scrolled")) el.classList.toggle("qb-scrolled", on);
 }, true);
