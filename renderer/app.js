@@ -3365,7 +3365,7 @@ function CatPicker(model) {
     const tiles = v.tree.roots.map((r, i) => {
       const pct = Math.round(100 * selectedCount(r) / Math.max(1, r.count));
       const col = ROOT_COLOR[r.name] || "#8b949e";
-      return `<div class="cp-tile${i === v.focus ? " focus" : ""}">${box(r.id, r.name)}<button type="button" class="cp-tile-main" data-cp="focus" data-i="${i}"><span class="cp-tile-top"><span class="dot" style="background:${col}"></span><span class="cp-tile-name">${escapeHtml(r.name)}</span><span class="tile-n">${fmt(r.count)}</span></span><span class="cp-share"><span style="width:${pct}%;background:${col}"></span></span></button>${stepper(r, true, wTotal)}</div>`;
+      return `<div class="cp-tile${i === v.focus ? " focus" : ""}">${box(r.id, r.name)}<button type="button" class="cp-tile-main" data-cp="focus" data-i="${i}"><span class="cp-tile-top"><span class="dot" style="background:${col}"></span><span class="cp-tile-name">${escapeHtml(r.name)}</span><span class="tile-n">${fmt(r.count)}</span><span class="cp-chev" aria-hidden="true">${ic("right", 15)}</span></span><span class="cp-share"><span style="width:${pct}%;background:${col}"></span></span></button>${stepper(r, true, wTotal)}</div>`;
     }).join("");
     const rt = root();
     const secs = (rt.children || []).filter((n) => n.count > 0).map((l2) => {
@@ -3393,12 +3393,16 @@ function CatPicker(model) {
     const saveHtml = v.saving
       ? `<span class="ifield" style="flex:none;width:200px;height:32px"><input class="cp-save-in" type="text" maxlength="40" placeholder="Preset name" aria-label="Preset name"></span>`
       : `<button type="button" class="chip" data-cp="preset-save" style="border-style:dashed;color:var(--muted)" title="Save these picks as a preset">+ Save</button>`;
+    // a phone shows one pane at a time: the list of categories, or one category (with a way back)
+    const phone = matchMedia("(max-width: 760px)").matches, detail = phone && v.mDetail;
+    h.classList.toggle("cp-m-detail", !!detail);
+    const findBox = `<div class="cp-find${phone ? " cp-find-m" : ""}"><label class="field">${ic("search", 15)}<input class="cp-find-in" type="text" value="${escapeHtml(v.find)}" placeholder="Find a topic\u2026" aria-label="Find a topic" autocomplete="off" spellcheck="false"></label>${findPop}</div>`;
     h.innerHTML =
       `<div class="modal-head"><h2>Categories</h2><span class="tile-n cp-headn">${escapeHtml(model.headLabel ? model.headLabel() : "")}</span><span class="spacer"></span><span class="num" style="color:var(--muted);font-size:12.5px">${escapeHtml(head)}</span><button type="button" class="btn btn-ghost btn-icon" data-cp="close" aria-label="Close">${ic("x")}</button></div>` +
-      `<div class="cp-body"><nav class="cp-left${wOn ? " weights" : ""}" aria-label="Categories">${tiles}</nav>` +
-      `<section class="cp-right" aria-label="${escapeHtml(rt.name)}"><div class="cp-head"><div class="cp-title"><h3>${escapeHtml(rt.name)}</h3><p class="num">${fmt(rt.count)} ${model.noun} \u00b7 ${(rt.children || []).filter((n) => n.count > 0).length} subcategories</p></div>` +
+      `<div class="cp-body"><nav class="cp-left${wOn ? " weights" : ""}" aria-label="Categories">${phone && !detail ? findBox : ""}${tiles}</nav>` +
+      `<section class="cp-right" aria-label="${escapeHtml(rt.name)}"><div class="cp-head"><button type="button" class="btn btn-ghost btn-sm cp-back" data-cp="back">${ic("left", 15)}All categories</button><div class="cp-title"><h3>${escapeHtml(rt.name)}</h3><p class="num">${fmt(rt.count)} ${model.noun} \u00b7 ${(rt.children || []).filter((n) => n.count > 0).length} subcategories</p></div>` +
         `<button type="button" class="btn btn-sm" data-cp="toggle-root" data-id="${escapeHtml(rt.id)}">${model.state(rt.id) === "on" ? "Deselect all" : "Select all"}</button>` +
-        `<div class="cp-find"><label class="field">${ic("search", 15)}<input class="cp-find-in" type="text" value="${escapeHtml(v.find)}" placeholder="Find a topic\u2026" aria-label="Find a topic" autocomplete="off" spellcheck="false"></label>${findPop}</div></div>` +
+        `${!phone || detail ? findBox : ""}</div>` +
         `<div class="cp-scroll">${secs || '<div class="cp-empty">No subcategories</div>'}</div></section></div>` +
       `<div class="cp-foot"><div class="foot-left" role="group" aria-label="Presets"><span style="flex:none;display:inline-flex;color:var(--muted)" title="Presets">${ic("bookmark", 17)}</span>${presetHtml}${saveHtml}</div>` +
         `<div class="foot-right">${model.supportsWeights ? `<label class="cp-weights-lbl"><input type="checkbox" class="switch" data-cp="weights"${wOn ? " checked" : ""} aria-label="Weights">Weights</label>` : ""}` +
@@ -3414,7 +3418,7 @@ function CatPicker(model) {
     v.focus = Math.max(0, v.tree.roots.findIndex((r) => r.name === rootName));
     v.expand = n.depth >= 4 ? n.parentId : null;
     if (model.state(id) !== "on") model.toggle(id);
-    v.find = ""; v.hl = id;
+    v.find = ""; v.hl = id; v.mDetail = true;
     render();
     setTimeout(() => { const el = host()?.querySelector(".cp-pill.hl, .cp-sec-name.hl"); if (el) el.scrollIntoView({ block: "center" }); }, 0);
   }
@@ -3427,7 +3431,8 @@ function CatPicker(model) {
       e.preventDefault(); e.stopPropagation();
       if (a === "toggle") { v.hl = null; model.toggle(id); render(); }
       else if (a === "toggle-root") { v.hl = null; model.toggle(id); render(); }
-      else if (a === "focus") { v.focus = +t.dataset.i; v.expand = null; v.hl = null; render(); h.querySelector(".cp-scroll") && (h.querySelector(".cp-scroll").scrollTop = 0); }
+      else if (a === "focus") { v.focus = +t.dataset.i; v.expand = null; v.hl = null; v.mDetail = true; render(); h.querySelector(".cp-scroll") && (h.querySelector(".cp-scroll").scrollTop = 0); }
+      else if (a === "back") { v.mDetail = false; v.find = ""; v.hl = null; render(); }
       else if (a === "expand") { v.expand = v.expand === id ? null : id; render(); }
       else if (a === "expand-to") { v.expand = id || null; render(); }
       else if (a === "w") { model.setWeight(id, Math.max(0, model.weight(id) + (+t.dataset.d))); render(); }
@@ -3460,7 +3465,7 @@ function CatPicker(model) {
       if (e.target.classList.contains("cp-save-in") && v.saving) setTimeout(() => { if (v.saving && !h.contains(document.activeElement)) { v.saving = false; render(); } }, 0);
     });
   }
-  self.open = () => { v.find = ""; v.hl = null; v.saving = false; wire(); render(); };
+  self.open = () => { v.find = ""; v.hl = null; v.saving = false; v.mDetail = false; wire(); render(); };
   self.render = () => { if (host() && host().isConnected) render(); };
   return self;
 }

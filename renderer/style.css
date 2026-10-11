@@ -3274,13 +3274,34 @@ html[data-scheme="light"] .qchip { color: color-mix(in srgb, var(--c) 60%, #000)
 .cp-preset-x { margin-left: 2px; color: var(--muted); }
 .cp-preset-x:hover { color: var(--red); }
 .cp-empty { padding: 30px 10px; color: var(--muted); text-align: center; }
+.cp-back, .cp-chev { display: none; }
+/* A phone: one pane at a time — the list of categories (tap one to open it), or one category with
+   "‹ All categories" back (app.js: .cp-m-detail on the picker) */
 @media (max-width: 760px) {
+  .cat-modal { width: calc(100vw - 16px); height: calc(100dvh - 16px); }
   .cp-body { flex-direction: column; }
-  .cp-left { flex: none; flex-direction: row; gap: 6px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line-soft); padding: 8px; }
-  .cp-left .cp-tile { flex: 0 0 200px; }
+  .cp-left { flex: 1 1 auto; min-height: 0; flex-direction: column; gap: 2px; overflow-y: auto; border-right: 0; padding: 8px; }
+  .cp-left .cp-tile { flex: none; padding: 6px 8px 6px 10px; }
+  .cp-left .cp-tile-name { font-size: 14px; }
+  .cp-left .cp-tile-main { padding: 6px 0; }
+  .cp-chev { display: inline-flex; flex: none; color: var(--muted); }
+  .cp-right { display: none; }
+  .cp-m-detail .cp-left { display: none; }
+  .cp-m-detail .cp-right { display: flex; }
+  .cp-back { display: inline-flex; flex: 1 1 100%; justify-content: flex-start; gap: 4px; margin: -4px 0 -2px -8px; color: var(--accent); }
+  .cp-head { gap: 8px 10px; padding: 10px 14px; }
+  .cp-title h3 { font-size: 17px; }
   .cp-find { width: 100%; }
+  .cp-find-m { flex: none; width: auto; margin: 2px 2px 8px; }
+  .cp-head .cp-find-m { flex: 1 1 100%; margin: 0; }   /* (one category open: its own row under the title) */
+  .cp-find-pop { left: 0; right: 0; width: auto; }
+  .cp-scroll { padding: 4px 14px 16px; }
   .cp-pills, .cp-sub { margin-left: 0; }
-  .cp-foot { flex-wrap: wrap; } .foot-left, .foot-right { flex: 1 1 100%; }
+  .cp-foot { flex-direction: column; align-items: stretch; gap: 10px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .foot-left { flex: none; }
+  .foot-right { margin-left: 0; }
+  .foot-right .btn { flex: 1 1 0; justify-content: center; min-height: 42px; }
+  .cp-weights-lbl { margin-right: 4px; }
 }
 
 /* ═══ Question database ═══ */
