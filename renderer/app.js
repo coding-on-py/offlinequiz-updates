@@ -6073,7 +6073,8 @@ function qcardHtml(o) {
 }
 
 document.addEventListener("click", (e) => {
-  if (e.target.closest(".qb-star, .star-toggle, button, a, input, select, textarea, kbd")) return;
+  // (the + is a span: "Save to review / folders" opens its menu and leaves the card as it is)
+  if (e.target.closest(".qb-star, .star-toggle, .star-btn, .save-plus, button, a, input, select, textarea, kbd")) return;
   const card = e.target.closest(".qcard");
   if (!card || card.hasAttribute("data-self-toggle")) return;
   if (card.classList.contains("compact")) {
