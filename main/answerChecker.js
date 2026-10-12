@@ -2209,6 +2209,21 @@ function wordFormEq(base, rt) {
   return sr === sb || (sb.length >= 4 && (rt.startsWith(sb) || sr.startsWith(sb)));
 }
 
+// The -ing / -ed forms of a base word of 4+ letters (bond → bonding, bonded; dance → dancing, danced;
+// stop → stopping), and whether c and r are such a pair either way, a plural base included
+// ("bonds" → bond → bonding).
+function ingEdOf(b) {
+  if (b.length < 4 || /\d/.test(b)) return [];
+  const out = [b + "ing", b + "ed"];
+  if (b.endsWith("e")) out.push(b.slice(0, -1) + "ing", b + "d");
+  if (/[^aeiou][aeiou][bdgklmnprt]$/.test(b)) out.push(b + b.slice(-1) + "ing", b + b.slice(-1) + "ed");
+  return out;
+}
+function ingEdEq(c, r) {
+  const bases = (x) => (x.length >= 5 && x.endsWith("s") ? [x, x.slice(0, -1)] : [x]);
+  return bases(c).some((b) => ingEdOf(b).includes(r)) || bases(r).some((b) => ingEdOf(b).includes(c));
+}
+
 // Cost of matching response token r against form word w: 0 exact, n edits, -1 no match. (J5 exact, J10 loose)
 function wordCost(w, r, ctx, fuzzy, required) {
   const rt = r.t;
@@ -2229,6 +2244,10 @@ function wordCost(w, r, ctx, fuzzy, required) {
   if (!fuzzy || /\d/.test(rt)) return -1;
   // never fuzz a one-letter required portion (an initial), digits or numerals (J10)
   if (w.kind !== "O" && w._rlen === 1) return -1;
+  // a lowercase word's -ing / -ed form, either way ("hydrogen bonding" for <u>hydrogen bond</u>s): a common
+  // noun or verb only — a capitalised word may be a name (Browning is not Brown, Fielding is not Field).
+  // It costs like one typo, so the form's budget and the collision guard still apply (painting ≠ paint).
+  if (!w.cap && rt.length >= 5) for (const c of cands) if (!/\d/.test(c) && ingEdEq(c, rt)) return 1;
   let best = -1;
   for (const c of cands) {
     if (/\d/.test(c) || c.length < 3) continue;
@@ -3548,6 +3567,42 @@ function questionInfo(rc, P) {
   rc.qWords = new Set(rc.ti.nouns.filter(([end]) => end <= rc.buzz).map(([, w]) => w));
 }
 
+// J1b a field qualifier in front of the answer ("electrical resistance" for <u>resistance</u>, "chemical bond",
+// "economic recession"): at strictness 20 extra words are wrong, but an adjective naming the subject the
+// question is in doesn't change the answer. Narrow on purpose: only these words, only in front, only when the
+// question's own text is about that subject ("electrical induction" isn't mathematical induction), and only
+// when what's left is the WHOLE matched answer (a line's own modifier can't be swapped: "electric field" is not
+// "magnetic <u>field</u>"). Names and narrowing words never pass ("North Korea", "internal resistance").
+const QUALIFIER_FIELDS = {};
+// (each subject's words, matched at the start of a word in the question's text)
+for (const [k, words] of Object.entries({
+  "electrical electric": "electr circuit current voltage ohm resist capacit charge conduct wire ampere watt",
+  chemical: "chemi reaction molecul atom compound element acid solution bond ions electron",
+  biological: "biolog cell organism species gene protein evolution enzyme tissue",
+  mathematical: "mathemat function equation integer theorem proof integral matrix polynomial",
+  economic: "econom market price trade inflation money demand supply tax bank",
+  political: "politic government party vote election parliament congress president minister",
+  musical: "music compos symphon sonata opera piano tempo chord orchestra melod",
+  literary: "literar novel poem poet author story narrat verse wrote",
+})) { const rx = new RegExp("\\b(?:" + words.split(" ").join("|") + ")"); for (const q of k.split(" ")) QUALIFIER_FIELDS[q] = rx; }
+const QUALIFIER_RX = new RegExp("^(?:(?:the|a|an)\\s+)?((?:" + Object.keys(QUALIFIER_FIELDS).join("|") + ")(?:\\s+|$)){1,2}", "i");
+function qualifierRetry(r, P, strictness, opts, rc, plain) {
+  if (!rc.hasText) return null;
+  const m = QUALIFIER_RX.exec(r);
+  if (!m) return null;
+  const quals = m[0].toLowerCase().split(/\s+/).filter((w) => QUALIFIER_FIELDS[w]);
+  if (!quals.length || !quals.every((w) => QUALIFIER_FIELDS[w].test(rc.folded))) return null;
+  const rest = r.slice(m[0].length).trim();
+  if (!rest) return null;
+  const v = judgeOnce(rest, P, strictness, opts, rc, plain);
+  if (v.status !== "accept" || !v.matchedAnswer) return null;
+  // what's left must cover every word of the answer it matched (no line modifier left out and replaced)
+  const core = (x) => x.replace(/(?:es|s)$/, "");
+  const said = new Set(normalizeText(rest).split(/\s+/).filter(Boolean).map(core));
+  const need = normalizeText(String(v.matchedAnswer).replace(/[\[(].*$/, "")).split(/\s+/).filter((w) => w && !ARTICLES_ALL.has(w));
+  if (!need.every((w) => said.has(core(w)))) return null;
+  return { ...v, note: "extra words ignored" };
+}
 function judgeTop(resp, P, strictness, opts, plain) {
   const rc = makeReadCtx(opts);
   questionInfo(rc, P);
@@ -3562,6 +3617,9 @@ function judgeTop(resp, P, strictness, opts, plain) {
     const v2 = judgeOnce(f, P, strictness, opts, rc, plain);
     if (better(v2)) { v = v2; if (v.status === "accept") return v; }
   }
+  // J1b a field qualifier in front of the answer
+  const vq = qualifierRetry(r, P, strictness, opts, rc, plain);
+  if (vq) return vq;
   // common acronyms (J§9.3): UK, USA, WWII, ...
   const toks = r.split(/\s+/);
   if (toks.some((x) => ACRONYMS.has(x.toLowerCase().replace(/\./g, "")))) {

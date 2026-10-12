@@ -459,7 +459,8 @@ export class QuestionDatabase {
     else {
       ids = Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${where}`).all(params), (x) => x.r);
       cache.set(key, ids);
-      while (cache.size > 24) cache.delete(cache.keys().next().value);
+      // (the game server's 15 official rooms keep a list each, besides what other rooms ask for)
+      while (cache.size > 64) cache.delete(cache.keys().next().value);
     }
     return ids;
   }

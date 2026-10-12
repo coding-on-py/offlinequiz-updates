@@ -5526,3 +5526,37 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .dx-end-t b { color: var(--strong); }
 .mp-borrowed .mp-injected .slider-group { grid-template-columns: 136px minmax(0, 1fr) 44px; }
 .mp-injected .sg-label { white-space: nowrap; }
+/* a member's name on a team card opens their menu (14.68+) */
+.cl-roster .rn-wrap { flex: 1 1 auto; min-width: min(7em, 100%); display: flex; }
+.cl-roster .rn-btn { min-width: 0; max-width: 100%; padding: 2px 4px; margin-left: -4px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--strong); font: inherit; font-size: 13px; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-roster .rn-btn:hover, .cl-roster .rn-btn[aria-expanded="true"] { background: var(--raised); }
+.cl-roster .rn-btn:has(.neon-name) { overflow: clip; overflow-clip-margin: 30px; }
+.cl-roster .rn-btn small { color: var(--muted); }
+.cl-roster .rn-wrap > .pop:not(.up) { top: calc(100% + 4px); }
+.tchip.pend { gap: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+/* Organization settings */
+.confirm-box.cl-settings { width: min(560px, calc(100vw - 32px)); height: min(640px, calc(100vh - 32px)); gap: 12px; }
+.cl-set-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; margin: 0 -4px; padding: 0 4px; }
+.cl-set-sec { display: flex; flex-direction: column; gap: 8px; }
+.cl-set-sec > .eyebrow { margin: 0; display: flex; align-items: center; }
+.cl-set-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 250px); align-items: center; gap: 12px; font-size: 13px; color: var(--text); }
+.cl-set-row > span { display: flex; align-items: center; }
+.cl-set-row .qb-select, .cl-set-row select { width: 100%; }
+.cl-settings .checkbox-row:has(input:disabled) { opacity: .6; }
+@media (max-width: 560px) { .cl-set-row { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+/* the lobby's official rooms (the game server's: Levels, then Subjects) and their badge in a room */
+.mp-official h2 { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
+#mp-official-list { display: flex; flex-direction: column; gap: 12px; }
+.mp-off-grp { display: flex; flex-direction: column; gap: 8px; }
+.mp-off-lbl { font-size: 12px; color: var(--muted); }
+.mp-off-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.mp-off-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 56px; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); color: var(--text); font-family: var(--font); text-align: left; cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
+.mp-off-tile:hover { border-color: var(--go); background: var(--raised); }
+.mp-off-tile b { color: var(--strong); font-size: 13.5px; font-weight: 700; }
+.mp-off-tile span { color: var(--muted); font-size: 12px; }
+.mp-off-tile span.on { color: var(--go); font-weight: 700; }
+.mp-off-grp:first-child .mp-off-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 560px) { .mp-off-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .mp-off-grp:first-child .mp-off-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .mp-off-tile { min-height: 50px; padding: 8px 10px; } }
+.rh-off { display: inline-flex; align-items: center; gap: 5px; background: color-mix(in srgb, var(--go) 14%, transparent); color: var(--go); }
+.rh-off[hidden] { display: none; }
+.rh-off .qb-info { margin-left: 2px; }

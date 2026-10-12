@@ -2351,8 +2351,14 @@ function __qbMain(ctx) {
     // i, players / hosts by account, amHost = may run it now, host, waiting, done, settings);
     // dxDone: its "diagdone" ({ diag, released }). Never the backup relay. ──
     var dxInfo = null, dxDone = null, dxHidden = [];
+    // A diagnostic room is one opened as such (QB.dxJoin, from Clubs or /diagnostic/<code>): it lives in
+    // the game server's own namespace (dxRoomId). The same code typed in the lobby (/multiplayer/dx-…)
+    // is an ordinary room.
+    var dxMode = false, dxPending = null;
+    // an official public room (the game server's: one subject or one level, settings fixed): { name, kind }
+    var officialRoom = null;
     function isDiagCode(c) { return /^dx-/i.test(String(c || "")); }
-    function inDiag() { return !!lobby && isDiagCode(lobby); }
+    function inDiag() { return !!lobby && dxMode; }
     function qbCall(name, arg) { try { if (window.QB && typeof window.QB[name] === "function") { window.QB[name](arg); return true; } } catch (e) {} return false; }
     var ws = null, _relayConns = {};
     // Rooms are run by the game server (mpserver/, mp.onlinequiz.net): it plays
@@ -2441,6 +2447,15 @@ function __qbMain(ctx) {
     // a buzz shown before the room confirmed it (a round trip later): { idx, at, speed, answer }
     var optBuzz = null, optBuzzT = null, lastReadSpeed = 0;
     var lockedTeams = {}, lockedIds = {};   // per-question lockouts
+    // this player can't buzz again on this question (their wrong answer, or their team's, with rebuzzes
+    // off): the question it happened on — a new question frees them
+    var lockedOn = null;
+    function lockedOut() {
+      if (!current) return false;
+      if (lockedOn && lockedOn === current) return true;
+      var me = players[myId];
+      return !!(isHost && (lockedIds[myId] || (me && me.team && lockedTeams[me.team])));
+    }
     var buzzHistory = [];        // per-question [{name, correct, points, given, index}]
     var buzzCharMarks = [];      // character indices where a buzz happened (for (#) marks)
     var sessionLog = [];         // all completed questions: {text, answer, category, difficulty, buzzes[], marks[]}
@@ -2555,6 +2570,8 @@ function __qbMain(ctx) {
       return segs.slice(-2).join(" > ");
     }
     function lobbyId(n) { return "offlinequiz-mp-" + n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+    // a diagnostic room's id (mpserver/room.mjs diagIdOf): "dx-wgpu9nwy" → "offlinequiz-dx-wgpu9nwy"
+    function dxRoomId(n) { return "offlinequiz-dx-" + n.toLowerCase().replace(/^dx-/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 
     // ── page (mirrors the practice screen) ──
     page = ctx.registerPage({
@@ -2771,7 +2788,7 @@ function __qbMain(ctx) {
       roomConfig = null; leftIntentionally = false;
       roomInfo = null; roomOpErr = ""; showPw = false; pwPending = false; pwDraft = null; pwErr = "";
       if (!rejoining) { dxInfo = null; dxDone = null; }
-      if (isDiagCode(lobby)) mySpec = false;   // a diagnostic seats its players (its hosts watch) by account
+      if (inDiag()) mySpec = false;   // a diagnostic seats its players (its hosts watch) by account
       // who's signed in must be known first (a direct /multiplayer/<room> visit can get here sooner):
       // a signed-in player never joins under a guest name
       if (ctx.host && ctx.host.whenAccountKnown) { try { await Promise.race([ctx.host.whenAccountKnown(), new Promise(function (r) { setTimeout(r, 5000); })]); } catch (e) {} }
@@ -2800,8 +2817,8 @@ function __qbMain(ctx) {
       // would be an empty room of its own)
       if (rejoining && wasServer && srv && srv !== "off") joinRelay(srv, function () { serverMode = true; showDisconnected(); });
       // a diagnostic room lives only on the game server: no backup relay (it would be an empty room)
-      else if (srv && srv !== "off") joinRelay(srv, isDiagCode(lobby) ? dxUnreachable : function () { joinRelay(relayUrl()); });
-      else if (isDiagCode(lobby)) dxUnreachable();
+      else if (srv && srv !== "off") joinRelay(srv, inDiag() ? dxUnreachable : function () { joinRelay(relayUrl()); });
+      else if (inDiag()) dxUnreachable();
       else joinRelay(relayUrl());
     }
     function dxUnreachable() {
@@ -2817,7 +2834,7 @@ function __qbMain(ctx) {
       if (/^https?:/i.test(base)) base = base.replace(/^http/i, "ws").replace(/^HTTPS/i, "wss");
       if (!/^wss?:/i.test(base)) base = "wss://" + base;
       var sock;
-      try { sock = new WebSocket(base + "/lobby/" + encodeURIComponent(lobbyId(lobby))); }
+      try { sock = new WebSocket(base + "/lobby/" + encodeURIComponent(inDiag() ? dxRoomId(lobby) : lobbyId(lobby))); }
       catch (e) { if (fallback) { fallback(); return; } setStatus("Bad relay URL."); return; }
       ws = sock;
       var opened = false, fellBack = false;
@@ -3567,6 +3584,7 @@ function __qbMain(ctx) {
         if (admitting) { admitting = false; door = null; render(); }   // let in: now the room shows
         if (rejoining || reconnectN) reconnected();
         srvHost = d.host || null;
+        officialRoom = d.official || null;
         players = {}; order = []; (d.players || []).forEach(function (p) { players[p.id] = p; order.push(p.id); });
         settings = d.settings || settings;
         match = d.match || null;
@@ -3600,6 +3618,8 @@ function __qbMain(ctx) {
       else if (d.t === "result") {
         stopClientRead();
         if (current && d.qid) current.id = d.qid;   // a server room names the question only now
+        // a wrong answer with rebuzzes off locks its player (and their team) out of this question
+        if (!d.correct && !d.noBuzz && d.id && !settings.rebuzz && current) { var bz = players[d.id], me0 = players[myId]; if (d.id === myId || (bz && me0 && bz.team && bz.team === me0.team)) lockedOn = current; }
         if (current && d.fullText && d.fullText.length > current.text.length) current.text = d.fullText; if (typeof d.index === "number" && !d.ended) revealIdx = d.index; buzzHistory = d.history || buzzHistory; if (d.ended) ended = true; applyResult(d); renderBuzzes(); }
       else if (d.t === "reading") { /* the host's "read" message restarts the local ticker */ }
       else if (d.t === "pause") { paused = d.paused; if (typeof d.idx === "number") { revealIdx = d.idx; applyReveal(revealIdx); } applyPause(d.paused); }
@@ -3637,7 +3657,7 @@ function __qbMain(ctx) {
 
     // ── local actions (sent to host or handled if host) ──
     function requestBuzz() {
-      if (!current || ended) return;
+      if (!current || ended || lockedOut()) return;   // locked out: no buzz (and no answer box flashing open)
       if (inDiag() && players[myId] && players[myId].spec) return;   // a diagnostic's host who isn't playing
       if (players[myId] && players[myId].spec) { ctx.toast("You're spectating \u2014 no buzzing", "error"); return; }
       if (settings.tournament && !(players[myId] && players[myId].team)) { setStatus("Join a team to play"); return; }
@@ -3748,12 +3768,24 @@ function __qbMain(ctx) {
     function updateTopBar() {
       if (!page || !page.screenEl) return;
       var titleEl = page.screenEl.querySelector(".top-bar-title");
-      if (titleEl) titleEl.textContent = !lobby ? "Multiplayer" : inDiag() ? "Diagnostic" + (dxInfo && dxInfo.team ? " · " + dxInfo.team : "") : ("Multiplayer · Room " + String(lobby).toUpperCase());
+      if (titleEl) titleEl.textContent = !lobby ? "Multiplayer" : inDiag() ? "Diagnostic" + (dxInfo && dxInfo.team ? " · " + dxInfo.team : "") : officialRoom ? "Multiplayer · " + officialRoom.name : ("Multiplayer · Room " + String(lobby).toUpperCase());
+      paintOfficial();
       page.screenEl.classList.toggle("mp-in-room", !!lobby);
       try { if (ctx.host && ctx.host.refreshTopbar) ctx.host.refreshTopbar(); } catch (e) {}
       syncActions();
     }
 
+    // an official room: its name as a badge (what it plays, in the ⓘ) and no Room settings — they're fixed
+    function paintOfficial() {
+      if (!body) return;
+      var rs = body.querySelector("#mp-roomset"), b = body.querySelector("#mp-offbadge");
+      if (rs) rs.hidden = !!officialRoom;
+      if (b) {
+        b.hidden = !officialRoom;
+        if (officialRoom) b.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' + esc(officialRoom.name) +
+          ' <span class="qb-info" data-tip="' + esc("An official room, open to everyone: " + (filterSummary || officialRoom.name) + ". Its settings are fixed. After an hour with no activity, it starts over.") + '">i</span>';
+      }
+    }
     // ── rendering ──
     function render() {
       if (!body) return;
@@ -3801,6 +3833,7 @@ function __qbMain(ctx) {
           // a nudge to the room you can own, all the way down the page
           '<a class="mp-own-teaser" id="mp-own-teaser" href="#mp-shop" hidden>Want a room that stays yours for good?<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg></a>' +
           '<section class="mp-recent mp-mine" id="mp-my-rooms" hidden><h2 class="eyebrow">Your rooms</h2><div class="list" id="mp-my-list"></div></section>' +
+          '<section class="mp-official" id="mp-official" hidden><h2 class="eyebrow">Official rooms <span class="qb-info" data-tip="Always open to everyone. Their settings are fixed: one subject at high school level, or every category at one level. After an hour with no activity, a room starts over.">i</span></h2><div id="mp-official-list"></div></section>' +
           '<section class="mp-recent mp-public" id="mp-public-rooms" hidden><h2 class="eyebrow">Public rooms <span class="qb-info" data-tip="Rooms whose players left them public (Room settings → Public room). Pick one to join.">i</span></h2><div class="list" id="mp-public-list"></div></section>' +
           (recent.length ? '<section class="mp-recent"><h2 class="eyebrow">Recent rooms</h2><div class="list">' + recent.map(function (r) {
             return '<button type="button" class="list-row clickable mp-recent-row" data-code="' + esc(r.code) + '"><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + '</b><span class="mp-rwho"><span class="mp-rcount" data-code="' + esc(r.code) + '">' + esc(countText(null)) + "</span>" + (r.host ? " · you hosted" : "") + '</span><span class="mp-rwhen">' + esc(whenLabel(r.at)) + '</span><span class="mp-rjoin">Rejoin ›</span></button>';
@@ -3823,6 +3856,8 @@ function __qbMain(ctx) {
         myName = (nameEl.value.trim()) || myName;
         if (!fixedName) ctx.setSetting("name", myName); // remember for next time (the app)
         lobby = String(code || "").trim();
+        // a diagnostic only when QB.dxJoin asked for this code; anything typed or picked here is ordinary
+        dxMode = !!(dxPending && dxPending === lobby.toLowerCase()); dxPending = null;
         mySpec = !!body.querySelector("#mp-spectate").checked;
         if (!lobby) { setStatus("Enter a room code."); return; }
         join();
@@ -3833,8 +3868,19 @@ function __qbMain(ctx) {
         var sec = body && body.querySelector("#mp-public-rooms");
         if (!d || !Array.isArray(d.rooms) || !sec) return;
         sec.hidden = false;
+        // the game server's official rooms: Levels, then Subjects, as tiles
+        var off = d.rooms.filter(function (r) { return r.official; }).sort(function (a, b) { return (a.official.order || 0) - (b.official.order || 0); });
+        var rooms = d.rooms.filter(function (r) { return !r.official; });
+        var osec = body.querySelector("#mp-official");
+        if (osec) {
+          osec.hidden = !off.length;
+          var tile = function (r) { var n = r.players || 0; return '<button type="button" class="mp-off-tile mp-pub-row" data-code="' + esc(r.code) + '" title="' + esc(r.summary || "") + '"><b>' + esc(r.official.name) + '</b><span class="' + (n ? "on" : "") + '">' + (n ? n + " playing" : "Empty") + "</span></button>"; };
+          var grp = function (kind, label) { var g = off.filter(function (r) { return r.official.kind === kind; }); return g.length ? '<div class="mp-off-grp"><span class="mp-off-lbl">' + label + '</span><div class="mp-off-tiles">' + g.map(tile).join("") + "</div></div>" : ""; };
+          osec.querySelector("#mp-official-list").innerHTML = grp("level", "Levels") + grp("subject", "Subjects");
+          osec.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
+        }
         var list = sec.querySelector("#mp-public-list");
-        list.innerHTML = d.rooms.length ? d.rooms.map(function (r) {
+        list.innerHTML = rooms.length ? rooms.map(function (r) {
           var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - r.names.length) : "");
           var state = countText(r.online == null ? { players: r.players, online: r.players } : r) + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.questions ? " · Q" + r.questions : " · waiting");
           return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
@@ -4157,7 +4203,7 @@ function __qbMain(ctx) {
     }
     function recentRooms() { try { var r = ctx.storage.get("recent"); return Array.isArray(r) ? r.slice(0, 6) : []; } catch (e) { return []; } }
     function rememberRoom() {
-      if (!lobby || isDiagCode(lobby)) return;   // a diagnostic room is opened from Clubs, not Recent rooms
+      if (!lobby || inDiag()) return;   // a diagnostic room is opened from Clubs, not Recent rooms
       try {
         var list = recentRooms().filter(function (r) { return String(r.code).toLowerCase() !== lobby.toLowerCase(); });
         list.unshift({ code: lobby, at: Date.now(), players: order.filter(function (id) { return players[id] && !players[id].spec; }).length || 1, host: !!isHost });
@@ -4238,6 +4284,7 @@ function __qbMain(ctx) {
             '<span class="rh-lbl">Room</span><b class="rh-code" id="mp-code">' + esc(String(lobby).toUpperCase()) + "</b>" +
             '<button type="button" class="btn btn-ghost btn-icon btn-sm" id="mp-copy" title="Copy room code" aria-label="Copy room code"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>' +
             (inDiag() ? '<span class="badge rh-dx" id="mp-dxbadge">Diagnostic</span>' : "") +
+            '<span class="badge rh-off" id="mp-offbadge" hidden></span>' +
             '<span class="badge rh-host" id="mp-hostbadge"' + (hostBadgeOn() ? "" : " hidden") + ">You host</span>" +
             '<span class="badge rh-own" id="mp-ownbadge" hidden></span>' +
             (mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
@@ -4330,7 +4377,7 @@ function __qbMain(ctx) {
       // The real practice filter panel becomes this room's settings drawer.
       borrowPanel(body.querySelector(".practice-layout"));
 
-      renderScores(); renderSettings(); renderFilterSummary(); renderRoomInfo();
+      renderScores(); renderSettings(); renderFilterSummary(); renderRoomInfo(); paintOfficial();
       if (current) { renderQuestion(); renderBuzzes(); }
       if (bonusView && inDiag()) renderBonusArea(0);   // a diagnostic's bonuses-only round has no question to draw it under
       renderSessionLog();
@@ -4495,9 +4542,10 @@ function __qbMain(ctx) {
         return;
       }
       admitting = false;
+      var wasDx = inDiag();
       leave();
       // (a diagnostic room's door offers Sign in only when the room said this one isn't signed in)
-      door = { code: code, need: d.need, wrong: !!d.wrong, signedIn: d.signedIn == null && isDiagCode(code) ? true : !!d.signedIn, kicked: !!d.kicked, text: d.text || "" };
+      door = { code: code, dx: wasDx, need: d.need, wrong: !!d.wrong, signedIn: d.signedIn == null && wasDx ? true : !!d.signedIn, kicked: !!d.kicked, text: d.text || "" };
       showDoor();
     }
     function showDoor() {
@@ -4528,7 +4576,7 @@ function __qbMain(ctx) {
         };
       } else {
         // a diagnostic room (closed, or not for this account): back to Clubs, where it's opened from
-        var dxDoor = isDiagCode(D.code) && !!(window.QB && typeof window.QB.openClubs === "function");
+        var dxDoor = !!D.dx && !!(window.QB && typeof window.QB.openClubs === "function");
         st.innerHTML = '<div class="mp-door">' + (D.kicked ? esc(D.text || "You were taken off this room.") :
           "<b>" + name + "</b> is for its members. Ask its owner or an admin to add your username" + (D.signedIn ? "." : " — and sign in first.")) +
           (D.signedIn ? "" : ' <button type="button" class="btn btn-sm" data-acct="signin">Sign in</button>') +
@@ -4675,7 +4723,7 @@ function __qbMain(ctx) {
         // a diagnostic: the host (or, with none here, any player) starts, goes on and pauses; the
         // counter is "Question N of M"; once it's over, the report / Clubs
         var can = amHost(), spec = !!(players[myId] && players[myId].spec), fin = !!(dxDone || (dxInfo && dxInfo.done)), waiting = !!(dxInfo && dxInfo.waiting);
-        if (b) { b.hidden = !reading || spec || answering || fin; b.disabled = !!pendingBuzzer; }
+        if (b) { b.hidden = !reading || spec || answering || fin; b.disabled = !!pendingBuzzer || lockedOut(); }
         if (n) {
           n.hidden = !dxInfo || !can || fin || reading || !!(bonusView && !bonusView.done);
           var lbl = waiting ? "Start" : "Next";
@@ -4689,7 +4737,7 @@ function __qbMain(ctx) {
         var hb2 = body.querySelector("#mp-hostbadge"); if (hb2) hb2.hidden = !hostBadgeOn();
         return;
       }
-      if (b) { b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer; }
+      if (b) { b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer || lockedOut(); }
       if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
       if (p) { p.hidden = !reading || mySpec || answering; p.textContent = paused ? "Resume" : "Pause"; }
       var qc = body.querySelector("#mp-qcount"); if (qc) qc.textContent = qCount ? "Question " + qCount : "";
@@ -5444,7 +5492,7 @@ function __qbMain(ctx) {
       ws = null; _relayConns = {};
       isHost = false; serverMode = false; current = null;
       players = {}; order = []; lobby = ""; qCount = 0; sessionLog = [];
-      dxInfo = null; dxDone = null;
+      dxInfo = null; dxDone = null; dxMode = false; officialRoom = null;
       render();
     }
 
@@ -5452,10 +5500,23 @@ function __qbMain(ctx) {
     // opens the lobby and joins that room; leaving the address leaves the room.
     window.QB.mpRoom = function () { return lobby || ""; };
     window.QB.mpLeave = function () { if (lobby) leave(); };
+    window.QB.mpIsDiag = function () { return inDiag(); };
+    // a diagnostic room (Clubs, /diagnostic/<code>): the website has opened it on the game server
+    window.QB.dxJoin = function (code) {
+      code = String(code || "").trim().slice(0, 48);
+      if (!isDiagCode(code)) return;
+      window.QB.showPage("multiplayer::lobby");
+      if (lobby && dxMode && lobby.toLowerCase() === code.toLowerCase()) return;
+      if (lobby) leave();
+      dxPending = code.toLowerCase();
+      var codeEl = body && body.querySelector("#mp-lobby"), joinBtn = body && body.querySelector("#mp-join");
+      if (codeEl && joinBtn) { codeEl.value = code; joinBtn.click(); }
+    };
     window.QB.mpJoin = function (code) {
+      dxPending = null;
       code = String(code || "").trim().slice(0, 32);
       window.QB.showPage("multiplayer::lobby");
-      if (!code || (lobby && lobby.toLowerCase() === code.toLowerCase())) return;
+      if (!code || (lobby && !dxMode && lobby.toLowerCase() === code.toLowerCase())) return;   // (a diagnostic by this code is another room)
       if (lobby) leave();
       var codeEl = body && body.querySelector("#mp-lobby"), joinBtn = body && body.querySelector("#mp-join");
       if (codeEl && joinBtn) { codeEl.value = code; joinBtn.click(); }
@@ -5539,6 +5600,7 @@ function __qbMain(ctx) {
     exit: '<path d="M15 4h4a1 1 0 011 1v14a1 1 0 01-1 1h-4M10 16l-4-4 4-4M6 12h10"/>',
     swap: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
   };
   const ico = (n, s, extra) => '<svg width="' + (s || 18) + '" height="' + (s || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || "") + ">" + (ICONS[n] || "") + "</svg>";
   // the site's ⓘ: explanations live here, never as visible text
@@ -5695,8 +5757,12 @@ function __qbMain(ctx) {
   const capOf = (t) => !!(t && t.captain && t.captain === myMid());
   const canManageTeam = (t) => !!t && (isAdmin() || capOf(t));
   const myCapTeams = () => teams().filter(capOf);
-  const canInvite = () => isAdmin() || myCapTeams().length > 0;
-  const canRunAny = () => isAdmin() || myCapTeams().length > 0;
+  // the organization's settings (Organization settings…): who invites, who runs diagnostics
+  const capsInvite = () => !O() || O().inviteBy !== "admins";
+  const capsRun = () => !O() || O().runBy !== "admins";
+  const canInvite = () => isAdmin() || (capsInvite() && myCapTeams().length > 0);
+  const canRunTeam = (t) => !!t && (isAdmin() || (capsRun() && capOf(t)));
+  const canRunAny = () => isAdmin() || (capsRun() && myCapTeams().length > 0);
   const roleName = (r) => (r === "owner" ? "Owner" : r === "admin" ? "Admin" : "Member");
 
   function setTab(t) {
@@ -5800,9 +5866,10 @@ function __qbMain(ctx) {
   }
   function headHtml() {
     const o = O();
+    const settingsItem = isAdmin() ? '<button type="button" class="pop-item" role="menuitem" data-cl="settings">' + ico("gear", 15) + "Organization settings…</button>" : "";
     const items = isOwner()
-      ? '<button type="button" class="pop-item" role="menuitem" data-cl="rename-org">' + ico("pencil", 15) + 'Rename…</button><button type="button" class="pop-item" role="menuitem" data-cl="transfer">' + ico("crown", 15) + 'Transfer ownership…</button><div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="delete-org">' + ico("trash", 15) + "Delete organization</button>"
-      : '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
+      ? settingsItem + '<button type="button" class="pop-item" role="menuitem" data-cl="transfer">' + ico("crown", 15) + 'Transfer ownership…</button><div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="delete-org">' + ico("trash", 15) + "Delete organization</button>"
+      : settingsItem + (settingsItem ? '<div class="pop-sep"></div>' : "") + '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
     return '<div class="cl-card club-head"><span class="club-tile lg" aria-hidden="true">' + esc(o.tag) + '</span><div class="ch-text"><div class="ch-name"><h2>' + esc(o.name) + '</h2><span class="tag-chip">' + esc(o.tag) + "</span></div>" +
       '<p class="ch-meta">' + plural(people().length, "member") + " · " + plural(teams().length, "team") + " · " + roleLine() + "</p></div>" +
       '<div class="ch-actions">' + (canRunAny() && teams().length ? '<button type="button" class="btn btn-primary" data-cl="run">' + ico("target", 16) + "Run a diagnostic</button>" : "") +
@@ -5843,7 +5910,7 @@ function __qbMain(ctx) {
     const noTeam = people().filter((p) => !teamsOf(p.mid).length);
     const manageable = teams().filter(canManageTeam);
     if (noTeam.length) cards += '<section class="cl-card tcard free" aria-label="Not on a team"><div class="tcard-head"><h3>Not on a team</h3><span class="count">' + plural(noTeam.length, "person", "people") + '</span></div><ul class="cl-roster">' + noTeam.map((p) =>
-      "<li>" + av(p, "sm") + '<span class="rn">' + nm(p) + (p.you ? " <small>(you)</small>" : "") + "</span>" + (p.na ? '<span class="rchips"><span class="tchip na">No account</span></span>' : "") +
+      "<li>" + av(p, "sm") + nameMenu(p, "f-" + p.mid) + (p.na ? '<span class="rchips"><span class="tchip na">No account</span></span>' : "") +
       (manageable.length ? '<select class="mode-input cl-act-sel" data-put="' + esc(p.mid) + '" aria-label="Add ' + esc(p.name) + ' to a team"><option value="">Add to team</option>' + manageable.map((t) => '<option value="' + esc(t.id) + '">' + esc(t.name) + "</option>").join("") + "</select>" : "") + "</li>").join("") + "</ul></section>";
     if (!teams().length && !noTeam.length) cards = '<div class="cl-card"><p class="cl-none">No teams yet.</p></div>';
     return bar + '<div class="teams-grid">' + cards + "</div>";
@@ -5860,7 +5927,8 @@ function __qbMain(ctx) {
       : capP ? '<span class="who">' + av(capP, "xs") + nm(capP) + "</span>" : '<span class="cl-none">None yet</span>') + "</div>";
     const rows = roster.length ? roster.map((p) => {
       const also = teamsOf(p.mid).filter((x) => x.id !== t.id);
-      return "<li>" + av(p, "sm") + '<span class="rn">' + nm(p) + (p.you ? " <small>(you)</small>" : "") + '</span><span class="rchips">' + (p.na ? '<span class="tchip na">No account</span>' : "") + (t.captain === p.mid ? '<span class="tchip cap">Captain</span>' : "") +
+      const pend = p.na && (S.org.invites || []).find((i) => i.replaces === p.mid);
+      return "<li>" + av(p, "sm") + nameMenu(p, "r-" + t.id + "-" + p.mid) + '<span class="rchips">' + (pend ? '<span class="tchip pend" title="Invite sent to @' + esc(pend.handle) + '">' + ico("mail", 11) + " @" + esc(pend.handle) + "</span>" : p.na ? '<span class="tchip na">No account</span>' : "") + (t.captain === p.mid ? '<span class="tchip cap">Captain</span>' : "") +
         also.map((x) => '<span class="tchip">also ' + esc(x.name) + "</span>").join("") + "</span>" +
         (can ? '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-cl="roster-off" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '" aria-label="Take ' + esc(p.name) + " off " + esc(t.name) + '">' + ico("x", 14) + "</button>" : "") + "</li>";
     }).join("") : '<li><span class="cl-none">No players yet</span></li>';
@@ -5871,7 +5939,7 @@ function __qbMain(ctx) {
     const runnable = t.roster.some((m) => { const p = P(m); return p && !p.na; }) || t.roster.length;
     const foot = '<div class="tcard-foot"><dl class="tstats"><div><dt>Avg this week</dt><dd>' + (t.avg != null && t.active ? fmt(t.avg) + " <small>pts</small>" : "—") + "</dd></div><div><dt>Last diagnostic</dt><dd>" +
       (t.last ? (t.last.conv != null ? t.last.conv + "% " : "") + "<small>" + esc(dayText(t.last.at)) + "</small>" : "<small>None yet</small>") + "</dd></div></dl>" +
-      (can && runnable ? '<button type="button" class="btn btn-sm" data-cl="run" data-team="' + esc(t.id) + '">' + ico("target", 14) + "Diagnostic</button>" : "") + "</div>";
+      (canRunTeam(t) && runnable ? '<button type="button" class="btn btn-sm" data-cl="run" data-team="' + esc(t.id) + '">' + ico("target", 14) + "Diagnostic</button>" : "") + "</div>";
     return '<section class="cl-card tcard" aria-label="' + esc(t.name) + '"><div class="tcard-head"><h3>' + esc(t.name) + '</h3><span class="count">' + plural(t.roster.length, "player") + "</span>" + menu + "</div>" + cap + '<ul class="cl-roster">' + rows + "</ul>" + add + foot + "</section>";
   }
 
@@ -5886,19 +5954,37 @@ function __qbMain(ctx) {
     return '<div class="cl-toolbar"><div class="seg cl-seg-scroll" role="group" aria-label="Show">' + filters.map((f) => '<button type="button" data-mem-filter="' + esc(f[0]) + '" aria-pressed="' + (S.memFilter === f[0]) + '">' + esc(f[1]) + ' <span class="num cl-dim">' + f[2] + "</span></button>").join("") + "</div></div>" +
       '<div class="mem-list" role="table" aria-label="Members"><div class="mem-head" role="row"><span></span><span>Name</span><span>Teams</span><span>Role</span><span></span></div>' + (list.length ? list.map(memRow).join("") : '<div class="cl-empty">No one here.</div>') + "</div>";
   }
-  function memRow(p) {
+  // What can be done to one member — the same menu from the Members tab's ⋯ and from their name on a
+  // team card: View profile, teams, Rename / Replace with a username (no account), Make admin, Make
+  // owner, Remove, Leave. (profile: false where the row's own player menu already offers it)
+  function memberItems(p, opts) {
+    opts = opts || {};
     const ts = teamsOf(p.mid), anyManage = teams().some(canManageTeam), admin = isAdmin(), owner = isOwner();
     const pend = (S.org.invites || []).find((i) => i.replaces === p.mid);
-    const chips = ts.length ? ts.map((t) => '<span class="tchip' + (t.captain === p.mid ? " cap" : "") + '">' + esc(t.name) + (t.captain === p.mid ? " · captain" : "") + "</span>").join("") : '<span class="none">No team</span>';
     let items = "";
-    if (teams().length && anyManage) items += '<div class="pop-label">Teams</div>' + teams().map((t) => '<button type="button" class="pop-item" role="menuitemcheckbox" aria-checked="' + t.roster.includes(p.mid) + '" data-cl="toggle-team" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '"' + (canManageTeam(t) ? "" : " disabled") + '><span class="pi-check" aria-hidden="true"></span>' + esc(t.name) + "</button>").join("");
     const sep = () => (items ? '<div class="pop-sep"></div>' : "");
+    if (opts.profile && p.handle && !p.na) items += '<button type="button" class="pop-item" role="menuitem" data-cl="profile" data-mid="' + esc(p.mid) + '">' + ico("user", 15) + "View profile</button>";
+    if (teams().length && anyManage) items += sep() + '<div class="pop-label">Teams</div>' + teams().map((t) => '<button type="button" class="pop-item" role="menuitemcheckbox" aria-checked="' + t.roster.includes(p.mid) + '" data-cl="toggle-team" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '"' + (canManageTeam(t) ? "" : " disabled") + '><span class="pi-check" aria-hidden="true"></span>' + esc(t.name) + "</button>").join("");
     if (p.na && (admin || ts.some(capOf))) items += sep() + '<button type="button" class="pop-item" role="menuitem" data-cl="mem-rename" data-mid="' + esc(p.mid) + '">' + ico("pencil", 15) + "Rename…</button>";
     if (p.na && admin) items += (pend ? '<button type="button" class="pop-item" role="menuitem" data-cl="cancel-invite" data-id="' + esc(pend.id) + '">' + ico("x", 15) + "Cancel the invite to @" + esc(pend.handle) + "</button>" : '<button type="button" class="pop-item" role="menuitem" data-cl="replace" data-mid="' + esc(p.mid) + '">' + ico("userplus", 15) + "Replace with a username…</button>");
     if (owner && !p.na && !p.you) items += sep() + (p.role === "admin" ? '<button type="button" class="pop-item" role="menuitem" data-cl="role" data-role="member" data-mid="' + esc(p.mid) + '">' + ico("shield", 15) + "Remove admin</button>" : '<button type="button" class="pop-item" role="menuitem" data-cl="role" data-role="admin" data-mid="' + esc(p.mid) + '">' + ico("shield", 15) + "Make admin</button>") +
       '<button type="button" class="pop-item" role="menuitem" data-cl="transfer" data-mid="' + esc(p.mid) + '">' + ico("crown", 15) + "Make owner…</button>";
     if (admin && !p.you && p.role === "member") items += sep() + '<button type="button" class="pop-item danger" role="menuitem" data-cl="remove" data-mid="' + esc(p.mid) + '">' + ico("userminus", 15) + "Remove from organization</button>";
     if (p.you && !owner) items += sep() + '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
+    return items;
+  }
+  // a member's name that opens their menu (team cards); plain text when there's nothing to do
+  function nameMenu(p, key) {
+    const items = memberItems(p, { profile: true });
+    const label = nm(p) + (p.you ? " <small>(you)</small>" : "");
+    if (!items) return '<span class="rn">' + label + "</span>";
+    return '<span class="rn-wrap pop-wrap"><button type="button" class="rn-btn" data-menu="' + esc(key) + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(p.name) + ': options">' + label + '</button><div class="pop left" role="menu" hidden>' + items + "</div></span>";
+  }
+  function memRow(p) {
+    const ts = teamsOf(p.mid);
+    const pend = (S.org.invites || []).find((i) => i.replaces === p.mid);
+    const chips = ts.length ? ts.map((t) => '<span class="tchip' + (t.captain === p.mid ? " cap" : "") + '">' + esc(t.name) + (t.captain === p.mid ? " · captain" : "") + "</span>").join("") : '<span class="none">No team</span>';
+    const items = memberItems(p);
     const menu = items ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="m-' + esc(p.mid) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ' + esc(p.name) + '">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div>" : "";
     const sub = p.na ? (pend ? '<span class="cl-pend">' + ico("mail", 12) + " Invite sent to @" + esc(pend.handle) + "</span>" : "No account") + '<span class="joined"> · added ' + esc(dayText(p.joinedAt)) + "</span>"
       : "@" + esc(p.handle) + '<span class="joined"> · joined ' + esc(dayText(p.joinedAt)) + "</span>";
@@ -5935,12 +6021,14 @@ function __qbMain(ctx) {
   // ── Invites: by username, the code, join requests, pending invites ──
   function invitesHtml() {
     const o = O(), admin = isAdmin(), inv = canInvite();
+    const codeOn = o.codeJoin !== false;
     const codeCard = '<section class="cl-card" aria-label="Invite code"><h2 class="sec-title">Invite code' + info(TIP.code, "About the invite code") + "</h2>" +
-      '<div class="code-row"><code class="cl-code" id="cl-code">' + esc(o.code || "") + '</code><button type="button" class="btn" data-cl="copy-code">' + ico("copy", 16) + "<span>Copy</span></button>" +
-      (admin ? '<button type="button" class="btn btn-ghost" data-cl="new-code">' + ico("refresh", 16) + "New code</button>" : "") + "</div>" +
-      (admin ? '<label class="checkbox-row"><input type="checkbox" id="cl-approve"' + (o.approve ? " checked" : "") + ">Admins approve code joins" + info(TIP.approve, "About approving joins") + "</label>" : "") + "</section>";
+      (codeOn && o.code ? '<div class="code-row"><code class="cl-code" id="cl-code">' + esc(o.code) + '</code><button type="button" class="btn" data-cl="copy-code">' + ico("copy", 16) + "<span>Copy</span></button>" +
+        (admin ? '<button type="button" class="btn btn-ghost" data-cl="new-code">' + ico("refresh", 16) + "New code</button>" : "") + "</div>" +
+        (admin ? '<label class="checkbox-row"><input type="checkbox" id="cl-approve"' + (o.approve ? " checked" : "") + ">Admins approve code joins" + info(TIP.approve, "About approving joins") + "</label>" : "")
+        : '<p class="cl-none">' + ico("lock", 13) + " Joining with a code is off." + (admin ? "" : " Ask an admin for an invite.") + "</p>" + (admin ? '<button type="button" class="btn btn-sm cl-self-start" data-cl="settings">Organization settings</button>' : "")) + "</section>";
     if (!inv) return '<div class="inv-grid"><div class="inv-col">' + codeCard + "</div></div>";
-    const teamOpts = '<option value="">No team</option>' + (admin ? teams() : myCapTeams()).map((t) => '<option value="' + esc(t.id) + '"' + (S.invTeam === t.id ? " selected" : "") + ">" + esc(t.name) + "</option>").join("");
+    const teamOpts = '<option value="">No team</option>' + (admin ? teams() : capsInvite() ? myCapTeams() : []).map((t) => '<option value="' + esc(t.id) + '"' + (S.invTeam === t.id ? " selected" : "") + ">" + esc(t.name) + "</option>").join("");
     const row = (p, sub, acts) => '<div class="fr-row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name || p.handle) + '"' : "") + ">" + av(p) + '<span class="fr-name"><b>' + nm(p) + "</b><small>" + sub + '</small></span><span class="fr-act">' + acts + "</span></div>";
     const pend = (S.org.invites || []).length ? S.org.invites.map((r) => {
       const t = r.team && team(r.team), rep = r.replaces && P(r.replaces);
@@ -5965,7 +6053,7 @@ function __qbMain(ctx) {
       const meta = FORMATS[d.format].label + " · " + (d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup")) + " · " + PLACE[d.place] + " · difficulty " + diffText(d.diff);
       const title = esc(d.team) + " · " + esc(d.status === "done" && d.releasedAt ? dayText(d.releasedAt) : d.status === "scheduled" && d.startAt ? dayText(d.startAt) : dayText(d.createdAt));
       const main = '<span class="dg-main"><b>' + title + "</b><small>" + esc(meta) + "</small></span>";
-      const menu = d.canManage && d.status !== "done" ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="d-' + esc(d.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden><button type="button" class="pop-item danger" role="menuitem" data-cl="dx-cancel" data-id="' + esc(d.id) + '">' + ico("trash", 15) + "Cancel diagnostic</button></div></div>" : "";
+      const menu = d.canManage ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="d-' + esc(d.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden><button type="button" class="pop-item danger" role="menuitem" data-cl="dx-delete" data-id="' + esc(d.id) + '" data-done="' + (d.status === "done" ? 1 : "") + '">' + ico("trash", 15) + (d.status === "done" ? "Delete report" : "Delete diagnostic") + "</button></div></div>" : "";
       let side, icon = "doc";
       if (d.status === "done") side = stat(d.players, d.players === 1 ? "player" : "players") + stat(d.conv == null ? "—" : d.conv + "%", "conversion") + '<span class="dx-chip good">Report ready</span><button type="button" class="btn btn-sm" data-report="' + esc(d.id) + '">View report</button>';
       else if (d.place === "irl") { icon = "doc"; side = stat(d.players, "players") + stat("—", "") + '<span class="dx-chip mid">Being read</span>' + (d.canManage ? '<button type="button" class="btn btn-sm" data-irl="' + esc(d.id) + '">Continue reading</button>' : '<span class="dg-pad"></span>'); }
@@ -6081,12 +6169,13 @@ function __qbMain(ctx) {
       case "add-name": return promptDialog("Add a player by name", "", (name) => act(null, "/api/clubs/member/add-name", { org, name, team: tid }), { placeholder: "Their name", yes: "Add", max: 40 });
       case "mem-rename": return promptDialog("Rename " + p.name, p.name, (name) => act(null, "/api/clubs/member/rename", { org, mid, name }), { yes: "Save", max: 40 });
       case "replace": return replaceDialog(p);
+      case "profile": if (p && p.handle && typeof openUserProfile === "function") openUserProfile(p.handle, p.name); return;
       case "cancel-invite": return act(t, "/api/clubs/invite/cancel", { org, id: t.dataset.id });
       case "role": return act(null, "/api/clubs/member/role", { org, mid, role: t.dataset.role });
       case "transfer": return mid ? confirmTransfer(p) : transferDialog();
       case "remove": return confirmDialog("Remove " + p.name + " from " + o.name + "?", () => act(null, "/api/clubs/member/remove", { org, mid }), { yes: "Remove", danger: true });
       case "leave": return confirmDialog("Leave " + o.name + "?", () => act(null, "/api/clubs/leave", { org }, () => { S.org = null; ls.set("qb-club-org", ""); S.orgId = ""; }), { yes: "Leave", danger: true });
-      case "rename-org": return orgNameDialog();
+      case "rename-org": case "settings": return settingsDialog();
       case "delete-org": return confirmDialog("Delete " + o.name + " for everyone in it? Its teams, invites and diagnostic reports go too.", () => act(null, "/api/clubs/delete", { org }, () => { S.org = null; S.orgId = ""; ls.set("qb-club-org", ""); }), { yes: "Delete", danger: true });
       case "copy-code": {
         try { await navigator.clipboard.writeText(o.code); } catch (e) { const r = document.createRange(), el = document.getElementById("cl-code"); if (el) { r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } }
@@ -6096,7 +6185,7 @@ function __qbMain(ctx) {
       case "new-code": return confirmDialog("Make a new code? The old one stops working.", () => act(null, "/api/clubs/code", { org }), { yes: "New code" });
       case "req-yes": case "req-no": return act(t, "/api/clubs/request", { org, handle: t.dataset.h, accept: a === "req-yes" });
       case "release": return confirmDialog("Release the report now? Anyone who hasn't finished is counted on what they read.", () => act(null, "/api/diag/release", { id: t.dataset.id }), { yes: "Release now", danger: true });
-      case "dx-cancel": return confirmDialog("Cancel this diagnostic? What was played so far is dropped.", () => act(null, "/api/diag/cancel", { id: t.dataset.id }), { yes: "Cancel it", no: "Keep it", danger: true });
+      case "dx-delete": return confirmDialog(t.dataset.done ? "Delete this report for everyone? It can't be brought back." : "Delete this diagnostic? What was played so far is dropped, for everyone.", () => act(null, "/api/diag/delete", { id: t.dataset.id }), { yes: "Delete", danger: true });
     }
   }
   // a name-only player → an account: an invite that carries the player's place
@@ -6121,16 +6210,40 @@ function __qbMain(ctx) {
       '<div class="confirm-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Continue</button></div></form>');
     el.querySelector("form").onsubmit = (e) => { e.preventDefault(); const p = P(el.querySelector("#cl-tr-who").value); closeOverlay(el); if (p) confirmTransfer(p); };
   }
-  function orgNameDialog() {
-    const o = O();
-    const el = overlay('<form class="confirm-box cl-modal"><div class="confirm-title">Rename the organization</div>' +
-      '<div class="two-in"><label class="cl-field"><span class="cl-lbl">Name</span><input class="mode-input" id="cl-on-name" maxlength="40" value="' + esc(o.name) + '" autocomplete="off"></label><label class="cl-field"><span class="cl-lbl">Tag</span><input class="mode-input" id="cl-on-tag" maxlength="5" value="' + esc(o.tag) + '" autocomplete="off"></label></div>' +
-      '<p class="fr-msg err" id="cl-on-msg" role="status"></p><div class="confirm-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>');
-    el.querySelector("form").onsubmit = async (e) => {
+  // Organization settings (admins; the name and tag are the owner's): the leaderboards, joining with
+  // the code, and who may invite, run diagnostics and see every player's card
+  function settingsDialog() {
+    const o = O(), owner = isOwner();
+    const sel = (id, v, opts) => '<select class="mode-input" id="' + id + '">' + opts.map((x) => '<option value="' + x[0] + '"' + (x[0] === v ? " selected" : "") + ">" + esc(x[1]) + "</option>").join("") + "</select>";
+    const sw = (id, on, label, tip, dis) => '<label class="checkbox-row"><input type="checkbox" id="' + id + '"' + (on ? " checked" : "") + (dis ? " disabled" : "") + ">" + label + (tip ? info(tip, label) : "") + "</label>";
+    const el = overlay('<form class="confirm-box cl-modal cl-settings" novalidate><div class="cl-modal-head"><div class="confirm-title">Organization settings</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-x aria-label="Close">' + ico("x", 16) + "</button></div>" +
+      '<div class="cl-set-body">' +
+      '<section class="cl-set-sec"><h3 class="eyebrow">Organization' + (owner ? "" : info("Only the owner can rename the organization.", "Who can rename it")) + '</h3><div class="two-in"><label class="cl-field"><span class="cl-lbl">Name</span><input class="mode-input" id="cs-name" maxlength="40" value="' + esc(o.name) + '" autocomplete="off"' + (owner ? "" : " disabled") + '></label><label class="cl-field"><span class="cl-lbl">Tag</span><input class="mode-input" id="cs-tag" maxlength="5" value="' + esc(o.tag) + '" autocomplete="off"' + (owner ? "" : " disabled") + "></label></div></section>" +
+      '<section class="cl-set-sec"><h3 class="eyebrow">Leaderboards</h3>' + sw("cs-lb", o.lbShow !== false, "Show on the Teams and Organizations leaderboards", "When this is off, the organization and its teams are left out of the global rankings. The organization's own leaderboard isn't affected.") + "</section>" +
+      '<section class="cl-set-sec"><h3 class="eyebrow">Joining</h3>' + sw("cs-code", o.codeJoin !== false, "Anyone with the invite code can join", "When this is off, people join only by an invite.") +
+        sw("cs-approve", !!o.approve, "Admins approve code joins", TIP.approve, o.codeJoin === false) + "</section>" +
+      '<section class="cl-set-sec"><h3 class="eyebrow">Permissions</h3>' +
+        '<label class="cl-set-row"><span>Who can invite people</span>' + sel("cs-invite", o.inviteBy || "captains", [["captains", "Captains and admins"], ["admins", "Admins only"]]) + "</label>" +
+        '<label class="cl-set-row"><span>Who can run diagnostics' + info("Setting up a team's diagnostics, reading them aloud with IRL Reading, releasing and deleting them.", "About running diagnostics") + "</span>" + sel("cs-run", o.runBy || "captains", [["captains", "Captains and admins"], ["admins", "Admins only"]]) + "</label>" +
+        '<label class="cl-set-row"><span>Who sees every player card' + info("Every report shows each player their own card. This decides who else sees all of them.", "About player cards") + "</span>" + sel("cs-cards", o.cardsFor || "captains", [["captains", "The team's captain and admins"], ["admins", "Admins only"], ["everyone", "Everyone in the organization"]]) + "</label></section>" +
+      '</div><p class="fr-msg err" id="cs-msg" role="status"></p><div class="confirm-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>');
+    const f = el.querySelector("form"), $f = (id) => f.querySelector("#" + id);
+    $f("cs-code").onchange = () => { $f("cs-approve").disabled = !$f("cs-code").checked; };
+    $f("cs-tag").oninput = () => { $f("cs-tag").value = $f("cs-tag").value.toUpperCase().replace(/[^A-Z0-9]/g, ""); };
+    f.onsubmit = async (e) => {
       e.preventDefault();
-      const name = el.querySelector("#cl-on-name").value.trim(), tag = el.querySelector("#cl-on-tag").value.trim().toUpperCase();
-      const r = await post("/api/clubs/settings", { org: S.orgId, name, tag });
-      if (!r || r.error) { el.querySelector("#cl-on-msg").textContent = (r && r.error) || OFFLINE; return; }
+      const body = { org: S.orgId, lbShow: $f("cs-lb").checked, codeJoin: $f("cs-code").checked, approve: $f("cs-approve").checked, inviteBy: $f("cs-invite").value, runBy: $f("cs-run").value, cardsFor: $f("cs-cards").value };
+      if (owner) {
+        const name = $f("cs-name").value.trim(), tag = $f("cs-tag").value.trim();
+        if (!name) { $f("cs-msg").textContent = "Give it a name."; return; }
+        if (!/^[A-Z0-9]{2,5}$/.test(tag)) { $f("cs-msg").textContent = "The tag is 2 to 5 letters or numbers."; return; }
+        if (name !== o.name) body.name = name;
+        if (tag !== o.tag) body.tag = tag;
+      }
+      const b = f.querySelector("button[type=submit]"); b.disabled = true;
+      const r = await post("/api/clubs/settings", body);
+      b.disabled = false;
+      if (!r || r.error) { $f("cs-msg").textContent = (r && r.error) || OFFLINE; return; }
       closeOverlay(el); refresh();
     };
   }
@@ -6190,7 +6303,7 @@ function __qbMain(ctx) {
     const r = await post("/api/diag/room", { id });
     if (btn) btn.disabled = false;
     if (!r || r.error || !r.code) { failBubble(btn, (r && r.error) || "The room couldn't open. Try again in a moment."); return; }
-    if (window.QB && window.QB.mpJoin) window.QB.mpJoin(r.code);
+    if (window.QB && window.QB.dxJoin) window.QB.dxJoin(r.code); else if (window.QB && window.QB.mpJoin) window.QB.mpJoin(r.code);
   }
   // ═══ DIAGNOSTIC SETUP ═══
   function stepsHtml(cur) {
@@ -6203,11 +6316,11 @@ function __qbMain(ctx) {
     return place === "irl" ? list : accountOnly(list);
   }
   function defaultTarget() {
-    const mine = teams().filter((t) => canManageTeam(t) && t.roster.length);
+    const mine = teams().filter((t) => canRunTeam(t) && t.roster.length);
     if (mine.length) return mine[0].id;
     return isAdmin() ? "org" : (teams()[0] ? teams()[0].id : "org");
   }
-  const canRunTarget = (t) => (t === "org" ? isAdmin() : canManageTeam(team(t)));
+  const canRunTarget = (t) => (t === "org" ? isAdmin() : canRunTeam(team(t)));
   // the next two weeks and the hours from 7 AM to 10 PM, for Later and the deadline
   function dayOpts() {
     const out = [], now = new Date();
@@ -6218,7 +6331,7 @@ function __qbMain(ctx) {
   const atOf = (day, hour) => { const [y, m, d] = String(day).split("-").map(Number); return new Date(y, m - 1, d, Number(hour) || 0).getTime(); };
   function newDx(target) {
     const t = target && canRunTarget(target) ? target : defaultTarget(), days = dayOpts();
-    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [3, 4, 5, 6] };
+    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [2, 3, 4, 5] };
   }
   async function renderSetup() {
     const c = document.getElementById("dx-container"); if (!c) return;
@@ -6349,7 +6462,7 @@ function __qbMain(ctx) {
       if (d.place === "room" && !startAt) {
         const rr = await post("/api/diag/room", { id: r.id });
         btn.disabled = false;
-        if (rr && rr.code && window.QB && window.QB.mpJoin) { window.QB.mpJoin(rr.code); return; }
+        if (rr && rr.code && window.QB && (window.QB.dxJoin || window.QB.mpJoin)) { (window.QB.dxJoin || window.QB.mpJoin)(rr.code); return; }
         S.tab = "diagnostics"; open("diagnostics");
         return;
       }
@@ -6629,6 +6742,35 @@ function __qbMain(ctx) {
     };
     c.onchange = (e) => { const t = e.target; if (t.name === "bz-player" && S.irl && S.irl.edit) { S.irl.edit.p = t.value; const m = document.getElementById("bz-msg"); if (m) m.textContent = ""; updateEditor(); } };
   }
+  // Leaving IRL Reading (Back, Esc, the browser's Back) is never one slip away: Esc first drops a buzz
+  // being edited; with anything recorded it asks; and it lands on Clubs → Diagnostics (where the
+  // reading carries on from), never on the setup page that would start another packet.
+  const irlRecorded = () => {
+    const st = S.irl && S.irl.state; if (!st) return false;
+    return Object.values(st.buzzes || {}).some((a) => a && a.length) || Object.keys(st.dead || {}).length > 0 || Object.values(st.parts || {}).some((a) => (a || []).some((v) => v === 0 || v === 1));
+  };
+  function leaveIrl() {
+    const I = S.irl;
+    if (I && I.saveT) { clearTimeout(I.saveT); post("/api/diag/irl", { id: I.id, state: I.state }); }   // what's pending goes now
+    open("diagnostics");
+  }
+  function beforeBack() {
+    if (!screenOn("irl-screen") || !S.irl || !S.irl.packet) return false;
+    const c = document.getElementById("irl-container");
+    if (S.irl.edit) { S.irl.edit = null; if (c) paintIrl(c); return true; }
+    if (!irlRecorded()) { leaveIrl(); return true; }
+    confirmDialog("Leave IRL Reading?", leaveIrl, { detail: "What you've recorded so far is kept. To keep reading, open it again from Clubs → Diagnostics.", yes: "Leave", no: "Stay" });
+    return true;
+  }
+  // the browser's Back on the website: the same question first
+  addEventListener("popstate", (e) => {
+    if (!screenOn("irl-screen") || !S.irl || !S.irl.packet || !irlRecorded()) return;
+    if (/^\/diagnostic\/irl\//.test(location.pathname)) return;
+    e.stopImmediatePropagation();   // (app.js's address router comes after this one)
+    try { history.pushState({ qb: 1 }, "", "/diagnostic/irl/" + encodeURIComponent(S.irl.id)); } catch (x) {}
+    beforeBack();
+  });
+
   // ═══ REPORT ═══
   function openReport(id) {
     S.rep = { id, d: null, cov: {}, pc: {} };
@@ -6642,8 +6784,9 @@ function __qbMain(ctx) {
     if (!R || !R.id) { c.innerHTML = plainPanel("chart", "No report is open.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
     if (!R.d) {
       c.innerHTML = loading("Loading the report…");
-      const d = await get("/api/diag/report?id=" + encodeURIComponent(R.id));
+      const [d, dg] = await Promise.all([get("/api/diag/report?id=" + encodeURIComponent(R.id)), get("/api/diag?id=" + encodeURIComponent(R.id))]);
       if (S.rep !== R) return;
+      R.canManage = !!(dg && dg.diag && dg.diag.canManage);
       if (!d || d.error) { c.innerHTML = plainPanel("chart", (d && d.error) || OFFLINE, '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
       if (d.locked) { c.innerHTML = plainPanel("lock", "This report isn't released yet. It opens for everyone at once when the diagnostic ends.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
       R.d = d.report || d;
@@ -6682,7 +6825,8 @@ function __qbMain(ctx) {
     const meta = [FORMATS[d.format] && FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), "NAQT distribution", plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
     const jump = [["rp-summary", "Summary"], hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], ["rp-plan", "Practice"], ["rp-players", seeAll ? "Players" : "Your card"]];
     let html = '<div class="cl-page rp-page"><div class="rp-head"><div><p class="eyebrow">' + esc([d.org && d.org.name, d.team].filter(Boolean).join(" · ")) + "</p><h1>" + esc(date) + " diagnostic" + info("Released to every player at once" + (d.date ? ", " + whenText(d.date) : "") + ".", "When this report was released") + '</h1><p class="rp-meta">' + esc(meta) + "</p></div>" +
-      '<div class="ph-right"><button type="button" class="btn" data-go-clubs="diagnostics">' + ico("doc", 16) + "All reports</button></div></div>" +
+      '<div class="ph-right"><button type="button" class="btn" data-go-clubs="diagnostics">' + ico("doc", 16) + "All reports</button>" +
+      (R.canManage ? '<button type="button" class="btn btn-ghost" data-rp-delete>' + ico("trash", 16) + "Delete report</button>" : "") + "</div></div>" +
       '<nav class="rp-jump" aria-label="Report sections">' + jump.map((j) => '<button type="button" class="db-tab" data-jump="' + j[0] + '">' + j[1] + "</button>").join("") + "</nav>";
     // summary
     const trend = (d.trend || []).length >= 2 ? '<div class="cl-trend"><span class="eyebrow">' + esc(d.team) + " conversion</span>" + trendSvg(d.trend) + "</div>" : "";
@@ -6716,6 +6860,14 @@ function __qbMain(ctx) {
       if (b.dataset.cov) { R.cov[b.dataset.cov] = !R.cov[b.dataset.cov]; const sub = document.getElementById("cov-sub-" + b.dataset.cov); if (sub) sub.hidden = !R.cov[b.dataset.cov]; b.setAttribute("aria-expanded", String(!!R.cov[b.dataset.cov])); return; }
       if (b.dataset.pc) { R.pc[b.dataset.pc] = !R.pc[b.dataset.pc]; const card = b.closest(".pcard"); if (card) card.classList.toggle("open", !!R.pc[b.dataset.pc]); b.textContent = R.pc[b.dataset.pc] ? "Less" : "More"; b.setAttribute("aria-expanded", String(!!R.pc[b.dataset.pc])); return; }
       if (b.dataset.goClubs) { open(b.dataset.goClubs); return; }
+      if (b.hasAttribute("data-rp-delete")) {
+        confirmDialog("Delete this report for everyone? It can't be brought back.", async () => {
+          const r = await post("/api/diag/delete", { id: R.id });
+          if (!r || r.error) { failBubble(b, (r && r.error) || OFFLINE); return; }
+          S.rep = null; open("diagnostics");
+        }, { yes: "Delete", danger: true });
+        return;
+      }
       if (b.dataset.practice != null) { const p = plan[+b.dataset.practice]; if (p) practiceArea(p.cat, p.sub, d.diff); }
     };
   }
@@ -6827,11 +6979,12 @@ function __qbMain(ctx) {
     const [a, b, c] = seg;
     if (a === "clubs") { open(b || "teams"); return true; }
     if (a === "diagnostic" && b === "irl" && c) { openIrl(c); return true; }
+    if (a === "diagnostic" && b && /^dx-/i.test(b) && window.QB && window.QB.dxJoin) { window.QB.dxJoin(b); return true; }
     if (a === "diagnostic") { if (typeof goTo === "function") goTo("diagnostic"); return true; }
     if (a === "report" && b) { openReport(b); return true; }
     return false;
   }
-  window.QBClubs = { poll, paintBadge, onScreen, open, openIrl, openReport, webPath, route, renderGroups, groupsTip, renderClubs };
+  window.QBClubs = { poll, paintBadge, onScreen, open, openIrl, openReport, webPath, route, renderGroups, groupsTip, renderClubs, beforeBack };
   if (window.QB) {
     window.QB.openClubs = (tab) => open(tab || "diagnostics");
     window.QB.openDiagReport = (id) => openReport(id);
@@ -9055,6 +9208,21 @@ function wordFormEq(base, rt) {
   return sr === sb || (sb.length >= 4 && (rt.startsWith(sb) || sr.startsWith(sb)));
 }
 
+// The -ing / -ed forms of a base word of 4+ letters (bond → bonding, bonded; dance → dancing, danced;
+// stop → stopping), and whether c and r are such a pair either way, a plural base included
+// ("bonds" → bond → bonding).
+function ingEdOf(b) {
+  if (b.length < 4 || /\d/.test(b)) return [];
+  const out = [b + "ing", b + "ed"];
+  if (b.endsWith("e")) out.push(b.slice(0, -1) + "ing", b + "d");
+  if (/[^aeiou][aeiou][bdgklmnprt]$/.test(b)) out.push(b + b.slice(-1) + "ing", b + b.slice(-1) + "ed");
+  return out;
+}
+function ingEdEq(c, r) {
+  const bases = (x) => (x.length >= 5 && x.endsWith("s") ? [x, x.slice(0, -1)] : [x]);
+  return bases(c).some((b) => ingEdOf(b).includes(r)) || bases(r).some((b) => ingEdOf(b).includes(c));
+}
+
 // Cost of matching response token r against form word w: 0 exact, n edits, -1 no match. (J5 exact, J10 loose)
 function wordCost(w, r, ctx, fuzzy, required) {
   const rt = r.t;
@@ -9075,6 +9243,10 @@ function wordCost(w, r, ctx, fuzzy, required) {
   if (!fuzzy || /\d/.test(rt)) return -1;
   // never fuzz a one-letter required portion (an initial), digits or numerals (J10)
   if (w.kind !== "O" && w._rlen === 1) return -1;
+  // a lowercase word's -ing / -ed form, either way ("hydrogen bonding" for <u>hydrogen bond</u>s): a common
+  // noun or verb only — a capitalised word may be a name (Browning is not Brown, Fielding is not Field).
+  // It costs like one typo, so the form's budget and the collision guard still apply (painting ≠ paint).
+  if (!w.cap && rt.length >= 5) for (const c of cands) if (!/\d/.test(c) && ingEdEq(c, rt)) return 1;
   let best = -1;
   for (const c of cands) {
     if (/\d/.test(c) || c.length < 3) continue;
@@ -10394,6 +10566,42 @@ function questionInfo(rc, P) {
   rc.qWords = new Set(rc.ti.nouns.filter(([end]) => end <= rc.buzz).map(([, w]) => w));
 }
 
+// J1b a field qualifier in front of the answer ("electrical resistance" for <u>resistance</u>, "chemical bond",
+// "economic recession"): at strictness 20 extra words are wrong, but an adjective naming the subject the
+// question is in doesn't change the answer. Narrow on purpose: only these words, only in front, only when the
+// question's own text is about that subject ("electrical induction" isn't mathematical induction), and only
+// when what's left is the WHOLE matched answer (a line's own modifier can't be swapped: "electric field" is not
+// "magnetic <u>field</u>"). Names and narrowing words never pass ("North Korea", "internal resistance").
+const QUALIFIER_FIELDS = {};
+// (each subject's words, matched at the start of a word in the question's text)
+for (const [k, words] of Object.entries({
+  "electrical electric": "electr circuit current voltage ohm resist capacit charge conduct wire ampere watt",
+  chemical: "chemi reaction molecul atom compound element acid solution bond ions electron",
+  biological: "biolog cell organism species gene protein evolution enzyme tissue",
+  mathematical: "mathemat function equation integer theorem proof integral matrix polynomial",
+  economic: "econom market price trade inflation money demand supply tax bank",
+  political: "politic government party vote election parliament congress president minister",
+  musical: "music compos symphon sonata opera piano tempo chord orchestra melod",
+  literary: "literar novel poem poet author story narrat verse wrote",
+})) { const rx = new RegExp("\\b(?:" + words.split(" ").join("|") + ")"); for (const q of k.split(" ")) QUALIFIER_FIELDS[q] = rx; }
+const QUALIFIER_RX = new RegExp("^(?:(?:the|a|an)\\s+)?((?:" + Object.keys(QUALIFIER_FIELDS).join("|") + ")(?:\\s+|$)){1,2}", "i");
+function qualifierRetry(r, P, strictness, opts, rc, plain) {
+  if (!rc.hasText) return null;
+  const m = QUALIFIER_RX.exec(r);
+  if (!m) return null;
+  const quals = m[0].toLowerCase().split(/\s+/).filter((w) => QUALIFIER_FIELDS[w]);
+  if (!quals.length || !quals.every((w) => QUALIFIER_FIELDS[w].test(rc.folded))) return null;
+  const rest = r.slice(m[0].length).trim();
+  if (!rest) return null;
+  const v = judgeOnce(rest, P, strictness, opts, rc, plain);
+  if (v.status !== "accept" || !v.matchedAnswer) return null;
+  // what's left must cover every word of the answer it matched (no line modifier left out and replaced)
+  const core = (x) => x.replace(/(?:es|s)$/, "");
+  const said = new Set(normalizeText(rest).split(/\s+/).filter(Boolean).map(core));
+  const need = normalizeText(String(v.matchedAnswer).replace(/[\[(].*$/, "")).split(/\s+/).filter((w) => w && !ARTICLES_ALL.has(w));
+  if (!need.every((w) => said.has(core(w)))) return null;
+  return { ...v, note: "extra words ignored" };
+}
 function judgeTop(resp, P, strictness, opts, plain) {
   const rc = makeReadCtx(opts);
   questionInfo(rc, P);
@@ -10408,6 +10616,9 @@ function judgeTop(resp, P, strictness, opts, plain) {
     const v2 = judgeOnce(f, P, strictness, opts, rc, plain);
     if (better(v2)) { v = v2; if (v.status === "accept") return v; }
   }
+  // J1b a field qualifier in front of the answer
+  const vq = qualifierRetry(r, P, strictness, opts, rc, plain);
+  if (vq) return vq;
   // common acronyms (J§9.3): UK, USA, WWII, ...
   const toks = r.split(/\s+/);
   if (toks.some((x) => ACRONYMS.has(x.toLowerCase().replace(/\./g, "")))) {

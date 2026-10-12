@@ -884,7 +884,12 @@ function webPathNow() {
   }
   const pg = ((window.QB && window.QB._pages) || []).find((p) => p.screenEl === a);
   if (!pg) return null;
-  if (pg.pluginId === "multiplayer") { const room = window.QB.mpRoom ? window.QB.mpRoom() : ""; return "/multiplayer" + (room ? "/" + encodeURIComponent(room) : ""); }
+  if (pg.pluginId === "multiplayer") {
+    const room = window.QB.mpRoom ? window.QB.mpRoom() : "";
+    // a team diagnostic's room has its own address; /multiplayer/<the same code> is an ordinary room
+    if (room && window.QB.mpIsDiag && window.QB.mpIsDiag()) return "/diagnostic/" + encodeURIComponent(room);
+    return "/multiplayer" + (room ? "/" + encodeURIComponent(room) : "");
+  }
   return "/plugins/" + encodeURIComponent(pg.pluginId) + "/" + encodeURIComponent(pg.id);
 }
 // the home page's title — what search results show as the link (server.js sends the same)
@@ -1607,6 +1612,7 @@ function navigateTo(name, opts) {
   else buildScreen(name);
 }
 function goBack() {
+  if (window.QBClubs?.beforeBack?.()) return;   // IRL Reading asks before it's left (clubs.js)
   if (window.QB?.handleBack?.()) return;
   if (dbBrowseBack()) return;
   if (_navCurrent === "stats" && state.statsSessionId) { state.statsSessionId = null; loadStats(); return; }
@@ -3434,6 +3440,8 @@ function CatPicker(model) {
     h.addEventListener("click", (e) => {
       const t = e.target.closest("[data-cp]"); if (!t || !h.contains(t)) return;
       const a = t.dataset.cp, id = t.dataset.id;
+      // the Weights switch is a real checkbox: a cancelled click would undo the toggle (its change handler below runs it)
+      if (a === "weights") { e.stopPropagation(); return; }
       e.preventDefault(); e.stopPropagation();
       if (a === "toggle") { v.hl = null; model.toggle(id); render(); }
       else if (a === "toggle-root") { v.hl = null; model.toggle(id); render(); }
