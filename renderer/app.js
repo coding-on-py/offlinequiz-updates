@@ -990,6 +990,9 @@ function updateTopbar() {
       crumb.hidden = !txt.textContent;
     }
   }
+  // the top bar's link for the page on screen reads as current
+  const here = { "clubs-screen": "tb-clubs", "diagnostic-screen": "tb-clubs", "irl-screen": "tb-clubs", "report-screen": "tb-clubs", "store-screen": "tb-store", "leaderboards-screen": "tb-leaderboards", "extensions-screen": "tb-plugins" }[active && active.id];
+  ["tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
   renderTopbarProfile();
 }
 function renderTopbarProfile() {
@@ -7744,14 +7747,16 @@ function populateGraphFilters(stats) {
   };
 }
 
-let _breakdownCache = null;
-async function redrawFilteredGraphs(breakdown) {
+let _breakdownCache = null, _breakdownShown = null;
+// again: the same sessions redrawn (the window was resized) — no new read
+async function redrawFilteredGraphs(breakdown, again) {
   const cat = "";   // categories: the page's picker (categoryIds)
   const cids = statsCatIds();
   const diff = _bdDiffs.join(",");
 
   let bd;
-  if (breakdown) { _breakdownCache = breakdown; bd = breakdown; }
+  if (again && _breakdownShown) bd = _breakdownShown;
+  else if (breakdown) { _breakdownCache = breakdown; bd = breakdown; }
   else {
     try {
       const params = [diff ? "difficulty=" + encodeURIComponent(diff) : "", cids.length ? "categoryIds=" + encodeURIComponent(cids.join(",")) : ""].filter(Boolean).join("&");
@@ -7759,6 +7764,7 @@ async function redrawFilteredGraphs(breakdown) {
       bd = res.breakdown || [];
     } catch { bd = _breakdownCache || []; }
   }
+  _breakdownShown = bd;
 
   // The session list arrives newest-first — charts read left→right in time.
   bd = bd.slice().reverse();
@@ -7904,6 +7910,9 @@ function qhDetailHtml(q, type) {
     '<div class="qh-ans">Answer: ' + answerLineHtml(q.answer, q.answer_sanitized || "") + "</div>";
 }
 let _statsRedraw = null;
+// the charts are drawn for their width: a resized window redraws them (squeezed or stretched otherwise)
+let _statsResizeT = 0;
+window.addEventListener("resize", () => { clearTimeout(_statsResizeT); _statsResizeT = setTimeout(() => { if (_statsRedraw && document.querySelector("#stats-screen.active")) _statsRedraw(true); }, 150); });
 // The row goes at once; the totals catch up when the server has deleted it.
 function deleteSessionRow(id) {
   const rows = [...document.querySelectorAll("#stats-container .session-row")].filter((r) => r.dataset.session === id);
@@ -7991,7 +8000,7 @@ async function loadStats(preserveScroll = false) {
     if (!sid) {
       html += `<div class="stats-section" data-coll="stats:graph">
         <div class="stats-section-title">GRAPH</div>
-        <canvas id="stats-graph" class="chart-canvas" width="700" height="300" style="width:100%;max-width:760px"></canvas>
+        <canvas id="stats-graph" class="chart-canvas" width="700" height="300" style="width:100%;height:300px"></canvas>
       </div>`;
     }
 
@@ -8351,7 +8360,7 @@ async function loadStats(preserveScroll = false) {
 
     // Canvases size from clientWidth, so one drawn inside a collapsed section
     // comes out blank — draw now, and again whenever a section is opened.
-    const drawCharts = (initial) => {
+    const drawCharts = (initial, resized) => {
       const canvas = document.getElementById("stats-graph");
       if (canvas) drawStatsGraph(canvas, stats);
       const c1 = document.getElementById("graph-diff-accuracy");
@@ -8362,9 +8371,9 @@ async function loadStats(preserveScroll = false) {
       if (c3) drawDiffBonus(c3, stats);
       // initial: the breakdown fetched above (unless difficulty squares are
       // still ticked from before); later: re-read with the graph filters.
-      if (document.getElementById("graph-session-outcomes")) redrawFilteredGraphs(initial && !_bdDiffs.length ? breakdown : undefined);
+      if (document.getElementById("graph-session-outcomes")) redrawFilteredGraphs(initial && !_bdDiffs.length ? breakdown : undefined, resized);
     };
-    _statsRedraw = () => drawCharts(false);
+    _statsRedraw = (resized) => drawCharts(false, resized);
     if (!container.__collWired) {
       container.__collWired = true;
       container.addEventListener("qb-coll-open", (ev) => {
@@ -11861,7 +11870,7 @@ function paintStreaks(c) {
       (sx.tu ? ((sx.tans != null ? sx.tans : sx.tu) ? stat(Math.round((100 * sx.cor) / (sx.tans != null ? sx.tans : sx.tu)) + "%", "tossups right") : "") + stat(sx.pw, sx.pw === 1 ? "power" : "powers") + stat(sx.neg, sx.neg === 1 ? "neg" : "negs") : "") +
       (sx.bo ? stat(sx.bpc, "bonus parts") : "") + `</div><small class="stk-day-mix">${plural(sx.tu, "tossup")} · ${plural(sx.bo, "bonus")}</small>`
     : `<p>${_stk.sel === d.today ? "Nothing yet today." : "No practice this day."}</p>`) + "</div>";
-  const wdLbl = ["", "Mon", "", "Wed", "", "Fri", ""].map((x) => `<span>${x}</span>`).join("");
+  const wdLbl = ["", "", "Mon", "", "Wed", "", "Fri", ""].map((x) => `<span>${x}</span>`).join("");   // the months line, then the Sunday-first rows
   c.innerHTML = `<div class="stk-page">
     <div class="stk-cards">
       <div class="fr-card stk-now${d.streak ? " lit" : ""}"><div class="stk-big">${stkFlame(30)}<span><b class="num">${d.streak}</b> ${d.streak === 1 ? "day" : "days"}</span></div><small class="stk-sub"><b>Current streak</b><span>${escapeHtml(sub)}</span></small><div class="stk-week" aria-label="This week">${week}</div></div>

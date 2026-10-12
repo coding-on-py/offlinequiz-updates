@@ -2831,7 +2831,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px 
 .tb-icon { color: var(--muted); }
 .tb-link { height: 36px; padding: 0 12px 0 10px; gap: 8px; color: var(--muted); font-weight: 500; }
 .tb-link:hover { color: var(--strong); }
-.tb-link[aria-pressed="true"] { background: var(--raised); color: var(--strong); }
+.tb-link[aria-pressed="true"], .tb-link[aria-current="page"] { background: var(--raised); color: var(--strong); }
 .tb-scheme { width: 36px; padding: 0; justify-content: center; }
 .tb-scheme[hidden], .tb-scheme svg[hidden], #row-light-mode[hidden] { display: none; }
 .tb-profile {
@@ -3548,7 +3548,6 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .mp-rjoin { color: var(--go); }
 .mp-public h2 { display: flex; align-items: center; gap: 6px; }
 .mp-pub-empty { margin: 0; padding: 16px 18px; color: var(--muted); font-size: 13px; line-height: 1.55; }
-@media (max-width: 560px) { .mp-recent-row { flex-wrap: wrap; row-gap: 2px; } .mp-recent-row .mp-rcode { flex-basis: 70px; } .mp-recent-row .mp-rwhen { order: 3; flex: 1 1 100%; padding-left: 70px; font-size: 12px; } }
 #ext-page-multiplayer-lobby.mp-in-room > .top-bar { display: none; }
 .mp-room { display: flex; flex-direction: column; gap: 14px; }
 .room-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding-top: 18px; }
@@ -3601,16 +3600,25 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .mp-room .question-placeholder { min-height: 30vh; }
   .page-head { flex-wrap: wrap; row-gap: 8px; }
   .page-head .top-bar-right { flex-wrap: wrap; }
+  /* Statistics: Back stays beside the title, the period + categories go on a line of their own (they
+     wrapped together, leaving Back alone on a line under the filters) */
+  #stats-screen .page-head { row-gap: 4px; justify-content: flex-start; }
+  #stats-screen .page-head .top-bar-right { display: contents; }
+  #stats-screen .page-head #btn-stats-home { order: 1; margin-left: auto; }
+  #stats-screen .page-head::after { content: ""; order: 2; flex-basis: 100%; }
+  #stats-screen .page-head .top-bar-right > :not(#btn-stats-home) { order: 3; }
 }
 /* phones: the top bar fits (it pushed the account avatar off the edge) */
 @media (max-width: 560px) {
   .app-topbar { padding: 0 10px; gap: 4px; }
   .app-topbar .brand { font-size: 15px; padding-right: 2px; }
   .tb-right { gap: 0; }
+  .tb-right .btn + .btn { margin-left: 0; }
   .tb-link, .tb-scheme, .tb-link.btn-icon { width: 34px; height: 34px; min-height: 34px; }
   .tb-pill { height: 30px; padding: 0 8px; gap: 4px; }
   .tb-profile .avatar { width: 30px; height: 30px; }
 }
+@media (max-width: 380px) { .tb-scheme { display: none; } }   /* the smallest phones: light mode is in Settings → Appearance */
 @media (max-width: 760px) {
   /* Settings: a row's wide control (slider, dropdown, text box) goes under its label */
   .set-pane .setting-row { flex-wrap: wrap; }
@@ -3622,6 +3630,7 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .db-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .db-tabs::-webkit-scrollbar { display: none; }
   .db-tabs .db-tab { flex: none; }
+  .db-tabs > .db-tab { padding: 0 8px; }   /* the Database's four fit a phone */
   /* lists: names wrap instead of being cut; the standard / non-standard pill goes */
   .list-row .lr-name { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.35; }
   .db-browse .list-row .lr-std { display: none; }
@@ -4508,6 +4517,8 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
 /* a bought room's name can be long (up to 24): its code takes the room it needs, on one line */
 .mp-rcode { white-space: nowrap; }
 .mp-recent-row .mp-rcode { flex: 0 0 auto; min-width: 90px; }
+/* phones: the code and Rejoin on one line, who's there and when under them */
+@media (max-width: 560px) { .mp-recent-row { flex-wrap: wrap; row-gap: 2px; column-gap: 10px; } .mp-recent-row .mp-rcode { order: 1; flex: 1 1 calc(100% - 110px); min-width: 0; overflow: hidden; text-overflow: ellipsis; } .mp-recent-row .mp-rjoin { order: 2; } .mp-recent-row .mp-rwho { order: 3; flex: 0 1 auto; font-size: 12px; } .mp-recent-row .mp-rwhen { order: 4; font-size: 12px; } }
 .mp-mine-row .mp-rcode, .mp-pub-row .mp-rcode { letter-spacing: 0.12em; }
 
 /* Plugin guides: pictures of the plugin in use (extensions.js shotHtml / cleanMock). A window
@@ -5141,6 +5152,7 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 }
 .cl-tabs::-webkit-scrollbar { display: none; }
 .cl-tabs .db-tab { flex: none; }
+@media (max-width: 560px) { .cl-tabs { flex-wrap: wrap; overflow: visible; row-gap: 4px; } }   /* phones: five tabs don't fit; they wrap rather than run off the edge */
 .cl-msg { margin: -2px 0 12px; }
 /* teams */
 .teams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 16px; }
@@ -5180,6 +5192,9 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .mem-name { min-width: 0; display: flex; flex-direction: column; }
 .mem-name b { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--strong); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mem-name b:has(.neon-name) { overflow: clip; overflow-clip-margin: 40px; }
+.mem-name .mem-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }   /* a long name gives way, the You tag stays whole */
+.mem-name b:has(.neon-name) .mem-nm { overflow: visible; }
+.mem-name .cl-you { flex: none; }
 .mem-name small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mem-name .cl-pend { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); }
 .mem-teams { min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; }
@@ -5292,7 +5307,7 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 }
 @media (max-width: 560px) {
   .seg.seg-where, .seg.seg-even { grid-template-columns: minmax(0, 1fr); }
-  .cl-seg-scroll { flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+  .cl-seg-scroll { flex-wrap: wrap !important; max-width: 100%; }   /* every team in view (a sideways scroll hid the last ones) */
   .cl-seg-scroll::-webkit-scrollbar { display: none; }
   .cl-seg-scroll button { flex: none; }
 }
@@ -5394,6 +5409,7 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .rp-head h1 { margin: 0; display: flex; align-items: center; font-size: 22px; letter-spacing: -0.01em; color: var(--strong); }
 .rp-meta { margin: 0; color: var(--muted); font-size: 13px; }
 .rp-head .ph-right { margin-left: auto; display: flex; gap: 8px; }
+@media (max-width: 560px) { .rp-head .ph-right { margin-left: 0; } }   /* under the title on a phone: lined up with it */
 .rp-jump { position: sticky; top: 0; z-index: 30; display: flex; gap: 4px; margin: 0 0 8px; padding: 8px 0; background: var(--bg); border-bottom: 1px solid var(--line-soft); overflow-x: auto; scrollbar-width: none; }
 .rp-jump::-webkit-scrollbar { display: none; }
 .rp-jump .db-tab { height: 30px; font-size: 12.5px; flex: none; }
@@ -5560,3 +5576,5 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .rh-off { display: inline-flex; align-items: center; gap: 5px; background: color-mix(in srgb, var(--go) 14%, transparent); color: var(--go); }
 .rh-off[hidden] { display: none; }
 .rh-off .qb-info { margin-left: 2px; }
+/* a list with a ⋯ menu in a row (Clubs → Diagnostics): the menu opens over the page, not cut at the list's edge */
+.cl-container .fr-list:has(.pop-wrap) { overflow: visible; }

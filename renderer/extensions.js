@@ -5988,7 +5988,7 @@ function __qbMain(ctx) {
     const menu = items ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="m-' + esc(p.mid) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ' + esc(p.name) + '">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div>" : "";
     const sub = p.na ? (pend ? '<span class="cl-pend">' + ico("mail", 12) + " Invite sent to @" + esc(pend.handle) + "</span>" : "No account") + '<span class="joined"> · added ' + esc(dayText(p.joinedAt)) + "</span>"
       : "@" + esc(p.handle) + '<span class="joined"> · joined ' + esc(dayText(p.joinedAt)) + "</span>";
-    return '<div class="mem-row' + (p.you ? " you" : "") + '" role="row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(p.neon || "") + '"' : "") + ">" + av(p) + '<div class="mem-name"><b>' + nm(p) + (p.you ? '<span class="badge cl-you">You</span>' : "") + "</b><small>" + sub + '</small></div><div class="mem-teams">' + chips + '</div><span class="cl-role ' + p.role + '">' + (p.role === "owner" ? ico("crown", 12) : "") + roleName(p.role) + '</span><div class="mem-act">' + menu + "</div></div>";
+    return '<div class="mem-row' + (p.you ? " you" : "") + '" role="row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(p.neon || "") + '"' : "") + ">" + av(p) + '<div class="mem-name"><b><span class="mem-nm">' + nm(p) + "</span>" + (p.you ? '<span class="badge cl-you">You</span>' : "") + "</b><small>" + sub + '</small></div><div class="mem-teams">' + chips + '</div><span class="cl-role ' + p.role + '">' + (p.role === "owner" ? ico("crown", 12) : "") + roleName(p.role) + '</span><div class="mem-act">' + menu + "</div></div>";
   }
 
   // ── Leaderboard: the members' practice (the global leaderboard's numbers), by team ──
@@ -6046,7 +6046,7 @@ function __qbMain(ctx) {
   // ── Diagnostics: rooms open now, scheduled, being played on their own, IRL, reports ──
   function diagListHtml() {
     const list = (S.org.diagnostics || []);
-    const bar = canRunAny() && teams().length ? '<div class="cl-toolbar"><div class="end"><button type="button" class="btn btn-sm btn-primary" data-cl="run">' + ico("target", 14) + "Run a diagnostic</button></div></div>" : "";
+    const bar = "";   // (Run a diagnostic is on the organization's header)
     if (!list.length) return bar + '<div class="fr-list"><div class="cl-empty">No diagnostics yet</div></div>';
     const stat = (v, l) => '<span class="fr-stat"><b class="num">' + v + "</b><small>" + l + "</small></span>";
     return bar + '<div class="fr-list">' + list.map((d) => {
@@ -6056,7 +6056,7 @@ function __qbMain(ctx) {
       const menu = d.canManage ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="d-' + esc(d.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden><button type="button" class="pop-item danger" role="menuitem" data-cl="dx-delete" data-id="' + esc(d.id) + '" data-done="' + (d.status === "done" ? 1 : "") + '">' + ico("trash", 15) + (d.status === "done" ? "Delete report" : "Delete diagnostic") + "</button></div></div>" : "";
       let side, icon = "doc";
       if (d.status === "done") side = stat(d.players, d.players === 1 ? "player" : "players") + stat(d.conv == null ? "—" : d.conv + "%", "conversion") + '<span class="dx-chip good">Report ready</span><button type="button" class="btn btn-sm" data-report="' + esc(d.id) + '">View report</button>';
-      else if (d.place === "irl") { icon = "doc"; side = stat(d.players, "players") + stat("—", "") + '<span class="dx-chip mid">Being read</span>' + (d.canManage ? '<button type="button" class="btn btn-sm" data-irl="' + esc(d.id) + '">Continue reading</button>' : '<span class="dg-pad"></span>'); }
+      else if (d.place === "irl") { icon = "doc"; side = stat(d.players, "players") + stat("—", "conversion") + '<span class="dx-chip mid">Being read</span>' + (d.canManage ? '<button type="button" class="btn btn-sm" data-irl="' + esc(d.id) + '">Continue reading</button>' : '<span class="dg-pad"></span>'); }
       else if (d.place === "own") {
         icon = "clock";
         const pr = d.progress || { done: 0, total: d.players }, mine = d.myProgress;
@@ -6716,6 +6716,9 @@ function __qbMain(ctx) {
         if (ed.ok == null) { m.textContent = "Mark it correct or wrong."; return; }
         const list = st.buzzes[keyOf(ed.i)] = st.buzzes[keyOf(ed.i)] || [];
         if (ed.ok && list.some((x, j) => x.ok && j !== ed.idx)) { m.textContent = "This tossup already has a correct buzz. Edit or delete that one first."; return; }
+        // one buzz per player (the other team can be several), and nothing after the tossup was answered
+        if (ed.p !== "opp" && list.some((x, j) => j !== ed.idx && x.p === ed.p)) { m.textContent = "That player already buzzed on this tossup."; return; }
+        if (list.some((x, j) => j !== ed.idx && (x.ok ? x.k < ed.k : ed.ok && x.k > ed.k))) { m.textContent = ed.ok ? "A wrong buzz comes after this point. Move this buzz later or delete that one." : "The tossup was already answered before this point."; return; }
         const rec = { p: ed.p, k: ed.k, ok: ed.ok };
         if (ed.idx != null) list[ed.idx] = rec; else list.push(rec);
         list.sort((x, y) => x.k - y.k);
