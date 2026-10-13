@@ -5679,7 +5679,7 @@ function __qbMain(ctx) {
   const TIP = {
     na: "No onlinequiz account, so they can only play IRL Reading, where the reader records their buzzes.",
     addName: "For a player with no onlinequiz account. They can play IRL Reading, where the reader records their buzzes, and can be replaced with their account later.",
-    replace: "They get an invite under Clubs. Once they accept, their account takes this player's place: the same teams and the same recorded results.",
+    replace: "They get an invite under Clubs. Once they accept, their account takes this player's place: the same teams and the same recorded results. The name stays as their nickname here, which they or an admin can change.",
     invite: "They see the invite under Clubs, on the website and in the app. Pick a team to put them straight onto it.",
     code: "Anyone with the code can join from Clubs, Join or create. A captain or admin then puts them on a team.",
     approve: "When this is on, someone who joins with the code waits until an admin accepts them.",
@@ -5698,6 +5698,7 @@ function __qbMain(ctx) {
     locked: "The report is released to everyone at once when the diagnostic ends.",
     lbOrg: "The same numbers as the global leaderboard: everyone's practice on onlinequiz. Players without an account aren't on it.",
     transfer: "The new owner can make and remove admins and delete the organization. You become an admin.",
+    nick: "Only members of {org} see it, in place of the display name: on its teams, diagnostics, reports and leaderboard. Everywhere else, like the global leaderboards, multiplayer and profiles, the display name stays.",
   };
   // ── the top bar's Clubs count: invites waiting for you + join requests you can answer ──
   // Checked with friend requests (app.js friendPoll: sign-in, every minute, the window coming back).
@@ -5969,6 +5970,9 @@ function __qbMain(ctx) {
     if (opts.profile && p.handle && !p.na) items += '<button type="button" class="pop-item" role="menuitem" data-cl="profile" data-mid="' + esc(p.mid) + '">' + ico("user", 15) + "View profile</button>";
     if (teams().length && anyManage) items += sep() + '<div class="pop-label">Teams</div>' + teams().map((t) => '<button type="button" class="pop-item" role="menuitemcheckbox" aria-checked="' + t.roster.includes(p.mid) + '" data-cl="toggle-team" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '"' + (canManageTeam(t) ? "" : " disabled") + '><span class="pi-check" aria-hidden="true"></span>' + esc(t.name) + "</button>").join("");
     if (p.na && (admin || ts.some(capOf))) items += sep() + '<button type="button" class="pop-item" role="menuitem" data-cl="mem-rename" data-mid="' + esc(p.mid) + '">' + ico("pencil", 15) + "Rename…</button>";
+    // a nickname: their own, or anyone's for an admin or their team's captain
+    if (!p.na && (p.you || admin || ts.some(capOf))) items += sep() + '<button type="button" class="pop-item" role="menuitem" data-cl="mem-nick" data-mid="' + esc(p.mid) + '">' + ico("pencil", 15) + (p.nick ? "Change nickname…" : p.you ? "Set your nickname…" : "Give a nickname…") + "</button>" +
+      (p.nick ? '<button type="button" class="pop-item" role="menuitem" data-cl="mem-nick-off" data-mid="' + esc(p.mid) + '">' + ico("x", 15) + "Remove nickname</button>" : "");
     if (p.na && admin) items += (pend ? '<button type="button" class="pop-item" role="menuitem" data-cl="cancel-invite" data-id="' + esc(pend.id) + '">' + ico("x", 15) + "Cancel the invite to @" + esc(pend.handle) + "</button>" : '<button type="button" class="pop-item" role="menuitem" data-cl="replace" data-mid="' + esc(p.mid) + '">' + ico("userplus", 15) + "Replace with a username…</button>");
     if (owner && !p.na && !p.you) items += sep() + (p.role === "admin" ? '<button type="button" class="pop-item" role="menuitem" data-cl="role" data-role="member" data-mid="' + esc(p.mid) + '">' + ico("shield", 15) + "Remove admin</button>" : '<button type="button" class="pop-item" role="menuitem" data-cl="role" data-role="admin" data-mid="' + esc(p.mid) + '">' + ico("shield", 15) + "Make admin</button>") +
       '<button type="button" class="pop-item" role="menuitem" data-cl="transfer" data-mid="' + esc(p.mid) + '">' + ico("crown", 15) + "Make owner…</button>";
@@ -5990,7 +5994,7 @@ function __qbMain(ctx) {
     const items = memberItems(p);
     const menu = items ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="m-' + esc(p.mid) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ' + esc(p.name) + '">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div>" : "";
     const sub = p.na ? (pend ? '<span class="cl-pend">' + ico("mail", 12) + " Invite sent to @" + esc(pend.handle) + "</span>" : "No account") + '<span class="joined"> · added ' + esc(dayText(p.joinedAt)) + "</span>"
-      : "@" + esc(p.handle) + '<span class="joined"> · joined ' + esc(dayText(p.joinedAt)) + "</span>";
+      : "@" + esc(p.handle) + (p.nick && p.publicName && p.publicName !== p.nick ? '<span class="pubname" title="Their display name outside ' + esc(O() ? O().name : "the club") + '"> · ' + esc(p.publicName) + "</span>" : "") + '<span class="joined"> · joined ' + esc(dayText(p.joinedAt)) + "</span>";
     return '<div class="mem-row' + (p.you ? " you" : "") + '" role="row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(p.neon || "") + '"' : "") + ">" + av(p) + '<div class="mem-name"><b><span class="mem-nm">' + nm(p) + "</span>" + (p.you ? '<span class="badge cl-you">You</span>' : "") + "</b><small>" + sub + '</small></div><div class="mem-teams">' + chips + '</div><span class="cl-role ' + p.role + '">' + (p.role === "owner" ? ico("crown", 12) : "") + roleName(p.role) + '</span><div class="mem-act">' + menu + "</div></div>";
   }
 
@@ -6171,8 +6175,11 @@ function __qbMain(ctx) {
       case "toggle-team": return act(null, "/api/clubs/team/roster", { org, team: tid, mid, on: !tm.roster.includes(mid) });
       case "add-name": return promptDialog("Add a player by name", "", (name) => act(null, "/api/clubs/member/add-name", { org, name, team: tid }), { placeholder: "Their name", yes: "Add", max: 40 });
       case "mem-rename": return promptDialog("Rename " + p.name, p.name, (name) => act(null, "/api/clubs/member/rename", { org, mid, name }), { yes: "Save", max: 40 });
+      case "mem-nick": return promptDialog(p.you ? "Your nickname in " + o.name : "Nickname for " + (p.publicName || p.name), p.nick || "", (nick) => act(null, "/api/clubs/member/nick", { org, mid, nick }),
+        { yes: "Save", max: 32, placeholder: p.you ? "e.g. your real name" : "e.g. their real name", note: TIP.nick.replace("{org}", o.name) });
+      case "mem-nick-off": return act(null, "/api/clubs/member/nick", { org, mid, nick: "" });
       case "replace": return replaceDialog(p);
-      case "profile": if (p && p.handle && typeof openUserProfile === "function") openUserProfile(p.handle, p.name); return;
+      case "profile": if (p && p.handle && typeof openUserProfile === "function") openUserProfile(p.handle, p.publicName || p.name); return;
       case "cancel-invite": return act(t, "/api/clubs/invite/cancel", { org, id: t.dataset.id });
       case "role": return act(null, "/api/clubs/member/role", { org, mid, role: t.dataset.role });
       case "transfer": return mid ? confirmTransfer(p) : transferDialog();

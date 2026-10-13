@@ -6262,7 +6262,7 @@ function promptDialog(title, value, onOk, opts) {
   el.id = "prompt-dialog";
   el.className = "qb-overlay confirm-overlay";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true");
-  el.innerHTML = `<form class="confirm-box prompt-box"><div class="confirm-title">${escapeHtml(title)}</div>` +
+  el.innerHTML = `<form class="confirm-box prompt-box"><div class="confirm-title">${escapeHtml(title)}</div>` + (opts.note ? `<p class="prompt-note">${escapeHtml(opts.note)}</p>` : "") +
     `<input class="mode-input" id="pd-in" maxlength="${opts.max || 40}" autocomplete="off" placeholder="${escapeHtml(opts.placeholder || "")}" value="${escapeHtml(value || "")}">` +
     `<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="pd-no">Cancel</button><button type="submit" class="btn btn-primary">${escapeHtml(opts.yes || "OK")}</button></div></form>`;
   const close = () => animateRemove(el);
