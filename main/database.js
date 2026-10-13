@@ -359,6 +359,10 @@ export class QuestionDatabase {
       clauses.push(`${col("question_sanitized")} LIKE '%(*)%'`);
     }
 
+    // a team diagnostic's packet (14.77): no question spanning two categories, no stale current event
+    if (filters.noCrossCategory && this.v2) clauses.push(`COALESCE(${col("composition")}, '') != 'Hybrid - Cross Category'`);
+    if (filters.notStale && this.v2) clauses.push(`instr(COALESCE(${col("tags")}, ''), '"Stale Current Events"') = 0`);
+
     // the standard bonus: three parts, ten points each (a team diagnostic's packet)
     if (filters.threeParts && opts.isBonus && this.v2) {
       clauses.push(`${col("part_count")} = 3 AND replace(${col("point_values")}, ' ', '') = '[10,10,10]'`);

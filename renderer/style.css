@@ -5633,3 +5633,6 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .dx-years { display: flex; flex-wrap: wrap; gap: 10px 16px; }
 .dx-years label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .dx-years .mode-input { width: 96px; height: 36px; }
+.dx-levels { margin-bottom: 10px; }
+#dx-years { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+#dx-s-years.bad { color: var(--red); }

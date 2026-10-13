@@ -5688,7 +5688,7 @@ function __qbMain(ctx) {
     roster: "The team's roster is picked. Changes here are for this diagnostic only; the roster stays the same.",
     own: "Only Tossups only can be played on your own.",
     irl: "In person: the team practices together in a real room, and one person reads the packet aloud from this page and records every buzz and bonus part. Works with all three formats.",
-    dist: "Every packet is drawn at random by NAQT's high school distribution, and drawn again when a category strays too far from it. Only standard-format questions from standard sets: every tossup has a power mark and a \"For 10 points\" giveaway, every bonus a lead-in and three parts worth 10. With 12 or more questions, every category gets at least one.",
+    dist: "Drawn at random by NAQT's high school distribution, drawn again when a category strays too far from it, and every category gets at least one question. Miscellaneous is left out (its questions belong to other categories). Questions that test their category cleanly come first: no common-link or trick questions, nothing that spans two categories, current events from the last few years. Every tossup has a power mark and a \"For 10 points\" giveaway; every bonus has a lead-in and three parts worth 10.",
     avg: "Ranked by average points per active member (anyone who practiced in the period), so a big roster can't win by size alone. A team needs 3 active members and an organization 4 to be ranked.",
     cov: "Team conversion is the share of tossups the team got. Strength: 70% or more. Middling: 30 to 69%. Gap: under 30%. Overlap: two or more players each got 40% or more of an area. Open a category to see its subcategories.",
     plan: "In order: gaps first (categories, then the subcategories to learn, with the answers missed), then habits that cost points, then overlaps.",
@@ -6342,9 +6342,23 @@ function __qbMain(ctx) {
   }
   const HOURS = Array.from({ length: 16 }, (_, i) => i + 7);
   const atOf = (day, hour) => { const [y, m, d] = String(day).split("-").map(Number); return new Date(y, m - 1, d, Number(hour) || 0).getTime(); };
+  // difficulty presets (the official rooms' levels) and set-year choices
+  const LEVELS = [["ms", "Middle school", [1]], ["hs", "High school", [2, 3, 4, 5]], ["col", "College", [6, 7, 8, 9]]];
+  const YEAR_MODES = [["any", "Any year"], ["5", "Last 5 years"], ["10", "Last 10 years"], ["custom", "Custom"]];
+  const yearsBad = (y) => !!(y && y.min != null && y.max != null && y.min > y.max);
+  function paintYears() {
+    const box = document.getElementById("dx-years"), d = S.dx; if (!box) return;
+    if (!d.years) d.years = { min: null, max: null };
+    if (!d.yearsMode) d.yearsMode = d.years.min != null || d.years.max != null ? "custom" : "any";
+    if (box.dataset.mode === d.yearsMode) return;   // (painting again would drop a year being typed)
+    box.dataset.mode = d.yearsMode;
+    const yr = (id, v) => '<input type="number" class="mode-input" id="' + id + '" inputmode="numeric" min="1990" max="' + new Date().getFullYear() + '" placeholder="Any" value="' + (v ?? "") + '">';
+    box.innerHTML = '<div class="seg" role="group" aria-label="Years">' + YEAR_MODES.map((m) => '<button type="button" data-ymode="' + m[0] + '" aria-pressed="' + (d.yearsMode === m[0]) + '">' + m[1] + "</button>").join("") + "</div>" +
+      (d.yearsMode === "custom" ? '<div class="dx-years"><label><span>From</span>' + yr("dx-y0", d.years.min) + '</label><label><span>To</span>' + yr("dx-y1", d.years.max) + "</label></div>" : "");
+  }
   function newDx(target) {
     const t = target && canRunTarget(target) ? target : defaultTarget(), days = dayOpts();
-    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [2, 3, 4, 5], years: { min: null, max: null } };
+    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [2, 3, 4, 5], years: { min: null, max: null }, yearsMode: "any" };
   }
   async function renderSetup() {
     const c = document.getElementById("dx-container"); if (!c) return;
@@ -6376,10 +6390,9 @@ function __qbMain(ctx) {
         ["tu", "bo", "tb"].map((k) => '<button type="button" data-format="' + k + '" aria-pressed="' + (d.format === k) + '">' + FORMATS[k].label + info(FORMATS[k].tip, FORMATS[k].label) + "</button>").join("") + "</div></div></div>" +
       '<div class="fsec" role="group" aria-label="Where"><h2 class="fsec-label">Where</h2><div class="fsec-body" id="dx-where"></div></div>' +
       '<div class="fsec" role="group" aria-label="Questions"><h2 class="fsec-label">Questions' + info(TIP.dist, "How the packet is drawn") + '</h2><div class="fsec-body" id="dx-qty"></div></div>' +
-      '<div class="fsec" role="group" aria-label="Difficulty"><h2 class="fsec-label">Difficulty</h2><div class="fsec-body"><div class="diff-toggles" role="group" aria-label="Difficulty levels">' + diff + "</div></div></div>" +
-      '<div class="fsec" role="group" aria-label="Years"><h2 class="fsec-label">Years' + info(TIP.years, "About the years") + '</h2><div class="fsec-body"><div class="dx-years">' +
-        '<label><span>From</span><input type="number" class="mode-input" id="dx-y0" inputmode="numeric" min="1990" max="' + new Date().getFullYear() + '" placeholder="Any" value="' + (d.years.min ?? "") + '"></label>' +
-        '<label><span>To</span><input type="number" class="mode-input" id="dx-y1" inputmode="numeric" min="1990" max="' + new Date().getFullYear() + '" placeholder="Any" value="' + (d.years.max ?? "") + '"></label></div></div></div>' +
+      '<div class="fsec" role="group" aria-label="Difficulty"><h2 class="fsec-label">Difficulty</h2><div class="fsec-body"><div class="seg dx-levels" role="group" aria-label="Level">' +
+        LEVELS.map((l) => '<button type="button" data-level="' + l[0] + '" aria-pressed="false">' + l[1] + "</button>").join("") + '</div><div class="diff-toggles" role="group" aria-label="Difficulty levels">' + diff + "</div></div></div>" +
+      '<div class="fsec" role="group" aria-label="Years"><h2 class="fsec-label">Years' + info(TIP.years, "About the years") + '</h2><div class="fsec-body" id="dx-years"></div></div>' +
       '</div><aside class="dx-side"><div class="cl-card dx-summary"><h2 class="sec-title">Summary</h2><dl class="sum-list">' +
       '<div><dt>Team</dt><dd id="dx-s-team"></dd></div><div><dt>Format</dt><dd id="dx-s-format"></dd></div><div><dt>Where</dt><dd id="dx-s-where"></dd></div><div><dt>Questions</dt><dd id="dx-s-q"></dd></div><div><dt>Difficulty</dt><dd id="dx-s-diff"></dd></div><div><dt>Years</dt><dd id="dx-s-years"></dd></div><div><dt>Time</dt><dd id="dx-s-time"></dd></div>' +
       '</dl><button type="submit" class="btn btn-primary btn-md btn-full" id="dx-go">' + ico("play", 16) + '<span id="dx-go-lbl">Open the room</span></button><p class="fr-msg err" id="dx-msg" role="status"></p></div></aside></form>';
@@ -6426,7 +6439,10 @@ function __qbMain(ctx) {
     const d = S.dx;
     $$("#dx-form [data-target]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.target === d.target)));
     $$("#dx-form [data-format]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.format === d.format)));
-    paintWho(); paintWhere(); paintQty();
+    paintWho(); paintWhere(); paintQty(); paintYears();
+    $$("#dx-form [data-level]").forEach((b) => { const l = LEVELS.find((x) => x[0] === b.dataset.level); b.setAttribute("aria-pressed", String(!!l && l[2].join() === d.diff.join())); });
+    $$("#dx-form [data-diff]").forEach((cb) => { cb.checked = d.diff.includes(+cb.dataset.diff); });
+    $$("#dx-form [data-ymode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.ymode === d.yearsMode)));
     const tname = d.target === "org" ? "Whole organization" : (team(d.target) || {}).name || "Team";
     const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
     set("dx-s-team", tname + " · " + plural(d.players.length, "player"));
@@ -6434,7 +6450,8 @@ function __qbMain(ctx) {
     set("dx-s-where", d.place === "own" ? "On their own, due " + whenText(atOf(d.dueDay, d.dueHour)) : d.place === "irl" ? "IRL Reading, read aloud in person" : "In a room, " + (d.when === "now" ? "now" : whenText(atOf(d.startDay, d.startHour))));
     set("dx-s-q", d.format === "tb" ? d.tu + " tossups, bonuses as earned" : d.format === "bo" ? d.bo + " bonuses" : d.tu + " tossups");
     set("dx-s-diff", d.diff.length ? diffText(d.diff) : "Pick at least one");
-    set("dx-s-years", yearsText(d.years) || "Any");
+    set("dx-s-years", yearsBad(d.years) ? "From is after To" : yearsText(d.years) || "Any");
+    const ys = document.getElementById("dx-s-years"); if (ys) ys.classList.toggle("bad", yearsBad(d.years));
     const mins = d.format === "bo" ? Math.round(d.bo * 1.5 / 5) * 5 : d.format === "tu" ? Math.round(d.tu * 0.75 / 5) * 5 : Math.round(d.tu * 1.45 / 5) * 5;
     set("dx-s-time", "About " + mins + " minutes" + (d.place === "own" ? " each" : ""));
     set("dx-go-lbl", d.place === "own" ? "Send it out" : d.place === "irl" ? "Open the packet" : d.when === "now" ? "Open the room" : "Schedule the room");
@@ -6450,6 +6467,14 @@ function __qbMain(ctx) {
       else if (ds.when) d.when = ds.when;
       else if (ds.tu) d.tu = +ds.tu;
       else if (ds.bo) d.bo = +ds.bo;
+      else if (ds.level) { const l = LEVELS.find((x) => x[0] === ds.level); if (l) d.diff = l[2].slice(); }
+      else if (ds.ymode) {
+        const y = new Date().getFullYear();
+        d.yearsMode = ds.ymode;
+        if (ds.ymode === "any") d.years = { min: null, max: null };
+        else if (ds.ymode === "5" || ds.ymode === "10") d.years = { min: y - (+ds.ymode - 1), max: null };
+        if (ds.ymode === "custom") setTimeout(() => document.getElementById("dx-y0")?.focus(), 0);
+      }
       else return;
       document.getElementById("dx-msg").textContent = "";
       syncSetup();
