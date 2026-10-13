@@ -5688,7 +5688,7 @@ function __qbMain(ctx) {
     roster: "The team's roster is picked. Changes here are for this diagnostic only; the roster stays the same.",
     own: "Only Tossups only can be played on your own.",
     irl: "In person: the team practices together in a real room, and one person reads the packet aloud from this page and records every buzz and bonus part. Works with all three formats.",
-    dist: "Drawn at random by NAQT's high school distribution, drawn again when a category strays too far from it, and every category gets at least one question. Miscellaneous is left out (its questions belong to other categories). Questions that test their category cleanly come first: no common-link or trick questions, nothing that spans two categories, current events from the last few years. Every tossup has a power mark and a \"For 10 points\" giveaway; every bonus has a lead-in and three parts worth 10.",
+    dist: "Drawn at random by NAQT's high school distribution, drawn again when a category strays too far from it, and every category gets at least one question. Miscellaneous is left out (its questions belong to other categories). Questions that test their category cleanly come first: no common-link or trick questions, nothing that spans two categories, current events from the last few years. Every tossup has a power mark and a \"For 10 points\" giveaway; every bonus has a lead-in and three parts worth 10. Within the difficulties you pick, the easier ones come up most (2–5: about 40% 2, 30% 3, 20% 4, 10% 5).",
     avg: "Ranked by average points per active member (anyone who practiced in the period), so a big roster can't win by size alone. A team needs 3 active members and an organization 4 to be ranked.",
     cov: "Team conversion is the share of tossups the team got. Strength: 70% or more. Middling: 30 to 69%. Gap: under 30%. Overlap: two or more players each got 40% or more of an area. Open a category to see its subcategories.",
     plan: "In order: gaps first (categories, then the subcategories to learn, with the answers missed), then habits that cost points, then overlaps.",
@@ -6449,7 +6449,8 @@ function __qbMain(ctx) {
     set("dx-s-format", FORMATS[d.format].label);
     set("dx-s-where", d.place === "own" ? "On their own, due " + whenText(atOf(d.dueDay, d.dueHour)) : d.place === "irl" ? "IRL Reading, read aloud in person" : "In a room, " + (d.when === "now" ? "now" : whenText(atOf(d.startDay, d.startHour))));
     set("dx-s-q", d.format === "tb" ? d.tu + " tossups, bonuses as earned" : d.format === "bo" ? d.bo + " bonuses" : d.tu + " tossups");
-    set("dx-s-diff", d.diff.length ? diffText(d.diff) : "Pick at least one");
+    // (the draw leans to the easier end: "2–5, mostly 2–3")
+    set("dx-s-diff", !d.diff.length ? "Pick at least one" : d.diff.length >= 3 ? diffText(d.diff) + ", mostly " + diffText(d.diff.slice(0, 2)) : diffText(d.diff));
     set("dx-s-years", yearsBad(d.years) ? "From is after To" : yearsText(d.years) || "Any");
     const ys = document.getElementById("dx-s-years"); if (ys) ys.classList.toggle("bad", yearsBad(d.years));
     const mins = d.format === "bo" ? Math.round(d.bo * 1.5 / 5) * 5 : d.format === "tu" ? Math.round(d.tu * 0.75 / 5) * 5 : Math.round(d.tu * 1.45 / 5) * 5;
