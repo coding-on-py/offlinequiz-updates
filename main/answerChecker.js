@@ -1755,8 +1755,32 @@ function numEq(a, b) {
   if (!a || !b || a.v !== b.v || !!a.decade !== !!b.decade) return false;
   return a.kind === b.kind || a.kind === "digit" || b.kind === "digit" || a.kind === "roman" || b.kind === "roman";
 }
+// A written-out fraction is the digits it's written with: "one-half", "two thirds", "three quarters" / "three fourths"
+// are 1 2, 2 3, 3 4 — what "1/2", "1 / 2" and "½" ("1/2" from vulgar) are, the slash splitting them — in the answer
+// line and the response alike. Only a number word (one–nine) right before a fraction word: "a half", a bare "half"
+// and "Richard the Third" are words; "two seconds" isn't a fraction. Each keeps its word (fracWord), so the required
+// "half" of "one-<u>half</u> the volume" still takes "half"; its own kind (fracN / fracD) keeps "three-fourths" from
+// equalling "three-four" (time), while digits equal it as any number.
+const FRAC_NUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
+const FRAC_DEN = { half: 2, halves: 2, third: 3, thirds: 3, quarter: 4, quarters: 4, fourth: 4, fourths: 4, fifth: 5, fifths: 5, sixth: 6, sixths: 6,
+  seventh: 7, sevenths: 7, eighth: 8, eighths: 8, ninth: 9, ninths: 9, tenth: 10, tenths: 10 };
+function fracDigits(toks) {
+  let out = null;
+  const dig = (x, v, kind) => { const t = String(v), req = x.r.some(Boolean), run = req ? x.runs.find((y) => y >= 0) ?? -1 : -1;
+    return { ...x, t, r: [...t].map(() => req), runs: [...t].map(() => run), numMerged: { v, kind }, fracWord: x.t }; };
+  for (let i = 0; i + 1 < toks.length; i++) {
+    const a = toks[i], b = toks[i + 1];
+    if (a.sym || b.sym || !(a.t in FRAC_NUM) || !(b.t in FRAC_DEN)) continue;
+    out = out || toks.slice();
+    out[i] = dig(a, FRAC_NUM[a.t], "fracN");
+    out[i + 1] = dig(b, FRAC_DEN[b.t], "fracD");
+    i++;
+  }
+  return out || toks;
+}
 // Merge runs of number words ("nineteen forty eight", "eighteen forties", "two thousand five") into one numeric token.
 function mergeNumbers(toks) {
+  toks = fracDigits(toks);
   const isW = (t) => t && !t.sym && /^[a-z]+$/.test(t.t) && (t.t in CARD || t.t in ORD || t.t in DECADE || t.t in SCALE);
   const out = [];
   for (let i = 0; i < toks.length; i++) {
@@ -2144,7 +2168,7 @@ function wordInfo(tok, prevTok) {
     const v = romanVal(tok.t);
     if (v) num = { v, kind: "roman" };
   }
-  return { t: tok.t, kind, segs, run: run === undefined ? -1 : run, cap: tok.cap, orig: tok.orig, num, k0: tok.k0, k1: tok.k1, it: !!tok.it, poss: !!tok.poss };
+  return { t: tok.t, kind, segs, run: run === undefined ? -1 : run, cap: tok.cap, orig: tok.orig, num, k0: tok.k0, k1: tok.k1, it: !!tok.it, poss: !!tok.poss, fracWord: tok.fracWord };
 }
 function allReqWords(toks) {
   return toks.map((t, i) => wordInfo({ ...t, r: [...t.t].map(() => true), runs: [...t.t].map(() => 0) }, toks[i - 1]));
@@ -2228,6 +2252,11 @@ function ingEdEq(c, r) {
 function wordCost(w, r, ctx, fuzzy, required) {
   const rt = r.t;
   if (w.t === rt) return 0;
+  // a written fraction's word ("one-<u>half</u>": "half")
+  if (w.fracWord && (rt === w.fracWord || (r.fracWord && r.fracWord === w.fracWord) || inflEq(w.fracWord, rt, false))) return 0;
+  // a response fraction against words that aren't one (or digits): the words as written ("four fifth" on "the
+  // <u>four</u>th movement of Mahler's <u>fifth</u> symphony")
+  if (r.fracWord && !w.fracWord && !/^\d+$/.test(w.t)) return wordCost(w, { ...r, t: r.fracWord, num: numInfo(r.fracWord), fracWord: null }, ctx, fuzzy, required);
   const rnum = r.num !== undefined ? r.num : numInfo(rt);
   if (w.num && rnum) {
     if (numEq(w.num, rnum) || (w.num.alt && numEq(w.num.alt, rnum))) return 0;
