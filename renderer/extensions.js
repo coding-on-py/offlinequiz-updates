@@ -5670,6 +5670,8 @@ function __qbMain(ctx) {
   };
   const PLACE = { room: "in a room", own: "on their own", irl: "IRL Reading" };
   const DIFF_NAMES = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
+  // a set-year range (web/clubs.mjs yearsText): "2015–2024", "2015 on", "to 2010", "" for any year
+  const yearsText = (y) => (!y || (y.min == null && y.max == null) ? "" : y.min != null && y.max != null ? (y.min === y.max ? String(y.min) : y.min + "–" + y.max) : y.min != null ? y.min + " on" : "to " + y.max);
   const diffText = (d) => {
     const a = (d || []).slice().sort((x, y) => x - y);
     if (!a.length) return "all";
@@ -5697,6 +5699,7 @@ function __qbMain(ctx) {
     got: "First correct buzz on each tossup. Bars are relative to the top scorer.",
     locked: "The report is released to everyone at once when the diagnostic ends.",
     lbOrg: "The same numbers as the global leaderboard: everyone's practice on onlinequiz. Players without an account aren't on it.",
+    years: "Only questions from sets of those years (a set's year is when it was written). Leave either end empty for no limit.",
     transfer: "The new owner can make and remove admins and delete the organization. You become an admin.",
     nick: "Only members of {org} see it, in place of the display name: on its teams, diagnostics, reports and leaderboard. Everywhere else, like the global leaderboards, multiplayer and profiles, the display name stays.",
   };
@@ -6057,7 +6060,7 @@ function __qbMain(ctx) {
     if (!list.length) return bar + '<div class="fr-list"><div class="cl-empty">No diagnostics yet</div></div>';
     const stat = (v, l) => '<span class="fr-stat"><b class="num">' + v + "</b><small>" + l + "</small></span>";
     return bar + '<div class="fr-list">' + list.map((d) => {
-      const meta = FORMATS[d.format].label + " · " + (d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup")) + " · " + PLACE[d.place] + " · difficulty " + diffText(d.diff);
+      const meta = FORMATS[d.format].label + " · " + (d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup")) + " · " + PLACE[d.place] + " · difficulty " + diffText(d.diff) + (yearsText(d.years) ? " · " + yearsText(d.years) : "");
       const title = esc(d.team) + " · " + esc(d.status === "done" && d.releasedAt ? dayText(d.releasedAt) : d.status === "scheduled" && d.startAt ? dayText(d.startAt) : dayText(d.createdAt));
       const main = '<span class="dg-main"><b>' + title + "</b><small>" + esc(meta) + "</small></span>";
       const menu = d.canManage ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="d-' + esc(d.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden><button type="button" class="pop-item danger" role="menuitem" data-cl="dx-delete" data-id="' + esc(d.id) + '" data-done="' + (d.status === "done" ? 1 : "") + '">' + ico("trash", 15) + (d.status === "done" ? "Delete report" : "Delete diagnostic") + "</button></div></div>" : "";
@@ -6341,7 +6344,7 @@ function __qbMain(ctx) {
   const atOf = (day, hour) => { const [y, m, d] = String(day).split("-").map(Number); return new Date(y, m - 1, d, Number(hour) || 0).getTime(); };
   function newDx(target) {
     const t = target && canRunTarget(target) ? target : defaultTarget(), days = dayOpts();
-    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [2, 3, 4, 5] };
+    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [2, 3, 4, 5], years: { min: null, max: null } };
   }
   async function renderSetup() {
     const c = document.getElementById("dx-container"); if (!c) return;
@@ -6374,8 +6377,11 @@ function __qbMain(ctx) {
       '<div class="fsec" role="group" aria-label="Where"><h2 class="fsec-label">Where</h2><div class="fsec-body" id="dx-where"></div></div>' +
       '<div class="fsec" role="group" aria-label="Questions"><h2 class="fsec-label">Questions' + info(TIP.dist, "How the packet is drawn") + '</h2><div class="fsec-body" id="dx-qty"></div></div>' +
       '<div class="fsec" role="group" aria-label="Difficulty"><h2 class="fsec-label">Difficulty</h2><div class="fsec-body"><div class="diff-toggles" role="group" aria-label="Difficulty levels">' + diff + "</div></div></div>" +
+      '<div class="fsec" role="group" aria-label="Years"><h2 class="fsec-label">Years' + info(TIP.years, "About the years") + '</h2><div class="fsec-body"><div class="dx-years">' +
+        '<label><span>From</span><input type="number" class="mode-input" id="dx-y0" inputmode="numeric" min="1990" max="' + new Date().getFullYear() + '" placeholder="Any" value="' + (d.years.min ?? "") + '"></label>' +
+        '<label><span>To</span><input type="number" class="mode-input" id="dx-y1" inputmode="numeric" min="1990" max="' + new Date().getFullYear() + '" placeholder="Any" value="' + (d.years.max ?? "") + '"></label></div></div></div>' +
       '</div><aside class="dx-side"><div class="cl-card dx-summary"><h2 class="sec-title">Summary</h2><dl class="sum-list">' +
-      '<div><dt>Team</dt><dd id="dx-s-team"></dd></div><div><dt>Format</dt><dd id="dx-s-format"></dd></div><div><dt>Where</dt><dd id="dx-s-where"></dd></div><div><dt>Questions</dt><dd id="dx-s-q"></dd></div><div><dt>Difficulty</dt><dd id="dx-s-diff"></dd></div><div><dt>Time</dt><dd id="dx-s-time"></dd></div>' +
+      '<div><dt>Team</dt><dd id="dx-s-team"></dd></div><div><dt>Format</dt><dd id="dx-s-format"></dd></div><div><dt>Where</dt><dd id="dx-s-where"></dd></div><div><dt>Questions</dt><dd id="dx-s-q"></dd></div><div><dt>Difficulty</dt><dd id="dx-s-diff"></dd></div><div><dt>Years</dt><dd id="dx-s-years"></dd></div><div><dt>Time</dt><dd id="dx-s-time"></dd></div>' +
       '</dl><button type="submit" class="btn btn-primary btn-md btn-full" id="dx-go">' + ico("play", 16) + '<span id="dx-go-lbl">Open the room</span></button><p class="fr-msg err" id="dx-msg" role="status"></p></div></aside></form>';
   }
   function pchip(p, on, locked) {
@@ -6428,6 +6434,7 @@ function __qbMain(ctx) {
     set("dx-s-where", d.place === "own" ? "On their own, due " + whenText(atOf(d.dueDay, d.dueHour)) : d.place === "irl" ? "IRL Reading, read aloud in person" : "In a room, " + (d.when === "now" ? "now" : whenText(atOf(d.startDay, d.startHour))));
     set("dx-s-q", d.format === "tb" ? d.tu + " tossups, bonuses as earned" : d.format === "bo" ? d.bo + " bonuses" : d.tu + " tossups");
     set("dx-s-diff", d.diff.length ? diffText(d.diff) : "Pick at least one");
+    set("dx-s-years", yearsText(d.years) || "Any");
     const mins = d.format === "bo" ? Math.round(d.bo * 1.5 / 5) * 5 : d.format === "tu" ? Math.round(d.tu * 0.75 / 5) * 5 : Math.round(d.tu * 1.45 / 5) * 5;
     set("dx-s-time", "About " + mins + " minutes" + (d.place === "own" ? " each" : ""));
     set("dx-go-lbl", d.place === "own" ? "Send it out" : d.place === "irl" ? "Open the packet" : d.when === "now" ? "Open the room" : "Schedule the room");
@@ -6451,6 +6458,7 @@ function __qbMain(ctx) {
       const t = e.target, d = S.dx;
       if (t.dataset.player) { const m = t.dataset.player; d.players = t.checked ? d.players.concat([m]) : d.players.filter((x) => x !== m); syncSetup(); return; }
       if (t.dataset.diff != null) { const v = +t.dataset.diff; d.diff = t.checked ? d.diff.concat([v]).sort((a, b) => a - b) : d.diff.filter((x) => x !== v); syncSetup(); return; }
+      if (t.id === "dx-y0" || t.id === "dx-y1") { const n = parseInt(t.value, 10); d.years[t.id === "dx-y0" ? "min" : "max"] = n >= 1990 && n <= 2100 ? n : null; syncSetup(); return; }
       if (t.id === "dx-start-day") d.startDay = t.value; else if (t.id === "dx-start-hour") d.startHour = +t.value;
       else if (t.id === "dx-due-day") d.dueDay = t.value; else if (t.id === "dx-due-hour") d.dueHour = +t.value;
       else return;
@@ -6465,7 +6473,7 @@ function __qbMain(ctx) {
       const startAt = d.place === "room" && d.when === "later" ? atOf(d.startDay, d.startHour) : null, dueAt = d.place === "own" ? atOf(d.dueDay, d.dueHour) : null;
       if (dueAt && dueAt < Date.now() + 10 * 60e3) return say("Pick a deadline later than that.");
       btn.disabled = true; say("");
-      const r = await post("/api/diag/create", { org: d.org, team: d.target, players: d.players, format: d.format, place: d.place, startAt, dueAt, tu: d.tu, bo: d.bo, diff: d.diff });
+      const r = await post("/api/diag/create", { org: d.org, team: d.target, players: d.players, format: d.format, place: d.place, startAt, dueAt, tu: d.tu, bo: d.bo, diff: d.diff, years: d.years });
       if (!r || r.error) { btn.disabled = false; return say((r && r.error) || OFFLINE); }
       S.dx = null;
       if (d.place === "irl") { btn.disabled = false; return openIrl(r.id); }
@@ -6599,7 +6607,7 @@ function __qbMain(ctx) {
   function paintIrl(c) {
     const I = S.irl, order = irlOrder(), cur = irlCurrent(order), score = irlScore(order), total = order.filter((x) => x.kind === (I.packet.format === "bo" ? "bo" : "tu")).length;
     const d = I.diag || {};
-    const eyebrow = [d.team, FORMATS[I.packet.format] && FORMATS[I.packet.format].label, d.diff ? "difficulty " + diffText(d.diff) : ""].filter(Boolean).join(" · ");
+    const eyebrow = [d.team, FORMATS[I.packet.format] && FORMATS[I.packet.format].label, d.diff ? "difficulty " + diffText(d.diff) : "", yearsText(d.years)].filter(Boolean).join(" · ");
     const sc = scrollerOf(c), y = sc.scrollTop;
     c.innerHTML = '<div class="cl-page">' + (eyebrow ? '<p class="eyebrow irl-eyebrow">' + esc(eyebrow) + "</p>" : "") +
       '<div class="irl-bar"><button type="button" class="irl-now" data-irl="jump"' + (cur ? "" : " disabled") + "><b>" + (cur ? (cur.kind === "tu" ? "Tossup " : "Bonus ") + cur.n + " of " + total : "All recorded") + "</b><small>" + (cur ? "Up next" : "Ready to finish") + "</small></button>" +
@@ -6880,7 +6888,7 @@ function __qbMain(ctx) {
     if (hasBo) tiles.push(["Bonuses", s.ppb == null ? "—" : s.ppb.toFixed(1), "points per bonus", delta(s.ppb, prev && prev.ppb)]);
     if (!hasTu) tiles.unshift(["Bonuses heard", fmt(s.bonuses || 0), "", ""]);
     const seeAll = (d.cards || []).some((x) => !who(x.mid).you);
-    const meta = [FORMATS[d.format] && FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), "NAQT distribution", plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
+    const meta = [FORMATS[d.format] && FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), yearsText(d.years), "NAQT distribution", plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
     const topics = topicsHtml(d, who), dims = dimsHtml(d);
     const jump = [["rp-summary", "Summary"], hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], topics ? ["rp-topics", "Topics"] : null, dims ? ["rp-dims", "Breakdown"] : null, ["rp-plan", "Practice"], ["rp-players", seeAll ? "Players" : "Your card"]].filter(Boolean);
     let html = '<div class="cl-page rp-page"><div class="rp-head"><div><p class="eyebrow">' + esc([d.org && d.org.name, d.team].filter(Boolean).join(" · ")) + "</p><h1>" + esc(date) + " diagnostic" + info("Released to every player at once" + (d.date ? ", " + whenText(d.date) : "") + ".", "When this report was released") + '</h1><p class="rp-meta">' + esc(meta) + "</p></div>" +

@@ -5629,3 +5629,7 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .rh-off .qb-info { margin-left: 2px; }
 /* a list with a ⋯ menu in a row (Clubs → Diagnostics): the menu opens over the page, not cut at the list's edge */
 .cl-container .fr-list:has(.pop-wrap) { overflow: visible; }
+/* diagnostic setup: the set years (14.76) */
+.dx-years { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.dx-years label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.dx-years .mode-input { width: 96px; height: 36px; }
