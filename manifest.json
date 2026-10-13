@@ -1,5 +1,5 @@
 {
-  "version": "14.71",
+  "version": "14.72",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,12 +55,12 @@
     }
   ],
   "main": true,
-  "notes": "minor ui fixes",
+  "notes": "minor bug fixes",
   "files": {
     "renderer/index.html": "4d4f6242317031d95fb51e7163cd83ab1389c7a98892b799d2393fd8875a986c",
     "renderer/style.css": "40c289a5e029983e0a6b53bd92ceb15c5524f28aa18dd8de86a19e906429fc26",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "d150cad2e522bf15663794bb0da93821e702dac54262b231858c26cef816a9e4",
+    "renderer/extensions.js": "d836b6997fcea967cfc165b625c1b385da735f63fddddee7e4392e2a17a84126",
     "renderer/app.js": "ea6d1c6320830c8be4198b1d925d72373415e41d07c5816824b4b88a0a837cbb",
     "plugins/achievement-glyphs.zip": "8a4fd1632df36a70017618ce25e6e913207f6fdaede3d5a5dc8bed98669cfd7c",
     "plugins/buzz-words.zip": "fb96b9b4b8c0bc654868eadba64bf20d5789ec062aa6d9523e1d77e6e9597119",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "1442044528ffd61e05b6d74396589e541f33d0ceafbd3c72d9d69b4a60a28d5b",
     "plugins/packet-builder.zip": "c87f7b924d0c3c1dadbfab87d480573784013e2da23118918789381e3fac05e6"
   },
-  "signature": "JRQ5GBxzJH4PpFUEouxHJg000ZtXydgDaa1tmM7EHu3jINjM5SdPlR+/UokPTsGksfytyKMJQldJFldrYtWaDA=="
+  "signature": "fRojzErOAaHNI3sdnI2CNmM+/zt0T3L4OndrVlxTeKdp3Lj+bhid8HLFjBs1m8hXM1mUGn4WdDHHvKVOv7+zBg=="
 }

@@ -5686,7 +5686,7 @@ function __qbMain(ctx) {
     roster: "The team's roster is picked. Changes here are for this diagnostic only; the roster stays the same.",
     own: "Only Tossups only can be played on your own.",
     irl: "In person: the team practices together in a real room, and one person reads the packet aloud from this page and records every buzz and bonus part. Works with all three formats.",
-    dist: "Every packet is drawn at random by NAQT's high school distribution, and drawn again when a category strays too far from it.",
+    dist: "Every packet is drawn at random by NAQT's high school distribution, and drawn again when a category strays too far from it. Only standard-format questions from standard sets: every tossup has a power mark and a \"For 10 points\" giveaway, every bonus a lead-in and three parts worth 10.",
     avg: "Ranked by average points per active member (anyone who practiced in the period), so a big roster can't win by size alone. A team needs 3 active members and an organization 4 to be ranked.",
     cov: "Team conversion is the share of tossups the team got. Strength: 70% or more. Middling: 30 to 69%. Gap: under 30%. Overlap: two or more players each got 40% or more of an area. Open a category to see its subcategories.",
     plan: "In order: gaps first, then habits that cost points, then overlaps.",

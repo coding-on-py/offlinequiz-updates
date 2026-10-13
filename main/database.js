@@ -359,6 +359,19 @@ export class QuestionDatabase {
       clauses.push(`${col("question_sanitized")} LIKE '%(*)%'`);
     }
 
+    // the standard bonus: three parts, ten points each (a team diagnostic's packet)
+    if (filters.threeParts && opts.isBonus && this.v2) {
+      clauses.push(`${col("part_count")} = 3 AND replace(${col("point_values")}, ' ', '') = '[10,10,10]'`);
+    }
+
+    // none of these flag codes (flag_codes is " A B ", so a code is matched whole)
+    if (this.v2 && Array.isArray(filters.excludeFlags)) {
+      filters.excludeFlags.filter((f) => /^[A-Z_]+$/.test(String(f))).forEach((f, i) => {
+        clauses.push(`instr(COALESCE(${col("flag_codes")}, ''), :xflag${i}) = 0`);
+        params[`xflag${i}`] = " " + f + " ";
+      });
+    }
+
     if (filters.yearMin !== undefined) {
       clauses.push(`${col("set_year")} >= :yearMin`);
       params["yearMin"] = filters.yearMin;
