@@ -5686,10 +5686,13 @@ function __qbMain(ctx) {
     roster: "The team's roster is picked. Changes here are for this diagnostic only; the roster stays the same.",
     own: "Only Tossups only can be played on your own.",
     irl: "In person: the team practices together in a real room, and one person reads the packet aloud from this page and records every buzz and bonus part. Works with all three formats.",
-    dist: "Every packet is drawn at random by NAQT's high school distribution, and drawn again when a category strays too far from it. Only standard-format questions from standard sets: every tossup has a power mark and a \"For 10 points\" giveaway, every bonus a lead-in and three parts worth 10.",
+    dist: "Every packet is drawn at random by NAQT's high school distribution, and drawn again when a category strays too far from it. Only standard-format questions from standard sets: every tossup has a power mark and a \"For 10 points\" giveaway, every bonus a lead-in and three parts worth 10. With 12 or more questions, every category gets at least one.",
     avg: "Ranked by average points per active member (anyone who practiced in the period), so a big roster can't win by size alone. A team needs 3 active members and an organization 4 to be ranked.",
     cov: "Team conversion is the share of tossups the team got. Strength: 70% or more. Middling: 30 to 69%. Gap: under 30%. Overlap: two or more players each got 40% or more of an area. Open a category to see its subcategories.",
-    plan: "In order: gaps first, then habits that cost points, then overlaps.",
+    plan: "In order: gaps first (categories, then the subcategories to learn, with the answers missed), then habits that cost points, then overlaps.",
+    find: "What stands out in this diagnostic, each with the numbers behind it. A subcategory needs 3 or more tossups and bonus parts from 2 or more questions; a pattern (era, region, answer type) needs 4 or more on each side.",
+    topics: "Every tossup and bonus part, by subcategory: what it was about, the answer, and whether the team got it. Bonus parts are Easy, Medium or Hard by their place in the bonus.",
+    dims: "Tossups and bonus parts by the era, region and kind of answer they're about, from each question's tags. A bonus's era or region counts for its parts only when the whole bonus has one.",
     bonus: "The team confers on every bonus, so bonus parts count for the team. Parts are labeled by their place in the bonus.",
     got: "First correct buzz on each tossup. Bars are relative to the top scorer.",
     locked: "The report is released to everyone at once when the diagnostic ends.",
@@ -6694,7 +6697,8 @@ function __qbMain(ctx) {
     e.preventDefault(); e.stopPropagation(); setK(to);
   }, true);
   addEventListener("resize", () => { if (S.irl && S.irl.packet && screenOn("irl-screen")) placeAllMarks(); });
-  function focusHandle() { const hd = $("#irl-container .bz-handle"); if (hd) { hd.focus({ preventScroll: true }); const card = hd.closest(".irl-q"); if (card) card.scrollIntoView({ block: "nearest" }); } }
+  // the editor in view only when it isn't (the whole card "nearest" moved the page for a card taller than the screen)
+  function focusHandle() { const hd = $("#irl-container .bz-handle"); if (hd) { hd.focus({ preventScroll: true }); const ed = $("#irl-container .bz-edit"); if (ed) ed.scrollIntoView({ block: "nearest" }); } }
   const smooth = () => (matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
   function wireIrl(c) {
     c.onclick = async (e) => {
@@ -6723,9 +6727,11 @@ function __qbMain(ctx) {
         if (ed.idx != null) list[ed.idx] = rec; else list.push(rec);
         list.sort((x, y) => x.k - y.k);
         delete st.dead[keyOf(ed.i)];
+        // the page stays where the reader is (it jumped to the next unrecorded item, which could be far
+        // up the packet, or put the next card under the bar); "Up next" in the bar goes there
         const saved = ed.i; I.edit = null; saveIrl(); paintIrl(c);
-        const nx = irlCurrent(irlOrder()), card = nx ? document.getElementById((nx.kind === "tu" ? "irl-t-" : "irl-b-") + nx.i) : null;
-        if (card && rec.ok) card.scrollIntoView({ behavior: smooth(), block: "start" }); else { const c2 = document.getElementById("irl-t-" + saved); if (c2) c2.scrollIntoView({ block: "nearest" }); }
+        const ab = $('#irl-container [data-irl="add"][data-q="' + saved + '"]') || $('#irl-t-' + saved + " button");
+        if (ab) ab.focus({ preventScroll: true });
         return;
       }
       if (a === "dead") { st.dead[keyOf(qi)] = true; I.edit = null; saveIrl(); paintIrl(c); return; }
@@ -6801,6 +6807,48 @@ function __qbMain(ctx) {
   const KIND_CHIP = { gap: '<span class="dx-chip gap">Gap</span>', habit: '<span class="dx-chip mid">Habit</span>', ovl: '<span class="dx-chip ovl">Overlap</span>', mid: '<span class="dx-chip mid">Middling</span>', few: '<span class="dx-chip few">Too few</span>' };
   const bar = (p, cls) => '<span class="cl-bar"><i class="' + (cls || level(p)) + '" style="width:' + Math.max(0, Math.min(100, p)) + '%"></i></span>';
   const brow = (label, p, f, cls) => '<div class="brow"><span class="l">' + label + "</span>" + bar(p, cls) + '<span class="p">' + p + '%</span><span class="f">' + (f || "") + "</span></div>";
+  // ── the report's detail (v2): findings, every question by subcategory, the breakdowns ──
+  const FIND_ICON = { good: "up", bad: "down", note: "target" };
+  const listText = (xs) => (xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
+  function findingsHtml(d) {
+    const f = d.findings || [];
+    if (!f.length) return "";
+    return '<div class="cl-card rp-find"><h3 class="eyebrow">Key findings' + info(TIP.find, "How findings are picked") + '</h3><ul class="fd-list">' +
+      f.map((x, i) => '<li class="fd ' + esc(x.tone) + '"><span class="fd-ico" aria-hidden="true">' + ico(FIND_ICON[x.tone] || "target", 14) + '</span><div class="fd-body"><b>' + esc(x.title) + "</b><p>" + esc(x.body) + "</p></div>" +
+        (x.cat && x.tone !== "good" ? '<button type="button" class="btn btn-sm fd-go" data-fpractice="' + i + '">' + ico("play", 13) + "Practice</button>" : "") + "</li>").join("") + "</ul></div>";
+  }
+  const itemWho = (x, who) => {
+    if (x.k !== "tu") return "";
+    const negs = (x.negs || []).map((m) => (m ? esc(firstName(who(m))) : "a teammate"));
+    const bits = [];
+    if (negs.length) bits.push(listText(negs) + " negged");
+    if (x.ok) bits.push(nmFirst(who(x.by)) + (x.power ? " · power" : "") + (x.depth != null ? " · " + x.depth + "%" : ""));
+    else if (x.opp) bits.push("Other team");
+    else if (x.dead) bits.push("Nobody buzzed");
+    return bits.join(" → ");
+  };
+  function topicsHtml(d, who) {
+    const items = d.items || [], areas = d.areas || [];
+    if (!items.length) return "";
+    const cats = CATS.filter((c) => items.some((x) => x.cat === c)).concat([...new Set(items.map((x) => x.cat))].filter((c) => !CATS.includes(c)));
+    const cnt = (a) => [a.tu ? a.tuGot + "/" + a.tu + (a.tu === 1 ? " tossup" : " tossups") : "", a.bp ? a.bpGot + "/" + a.bp + (a.bp === 1 ? " part" : " parts") : ""].filter(Boolean).join(" · ");
+    return cats.map((cat) => {
+      const mine = areas.filter((a) => a.cat === cat);
+      return '<div class="cl-card tp-cat"><h3 class="tp-cat-h"><span class="dot" style="--c:' + catColor(cat) + '"></span>' + esc(cat) + "</h3>" + mine.map((a) => {
+        const list = items.filter((x) => x.areaPath === a.path).sort((x, y) => x.n - y.n || (x.k === y.k ? (x.p || 0) - (y.p || 0) : x.k === "tu" ? -1 : 1));
+        return '<div class="tp-area"><div class="tp-head"><span class="nm">' + esc(a.area === "General" ? cat + " (general)" : a.area) + '</span><span class="tp-cnt">' + esc(cnt(a)) + "</span>" + bar(a.pct) + '<span class="p">' + a.pct + "%</span></div>" +
+          '<ul class="tp-items">' + list.map((x) => '<li class="tp-item ' + (x.ok ? "ok" : "miss") + '"><span class="tp-ico" aria-label="' + (x.ok ? "Got it" : "Missed") + '">' + ico(x.ok ? "check" : "x", 13) + '</span><span class="tp-q">' + (x.k === "tu" ? "Tossup " + x.n : "Bonus " + x.n + " · " + esc(x.lvl)) + "</span>" +
+            '<span class="tp-ans"><b>' + esc(x.answer || "—") + "</b>" + (x.topic ? "<small>" + esc(x.topic) + "</small>" : "") + '</span><span class="tp-who">' + itemWho(x, who) + "</span></li>").join("") + "</ul></div>";
+      }).join("") + "</div>";
+    }).join("");
+  }
+  function dimsHtml(d) {
+    const dm = d.dims || {};
+    // a row needs 2 or more (one question says nothing), a card 2 or more rows
+    const card = (title, all) => { const rows = (all || []).filter((r) => r.n >= 2); return rows.length >= 2 ? '<div class="cl-card"><h3 class="eyebrow">' + title + "</h3>" + rows.map((r) => brow(esc(r.label), r.pct, r.got + "/" + r.n)).join("") + "</div>" : ""; };
+    const cards = [card("By era", dm.era), card("By region", dm.region), card("By kind of answer", dm.type)].filter(Boolean);
+    return cards.length ? '<div class="rp-dims">' + cards.join("") + "</div>" : "";
+  }
   function paintReport(c) {
     const R = S.rep, d = R.d, ppl = d.people || {}, meH = signedIn() ? Account.user.handle : "";
     const who = (mid) => ppl[mid] ? { ...ppl[mid], mid, you: !!(meH && ppl[mid].handle === meH) } : { name: "Former member", mid, na: true, former: true };
@@ -6826,7 +6874,8 @@ function __qbMain(ctx) {
     if (!hasTu) tiles.unshift(["Bonuses heard", fmt(s.bonuses || 0), "", ""]);
     const seeAll = (d.cards || []).some((x) => !who(x.mid).you);
     const meta = [FORMATS[d.format] && FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), "NAQT distribution", plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
-    const jump = [["rp-summary", "Summary"], hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], ["rp-plan", "Practice"], ["rp-players", seeAll ? "Players" : "Your card"]];
+    const topics = topicsHtml(d, who), dims = dimsHtml(d);
+    const jump = [["rp-summary", "Summary"], hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], topics ? ["rp-topics", "Topics"] : null, dims ? ["rp-dims", "Breakdown"] : null, ["rp-plan", "Practice"], ["rp-players", seeAll ? "Players" : "Your card"]].filter(Boolean);
     let html = '<div class="cl-page rp-page"><div class="rp-head"><div><p class="eyebrow">' + esc([d.org && d.org.name, d.team].filter(Boolean).join(" · ")) + "</p><h1>" + esc(date) + " diagnostic" + info("Released to every player at once" + (d.date ? ", " + whenText(d.date) : "") + ".", "When this report was released") + '</h1><p class="rp-meta">' + esc(meta) + "</p></div>" +
       '<div class="ph-right"><button type="button" class="btn" data-go-clubs="diagnostics">' + ico("doc", 16) + "All reports</button>" +
       (R.canManage ? '<button type="button" class="btn btn-ghost" data-rp-delete>' + ico("trash", 16) + "Delete report</button>" : "") + "</div></div>" +
@@ -6835,7 +6884,7 @@ function __qbMain(ctx) {
     const trend = (d.trend || []).length >= 2 ? '<div class="cl-trend"><span class="eyebrow">' + esc(d.team) + " conversion</span>" + trendSvg(d.trend) + "</div>" : "";
     html += '<section class="rp-sec" id="rp-summary" aria-label="Summary"><div class="rp-sec-head"><h2>Summary</h2>' + (prev ? info("Compared with " + esc(d.team) + "'s " + (prev.date ? dayText(prev.date) : "previous") + " diagnostic, same format and difficulty.", "What the changes compare with") : "") + "</div>" +
       '<div class="cl-tiles" style="--n:' + tiles.length + '">' + tiles.map((t) => '<div class="cl-tile"><span class="eyebrow">' + t[0] + '</span><span class="v">' + esc(t[1]) + '</span><span class="s">' + esc(t[2]) + "</span>" + (t[3] ? '<span class="dl">' + t[3] + "</span>" : "") + "</div>").join("") + "</div>" +
-      (d.verdict || trend ? '<div class="cl-card verdict' + (trend ? "" : " solo") + '"><p>' + esc(d.verdict || "") + "</p>" + trend + "</div>" : "");
+      (d.verdict || trend ? '<div class="cl-card verdict' + (trend ? "" : " solo") + '"><p>' + esc(d.verdict || "") + "</p>" + trend + "</div>" : "") + findingsHtml(d);
     const got = (d.got || []).filter((g) => g.n > 0), maxGot = Math.max(1, ...got.map((g) => g.n));
     const partsCard = hasBo && (s.parts || []).length ? '<div class="cl-card"><h3 class="eyebrow">Bonus parts' + info(TIP.bonus, "About bonus parts") + "</h3>" + s.parts.map((b) => brow(esc(b.label), pct(b.got, b.n), b.got + "/" + b.n)).join("") +
       '<p class="pc-line rp-ppb"><b>' + (s.ppb == null ? "—" : s.ppb.toFixed(1)) + "</b> points per bonus on " + plural(s.bonuses || 0, "bonus", "bonuses") + (prev && prev.ppb != null ? " · " + (prev.date ? dayText(prev.date) : "before") + ": " + prev.ppb.toFixed(1) : "") + "</p></div>" : "";
@@ -6846,10 +6895,13 @@ function __qbMain(ctx) {
     // coverage (or, bonuses only, conversion by category)
     if (hasTu) html += '<section class="rp-sec" id="rp-coverage" aria-label="Coverage"><div class="rp-sec-head"><h2>Coverage</h2>' + info(TIP.cov, "How coverage is labeled") + "</div>" + covHtml(d, who) + "</section>";
     else html += '<section class="rp-sec" id="rp-coverage" aria-label="Categories"><div class="rp-sec-head"><h2>Categories</h2></div><div class="cl-card">' + (d.bonusCats || []).map((b) => brow('<span class="dot-c" style="--c:' + catColor(b.cat) + '"></span>' + esc(SHORT[b.cat] || b.cat), Math.round(100 * (b.ppb || 0) / 30), (b.ppb || 0).toFixed(1) + " ppb", "acc")).join("") + "</div></section>";
+    // every question by subcategory; the breakdowns
+    if (topics) html += '<section class="rp-sec" id="rp-topics" aria-label="Topics"><div class="rp-sec-head"><h2>Topics</h2>' + info(TIP.topics, "What Topics shows") + '</div><div class="tp-grid">' + topics + "</div></section>";
+    if (dims) html += '<section class="rp-sec" id="rp-dims" aria-label="Breakdown"><div class="rp-sec-head"><h2>Breakdown</h2>' + info(TIP.dims, "Where the breakdown comes from") + "</div>" + dims + "</section>";
     // what to practice
     const plan = d.plan || [];
     html += '<section class="rp-sec" id="rp-plan" aria-label="What to practice"><div class="rp-sec-head"><h2>What to practice</h2>' + info(TIP.plan, "How the plan is ordered") + "</div>" +
-      (plan.length ? '<ol class="cl-plan">' + plan.map((p, i) => '<li class="plan-item"><span class="prio ' + p.lvl + '">' + (p.lvl === "high" ? "High" : p.lvl === "med" ? "Medium" : "Low") + '</span><div class="pi-body"><h3>' + esc(p.title) + (KIND_CHIP[p.kind] || "") + "</h3><p>" + esc(p.body) + '</p><p class="pi-assign">' + (p.mid ? nm(who(p.mid)) + " · " : "") + esc((p.sub ? p.cat + ", " + p.sub : p.cat) + " · difficulty " + diffText(d.diff)) + "</p></div>" +
+      (plan.length ? '<ol class="cl-plan">' + plan.map((p, i) => '<li class="plan-item"><span class="prio ' + p.lvl + '">' + (p.lvl === "high" ? "High" : p.lvl === "med" ? "Medium" : "Low") + '</span><div class="pi-body"><h3>' + esc(p.title) + (KIND_CHIP[p.kind] || "") + "</h3><p>" + esc(p.body) + '</p><p class="pi-assign">' + (p.mid ? nm(who(p.mid)) + " · " : "") + esc((p.sub ? p.cat + " › " + p.sub : p.cat) + " · difficulty " + diffText(d.diff)) + "</p></div>" +
         '<div class="pi-foot"><button type="button" class="btn btn-sm btn-primary" data-practice="' + i + '">' + ico("play", 14) + "Practice this</button></div></li>").join("") + "</ol>"
         : '<div class="fr-list"><div class="cl-empty">Nothing stands out. Run another diagnostic at a harder difficulty.</div></div>') + "</section>";
     // players
@@ -6871,7 +6923,8 @@ function __qbMain(ctx) {
         }, { yes: "Delete", danger: true });
         return;
       }
-      if (b.dataset.practice != null) { const p = plan[+b.dataset.practice]; if (p) practiceArea(p.cat, p.sub, d.diff); }
+      if (b.dataset.practice != null) { const p = plan[+b.dataset.practice]; if (p) practiceArea(p.cat, p.sub, d.diff, p.subPath); }
+      if (b.dataset.fpractice != null) { const f = (d.findings || [])[+b.dataset.fpractice]; if (f) practiceArea(f.cat, null, d.diff, f.path); }
     };
   }
   function covHtml(d, who) {
@@ -6913,15 +6966,16 @@ function __qbMain(ctx) {
       (hasTu ? '<dl class="pc-stats"><div><dt>Tossups</dt><dd>' + x.got + "<small>/" + (s.got || 0) + "</small></dd></div><div><dt>Powers</dt><dd>" + x.powers + '</dd></div><div><dt>Neg rate</dt><dd class="' + (x.negRate > 30 ? "warn" : "") + '">' + (x.buzzes ? x.negRate + "%" : "—") + "</dd></div><div><dt>Points</dt><dd>" + x.points + "</dd></div></dl>" +
         '<div class="pc-more"><div class="pc-sec"><h3 class="eyebrow">Buzz depth</h3>' + (x.depth != null ? '<span class="depth-track" aria-hidden="true">' + (s.depth != null ? '<i class="team" style="left:' + s.depth + '%"></i>' : "") + '<i class="me" style="left:' + x.depth + '%"></i></span><div class="depth-scale" aria-hidden="true"><span>start</span><span>end</span></div><p class="pc-line">At <b>' + x.depth + "%</b> on average." + (s.depth != null ? " Team: " + s.depth + "%." : "") + "</p>" : '<p class="pc-line cl-dim">No correct buzzes.</p>') + "</div>" +
         '<div class="pc-sec"><h3 class="eyebrow">Share of the team\'s tossups</h3>' + ((x.scored || []).length ? x.scored.map((sc) => brow(esc(SHORT[sc[0]] || sc[0]), pct(sc[1], sc[2]), sc[1] + "/" + sc[2], "acc")).join("") : '<p class="pc-line cl-dim">None yet.</p>') + "</div>" +
-        '<div class="pc-sec"><h3 class="eyebrow">Negs</h3><p class="pc-line' + (x.negsIn ? "" : " cl-dim") + '">' + (x.negsIn ? esc(x.negsIn) : "None") + "</p></div>" + (trend ? '<p class="pc-trend">' + esc(trend) + "</p>" : "") + "</div>"
+        ((x.answers || []).length ? '<div class="pc-sec"><h3 class="eyebrow">Got</h3><p class="pc-line">' + esc(x.answers.join(", ")) + "</p></div>" : "") +
+        '<div class="pc-sec"><h3 class="eyebrow">Negs</h3><p class="pc-line' + (x.negsIn ? "" : " cl-dim") + '">' + (x.negsIn ? esc(x.negsIn) : "None") + "</p>" + ((x.negAnswers || []).length ? '<p class="pc-line cl-dim">On ' + esc(x.negAnswers.join(", ")) + "</p>" : "") + "</div>" + (trend ? '<p class="pc-trend">' + esc(trend) + "</p>" : "") + "</div>"
         : '<p class="pc-line cl-dim">Bonuses are scored for the team.</p>') + "</article>";
   }
   // "Practice this": tossup practice with that category and the diagnostic's difficulties ticked
-  async function practiceArea(cat, sub, diff) {
+  async function practiceArea(cat, sub, diff, subPath) {
     goTo("practice-tossups");
     try {
       const tree = await fetchCatTree("tossups");
-      const root = tree.byPath.get(cat), node = sub ? tree.byPath.get(cat + " > " + sub) : null;
+      const root = tree.byPath.get(cat), node = subPath && subPath !== cat ? tree.byPath.get(subPath) : sub ? tree.byPath.get(cat + " > " + sub) : null;
       if (!root) return;
       for (let i = 0; i < 60 && !document.querySelector("#category-filters .cat-node"); i++) await new Promise((r) => setTimeout(r, 50));
       applyCatState({ v: 1, ids: node ? [root.id, node.id] : [root.id], auto: node ? [root.id] : [], weights: {} }, { initial: true });
