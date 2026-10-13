@@ -2464,6 +2464,12 @@ function __qbMain(ctx) {
     var chatScope = "all";        // "all" | "team" — which channel the chat box sends to
     var autoSubTimer = null;      // client-side: submits whatever is typed when the timer runs out
     var mpPre = { key: "", q: null, busy: false };  // host-only: next tossup fetched ahead
+    // what this room has read when this app hosts it (relay): a repeat is drawn again (the game server
+    // does the same, mpserver/room.mjs pickFresh); by the question's text (app.js seenKey)
+    var mpPlayedKeys = new Set();
+    var mpKey = function (q) { return typeof seenKey === "function" ? seenKey(q) : (q && q.id) || ""; };
+    var mpPlayed = function (q) { var k = mpKey(q); return !!k && mpPlayedKeys.has(k); };
+    var mpMarkPlayed = function (q) { var k = mpKey(q); if (!k) return; mpPlayedKeys.delete(k); mpPlayedKeys.add(k); while (mpPlayedKeys.size > 5000) mpPlayedKeys.delete(mpPlayedKeys.values().next().value); };
     var _lastSelJson = "";        // last panel-selection snapshot applied/sent (dedupe)
     var _hostSelGen = 0;          // host-side: only the newest client-sel apply broadcasts
 
@@ -3116,14 +3122,20 @@ function __qbMain(ctx) {
           // (Weighted mode matches on "W": the queued question carries its own
           // fresh roll, drawn from the same distribution.)
           var qkey = weightedOn() ? "W" : filtersToQuery(f);
-          if (mpPre.q && mpPre.key === qkey) { q = mpPre.q; mpPre.q = null; }
+          if (mpPre.q && mpPre.key === qkey && !mpPlayed(mpPre.q)) { q = mpPre.q; mpPre.q = null; }
           else {
-            var data = await ctx.api.get("/api/tossups/random?" + filtersToQuery(f));
-            q = data.tossup;
+            // one this room hasn't read, if a few tries find one (a small pool runs out)
+            for (var tryN = 0; tryN < 6; tryN++) {
+              var data = await ctx.api.get("/api/tossups/random?" + filtersToQuery(f));
+              if (!data.tossup) break;
+              q = q || data.tossup;
+              if (!mpPlayed(data.tossup)) { q = data.tossup; break; }
+            }
             if (!q) { setStatus("No question matches your Tossups filters."); return; }
           }
         }
         hostQ = q;
+        mpMarkPlayed(q);
         qCount++;
         // Read exactly what solo practice reads (notes hidden, guides per
         // settings); "(*)" survives so the power index still comes from it.
@@ -3165,7 +3177,7 @@ function __qbMain(ctx) {
       ctx.api.get("/api/tossups/random?" + filtersToQuery(f)).then(function (data) {
         mpPre.busy = false;
         var q = data && data.tossup;
-        if (q && (!hostQ || q.id !== hostQ.id)) { mpPre.key = key; mpPre.q = q; }
+        if (q && (!hostQ || q.id !== hostQ.id) && !mpPlayed(q)) { mpPre.key = key; mpPre.q = q; }
       }).catch(function () { mpPre.busy = false; });
     }
     // Fetch ahead as soon as this machine is hosting (room created, promoted,
@@ -3833,8 +3845,8 @@ function __qbMain(ctx) {
           // a nudge to the room you can own, all the way down the page
           '<a class="mp-own-teaser" id="mp-own-teaser" href="#mp-shop" hidden>Want a room that stays yours for good?<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg></a>' +
           '<section class="mp-recent mp-mine" id="mp-my-rooms" hidden><h2 class="eyebrow">Your rooms</h2><div class="list" id="mp-my-list"></div></section>' +
-          '<section class="mp-official" id="mp-official" hidden><h2 class="eyebrow">Official rooms <span class="qb-info" data-tip="Always open to everyone. Their settings are fixed: one subject at high school level, or every category at one level. After an hour with no activity, a room starts over.">i</span></h2><div id="mp-official-list"></div></section>' +
-          '<section class="mp-recent mp-public" id="mp-public-rooms" hidden><h2 class="eyebrow">Public rooms <span class="qb-info" data-tip="Rooms whose players left them public (Room settings → Public room). Pick one to join.">i</span></h2><div class="list" id="mp-public-list"></div></section>' +
+          '<section class="mp-recent mp-public mp-official" id="mp-official" hidden><h2 class="eyebrow">Official rooms</h2><div class="list" id="mp-official-list"></div></section>' +
+          '<section class="mp-recent mp-public" id="mp-public-rooms" hidden><h2 class="eyebrow">Public rooms</h2><div class="list" id="mp-public-list"></div></section>' +
           (recent.length ? '<section class="mp-recent"><h2 class="eyebrow">Recent rooms</h2><div class="list">' + recent.map(function (r) {
             return '<button type="button" class="list-row clickable mp-recent-row" data-code="' + esc(r.code) + '"><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + '</b><span class="mp-rwho"><span class="mp-rcount" data-code="' + esc(r.code) + '">' + esc(countText(null)) + "</span>" + (r.host ? " · you hosted" : "") + '</span><span class="mp-rwhen">' + esc(whenLabel(r.at)) + '</span><span class="mp-rjoin">Rejoin ›</span></button>';
           }).join("") + "</div></section>" : "") +
@@ -3868,23 +3880,23 @@ function __qbMain(ctx) {
         var sec = body && body.querySelector("#mp-public-rooms");
         if (!d || !Array.isArray(d.rooms) || !sec) return;
         sec.hidden = false;
-        // the game server's official rooms: Levels, then Subjects, as tiles
-        var off = d.rooms.filter(function (r) { return r.official; }).sort(function (a, b) { return (a.official.order || 0) - (b.official.order || 0); });
+        // the game server's official rooms (levels, then subjects), listed like the public rooms below
+        var off = d.rooms.filter(function (r) { return r.official; }).sort(function (a, b) { return (a.official.kind === "level" ? 0 : 1) - (b.official.kind === "level" ? 0 : 1) || (a.official.order || 0) - (b.official.order || 0); });
         var rooms = d.rooms.filter(function (r) { return !r.official; });
+        // a room as a row: its name, who's in it, players and online, Join
+        var roomRow = function (r, name) {
+          var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - (r.names || []).length) : "");
+          var state = countText(r.online == null ? { players: r.players, online: r.players } : r) + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.official ? "" : r.questions ? " · Q" + r.questions : " · waiting");
+          return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(name) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
+        };
         var osec = body.querySelector("#mp-official");
         if (osec) {
           osec.hidden = !off.length;
-          var tile = function (r) { var n = r.players || 0; return '<button type="button" class="mp-off-tile mp-pub-row" data-code="' + esc(r.code) + '" title="' + esc(r.summary || "") + '"><b>' + esc(r.official.name) + '</b><span class="' + (n ? "on" : "") + '">' + (n ? n + " playing" : "Empty") + "</span></button>"; };
-          var grp = function (kind, label) { var g = off.filter(function (r) { return r.official.kind === kind; }); return g.length ? '<div class="mp-off-grp"><span class="mp-off-lbl">' + label + '</span><div class="mp-off-tiles">' + g.map(tile).join("") + "</div></div>" : ""; };
-          osec.querySelector("#mp-official-list").innerHTML = grp("level", "Levels") + grp("subject", "Subjects");
+          osec.querySelector("#mp-official-list").innerHTML = off.map(function (r) { return roomRow(r, r.official.name); }).join("");
           osec.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
         }
         var list = sec.querySelector("#mp-public-list");
-        list.innerHTML = rooms.length ? rooms.map(function (r) {
-          var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - r.names.length) : "");
-          var state = countText(r.online == null ? { players: r.players, online: r.players } : r) + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.questions ? " · Q" + r.questions : " · waiting");
-          return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
-        }).join("") : '<p class="mp-pub-empty">No public rooms right now.</p>';
+        list.innerHTML = rooms.length ? rooms.map(function (r) { return roomRow(r, String(r.code).toUpperCase()); }).join("") : '<p class="mp-pub-empty">No public rooms right now.</p>';
         list.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
       };
       var loadPublic = function () {

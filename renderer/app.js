@@ -4350,7 +4350,8 @@ async function nextQuestion() {
   // makes "next" instant. Fall back to a live fetch otherwise.
   let question = null;
   const _plist = state.mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
-  const take = () => { while (_plist.length && !question) { const cand = _plist.shift(); if (servable(cand)) question = cand; } };
+  const fresh = (q) => servable(q) && !wasSeen(q, state.mode);   // (not served lately)
+  const take = () => { while (_plist.length && !question) { const cand = _plist.shift(); if (fresh(cand)) question = cand; } };
   take();
 
   // A refill on its way (or started now) beats a fresh request queued behind it:
@@ -4381,7 +4382,7 @@ async function nextQuestion() {
       endOfQueue("No questions match your filters — change Setup, then press Next");
       return;
     }
-    for (let tries = 0; tries < 8 && !servable(question); tries++) {
+    for (let tries = 0; tries < 8 && !fresh(question); tries++) {
       try {
         const retry = await API.get(`${endpoint}?${params}`);
         const next = state.mode === "tossups" ? retry.tossup : retry.bonus;
@@ -4391,6 +4392,7 @@ async function nextQuestion() {
   }
 
   state.currentQuestion = question;
+  markSeen(question, state.mode);
   try {
     renderQuestion(question);
   } catch (e) {
@@ -4400,6 +4402,33 @@ async function nextQuestion() {
   }
   $("#session-counter").textContent = `${state.questionCount}`;
   setTimeout(refillPrefetch, 0);
+}
+
+// ── Questions served lately (14.79): random practice skips them — by the question's text (the same
+// question stored under two ids is one), hashed small, the last 3,000 of each mode, kept in this browser.
+// When a pool has nothing new left, a repeat is served rather than nothing.
+const SEEN_MAX = 3000;
+const _seen = {};
+function seenKey(q) {
+  if (!q) return "";
+  const t = q.question_sanitized || q.question || ((q.leadin_sanitized || q.leadin || "") + " " + String(q.parts_sanitized || q.parts || "").slice(0, 200));
+  const n = String(t).toLowerCase().replace(/\(\*\)/g, "").replace(/[^a-z0-9]+/g, " ").trim().slice(0, 220);
+  if (!n) return "";
+  let h = 0x811c9dc5;
+  for (let i = 0; i < n.length; i++) { h ^= n.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(36);
+}
+function seenSet(mode) {
+  if (!_seen[mode]) { let a = []; try { a = JSON.parse(localStorage.getItem("qb-seen-" + mode) || "[]"); } catch {} _seen[mode] = new Set(Array.isArray(a) ? a : []); }
+  return _seen[mode];
+}
+const wasSeen = (q, mode) => { const k = seenKey(q); return !!k && seenSet(mode).has(k); };
+function markSeen(q, mode) {
+  const k = seenKey(q); if (!k) return;
+  const set = seenSet(mode); set.delete(k); set.add(k);
+  while (set.size > SEEN_MAX) set.delete(set.values().next().value);
+  clearTimeout(markSeen["t" + mode]);
+  markSeen["t" + mode] = setTimeout(() => { try { localStorage.setItem("qb-seen-" + mode, JSON.stringify([...set])); } catch {} }, 800);
 }
 
 // ── Question preloading ────────────────────────────────────────────────────
@@ -4531,7 +4560,7 @@ function refillPrefetch(force) {
         if (d && d.total === 0 && !state.settings.useWeights) p.none = true;   // the server says nothing matches at all
         let added = 0;
         for (const q of (d && d.rows) || []) {
-          if (!q || list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id)) continue;
+          if (!q || list.some((x) => x && x.id === q.id) || (state.currentQuestion && state.currentQuestion.id === q.id) || wasSeen(q, mode)) continue;
           list.push(q); added++;
         }
         return added;
