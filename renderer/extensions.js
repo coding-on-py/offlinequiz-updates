@@ -5705,6 +5705,11 @@ function __qbMain(ctx) {
     cov: "Team conversion is the share of tossups the team got. Strength: 70% or more. Middling: 30 to 69%. Gap: under 30%. Overlap: two or more players each got 40% or more of an area. Open a category to see its subcategories.",
     plan: "In order: gaps first (categories, then the subcategories to learn, with the answers missed), then habits that cost points, then overlaps.",
     find: "What stands out in this diagnostic, each with the numbers behind it. A subcategory needs 3 or more tossups and bonus parts from 2 or more questions; a pattern (era, region, answer type) needs 4 or more on each side.",
+    sheet: "Heard: tossups read. Got: the team answered first. Conversion: got ÷ heard. Buzz depth: how far into the question the right buzzes came, on average (lower is earlier). PPB: points per bonus.",
+    levels: "Each question's own difficulty. The draw leans to the easier end of the range picked, so the lower levels have more questions.",
+    halves: "Tossups got in the first and the second half of the packet, in the order they were read.",
+    buzzes: "Every buzz by how far into the question it came, in tenths. A power is a right buzz before the power mark (*).",
+    qs: "Every question in the order it was read: the answer, where it's from, every buzz (who, how far in, right or not, the points) and the bonus parts. Question shows the full text, with the buzzes marked where they came.",
     topics: "Every tossup and bonus part, by subcategory: what it was about, the answer, and whether the team got it. Bonus parts are Easy, Medium or Hard by their place in the bonus.",
     dims: "Tossups and bonus parts by the era, region and kind of answer they're about, from each question's tags. A bonus's era or region counts for its parts only when the whole bonus has one.",
     bonus: "The team confers on every bonus, so bonus parts count for the team. Parts are labeled by their place in the bonus.",
@@ -5849,12 +5854,10 @@ function __qbMain(ctx) {
     }
     const o = O(), reqN = (S.org.requests || []).length;
     const tabs = [["teams", "Teams", teams().length], ["members", "Members", people().length], ["leaderboard", "Leaderboard", ""], ["invites", "Invites", ""], ["diagnostics", "Diagnostics", ""]];
-    const tabAct = S.tab === "teams" && isAdmin() ? '<button type="button" class="btn btn-sm" data-cl="new-team">' + ico("plus", 14) + "New team</button>" : "";
-    c.innerHTML = '<div class="cl-page">' + headHtml() + reqs +
-      '<div class="cl-tabbar"><div class="db-tabs cl-tabs" role="tablist" aria-label="Organization">' + tabs.map((t) =>
+    c.innerHTML = '<div class="cl-page">' + reqs + headHtml() +
+      '<div class="db-tabs cl-tabs" role="tablist" aria-label="Organization">' + tabs.map((t) =>
         '<button type="button" role="tab" class="db-tab' + (S.tab === t[0] ? " active" : "") + '" data-cl-tab="' + t[0] + '" aria-selected="' + (S.tab === t[0]) + '">' + t[1] +
         (t[2] === "req" ? '<span class="tab-n num" aria-label="' + plural(reqN, "join request") + '">' + reqN + "</span>" : t[2] !== "" ? '<span class="btn-num num">' + t[2] + "</span>" : "") + "</button>").join("") + "</div>" +
-      (tabAct ? '<div class="cl-tabact">' + tabAct + "</div>" : "") + "</div>" +
       '<div class="fr-msg cl-msg" id="cl-msg" role="status"></div>' +
       '<div id="cl-panel" role="tabpanel">' + tabHtml() + "</div></div>";
     wireClubs(c);
@@ -5869,10 +5872,10 @@ function __qbMain(ctx) {
     const rows = inv.map((i) => {
       const sub = [(i.by ? neonHtml(esc(i.by.name || i.by.handle), i.by.neon) + " invited you" : "Invited"), i.team ? "to " + esc(i.team) : "", ago(i.at)].filter(Boolean).join(" · ") +
         (i.replaces ? '<br><span class="cl-replaces">' + ico("swap", 13) + " replaces " + esc(i.replaces) + info("Your account takes this player's place in the organization: the same teams and the same recorded results.", "About replacing a player") + "</span>" : "");
-      return '<div class="fr-row">' + av({ name: i.org.name }) + '<span class="fr-name"><b>' + esc(i.org.name) + "</b><small>" + sub + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-inv-no="' + esc(i.id) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-inv-yes="' + esc(i.id) + '">Accept</button></span></div>';
+      return '<div class="fr-row"><span class="club-tile sm" aria-hidden="true">' + esc(i.org.tag) + '</span><span class="fr-name"><b>' + esc(i.org.name) + "</b><small>" + sub + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-inv-no="' + esc(i.id) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-inv-yes="' + esc(i.id) + '">Accept</button></span></div>';
     }).join("") + joins.map((r) =>
       '<div class="fr-row" data-user="' + esc(r.handle) + '" data-user-name="' + esc(r.name || r.handle) + '" data-user-neon="' + esc(r.neon || "") + '">' + av({ name: r.name || r.handle, neon: r.neon }) + '<span class="fr-name"><b>' + neonHtml(esc(r.name || r.handle), r.neon) + "</b><small>@" + esc(r.handle) + " wants to join " + esc(O().name) + " · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-cl="req-no" data-h="' + esc(r.handle) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-cl="req-yes" data-h="' + esc(r.handle) + '">Accept</button></span></div>').join("") + reps.map((r) =>
-      '<div class="fr-row"><span class="fr-av na" aria-hidden="true">' + ico("doc", 15) + '</span><span class="fr-name"><b>' + esc(r.team) + " diagnostic</b><small>" + esc(r.orgName || "") + " · report ready · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-rep-seen="' + esc(r.id) + '">Dismiss</button><button type="button" class="btn btn-sm btn-primary" data-report="' + esc(r.id) + '">View report</button></span></div>').join("");
+      '<div class="fr-row"><span class="dg-ico" aria-hidden="true">' + ico("doc", 18) + '</span><span class="fr-name"><b>' + esc(r.team) + " diagnostic</b><small>" + esc(r.orgName || "") + " · report ready · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-rep-seen="' + esc(r.id) + '">Dismiss</button><button type="button" class="btn btn-sm btn-primary" data-report="' + esc(r.id) + '">View report</button></span></div>').join("");
     const n = inv.length + joins.length;
     return '<section class="cl-req" aria-label="Requests"><h2 class="eyebrow">' + (n ? "Requests" : "New reports") + (n ? '<span class="tab-n num">' + n + "</span>" : "") + '</h2><div class="fr-list">' + rows + "</div></section>";
   }
@@ -5891,11 +5894,11 @@ function __qbMain(ctx) {
     const items = isOwner()
       ? settingsItem + '<button type="button" class="pop-item" role="menuitem" data-cl="transfer">' + ico("crown", 15) + 'Transfer ownership…</button><div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="delete-org">' + ico("trash", 15) + "Delete organization</button>"
       : settingsItem + (settingsItem ? '<div class="pop-sep"></div>' : "") + '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
-    return '<header class="club-head"><div class="ch-text"><div class="ch-name"><h2>' + esc(o.name) + '</h2><span class="tag-chip">' + esc(o.tag) + "</span></div>" +
+    return '<div class="cl-card club-head"><span class="club-tile lg" aria-hidden="true">' + esc(o.tag) + '</span><div class="ch-text"><div class="ch-name"><h2>' + esc(o.name) + '</h2><span class="tag-chip">' + esc(o.tag) + "</span></div>" +
       '<p class="ch-meta">' + plural(people().length, "member") + " · " + plural(teams().length, "team") + " · " + roleLine() + "</p></div>" +
-      '<div class="ch-actions"><button type="button" class="btn" data-cl-tab="invites">' + ico(canInvite() ? "userplus" : "key", 16) + (canInvite() ? "Invite" : "Invite code") + "</button>" +
-      (canRunAny() && teams().length ? '<button type="button" class="btn btn-primary" data-cl="run">' + ico("target", 16) + "Run a diagnostic</button>" : "") +
-      '<div class="pop-wrap"><button type="button" class="btn btn-icon" data-menu="org" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(o.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div></div></header>";
+      '<div class="ch-actions">' + (canRunAny() && teams().length ? '<button type="button" class="btn btn-primary" data-cl="run">' + ico("target", 16) + "Run a diagnostic</button>" : "") +
+      '<button type="button" class="btn" data-cl-tab="invites">' + ico(canInvite() ? "userplus" : "key", 16) + (canInvite() ? "Invite" : "Invite code") + "</button>" +
+      '<div class="pop-wrap"><button type="button" class="btn btn-icon" data-menu="org" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(o.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div></div></div>";
   }
   function tabHtml() {
     if (S.tab === "members") return membersHtml();
@@ -5923,46 +5926,45 @@ function __qbMain(ctx) {
     await refresh();
     return r;
   }
-  // ── Teams: each team a heading line over a list of its players (then who's on none) ──
-  // A player's row: their name, @handle (or No account), Captain; everything else is in its ⋯
-  function rowMenu(p, key, opts) {
-    const items = memberItems(p, { profile: true, ...(opts || {}) });
-    return items ? '<div class="pop-wrap pr-menu"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="' + esc(key) + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(p.name) + ': options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div>" : "";
-  }
-  function playerRow(p, key, opts) {
-    const t = opts && opts.team, also = teamsOf(p.mid).filter((x) => !t || x.id !== t.id).map((x) => x.name);
-    const pend = p.na && (S.org.invites || []).find((i) => i.replaces === p.mid);
-    const sub = (p.na ? (pend ? ico("mail", 11) + " invite sent to @" + esc(pend.handle) : "No account") : "@" + esc(p.handle)) + (t && also.length ? " · also " + esc(also.join(", ")) : "");
-    return '<div class="list-row cl-prow' + (p.you ? " you" : "") + '"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.publicName || p.name) + '" data-user-neon="' + esc(p.neon || "") + '"' : "") + ">" + av(p, "sm") +
-      '<span class="pr-name"><b>' + nm(p) + (p.you ? ' <small class="pr-you">you</small>' : "") + "</b><small>" + sub + "</small></span>" +
-      (t && t.captain === p.mid ? '<span class="pr-tag">Captain</span>' : "") + rowMenu(p, key, opts) + "</div>";
-  }
+  // ── Teams: one card per team, then who's on none ──
   function teamsHtml() {
-    let out = teams().map(teamCard).join("");
+    const admin = isAdmin();
+    const bar = admin ? '<div class="cl-toolbar"><div class="end"><button type="button" class="btn btn-sm btn-primary" data-cl="new-team">' + ico("plus", 14) + "New team</button></div></div>" : "";
+    let cards = teams().map(teamCard).join("");
     const noTeam = people().filter((p) => !teamsOf(p.mid).length);
-    if (noTeam.length) out += '<section class="tcard free" aria-label="Not on a team"><div class="tsec-head"><h3>Not on a team</h3><span class="tsec-meta">' + plural(noTeam.length, "person", "people") + '</span></div><div class="list cl-roster">' +
-      noTeam.map((p) => playerRow(p, "f-" + p.mid)).join("") + "</div></section>";
-    if (!teams().length && !noTeam.length) out = '<div class="list"><div class="cl-empty">No teams yet.' + (isAdmin() ? " Make one with New team." : "") + "</div></div>";
-    return '<div class="cl-teams">' + out + "</div>";
+    const manageable = teams().filter(canManageTeam);
+    if (noTeam.length) cards += '<section class="cl-card tcard free" aria-label="Not on a team"><div class="tcard-head"><h3>Not on a team</h3><span class="count">' + plural(noTeam.length, "person", "people") + '</span></div><ul class="cl-roster">' + noTeam.map((p) =>
+      "<li>" + av(p, "sm") + nameMenu(p, "f-" + p.mid) + (p.na ? '<span class="rchips"><span class="tchip na">No account</span></span>' : "") +
+      (manageable.length ? '<select class="mode-input cl-act-sel" data-put="' + esc(p.mid) + '" aria-label="Add ' + esc(p.name) + ' to a team"><option value="">Add to team</option>' + manageable.map((t) => '<option value="' + esc(t.id) + '">' + esc(t.name) + "</option>").join("") + "</select>" : "") + "</li>").join("") + "</ul></section>";
+    if (!teams().length && !noTeam.length) cards = '<div class="cl-card"><p class="cl-none">No teams yet.</p></div>';
+    return bar + '<div class="teams-grid">' + cards + "</div>";
   }
   function teamCard(t) {
     const can = canManageTeam(t), admin = isAdmin();
     const roster = t.roster.slice().sort((a, b) => (b === t.captain) - (a === t.captain)).map(P).filter(Boolean);
-    const capP = t.captain ? P(t.captain) : null;
     const menu = can ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="team-' + esc(t.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(t.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' +
       '<button type="button" class="pop-item" role="menuitem" data-cl="team-rename" data-team="' + esc(t.id) + '">' + ico("pencil", 15) + "Rename…</button>" +
-      (admin && t.captain ? '<button type="button" class="pop-item" role="menuitem" data-cl="cap-off" data-team="' + esc(t.id) + '" data-mid="' + esc(t.captain) + '">' + ico("crown", 15) + "Remove the captain</button>" : "") +
-      (admin ? '<div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="team-delete" data-team="' + esc(t.id) + '">' + ico("trash", 15) + "Delete team</button>" : "") + "</div></div>" : "";
-    const meta = [plural(t.roster.length, "player"), capP ? "captain " + nm(capP) : roster.length ? "no captain" : "",
-      t.last ? "last diagnostic " + (t.last.conv != null ? t.last.conv + "% · " : "") + esc(dayText(t.last.at)) : ""].filter(Boolean).join(" · ");
-    const runnable = t.roster.length > 0;
-    const run = canRunTeam(t) && runnable ? '<button type="button" class="btn btn-sm" data-cl="run" data-team="' + esc(t.id) + '">' + ico("target", 14) + "Diagnostic</button>" : "";
-    const rows = roster.length ? roster.map((p) => playerRow(p, "r-" + t.id + "-" + p.mid, { team: t })).join("") : '<div class="cl-empty">No players yet.</div>';
+      (admin ? '<button type="button" class="pop-item danger" role="menuitem" data-cl="team-delete" data-team="' + esc(t.id) + '">' + ico("trash", 15) + "Delete team</button>" : "") + "</div></div>" : "";
+    const capP = t.captain ? P(t.captain) : null;
+    const cap = '<div class="tcard-cap"><span class="eyebrow">Captain</span>' + (admin && roster.length
+      ? '<select class="mode-input" data-cap="' + esc(t.id) + '" aria-label="Captain of ' + esc(t.name) + '"><option value="">No captain</option>' + roster.filter((p) => !p.na).map((p) => '<option value="' + esc(p.mid) + '"' + (p.mid === t.captain ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select>"
+      : capP ? '<span class="who">' + av(capP, "xs") + nm(capP) + "</span>" : '<span class="cl-none">None yet</span>') + "</div>";
+    const rows = roster.length ? roster.map((p) => {
+      const also = teamsOf(p.mid).filter((x) => x.id !== t.id);
+      const pend = p.na && (S.org.invites || []).find((i) => i.replaces === p.mid);
+      return "<li>" + av(p, "sm") + nameMenu(p, "r-" + t.id + "-" + p.mid) + '<span class="rchips">' + (pend ? '<span class="tchip pend" title="Invite sent to @' + esc(pend.handle) + '">' + ico("mail", 11) + " @" + esc(pend.handle) + "</span>" : p.na ? '<span class="tchip na">No account</span>' : "") + (t.captain === p.mid ? '<span class="tchip cap">Captain</span>' : "") +
+        also.map((x) => '<span class="tchip">also ' + esc(x.name) + "</span>").join("") + "</span>" +
+        (can ? '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-cl="roster-off" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '" aria-label="Take ' + esc(p.name) + " off " + esc(t.name) + '">' + ico("x", 14) + "</button>" : "") + "</li>";
+    }).join("") : '<li><span class="cl-none">No players yet</span></li>';
     const others = people().filter((p) => !t.roster.includes(p.mid));
-    const add = can ? '<div class="list-row cl-addrow"><div class="pop-wrap"><button type="button" class="btn btn-ghost btn-sm" data-menu="add-' + esc(t.id) + '" aria-haspopup="menu" aria-expanded="false">' + ico("plus", 14) + 'Add player</button><div class="pop left pop-scroll" role="menu" hidden>' +
-      (others.length ? '<div class="pop-label">Members</div>' + others.map((p) => { const ts = teamsOf(p.mid).map((x) => x.name); return '<button type="button" class="pop-item" role="menuitem" data-cl="toggle-team" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '">' + av(p, "xs") + '<span class="pi-text">' + esc(p.name) + "<small>" + esc(ts.length ? ts.join(", ") : p.na ? "No account" : "No team") + "</small></span></button>"; }).join("") + '<div class="pop-sep"></div>' : "") +
-      '<button type="button" class="pop-item" role="menuitem" data-cl="add-name" data-team="' + esc(t.id) + '">' + ico("user", 15) + "Someone without an account…</button></div></div></div>" : "";
-    return '<section class="tcard" aria-label="' + esc(t.name) + '"><div class="tsec-head"><h3>' + esc(t.name) + '</h3><span class="tsec-meta">' + meta + '</span><span class="tsec-act">' + run + menu + '</span></div><div class="list cl-roster">' + rows + add + "</div></section>";
+    const add = can ? '<div class="tcard-add">' + (others.length ? '<select class="mode-input cl-act-sel" data-add="' + esc(t.id) + '" aria-label="Add a player to ' + esc(t.name) + '"><option value="">Add player</option>' +
+      others.map((p) => { const ts = teamsOf(p.mid).map((x) => x.name); return '<option value="' + esc(p.mid) + '">' + esc(p.name) + (ts.length ? " (" + esc(ts.join(", ")) + ")" : p.na ? " (no account)" : "") + "</option>"; }).join("") + "</select>" : "") +
+      '<button type="button" class="btn btn-sm" data-cl="add-name" data-team="' + esc(t.id) + '">' + ico("user", 14) + "Add a name</button>" + info(TIP.addName, "About adding a name") + "</div>" : "";
+    const runnable = t.roster.some((m) => { const p = P(m); return p && !p.na; }) || t.roster.length;
+    const foot = '<div class="tcard-foot"><dl class="tstats"><div><dt>Avg this week</dt><dd>' + (t.avg != null && t.active ? fmt(t.avg) + " <small>pts</small>" : "—") + "</dd></div><div><dt>Last diagnostic</dt><dd>" +
+      (t.last ? (t.last.conv != null ? t.last.conv + "% " : "") + "<small>" + esc(dayText(t.last.at)) + "</small>" : "<small>None yet</small>") + "</dd></div></dl>" +
+      (canRunTeam(t) && runnable ? '<button type="button" class="btn btn-sm" data-cl="run" data-team="' + esc(t.id) + '">' + ico("target", 14) + "Diagnostic</button>" : "") + "</div>";
+    return '<section class="cl-card tcard" aria-label="' + esc(t.name) + '"><div class="tcard-head"><h3>' + esc(t.name) + '</h3><span class="count">' + plural(t.roster.length, "player") + "</span>" + menu + "</div>" + cap + '<ul class="cl-roster">' + rows + "</ul>" + add + foot + "</section>";
   }
 
   // ── Members: a grid, filtered by team ──
@@ -5986,8 +5988,6 @@ function __qbMain(ctx) {
     let items = "";
     const sep = () => (items ? '<div class="pop-sep"></div>' : "");
     if (opts.profile && p.handle && !p.na) items += '<button type="button" class="pop-item" role="menuitem" data-cl="profile" data-mid="' + esc(p.mid) + '">' + ico("user", 15) + "View profile</button>";
-    // on a team's list: its captain (admins)
-    if (opts.team && admin && !p.na) items += '<button type="button" class="pop-item" role="menuitem" data-cl="' + (opts.team.captain === p.mid ? "cap-off" : "cap-on") + '" data-team="' + esc(opts.team.id) + '" data-mid="' + esc(p.mid) + '">' + ico("crown", 15) + (opts.team.captain === p.mid ? "Remove as captain" : "Make captain of " + esc(opts.team.name)) + "</button>";
     if (teams().length && anyManage) items += sep() + '<div class="pop-label">Teams</div>' + teams().map((t) => '<button type="button" class="pop-item" role="menuitemcheckbox" aria-checked="' + t.roster.includes(p.mid) + '" data-cl="toggle-team" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '"' + (canManageTeam(t) ? "" : " disabled") + '><span class="pi-check" aria-hidden="true"></span>' + esc(t.name) + "</button>").join("");
     if (p.na && (admin || ts.some(capOf))) items += sep() + '<button type="button" class="pop-item" role="menuitem" data-cl="mem-rename" data-mid="' + esc(p.mid) + '">' + ico("pencil", 15) + "Rename…</button>";
     // a nickname: their own, or anyone's for an admin or their team's captain
@@ -6010,7 +6010,7 @@ function __qbMain(ctx) {
   function memRow(p) {
     const ts = teamsOf(p.mid);
     const pend = (S.org.invites || []).find((i) => i.replaces === p.mid);
-    const chips = ts.length ? '<span class="mem-tlist">' + ts.map((t) => esc(t.name) + (t.captain === p.mid ? ' <span class="cap">(captain)</span>' : "")).join(", ") + "</span>" : '<span class="none">No team</span>';
+    const chips = ts.length ? ts.map((t) => '<span class="tchip' + (t.captain === p.mid ? " cap" : "") + '">' + esc(t.name) + (t.captain === p.mid ? " · captain" : "") + "</span>").join("") : '<span class="none">No team</span>';
     const items = memberItems(p);
     const menu = items ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="m-' + esc(p.mid) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ' + esc(p.name) + '">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div>" : "";
     const sub = p.na ? (pend ? '<span class="cl-pend">' + ico("mail", 12) + " Invite sent to @" + esc(pend.handle) + "</span>" : "No account") + '<span class="joined"> · added ' + esc(dayText(p.joinedAt)) + "</span>"
@@ -6049,24 +6049,25 @@ function __qbMain(ctx) {
   function invitesHtml() {
     const o = O(), admin = isAdmin(), inv = canInvite();
     const codeOn = o.codeJoin !== false;
-    const codeBlock = '<div class="inv-code"><span class="eyebrow">Join code' + info(TIP.code, "About the join code") + "</span>" +
-      (codeOn && o.code ? '<div class="code-row"><code class="cl-code" id="cl-code">' + esc(o.code) + '</code><button type="button" class="btn btn-sm" data-cl="copy-code">' + ico("copy", 14) + "<span>Copy</span></button>" +
-        (admin ? '<button type="button" class="btn btn-sm btn-ghost" data-cl="new-code">' + ico("refresh", 14) + "New code</button>" : "") + "</div>" +
+    const codeCard = '<section class="cl-card" aria-label="Invite code"><h2 class="sec-title">Invite code' + info(TIP.code, "About the invite code") + "</h2>" +
+      (codeOn && o.code ? '<div class="code-row"><code class="cl-code" id="cl-code">' + esc(o.code) + '</code><button type="button" class="btn" data-cl="copy-code">' + ico("copy", 16) + "<span>Copy</span></button>" +
+        (admin ? '<button type="button" class="btn btn-ghost" data-cl="new-code">' + ico("refresh", 16) + "New code</button>" : "") + "</div>" +
         (admin ? '<label class="checkbox-row"><input type="checkbox" id="cl-approve"' + (o.approve ? " checked" : "") + ">Admins approve code joins" + info(TIP.approve, "About approving joins") + "</label>" : "")
-        : '<p class="cl-none">' + ico("lock", 13) + " Joining with a code is off." + (admin ? ' <button type="button" class="btn btn-sm btn-ghost" data-cl="settings">Organization settings</button>' : " Ask an admin for an invite.") + "</p>") + "</div>";
-    if (!inv) return '<div class="inv-wrap"><section class="cl-card inv-card" aria-label="Join code">' + codeBlock + "</section></div>";
+        : '<p class="cl-none">' + ico("lock", 13) + " Joining with a code is off." + (admin ? "" : " Ask an admin for an invite.") + "</p>" + (admin ? '<button type="button" class="btn btn-sm cl-self-start" data-cl="settings">Organization settings</button>' : "")) + "</section>";
+    if (!inv) return '<div class="inv-grid"><div class="inv-col">' + codeCard + "</div></div>";
     const teamOpts = '<option value="">No team</option>' + (admin ? teams() : capsInvite() ? myCapTeams() : []).map((t) => '<option value="' + esc(t.id) + '"' + (S.invTeam === t.id ? " selected" : "") + ">" + esc(t.name) + "</option>").join("");
     const row = (p, sub, acts) => '<div class="fr-row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name || p.handle) + '"' : "") + ">" + av(p) + '<span class="fr-name"><b>' + nm(p) + "</b><small>" + sub + '</small></span><span class="fr-act">' + acts + "</span></div>";
     const pend = (S.org.invites || []).length ? S.org.invites.map((r) => {
       const t = r.team && team(r.team), rep = r.replaces && P(r.replaces);
       return row({ name: r.name || r.handle, handle: r.handle, neon: r.neon }, "@" + esc(r.handle) + (t ? " · " + esc(t.name) : "") + (rep ? " · replaces " + esc(rep.name) : "") + " · by " + (r.byMe ? "you" : esc(r.by || "")) + ", " + esc(ago(r.at)),
         admin || r.byMe ? '<button type="button" class="btn btn-sm btn-ghost" data-cl="cancel-invite" data-id="' + esc(r.id) + '">Cancel</button>' : "");
-    }).join("") : '<div class="cl-empty">No pending invites.</div>';
-    return '<div class="inv-wrap"><section class="cl-card inv-card" aria-label="Invite people"><span class="eyebrow">Invite by username' + info(TIP.invite, "About invites") + "</span>" +
+    }).join("") : '<div class="cl-empty">No pending invites</div>';
+    return '<div class="inv-grid"><div class="inv-col">' +
+      '<section class="cl-card" aria-label="Invite by username"><h2 class="sec-title">Invite by username' + info(TIP.invite, "About invites") + "</h2>" +
       '<form id="cl-inv-form" class="inv-form" novalidate><span class="at-input"><span aria-hidden="true">@</span><input type="text" id="cl-inv-user" class="mode-input" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Username to invite"></span>' +
       '<select class="mode-input" id="cl-inv-team" aria-label="Team">' + teamOpts + '</select><button type="submit" class="btn btn-primary">Invite</button></form>' +
-      '<p class="fr-msg" id="cl-inv-msg" role="status"></p>' + codeBlock + "</section>" +
-      '<section class="sub-sec" aria-label="Pending invites"><h2 class="eyebrow">Pending invites</h2><div class="fr-list">' + pend + "</div></section></div>";
+      '<p class="fr-msg" id="cl-inv-msg" role="status"></p></section>' + codeCard + '</div><div class="inv-col">' +
+      '<section class="sub-sec" aria-label="Pending invites"><h2 class="eyebrow">Pending invites</h2><div class="fr-list">' + pend + "</div></section></div></div>";
   }
 
   // ── Diagnostics: one row each — what it is, where it stands, the one thing to do ──
@@ -6187,8 +6188,6 @@ function __qbMain(ctx) {
       case "team-rename": return promptDialog("Rename " + tm.name, tm.name, (name) => act(null, "/api/clubs/team/rename", { org, team: tid, name }), { yes: "Save", max: 24 });
       case "team-delete": return confirmDialog("Delete " + tm.name + "? Its players stay in " + o.name + ".", () => act(null, "/api/clubs/team/delete", { org, team: tid }), { yes: "Delete", danger: true });
       case "roster-off": return act(t, "/api/clubs/team/roster", { org, team: tid, mid, on: false });
-      case "cap-on": return act(null, "/api/clubs/team/captain", { org, team: tid, mid });
-      case "cap-off": return act(null, "/api/clubs/team/captain", { org, team: tid, mid: null });
       case "toggle-team": return act(null, "/api/clubs/team/roster", { org, team: tid, mid, on: !tm.roster.includes(mid) });
       case "add-name": return promptDialog("Add a player by name", "", (name) => act(null, "/api/clubs/member/add-name", { org, name, team: tid }), { placeholder: "Their name", yes: "Add", max: 40 });
       case "mem-rename": return promptDialog("Rename " + p.name, p.name, (name) => act(null, "/api/clubs/member/rename", { org, mid, name }), { yes: "Save", max: 40 });
@@ -6898,8 +6897,119 @@ function __qbMain(ctx) {
     const dm = d.dims || {};
     // a row needs 2 or more (one question says nothing), a card 2 or more rows
     const card = (title, all) => { const rows = (all || []).filter((r) => r.n >= 2); return rows.length >= 2 ? '<div class="cl-card"><h3 class="eyebrow">' + title + "</h3>" + rows.map((r) => brow(esc(r.label), r.pct, r.got + "/" + r.n)).join("") + "</div>" : ""; };
-    const cards = [card("By era", dm.era), card("By region", dm.region), card("By kind of answer", dm.type)].filter(Boolean);
+    const cards = [card("By era", dm.era), card("By region", dm.region), card("By kind of answer", dm.type), card("By theme", dm.theme)].filter(Boolean);
     return cards.length ? '<div class="rp-dims">' + cards.join("") + "</div>" : "";
+  }
+  // ── the scoresheet (v3): every number the answered questions give ──
+  const dash = (v, f) => (v == null || v === "" ? "—" : f ? f(v) : v);
+  const pctOf = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "—");
+  function rpTable(head, rows, foot) {
+    const cell = (tag, c, i) => "<" + tag + (i ? ' class="n"' : "") + ">" + c + "</" + tag + ">";
+    return '<div class="rp-tablewrap"><table class="rp-table"><thead><tr>' + head.map((h, i) => cell("th", h, i)).join("") + "</tr></thead><tbody>" +
+      rows.map((r) => "<tr>" + r.map((c, i) => cell("td", c, i)).join("") + "</tr>").join("") + "</tbody>" + (foot ? "<tfoot><tr>" + foot.map((c, i) => cell("td", c, i)).join("") + "</tr></tfoot>" : "") + "</table></div>";
+  }
+  const rpCard = (title, body, tip) => '<div class="cl-card rp-card"><h3 class="eyebrow">' + title + (tip ? info(tip, title) : "") + "</h3>" + body + "</div>";
+  function scoresheetHtml(d) {
+    const s = d.summary || {}, hasTu = d.format !== "bo", hasBo = d.format !== "tu";
+    const cov = (d.coverage || []).slice(), bc = d.bonusCats || [];
+    let out = "";
+    if (hasTu) {
+      // (a category with bonuses but no tossups still gets its row)
+      for (const b of bc) if (!cov.some((c) => c.cat === b.cat)) cov.push({ cat: b.cat, n: 0, team: 0, powers: 0, negs: 0, depth: null, bonuses: b.heard, ppb: b.ppb });
+      cov.sort((a, b) => CATS.indexOf(a.cat) - CATS.indexOf(b.cat));
+      const head = ["Category", "Heard", "Got", "Powers", "Negs", "Conversion", "Buzz depth"].concat(hasBo ? ["Bonuses", "PPB"] : []);
+      const rows = cov.map((c) => ['<span class="dot-c" style="--c:' + catColor(c.cat) + '"></span>' + esc(c.cat), c.n, c.team, dash(c.powers), dash(c.negs), pctOf(c.team, c.n), dash(c.depth, (v) => v + "%")]
+        .concat(hasBo ? [dash(c.bonuses), dash(c.ppb, (v) => v.toFixed(1))] : []));
+      const foot = ["All", s.tuRead, s.got, s.powers, s.negs, pctOf(s.got, s.tuRead), dash(s.depth, (v) => v + "%")].concat(hasBo ? [s.bonuses || 0, dash(s.ppb, (v) => v.toFixed(1))] : []);
+      out += rpCard("By category", rpTable(head, rows, foot), TIP.sheet);
+    } else if (bc.length) {
+      out += rpCard("By category", rpTable(["Category", "Bonuses", "Points", "PPB"], bc.map((b) => ['<span class="dot-c" style="--c:' + catColor(b.cat) + '"></span>' + esc(b.cat), b.heard, b.pts, dash(b.ppb, (v) => v.toFixed(1))]),
+        ["All", s.bonuses || 0, s.boPoints ?? "—", dash(s.ppb, (v) => v.toFixed(1))]));
+    }
+    const lv = d.levels || [];
+    if (lv.length) {
+      const head = ["Difficulty"].concat(hasTu ? ["Heard", "Got", "Powers", "Negs", "Conversion"] : []).concat(hasBo ? ["Bonuses", "PPB", "Parts"] : []);
+      out += rpCard("By difficulty", rpTable(head, lv.map((l) => [esc(String(l.d)) + ' <small class="cl-dim">' + esc(DIFF_NAMES[l.d] || "") + "</small>"]
+        .concat(hasTu ? [l.tu, l.tuGot, l.powers, l.negs, pctOf(l.tuGot, l.tu)] : []).concat(hasBo ? [l.bonuses, dash(l.ppb, (v) => v.toFixed(1)), pctOf(l.bpGot, l.bp)] : []))), TIP.levels);
+    }
+    const side = [];
+    if (hasBo && s.boDist && (s.bonuses || 0)) {
+      const n = Object.values(s.boDist).reduce((a, b) => a + b, 0) || 1;
+      side.push(rpCard("Bonus totals", [30, 20, 10, 0].map((k) => brow(k + " points", pct(s.boDist[k] || 0, n), (s.boDist[k] || 0) + "/" + n, "acc")).join("") +
+        '<p class="pc-line"><b>' + dash(s.ppb, (v) => v.toFixed(1)) + "</b> points per bonus · " + dash(s.partsPct, (v) => v + "%") + " of parts</p>"));
+    }
+    if ((d.halves || []).length) side.push(rpCard("The packet's two halves", d.halves.map((h) => brow(esc(h.label), h.pct, h.got + "/" + h.n)).join(""), TIP.halves));
+    if (side.length) out += '<div class="split2">' + side.join("") + "</div>";
+    return out;
+  }
+  // where the buzzes land: tenths of the question, right (green) and negs (red) stacked
+  function histSvg(h) {
+    const ok = h.ok || [], ng = h.neg || [], max = Math.max(1, ...ok.map((v, i) => v + (ng[i] || 0)));
+    const W = 600, H = 170, top = 14, base = 140, bw = W / 10;
+    let g = '<line class="t-grid" x1="0" x2="' + W + '" y1="' + base + '" y2="' + base + '"/>';
+    for (let i = 0; i < 10; i++) {
+      const a = ok[i] || 0, b = ng[i] || 0, ha = ((base - top) * a) / max, hb = ((base - top) * b) / max, x = i * bw + 8, w = bw - 16;
+      if (a) g += '<rect class="hb-ok" x="' + x + '" y="' + (base - ha) + '" width="' + w + '" height="' + ha + '" rx="3"><title>' + a + " right at " + i * 10 + "–" + (i + 1) * 10 + "%</title></rect>";
+      if (b) g += '<rect class="hb-neg" x="' + x + '" y="' + (base - ha - hb) + '" width="' + w + '" height="' + hb + '" rx="3"><title>' + b + (b === 1 ? " neg" : " negs") + " at " + i * 10 + "–" + (i + 1) * 10 + "%</title></rect>";
+      if (a + b) g += '<text class="t-val" x="' + (x + w / 2) + '" y="' + (base - ha - hb - 5) + '" text-anchor="middle">' + (a + b) + "</text>";
+      g += '<text class="t-lbl" x="' + (i * bw + bw / 2) + '" y="' + (base + 18) + '" text-anchor="middle">' + i * 10 + "%</text>";
+    }
+    return '<svg class="rp-hist" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Buzzes by how far into the question: right ' + ok.join(", ") + "; negs " + ng.join(", ") + '">' + g + "</svg>";
+  }
+  function buzzesHtml(d) {
+    const z = d.buzzes; if (!z || !z.n) return "";
+    const st = (v, l) => '<span class="fr-stat"><b class="num">' + v + "</b><small>" + l + "</small></span>";
+    return rpCard("Where the buzzes land", histSvg(z.hist) + '<p class="rp-legend"><span class="lg-ok"></span>Right <span class="lg-neg"></span>Neg · by how far into the question</p>' +
+      '<div class="rp-stats">' + st(z.n, z.n === 1 ? "buzz" : "buzzes") + st(z.firstThird, "right in the first third") + st(z.power, "before the power mark") + st(z.late, "right in the last tenth") +
+      st(dash(z.negDepth, (v) => v + "%"), "average neg depth") + st(z.neverBuzzed, "nobody buzzed") + (z.opp ? st(z.opp, "the other team got") : "") + "</div>", TIP.buzzes);
+  }
+  // ── every question, in packet order ──
+  function buzzLine(x, who) {
+    if (x.dead) return '<span class="cl-dim">Nobody buzzed</span>';
+    const bits = (x.buzzes || []).map((b) => '<span class="qv-b ' + (b.ok ? "ok" : "no") + '">' + (b.mid ? esc(firstName(who(b.mid))) : "A teammate") + " " + (b.ok ? "✓" : "✗") + (b.at != null ? " at " + b.at + "%" : "") + (b.power ? " · power" : "") + " · " + signed(b.pts) + "</span>");
+    if (x.opp) bits.push('<span class="cl-dim">The other team got it</span>');
+    return bits.join('<span class="qv-arrow">→</span>') || '<span class="cl-dim">—</span>';
+  }
+  function questionsHtml(d, who) {
+    const items = d.items || []; if (!items.length) return "";
+    const tus = items.filter((x) => x.k === "tu").sort((a, b) => a.n - b.n);
+    const bos = []; for (const x of items.filter((y) => y.k === "bp")) { let b = bos.find((y) => y.n === x.n); if (!b) bos.push(b = { n: x.n, qid: x.qid, parts: [] }); b.parts.push(x); }
+    bos.sort((a, b) => a.n - b.n);
+    const meta = (x) => [esc(x.cat) + (x.area && x.area !== "General" ? " › " + esc(x.area) : "") + (x.topic ? " › " + esc(x.topic) : ""), x.diff != null ? "difficulty " + x.diff : "", [x.set, x.year && !String(x.set).includes(String(x.year)) ? x.year : ""].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+    const tuRow = (x) => '<div class="qv-row ' + (x.ok ? "ok" : "miss") + '"><span class="qv-n">Tossup ' + x.n + '</span><span class="qv-main"><b>' + esc(x.answer || "—") + "</b><small>" + meta(x) + '</small><span class="qv-bz">' + buzzLine(x, who) + "</span></span>" +
+      '<span class="qv-pts ' + (x.pts > 0 ? "pos" : x.pts < 0 ? "neg" : "") + '">' + (x.pts ? signed(x.pts) : "0") + "</span>" + (x.qid ? '<button type="button" class="btn btn-ghost btn-sm" data-qx="tu:' + esc(x.qid) + '" aria-expanded="false">Question</button>' : "") +
+      '<div class="qv-text" hidden></div></div>';
+    const boRow = (b) => { const first = b.parts[0], pts = b.parts.reduce((a, p) => a + (p.ok ? p.val || 10 : 0), 0);
+      return '<div class="qv-row bo"><span class="qv-n">Bonus ' + b.n + '</span><span class="qv-main"><small>' + meta(first) + (first.by ? " · " + esc(firstName(who(first.by))) + "'s bonus" : "") + '</small><span class="qv-parts">' +
+        b.parts.map((p) => '<span class="qv-part ' + (p.ok ? "ok" : "miss") + '"><i>' + esc(p.lvl) + "</i>" + ico(p.ok ? "check" : "x", 12) + "<b>" + esc(p.answer || "—") + "</b>" + (p.ok ? "<em>+" + (p.val || 10) + "</em>" : "") + "</span>").join("") + "</span></span>" +
+        '<span class="qv-pts ' + (pts ? "pos" : "") + '">' + pts + "</span>" + (b.qid ? '<button type="button" class="btn btn-ghost btn-sm" data-qx="bo:' + esc(b.qid) + '" aria-expanded="false">Question</button>' : "") + '<div class="qv-text" hidden></div></div>'; };
+    const order = [];
+    if (d.format === "tb") tus.forEach((x) => { order.push(tuRow(x)); const b = bos.find((y) => y.n === x.n); if (b) order.push(boRow(b)); });
+    else if (d.format === "bo") bos.forEach((b) => order.push(boRow(b)));
+    else tus.forEach((x) => order.push(tuRow(x)));
+    return '<div class="list qv-list">' + order.join("") + "</div>";
+  }
+  // a question's text on demand, with the buzzes marked where they came (and the power mark)
+  async function showQuestion(btn, d, who) {
+    const row = btn.closest(".qv-row"), box = row && row.querySelector(".qv-text"); if (!box) return;
+    const open = box.hidden; box.hidden = !open; btn.setAttribute("aria-expanded", String(open));
+    if (!open || box.dataset.done) return;
+    box.innerHTML = '<p class="cl-dim">Loading…</p>';
+    const [kind, qid] = btn.dataset.qx.split(":");
+    const r = await get("/api/" + (kind === "tu" ? "tossups" : "bonuses") + "/" + encodeURIComponent(qid));
+    const q = r && (r.tossup || r.bonus);
+    if (!q) { box.innerHTML = '<p class="cl-dim">This question isn\'t in the database any more.</p>'; return; }
+    box.dataset.done = "1";
+    if (kind === "tu") {
+      const x = (d.items || []).find((y) => y.k === "tu" && y.qid === qid) || {}, T = tossupOf({ text: q.question_sanitized || "" });
+      const at = new Map(); for (const b of x.buzzes || []) { if (b.at == null) continue; const k = Math.min(T.N, Math.round((b.at / 100) * T.N)); at.set(k, (at.get(k) || []).concat(b)); }
+      const mark = (k) => (at.get(k) || []).map((b) => '<mark class="qv-mk ' + (b.ok ? "ok" : "no") + '">' + (b.mid ? esc(firstName(who(b.mid))) : "Buzz") + " " + signed(b.pts) + "</mark>").join("");
+      box.innerHTML = '<p class="qv-q">' + T.words.map((w) => (w.pm ? '<b class="qv-pm">(*)</b>' : mark(w.i) + '<span class="' + (w.pg ? "pg" : "") + '">' + esc(w.t) + "</span>")).join(" ") + " " + mark(T.N) + "</p>" +
+        '<p class="qv-ans"><span class="eyebrow">Answer</span> ' + ansHtml(q.answer || q.answer_sanitized || "") + "</p>";
+    } else {
+      const parts = (() => { try { return JSON.parse(q.parts_sanitized || q.parts || "[]"); } catch (e) { return []; } })(), answers = (() => { try { return JSON.parse(q.answers || q.answers_sanitized || "[]"); } catch (e) { return []; } })();
+      box.innerHTML = '<p class="qv-q">' + esc(q.leadin_sanitized || q.leadin || "") + "</p>" + parts.map((p, k) => '<p class="qv-q"><b>[' + (k + 1) + "]</b> " + esc(p) + '</p><p class="qv-ans"><span class="eyebrow">Answer</span> ' + ansHtml(answers[k] || "") + "</p>").join("");
+    }
   }
   function paintReport(c) {
     const R = S.rep, d = R.d, ppl = d.people || {}, meH = signedIn() ? Account.user.handle : "";
@@ -6916,18 +7026,21 @@ function __qbMain(ctx) {
     };
     const tiles = [];
     if (hasTu) {
-      tiles.push(["Questions", fmt(s.tuRead + (hasBo ? s.bonuses || 0 : 0)), hasBo ? plural(s.tuRead, "tossup") + ", " + plural(s.bonuses || 0, "bonus", "bonuses") : plural(s.tuRead, "tossup"), ""]);
+      tiles.push(["Points", s.points == null ? "—" : fmt(s.points), s.points == null ? "" : fmt(s.tuPoints) + " from tossups" + (hasBo ? ", " + fmt(s.boPoints) + " from bonuses" : ""), ""]);
+      tiles.push(["Per 20 tossups", s.pp20 == null ? "—" : String(s.pp20), "points (PP20TUH)", ""]);
       tiles.push(["Conversion", (s.conv == null ? 0 : s.conv) + "%", s.got + " of " + plural(s.tuRead, "tossup"), delta(s.conv, prev && prev.conv, " pts")]);
-      tiles.push(["Powers", fmt(s.powers), s.powerPlayers ? plural(s.powerPlayers, "player") : "none", delta(s.powers, prev && prev.powers)]);
-      tiles.push(["Negs", fmt(s.negs), s.negTopCat ? s.negTopN + " on " + s.negTopCat : s.negs ? "spread out" : "none", delta(s.negs, prev && prev.negs, "", true)]);
-      tiles.push(["Buzz depth", s.depth == null ? "—" : s.depth + "%", "of the question", delta(s.depth, prev && prev.depth, " pts", true)]);
+      tiles.push(["Powers", fmt(s.powers), (s.powerRate != null ? s.powerRate + "% of tossups got · " : "") + (s.powerPlayers ? plural(s.powerPlayers, "player") : "none"), delta(s.powers, prev && prev.powers)]);
+      tiles.push(["Negs", fmt(s.negs), (s.negRate != null ? s.negRate + "% of buzzes" : "") + (s.negTopCat ? " · " + s.negTopN + " on " + s.negTopCat : ""), delta(s.negs, prev && prev.negs, "", true)]);
+      tiles.push(["Buzz depth", s.depth == null ? "—" : s.depth + "%", "of the question, on average", delta(s.depth, prev && prev.depth, " pts", true)]);
+      tiles.push(["Nobody buzzed", s.dead == null ? "—" : fmt(s.dead), "tossups went dead", ""]);
     }
-    if (hasBo) tiles.push(["Bonuses", s.ppb == null ? "—" : s.ppb.toFixed(1), "points per bonus", delta(s.ppb, prev && prev.ppb)]);
+    if (hasBo) tiles.push(["Bonuses", s.ppb == null ? "—" : s.ppb.toFixed(1), "points per bonus" + (s.partsPct != null ? " · " + s.partsPct + "% of parts" : ""), delta(s.ppb, prev && prev.ppb)]);
     if (!hasTu) tiles.unshift(["Bonuses heard", fmt(s.bonuses || 0), "", ""]);
     const seeAll = (d.cards || []).some((x) => !who(x.mid).you);
     const meta = [FORMATS[d.format] && FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), yearsText(d.years), "NAQT distribution", plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
-    const topics = topicsHtml(d, who), dims = dimsHtml(d);
-    const jump = [["rp-summary", "Summary"], hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], topics ? ["rp-topics", "Topics"] : null, dims ? ["rp-dims", "Breakdown"] : null, ["rp-plan", "Practice"], ["rp-players", seeAll ? "Players" : "Your card"]].filter(Boolean);
+    const topics = topicsHtml(d, who), dims = dimsHtml(d), sheet = scoresheetHtml(d), bz = hasTu ? buzzesHtml(d) : "", qs = questionsHtml(d, who);
+    const jump = [["rp-summary", "Summary"], sheet ? ["rp-sheet", "Scoresheet"] : null, bz ? ["rp-buzzes", "Buzzes"] : null, hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], topics ? ["rp-topics", "Topics"] : null, dims ? ["rp-dims", "Breakdown"] : null,
+      qs ? ["rp-questions", "Questions"] : null, ["rp-plan", "Practice"], ["rp-players", seeAll ? "Players" : "Your card"]].filter(Boolean);
     let html = '<div class="cl-page rp-page"><div class="rp-head"><div><p class="eyebrow">' + esc([d.org && d.org.name, d.team].filter(Boolean).join(" · ")) + "</p><h1>" + esc(date) + " diagnostic" + info("Released to every player at once" + (d.date ? ", " + whenText(d.date) : "") + ".", "When this report was released") + '</h1><p class="rp-meta">' + esc(meta) + "</p></div>" +
       '<div class="ph-right"><button type="button" class="btn" data-go-clubs="diagnostics">' + ico("doc", 16) + "All reports</button>" +
       (R.canManage ? '<button type="button" class="btn btn-ghost" data-rp-delete>' + ico("trash", 16) + "Delete report</button>" : "") + "</div></div>" +
@@ -6944,12 +7057,16 @@ function __qbMain(ctx) {
       (got.length ? got.map((g) => '<div class="brow"><span class="l">' + nmFirst(who(g.mid)) + "</span>" + bar(pct(g.n, maxGot), "acc") + '<span class="p">' + g.n + '</span><span class="f">' + pct(g.n, s.got || 1) + "%</span></div>").join("") : '<p class="cl-none">Nobody got a tossup.</p>') + "</div>" : "";
     if (partsCard || gotCard) html += '<div class="split2">' + (partsCard || "") + (gotCard || "") + "</div>";
     html += "</section>";
+    // the scoresheet, where the buzzes land
+    if (sheet) html += '<section class="rp-sec" id="rp-sheet" aria-label="Scoresheet"><div class="rp-sec-head"><h2>Scoresheet</h2></div>' + sheet + "</section>";
+    if (bz) html += '<section class="rp-sec" id="rp-buzzes" aria-label="Buzzes"><div class="rp-sec-head"><h2>Buzzes</h2></div>' + bz + "</section>";
     // coverage (or, bonuses only, conversion by category)
     if (hasTu) html += '<section class="rp-sec" id="rp-coverage" aria-label="Coverage"><div class="rp-sec-head"><h2>Coverage</h2>' + info(TIP.cov, "How coverage is labeled") + "</div>" + covHtml(d, who) + "</section>";
     else html += '<section class="rp-sec" id="rp-coverage" aria-label="Categories"><div class="rp-sec-head"><h2>Categories</h2></div><div class="cl-card">' + (d.bonusCats || []).map((b) => brow('<span class="dot-c" style="--c:' + catColor(b.cat) + '"></span>' + esc(SHORT[b.cat] || b.cat), Math.round(100 * (b.ppb || 0) / 30), (b.ppb || 0).toFixed(1) + " ppb", "acc")).join("") + "</div></section>";
     // every question by subcategory; the breakdowns
     if (topics) html += '<section class="rp-sec" id="rp-topics" aria-label="Topics"><div class="rp-sec-head"><h2>Topics</h2>' + info(TIP.topics, "What Topics shows") + '</div><div class="tp-grid">' + topics + "</div></section>";
     if (dims) html += '<section class="rp-sec" id="rp-dims" aria-label="Breakdown"><div class="rp-sec-head"><h2>Breakdown</h2>' + info(TIP.dims, "Where the breakdown comes from") + "</div>" + dims + "</section>";
+    if (qs) html += '<section class="rp-sec" id="rp-questions" aria-label="Questions"><div class="rp-sec-head"><h2>Questions</h2>' + info(TIP.qs, "What Questions shows") + "</div>" + qs + "</section>";
     // what to practice
     const plan = d.plan || [];
     html += '<section class="rp-sec" id="rp-plan" aria-label="What to practice"><div class="rp-sec-head"><h2>What to practice</h2>' + info(TIP.plan, "How the plan is ordered") + "</div>" +
@@ -6977,6 +7094,7 @@ function __qbMain(ctx) {
       }
       if (b.dataset.practice != null) { const p = plan[+b.dataset.practice]; if (p) practiceArea(p.cat, p.sub, d.diff, p.subPath); }
       if (b.dataset.fpractice != null) { const f = (d.findings || [])[+b.dataset.fpractice]; if (f) practiceArea(f.cat, null, d.diff, f.path); }
+      if (b.dataset.qx) { showQuestion(b, d, who); return; }
     };
   }
   function covHtml(d, who) {
@@ -7018,6 +7136,8 @@ function __qbMain(ctx) {
       (hasTu ? '<dl class="pc-stats"><div><dt>Tossups</dt><dd>' + x.got + "<small>/" + (s.got || 0) + "</small></dd></div><div><dt>Powers</dt><dd>" + x.powers + '</dd></div><div><dt>Neg rate</dt><dd class="' + (x.negRate > 30 ? "warn" : "") + '">' + (x.buzzes ? x.negRate + "%" : "—") + "</dd></div><div><dt>Points</dt><dd>" + x.points + "</dd></div></dl>" +
         '<div class="pc-more"><div class="pc-sec"><h3 class="eyebrow">Buzz depth</h3>' + (x.depth != null ? '<span class="depth-track" aria-hidden="true">' + (s.depth != null ? '<i class="team" style="left:' + s.depth + '%"></i>' : "") + '<i class="me" style="left:' + x.depth + '%"></i></span><div class="depth-scale" aria-hidden="true"><span>start</span><span>end</span></div><p class="pc-line">At <b>' + x.depth + "%</b> on average." + (s.depth != null ? " Team: " + s.depth + "%." : "") + "</p>" : '<p class="pc-line cl-dim">No correct buzzes.</p>') + "</div>" +
         '<div class="pc-sec"><h3 class="eyebrow">Share of the team\'s tossups</h3>' + ((x.scored || []).length ? x.scored.map((sc) => brow(esc(SHORT[sc[0]] || sc[0]), pct(sc[1], sc[2]), sc[1] + "/" + sc[2], "acc")).join("") : '<p class="pc-line cl-dim">None yet.</p>') + "</div>" +
+        ((x.cats || []).length ? '<div class="pc-sec"><h3 class="eyebrow">By category</h3>' + x.cats.map((cc) => brow(esc(SHORT[cc.cat] || cc.cat), pct(cc.got, cc.buzzes), cc.got + "/" + cc.buzzes + (cc.negs ? " · " + cc.negs + "N" : ""), "acc")).join("") + "</div>" : "") +
+        ((x.hist || []).some(Boolean) ? '<div class="pc-sec"><h3 class="eyebrow">Where their right buzzes land</h3>' + histSvg({ ok: x.hist, neg: [] }).replace('class="rp-hist"', 'class="rp-hist mini"') + "</div>" : "") +
         ((x.answers || []).length ? '<div class="pc-sec"><h3 class="eyebrow">Got</h3><p class="pc-line">' + esc(x.answers.join(", ")) + "</p></div>" : "") +
         '<div class="pc-sec"><h3 class="eyebrow">Negs</h3><p class="pc-line' + (x.negsIn ? "" : " cl-dim") + '">' + (x.negsIn ? esc(x.negsIn) : "None") + "</p>" + ((x.negAnswers || []).length ? '<p class="pc-line cl-dim">On ' + esc(x.negAnswers.join(", ")) + "</p>" : "") + "</div>" + (trend ? '<p class="pc-trend">' + esc(trend) + "</p>" : "") + "</div>"
         : '<p class="pc-line cl-dim">Bonuses are scored for the team.</p>') + "</article>";
