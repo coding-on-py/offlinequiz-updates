@@ -5849,10 +5849,12 @@ function __qbMain(ctx) {
     }
     const o = O(), reqN = (S.org.requests || []).length;
     const tabs = [["teams", "Teams", teams().length], ["members", "Members", people().length], ["leaderboard", "Leaderboard", ""], ["invites", "Invites", ""], ["diagnostics", "Diagnostics", ""]];
-    c.innerHTML = '<div class="cl-page">' + reqs + headHtml() +
-      '<div class="db-tabs cl-tabs" role="tablist" aria-label="Organization">' + tabs.map((t) =>
+    const tabAct = S.tab === "teams" && isAdmin() ? '<button type="button" class="btn btn-sm" data-cl="new-team">' + ico("plus", 14) + "New team</button>" : "";
+    c.innerHTML = '<div class="cl-page">' + headHtml() + reqs +
+      '<div class="cl-tabbar"><div class="db-tabs cl-tabs" role="tablist" aria-label="Organization">' + tabs.map((t) =>
         '<button type="button" role="tab" class="db-tab' + (S.tab === t[0] ? " active" : "") + '" data-cl-tab="' + t[0] + '" aria-selected="' + (S.tab === t[0]) + '">' + t[1] +
         (t[2] === "req" ? '<span class="tab-n num" aria-label="' + plural(reqN, "join request") + '">' + reqN + "</span>" : t[2] !== "" ? '<span class="btn-num num">' + t[2] + "</span>" : "") + "</button>").join("") + "</div>" +
+      (tabAct ? '<div class="cl-tabact">' + tabAct + "</div>" : "") + "</div>" +
       '<div class="fr-msg cl-msg" id="cl-msg" role="status"></div>' +
       '<div id="cl-panel" role="tabpanel">' + tabHtml() + "</div></div>";
     wireClubs(c);
@@ -5867,10 +5869,10 @@ function __qbMain(ctx) {
     const rows = inv.map((i) => {
       const sub = [(i.by ? neonHtml(esc(i.by.name || i.by.handle), i.by.neon) + " invited you" : "Invited"), i.team ? "to " + esc(i.team) : "", ago(i.at)].filter(Boolean).join(" · ") +
         (i.replaces ? '<br><span class="cl-replaces">' + ico("swap", 13) + " replaces " + esc(i.replaces) + info("Your account takes this player's place in the organization: the same teams and the same recorded results.", "About replacing a player") + "</span>" : "");
-      return '<div class="fr-row"><span class="club-tile sm" aria-hidden="true">' + esc(i.org.tag) + '</span><span class="fr-name"><b>' + esc(i.org.name) + "</b><small>" + sub + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-inv-no="' + esc(i.id) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-inv-yes="' + esc(i.id) + '">Accept</button></span></div>';
+      return '<div class="fr-row">' + av({ name: i.org.name }) + '<span class="fr-name"><b>' + esc(i.org.name) + "</b><small>" + sub + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-inv-no="' + esc(i.id) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-inv-yes="' + esc(i.id) + '">Accept</button></span></div>';
     }).join("") + joins.map((r) =>
       '<div class="fr-row" data-user="' + esc(r.handle) + '" data-user-name="' + esc(r.name || r.handle) + '" data-user-neon="' + esc(r.neon || "") + '">' + av({ name: r.name || r.handle, neon: r.neon }) + '<span class="fr-name"><b>' + neonHtml(esc(r.name || r.handle), r.neon) + "</b><small>@" + esc(r.handle) + " wants to join " + esc(O().name) + " · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-cl="req-no" data-h="' + esc(r.handle) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-cl="req-yes" data-h="' + esc(r.handle) + '">Accept</button></span></div>').join("") + reps.map((r) =>
-      '<div class="fr-row"><span class="dg-ico" aria-hidden="true">' + ico("doc", 18) + '</span><span class="fr-name"><b>' + esc(r.team) + " diagnostic</b><small>" + esc(r.orgName || "") + " · report ready · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-rep-seen="' + esc(r.id) + '">Dismiss</button><button type="button" class="btn btn-sm btn-primary" data-report="' + esc(r.id) + '">View report</button></span></div>').join("");
+      '<div class="fr-row"><span class="fr-av na" aria-hidden="true">' + ico("doc", 15) + '</span><span class="fr-name"><b>' + esc(r.team) + " diagnostic</b><small>" + esc(r.orgName || "") + " · report ready · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-rep-seen="' + esc(r.id) + '">Dismiss</button><button type="button" class="btn btn-sm btn-primary" data-report="' + esc(r.id) + '">View report</button></span></div>').join("");
     const n = inv.length + joins.length;
     return '<section class="cl-req" aria-label="Requests"><h2 class="eyebrow">' + (n ? "Requests" : "New reports") + (n ? '<span class="tab-n num">' + n + "</span>" : "") + '</h2><div class="fr-list">' + rows + "</div></section>";
   }
@@ -5889,11 +5891,11 @@ function __qbMain(ctx) {
     const items = isOwner()
       ? settingsItem + '<button type="button" class="pop-item" role="menuitem" data-cl="transfer">' + ico("crown", 15) + 'Transfer ownership…</button><div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="delete-org">' + ico("trash", 15) + "Delete organization</button>"
       : settingsItem + (settingsItem ? '<div class="pop-sep"></div>' : "") + '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
-    return '<div class="cl-card club-head"><span class="club-tile lg" aria-hidden="true">' + esc(o.tag) + '</span><div class="ch-text"><div class="ch-name"><h2>' + esc(o.name) + '</h2><span class="tag-chip">' + esc(o.tag) + "</span></div>" +
+    return '<header class="club-head"><div class="ch-text"><div class="ch-name"><h2>' + esc(o.name) + '</h2><span class="tag-chip">' + esc(o.tag) + "</span></div>" +
       '<p class="ch-meta">' + plural(people().length, "member") + " · " + plural(teams().length, "team") + " · " + roleLine() + "</p></div>" +
-      '<div class="ch-actions">' + (canRunAny() && teams().length ? '<button type="button" class="btn btn-primary" data-cl="run">' + ico("target", 16) + "Run a diagnostic</button>" : "") +
-      '<button type="button" class="btn" data-cl-tab="invites">' + ico(canInvite() ? "userplus" : "key", 16) + (canInvite() ? "Invite" : "Invite code") + "</button>" +
-      '<div class="pop-wrap"><button type="button" class="btn btn-icon" data-menu="org" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(o.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div></div></div>";
+      '<div class="ch-actions"><button type="button" class="btn" data-cl-tab="invites">' + ico(canInvite() ? "userplus" : "key", 16) + (canInvite() ? "Invite" : "Invite code") + "</button>" +
+      (canRunAny() && teams().length ? '<button type="button" class="btn btn-primary" data-cl="run">' + ico("target", 16) + "Run a diagnostic</button>" : "") +
+      '<div class="pop-wrap"><button type="button" class="btn btn-icon" data-menu="org" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(o.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div></div></header>";
   }
   function tabHtml() {
     if (S.tab === "members") return membersHtml();
@@ -5921,45 +5923,46 @@ function __qbMain(ctx) {
     await refresh();
     return r;
   }
-  // ── Teams: one card per team, then who's on none ──
+  // ── Teams: each team a heading line over a list of its players (then who's on none) ──
+  // A player's row: their name, @handle (or No account), Captain; everything else is in its ⋯
+  function rowMenu(p, key, opts) {
+    const items = memberItems(p, { profile: true, ...(opts || {}) });
+    return items ? '<div class="pop-wrap pr-menu"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="' + esc(key) + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(p.name) + ': options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div>" : "";
+  }
+  function playerRow(p, key, opts) {
+    const t = opts && opts.team, also = teamsOf(p.mid).filter((x) => !t || x.id !== t.id).map((x) => x.name);
+    const pend = p.na && (S.org.invites || []).find((i) => i.replaces === p.mid);
+    const sub = (p.na ? (pend ? ico("mail", 11) + " invite sent to @" + esc(pend.handle) : "No account") : "@" + esc(p.handle)) + (t && also.length ? " · also " + esc(also.join(", ")) : "");
+    return '<div class="list-row cl-prow' + (p.you ? " you" : "") + '"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.publicName || p.name) + '" data-user-neon="' + esc(p.neon || "") + '"' : "") + ">" + av(p, "sm") +
+      '<span class="pr-name"><b>' + nm(p) + (p.you ? ' <small class="pr-you">you</small>' : "") + "</b><small>" + sub + "</small></span>" +
+      (t && t.captain === p.mid ? '<span class="pr-tag">Captain</span>' : "") + rowMenu(p, key, opts) + "</div>";
+  }
   function teamsHtml() {
-    const admin = isAdmin();
-    const bar = admin ? '<div class="cl-toolbar"><div class="end"><button type="button" class="btn btn-sm btn-primary" data-cl="new-team">' + ico("plus", 14) + "New team</button></div></div>" : "";
-    let cards = teams().map(teamCard).join("");
+    let out = teams().map(teamCard).join("");
     const noTeam = people().filter((p) => !teamsOf(p.mid).length);
-    const manageable = teams().filter(canManageTeam);
-    if (noTeam.length) cards += '<section class="cl-card tcard free" aria-label="Not on a team"><div class="tcard-head"><h3>Not on a team</h3><span class="count">' + plural(noTeam.length, "person", "people") + '</span></div><ul class="cl-roster">' + noTeam.map((p) =>
-      "<li>" + av(p, "sm") + nameMenu(p, "f-" + p.mid) + (p.na ? '<span class="rchips"><span class="tchip na">No account</span></span>' : "") +
-      (manageable.length ? '<select class="mode-input cl-act-sel" data-put="' + esc(p.mid) + '" aria-label="Add ' + esc(p.name) + ' to a team"><option value="">Add to team</option>' + manageable.map((t) => '<option value="' + esc(t.id) + '">' + esc(t.name) + "</option>").join("") + "</select>" : "") + "</li>").join("") + "</ul></section>";
-    if (!teams().length && !noTeam.length) cards = '<div class="cl-card"><p class="cl-none">No teams yet.</p></div>';
-    return bar + '<div class="teams-grid">' + cards + "</div>";
+    if (noTeam.length) out += '<section class="tcard free" aria-label="Not on a team"><div class="tsec-head"><h3>Not on a team</h3><span class="tsec-meta">' + plural(noTeam.length, "person", "people") + '</span></div><div class="list cl-roster">' +
+      noTeam.map((p) => playerRow(p, "f-" + p.mid)).join("") + "</div></section>";
+    if (!teams().length && !noTeam.length) out = '<div class="list"><div class="cl-empty">No teams yet.' + (isAdmin() ? " Make one with New team." : "") + "</div></div>";
+    return '<div class="cl-teams">' + out + "</div>";
   }
   function teamCard(t) {
     const can = canManageTeam(t), admin = isAdmin();
     const roster = t.roster.slice().sort((a, b) => (b === t.captain) - (a === t.captain)).map(P).filter(Boolean);
+    const capP = t.captain ? P(t.captain) : null;
     const menu = can ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="team-' + esc(t.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(t.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' +
       '<button type="button" class="pop-item" role="menuitem" data-cl="team-rename" data-team="' + esc(t.id) + '">' + ico("pencil", 15) + "Rename…</button>" +
-      (admin ? '<button type="button" class="pop-item danger" role="menuitem" data-cl="team-delete" data-team="' + esc(t.id) + '">' + ico("trash", 15) + "Delete team</button>" : "") + "</div></div>" : "";
-    const capP = t.captain ? P(t.captain) : null;
-    const cap = '<div class="tcard-cap"><span class="eyebrow">Captain</span>' + (admin && roster.length
-      ? '<select class="mode-input" data-cap="' + esc(t.id) + '" aria-label="Captain of ' + esc(t.name) + '"><option value="">No captain</option>' + roster.filter((p) => !p.na).map((p) => '<option value="' + esc(p.mid) + '"' + (p.mid === t.captain ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select>"
-      : capP ? '<span class="who">' + av(capP, "xs") + nm(capP) + "</span>" : '<span class="cl-none">None yet</span>') + "</div>";
-    const rows = roster.length ? roster.map((p) => {
-      const also = teamsOf(p.mid).filter((x) => x.id !== t.id);
-      const pend = p.na && (S.org.invites || []).find((i) => i.replaces === p.mid);
-      return "<li>" + av(p, "sm") + nameMenu(p, "r-" + t.id + "-" + p.mid) + '<span class="rchips">' + (pend ? '<span class="tchip pend" title="Invite sent to @' + esc(pend.handle) + '">' + ico("mail", 11) + " @" + esc(pend.handle) + "</span>" : p.na ? '<span class="tchip na">No account</span>' : "") + (t.captain === p.mid ? '<span class="tchip cap">Captain</span>' : "") +
-        also.map((x) => '<span class="tchip">also ' + esc(x.name) + "</span>").join("") + "</span>" +
-        (can ? '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-cl="roster-off" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '" aria-label="Take ' + esc(p.name) + " off " + esc(t.name) + '">' + ico("x", 14) + "</button>" : "") + "</li>";
-    }).join("") : '<li><span class="cl-none">No players yet</span></li>';
+      (admin && t.captain ? '<button type="button" class="pop-item" role="menuitem" data-cl="cap-off" data-team="' + esc(t.id) + '" data-mid="' + esc(t.captain) + '">' + ico("crown", 15) + "Remove the captain</button>" : "") +
+      (admin ? '<div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="team-delete" data-team="' + esc(t.id) + '">' + ico("trash", 15) + "Delete team</button>" : "") + "</div></div>" : "";
+    const meta = [plural(t.roster.length, "player"), capP ? "captain " + nm(capP) : roster.length ? "no captain" : "",
+      t.last ? "last diagnostic " + (t.last.conv != null ? t.last.conv + "% · " : "") + esc(dayText(t.last.at)) : ""].filter(Boolean).join(" · ");
+    const runnable = t.roster.length > 0;
+    const run = canRunTeam(t) && runnable ? '<button type="button" class="btn btn-sm" data-cl="run" data-team="' + esc(t.id) + '">' + ico("target", 14) + "Diagnostic</button>" : "";
+    const rows = roster.length ? roster.map((p) => playerRow(p, "r-" + t.id + "-" + p.mid, { team: t })).join("") : '<div class="cl-empty">No players yet.</div>';
     const others = people().filter((p) => !t.roster.includes(p.mid));
-    const add = can ? '<div class="tcard-add">' + (others.length ? '<select class="mode-input cl-act-sel" data-add="' + esc(t.id) + '" aria-label="Add a player to ' + esc(t.name) + '"><option value="">Add player</option>' +
-      others.map((p) => { const ts = teamsOf(p.mid).map((x) => x.name); return '<option value="' + esc(p.mid) + '">' + esc(p.name) + (ts.length ? " (" + esc(ts.join(", ")) + ")" : p.na ? " (no account)" : "") + "</option>"; }).join("") + "</select>" : "") +
-      '<button type="button" class="btn btn-sm" data-cl="add-name" data-team="' + esc(t.id) + '">' + ico("user", 14) + "Add a name</button>" + info(TIP.addName, "About adding a name") + "</div>" : "";
-    const runnable = t.roster.some((m) => { const p = P(m); return p && !p.na; }) || t.roster.length;
-    const foot = '<div class="tcard-foot"><dl class="tstats"><div><dt>Avg this week</dt><dd>' + (t.avg != null && t.active ? fmt(t.avg) + " <small>pts</small>" : "—") + "</dd></div><div><dt>Last diagnostic</dt><dd>" +
-      (t.last ? (t.last.conv != null ? t.last.conv + "% " : "") + "<small>" + esc(dayText(t.last.at)) + "</small>" : "<small>None yet</small>") + "</dd></div></dl>" +
-      (canRunTeam(t) && runnable ? '<button type="button" class="btn btn-sm" data-cl="run" data-team="' + esc(t.id) + '">' + ico("target", 14) + "Diagnostic</button>" : "") + "</div>";
-    return '<section class="cl-card tcard" aria-label="' + esc(t.name) + '"><div class="tcard-head"><h3>' + esc(t.name) + '</h3><span class="count">' + plural(t.roster.length, "player") + "</span>" + menu + "</div>" + cap + '<ul class="cl-roster">' + rows + "</ul>" + add + foot + "</section>";
+    const add = can ? '<div class="list-row cl-addrow"><div class="pop-wrap"><button type="button" class="btn btn-ghost btn-sm" data-menu="add-' + esc(t.id) + '" aria-haspopup="menu" aria-expanded="false">' + ico("plus", 14) + 'Add player</button><div class="pop left pop-scroll" role="menu" hidden>' +
+      (others.length ? '<div class="pop-label">Members</div>' + others.map((p) => { const ts = teamsOf(p.mid).map((x) => x.name); return '<button type="button" class="pop-item" role="menuitem" data-cl="toggle-team" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '">' + av(p, "xs") + '<span class="pi-text">' + esc(p.name) + "<small>" + esc(ts.length ? ts.join(", ") : p.na ? "No account" : "No team") + "</small></span></button>"; }).join("") + '<div class="pop-sep"></div>' : "") +
+      '<button type="button" class="pop-item" role="menuitem" data-cl="add-name" data-team="' + esc(t.id) + '">' + ico("user", 15) + "Someone without an account…</button></div></div></div>" : "";
+    return '<section class="tcard" aria-label="' + esc(t.name) + '"><div class="tsec-head"><h3>' + esc(t.name) + '</h3><span class="tsec-meta">' + meta + '</span><span class="tsec-act">' + run + menu + '</span></div><div class="list cl-roster">' + rows + add + "</div></section>";
   }
 
   // ── Members: a grid, filtered by team ──
@@ -5983,6 +5986,8 @@ function __qbMain(ctx) {
     let items = "";
     const sep = () => (items ? '<div class="pop-sep"></div>' : "");
     if (opts.profile && p.handle && !p.na) items += '<button type="button" class="pop-item" role="menuitem" data-cl="profile" data-mid="' + esc(p.mid) + '">' + ico("user", 15) + "View profile</button>";
+    // on a team's list: its captain (admins)
+    if (opts.team && admin && !p.na) items += '<button type="button" class="pop-item" role="menuitem" data-cl="' + (opts.team.captain === p.mid ? "cap-off" : "cap-on") + '" data-team="' + esc(opts.team.id) + '" data-mid="' + esc(p.mid) + '">' + ico("crown", 15) + (opts.team.captain === p.mid ? "Remove as captain" : "Make captain of " + esc(opts.team.name)) + "</button>";
     if (teams().length && anyManage) items += sep() + '<div class="pop-label">Teams</div>' + teams().map((t) => '<button type="button" class="pop-item" role="menuitemcheckbox" aria-checked="' + t.roster.includes(p.mid) + '" data-cl="toggle-team" data-team="' + esc(t.id) + '" data-mid="' + esc(p.mid) + '"' + (canManageTeam(t) ? "" : " disabled") + '><span class="pi-check" aria-hidden="true"></span>' + esc(t.name) + "</button>").join("");
     if (p.na && (admin || ts.some(capOf))) items += sep() + '<button type="button" class="pop-item" role="menuitem" data-cl="mem-rename" data-mid="' + esc(p.mid) + '">' + ico("pencil", 15) + "Rename…</button>";
     // a nickname: their own, or anyone's for an admin or their team's captain
@@ -6005,7 +6010,7 @@ function __qbMain(ctx) {
   function memRow(p) {
     const ts = teamsOf(p.mid);
     const pend = (S.org.invites || []).find((i) => i.replaces === p.mid);
-    const chips = ts.length ? ts.map((t) => '<span class="tchip' + (t.captain === p.mid ? " cap" : "") + '">' + esc(t.name) + (t.captain === p.mid ? " · captain" : "") + "</span>").join("") : '<span class="none">No team</span>';
+    const chips = ts.length ? '<span class="mem-tlist">' + ts.map((t) => esc(t.name) + (t.captain === p.mid ? ' <span class="cap">(captain)</span>' : "")).join(", ") + "</span>" : '<span class="none">No team</span>';
     const items = memberItems(p);
     const menu = items ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="m-' + esc(p.mid) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options for ' + esc(p.name) + '">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div>" : "";
     const sub = p.na ? (pend ? '<span class="cl-pend">' + ico("mail", 12) + " Invite sent to @" + esc(pend.handle) + "</span>" : "No account") + '<span class="joined"> · added ' + esc(dayText(p.joinedAt)) + "</span>"
@@ -6044,54 +6049,49 @@ function __qbMain(ctx) {
   function invitesHtml() {
     const o = O(), admin = isAdmin(), inv = canInvite();
     const codeOn = o.codeJoin !== false;
-    const codeCard = '<section class="cl-card" aria-label="Invite code"><h2 class="sec-title">Invite code' + info(TIP.code, "About the invite code") + "</h2>" +
-      (codeOn && o.code ? '<div class="code-row"><code class="cl-code" id="cl-code">' + esc(o.code) + '</code><button type="button" class="btn" data-cl="copy-code">' + ico("copy", 16) + "<span>Copy</span></button>" +
-        (admin ? '<button type="button" class="btn btn-ghost" data-cl="new-code">' + ico("refresh", 16) + "New code</button>" : "") + "</div>" +
+    const codeBlock = '<div class="inv-code"><span class="eyebrow">Join code' + info(TIP.code, "About the join code") + "</span>" +
+      (codeOn && o.code ? '<div class="code-row"><code class="cl-code" id="cl-code">' + esc(o.code) + '</code><button type="button" class="btn btn-sm" data-cl="copy-code">' + ico("copy", 14) + "<span>Copy</span></button>" +
+        (admin ? '<button type="button" class="btn btn-sm btn-ghost" data-cl="new-code">' + ico("refresh", 14) + "New code</button>" : "") + "</div>" +
         (admin ? '<label class="checkbox-row"><input type="checkbox" id="cl-approve"' + (o.approve ? " checked" : "") + ">Admins approve code joins" + info(TIP.approve, "About approving joins") + "</label>" : "")
-        : '<p class="cl-none">' + ico("lock", 13) + " Joining with a code is off." + (admin ? "" : " Ask an admin for an invite.") + "</p>" + (admin ? '<button type="button" class="btn btn-sm cl-self-start" data-cl="settings">Organization settings</button>' : "")) + "</section>";
-    if (!inv) return '<div class="inv-grid"><div class="inv-col">' + codeCard + "</div></div>";
+        : '<p class="cl-none">' + ico("lock", 13) + " Joining with a code is off." + (admin ? ' <button type="button" class="btn btn-sm btn-ghost" data-cl="settings">Organization settings</button>' : " Ask an admin for an invite.") + "</p>") + "</div>";
+    if (!inv) return '<div class="inv-wrap"><section class="cl-card inv-card" aria-label="Join code">' + codeBlock + "</section></div>";
     const teamOpts = '<option value="">No team</option>' + (admin ? teams() : capsInvite() ? myCapTeams() : []).map((t) => '<option value="' + esc(t.id) + '"' + (S.invTeam === t.id ? " selected" : "") + ">" + esc(t.name) + "</option>").join("");
     const row = (p, sub, acts) => '<div class="fr-row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name || p.handle) + '"' : "") + ">" + av(p) + '<span class="fr-name"><b>' + nm(p) + "</b><small>" + sub + '</small></span><span class="fr-act">' + acts + "</span></div>";
     const pend = (S.org.invites || []).length ? S.org.invites.map((r) => {
       const t = r.team && team(r.team), rep = r.replaces && P(r.replaces);
       return row({ name: r.name || r.handle, handle: r.handle, neon: r.neon }, "@" + esc(r.handle) + (t ? " · " + esc(t.name) : "") + (rep ? " · replaces " + esc(rep.name) : "") + " · by " + (r.byMe ? "you" : esc(r.by || "")) + ", " + esc(ago(r.at)),
         admin || r.byMe ? '<button type="button" class="btn btn-sm btn-ghost" data-cl="cancel-invite" data-id="' + esc(r.id) + '">Cancel</button>' : "");
-    }).join("") : '<div class="cl-empty">No pending invites</div>';
-    return '<div class="inv-grid"><div class="inv-col">' +
-      '<section class="cl-card" aria-label="Invite by username"><h2 class="sec-title">Invite by username' + info(TIP.invite, "About invites") + "</h2>" +
+    }).join("") : '<div class="cl-empty">No pending invites.</div>';
+    return '<div class="inv-wrap"><section class="cl-card inv-card" aria-label="Invite people"><span class="eyebrow">Invite by username' + info(TIP.invite, "About invites") + "</span>" +
       '<form id="cl-inv-form" class="inv-form" novalidate><span class="at-input"><span aria-hidden="true">@</span><input type="text" id="cl-inv-user" class="mode-input" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Username to invite"></span>' +
       '<select class="mode-input" id="cl-inv-team" aria-label="Team">' + teamOpts + '</select><button type="submit" class="btn btn-primary">Invite</button></form>' +
-      '<p class="fr-msg" id="cl-inv-msg" role="status"></p></section>' + codeCard + '</div><div class="inv-col">' +
-      '<section class="sub-sec" aria-label="Pending invites"><h2 class="eyebrow">Pending invites</h2><div class="fr-list">' + pend + "</div></section></div></div>";
+      '<p class="fr-msg" id="cl-inv-msg" role="status"></p>' + codeBlock + "</section>" +
+      '<section class="sub-sec" aria-label="Pending invites"><h2 class="eyebrow">Pending invites</h2><div class="fr-list">' + pend + "</div></section></div>";
   }
 
-  // ── Diagnostics: rooms open now, scheduled, being played on their own, IRL, reports ──
+  // ── Diagnostics: one row each — what it is, where it stands, the one thing to do ──
+  function dxStatus(d) {
+    if (d.status === "done") return { tone: "good", text: "Report ready" + (d.conv != null ? " · " + d.conv + "% conversion" : ""), btn: '<button type="button" class="btn btn-sm" data-report="' + esc(d.id) + '">View report</button>' };
+    if (d.place === "irl") return { tone: "mid", text: "Being read aloud · " + plural(d.players, "player"), btn: d.canManage ? '<button type="button" class="btn btn-sm" data-irl="' + esc(d.id) + '">Continue reading</button>' : "" };
+    if (d.place === "own") {
+      const pr = d.progress || { done: 0, total: d.players }, mine = d.myProgress;
+      return { tone: "mid", text: (mine && mine.done ? "You're done" : "In progress") + " · " + pr.done + " of " + pr.total + " finished" + (d.dueAt ? " · due " + dayText(d.dueAt) : ""),
+        btn: mine && !mine.done ? '<button type="button" class="btn btn-sm btn-primary" data-play="' + esc(d.id) + '">' + (mine.i ? "Continue" : "Play") + "</button>"
+          : d.canManage ? '<button type="button" class="btn btn-sm" data-cl="release" data-id="' + esc(d.id) + '">Release now</button>' : "" };
+    }
+    const live = d.status === "live";
+    return { tone: live ? "live" : "few", text: (live ? "Room open" : "Scheduled" + (d.startAt ? " · " + timeText(d.startAt) : "")) + " · " + plural(d.players, "player"),
+      btn: d.playing || d.canManage ? '<button type="button" class="btn btn-sm' + (live ? " btn-primary" : "") + '" data-room="' + esc(d.id) + '">' + (live ? "Join room" : "Open room") + "</button>" : "" };
+  }
   function diagListHtml() {
     const list = (S.org.diagnostics || []);
-    const bar = "";   // (Run a diagnostic is on the organization's header)
-    if (!list.length) return bar + '<div class="fr-list"><div class="cl-empty">No diagnostics yet</div></div>';
-    const stat = (v, l) => '<span class="fr-stat"><b class="num">' + v + "</b><small>" + l + "</small></span>";
-    return bar + '<div class="fr-list">' + list.map((d) => {
-      const meta = FORMATS[d.format].label + " · " + (d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup")) + " · " + PLACE[d.place] + " · difficulty " + diffText(d.diff) + (yearsText(d.years) ? " · " + yearsText(d.years) : "");
-      const title = esc(d.team) + " · " + esc(d.status === "done" && d.releasedAt ? dayText(d.releasedAt) : d.status === "scheduled" && d.startAt ? dayText(d.startAt) : dayText(d.createdAt));
-      const main = '<span class="dg-main"><b>' + title + "</b><small>" + esc(meta) + "</small></span>";
+    if (!list.length) return '<div class="list"><div class="cl-empty">No diagnostics yet.' + (canRunAny() && teams().length ? " Run one from the top of the page." : "") + "</div></div>";
+    return '<div class="list dg-list">' + list.map((d) => {
+      const when = d.status === "done" && d.releasedAt ? d.releasedAt : d.status === "scheduled" && d.startAt ? d.startAt : d.createdAt;
+      const meta = [dayText(when), FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), yearsText(d.years)].filter(Boolean).join(" · ");
+      const st = dxStatus(d);
       const menu = d.canManage ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="d-' + esc(d.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden><button type="button" class="pop-item danger" role="menuitem" data-cl="dx-delete" data-id="' + esc(d.id) + '" data-done="' + (d.status === "done" ? 1 : "") + '">' + ico("trash", 15) + (d.status === "done" ? "Delete report" : "Delete diagnostic") + "</button></div></div>" : "";
-      let side, icon = "doc";
-      if (d.status === "done") side = stat(d.players, d.players === 1 ? "player" : "players") + stat(d.conv == null ? "—" : d.conv + "%", "conversion") + '<span class="dx-chip good">Report ready</span><button type="button" class="btn btn-sm" data-report="' + esc(d.id) + '">View report</button>';
-      else if (d.place === "irl") { icon = "doc"; side = stat(d.players, "players") + stat("—", "conversion") + '<span class="dx-chip mid">Being read</span>' + (d.canManage ? '<button type="button" class="btn btn-sm" data-irl="' + esc(d.id) + '">Continue reading</button>' : '<span class="dg-pad"></span>'); }
-      else if (d.place === "own") {
-        icon = "clock";
-        const pr = d.progress || { done: 0, total: d.players }, mine = d.myProgress;
-        const btn = mine && !mine.done ? '<button type="button" class="btn btn-sm btn-primary" data-play="' + esc(d.id) + '">' + (mine.i ? "Continue" : "Play") + "</button>"
-          : d.canManage ? '<button type="button" class="btn btn-sm" data-cl="release" data-id="' + esc(d.id) + '">' + ico("unlock", 14) + "Release now</button>" : '<span class="dg-pad"></span>';
-        side = stat(pr.done + "/" + pr.total, "done") + stat(d.dueAt ? esc(dayText(d.dueAt)) : "—", "deadline") + '<span class="dx-chip mid">' + (mine && mine.done ? "You're done" : "In progress") + "</span>" + btn;
-      } else {
-        icon = "radio";
-        const live = d.status === "live";
-        side = stat(d.players, "players") + stat(live ? "Now" : d.startAt ? esc(timeText(d.startAt)) : "—", live ? "open" : "starts") + '<span class="dx-chip ' + (live ? "ovl" : "few") + '">' + (live ? "Room open" : "Scheduled") + "</span>" +
-          (d.playing || d.canManage ? '<button type="button" class="btn btn-sm' + (live ? " btn-primary" : "") + '" data-room="' + esc(d.id) + '">' + (live ? "Join room" : "Open room") + "</button>" : '<span class="dg-pad"></span>');
-      }
-      return '<div class="dg-row"><span class="dg-ico">' + ico(icon, 18) + "</span>" + main + '<span class="dg-side">' + side + "</span>" + '<span class="dg-menu">' + menu + "</span></div>";
+      return '<div class="list-row dg-row"><span class="dg-main"><b>' + esc(d.team) + "</b><small>" + esc(meta) + '</small><span class="dg-status ' + st.tone + '">' + esc(st.text) + '</span></span><span class="dg-act">' + st.btn + menu + "</span></div>";
     }).join("") + "</div>";
   }
   // ── menus (⋯): one open at a time; it opens upward when there's no room below ──
@@ -6187,6 +6187,8 @@ function __qbMain(ctx) {
       case "team-rename": return promptDialog("Rename " + tm.name, tm.name, (name) => act(null, "/api/clubs/team/rename", { org, team: tid, name }), { yes: "Save", max: 24 });
       case "team-delete": return confirmDialog("Delete " + tm.name + "? Its players stay in " + o.name + ".", () => act(null, "/api/clubs/team/delete", { org, team: tid }), { yes: "Delete", danger: true });
       case "roster-off": return act(t, "/api/clubs/team/roster", { org, team: tid, mid, on: false });
+      case "cap-on": return act(null, "/api/clubs/team/captain", { org, team: tid, mid });
+      case "cap-off": return act(null, "/api/clubs/team/captain", { org, team: tid, mid: null });
       case "toggle-team": return act(null, "/api/clubs/team/roster", { org, team: tid, mid, on: !tm.roster.includes(mid) });
       case "add-name": return promptDialog("Add a player by name", "", (name) => act(null, "/api/clubs/member/add-name", { org, name, team: tid }), { placeholder: "Their name", yes: "Add", max: 40 });
       case "mem-rename": return promptDialog("Rename " + p.name, p.name, (name) => act(null, "/api/clubs/member/rename", { org, mid, name }), { yes: "Save", max: 40 });
@@ -6331,10 +6333,7 @@ function __qbMain(ctx) {
     if (window.QB && window.QB.dxJoin) window.QB.dxJoin(r.code); else if (window.QB && window.QB.mpJoin) window.QB.mpJoin(r.code);
   }
   // ═══ DIAGNOSTIC SETUP ═══
-  function stepsHtml(cur) {
-    return '<ol class="cl-steps" aria-label="Diagnostic steps">' + [["setup", "Set up"], ["play", "Play"], ["report", "Report"]].map((s, i) =>
-      '<li><span class="cl-step"' + (cur === s[0] ? ' aria-current="step"' : "") + "><i>" + (i + 1) + "</i>" + s[1] + "</span></li>").join("") + "</ol>";
-  }
+
   const accountOnly = (mids) => mids.filter((m) => { const p = P(m); return p && !p.na; });
   function playersFor(target, place) {
     const list = target === "org" ? people().map((p) => p.mid) : ((team(target) || { roster: [] }).roster.slice());
@@ -6384,10 +6383,10 @@ function __qbMain(ctx) {
       if (o && !o.error) S.org = o;
     }
     if (!S.org) { c.innerHTML = plainPanel("users", "Diagnostics are for an organization's teams. Join yours or create one first.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
-    if (!canRunAny()) { c.innerHTML = stepsHtml("setup") + plainPanel("shield", "Team captains and admins set up diagnostics.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+    if (!canRunAny()) { c.innerHTML = plainPanel("shield", "Team captains and admins set up diagnostics.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
     if (!S.dx || S.dx.org !== S.orgId || S.dxFor) { S.dx = newDx(S.dxFor && S.dxFor.team); S.dxFor = null; }
     if (!canRunTarget(S.dx.target)) S.dx = newDx();
-    c.innerHTML = stepsHtml("setup") + setupHtml();
+    c.innerHTML = setupHtml();
     wireSetup(c);
     syncSetup();
   }
