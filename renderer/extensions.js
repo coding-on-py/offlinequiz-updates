@@ -2604,6 +2604,12 @@ function __qbMain(ctx) {
         myInp.focus();
         return;
       }
+      // buzzed, the room hasn't given it yet: what's typed waits for the box (no P / N / S here)
+      if (optBuzz && !myInp && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.key === "Enter") { e.preventDefault(); optBuzz.answer = optBuzz.typed.trim(); return; }
+        if (e.key === "Backspace") { e.preventDefault(); optBuzz.typed = optBuzz.typed.slice(0, -1); return; }
+        if (e.key && e.key.length === 1) { e.preventDefault(); if (!e.repeat || e.key !== " ") optBuzz.typed += e.key; return; }
+      }
       if (e.code === "Space") { e.preventDefault(); requestBuzz(); }
       else if (e.key === "p" || e.key === "P") { e.preventDefault(); requestPause(); }
       else if (e.key === "n" || e.key === "N" || e.key === "s" || e.key === "S") { e.preventDefault(); requestNext(); }
@@ -3626,7 +3632,11 @@ function __qbMain(ctx) {
       else if (d.t === "buzz") {
         var early = optBuzz; clearOptBuzz(); pendingBuzzer = d.id || null;
         stopClientRead(); if (typeof d.index === "number") { revealIdx = d.index; applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyBuzz(d.id, d.name, d.index, answerDeadline);
-        if (early && d.id === myId && early.answer != null) submitAnswer(early.answer);   // entered before the room said it was ours
+        if (early && d.id === myId) {   // typed (or entered) before the room said it was ours
+          var inp0 = body && body.querySelector("#mp-ans-input"), typed = early.answer != null ? early.answer : early.typed.replace(/^\s+/, "");
+          if (inp0 && typed) { inp0.value = typed; sendTyping(typed); }
+          if (early.answer != null) { stopAutoSub(); if (inp0) inp0.disabled = true; submitAnswer(early.answer); }
+        }
       }
       // the room didn't take this player's buzz (someone holds it, paused, locked out): close the box now
       else if (d.t === "buzzno") { undoOptBuzz(); }
@@ -3680,23 +3690,21 @@ function __qbMain(ctx) {
       ctx.playSound("buzz");
       if (isHost) { hostHandleBuzz(myId); return; }
       toHost({ t: "buzz", idx: revealIdx });
-      // Shown at once — the room answers a round trip later: the reading holds and the box opens, so
-      // nothing typed is lost. The room's "buzz" confirms it (what's typed stays; an answer entered
-      // already goes out then) or gives it to whoever was first; a buzz it didn't take lets the reading
-      // go on.
-      if (!optBuzz && !(body && body.querySelector("#mp-ans-input")) && !pendingBuzzer) {
+      // The reading holds at once; the answer box opens only when the room gives this player the buzz
+      // (a round trip later), so two buzzes together never both get one. What's typed meanwhile is kept
+      // (onKey) and put in the box, an answer entered already goes out then; a buzz the room didn't take
+      // lets the reading go on.
+      if (!optBuzz && !(body && body.querySelector("#mp-ans-input"))) {
         stopClientRead();
-        optBuzz = { idx: revealIdx, at: Date.now(), speed: lastReadSpeed, answer: null };
-        applyBuzz(myId, myName, revealIdx, Date.now() + (settings.answerSeconds || 10) * 1000, true);
+        optBuzz = { idx: revealIdx, at: Date.now(), speed: lastReadSpeed, typed: "", answer: null };
         clearTimeout(optBuzzT); optBuzzT = setTimeout(undoOptBuzz, 2500);
+        syncActions();
       }
     }
     function clearOptBuzz() { clearTimeout(optBuzzT); optBuzzT = null; optBuzz = null; }
     function undoOptBuzz() {
       var o = optBuzz; clearOptBuzz();
-      if (!o || pendingBuzzer || !current || ended) return;
-      var buzz = body && body.querySelector("#mp-buzz"); if (buzz) { buzz.className = "buzz-area hidden"; buzz.innerHTML = ""; }
-      stopTick();
+      if (!o || pendingBuzzer || !current || ended) { syncActions(); return; }
       if (o.speed) clientStartRead(Math.min(current.text.length, o.idx + Math.floor((Date.now() - o.at) / o.speed)), o.speed);
       syncActions();
     }
@@ -4739,7 +4747,7 @@ function __qbMain(ctx) {
         // a diagnostic: the host (or, with none here, any player) starts, goes on and pauses; the
         // counter is "Question N of M"; once it's over, the report / Clubs
         var can = amHost(), spec = !!(players[myId] && players[myId].spec), fin = !!(dxDone || (dxInfo && dxInfo.done)), waiting = !!(dxInfo && dxInfo.waiting);
-        if (b) { b.hidden = !reading || spec || answering || fin; b.disabled = !!pendingBuzzer || lockedOut(); }
+        if (b) { b.hidden = !reading || spec || answering || fin; b.disabled = !!pendingBuzzer || !!optBuzz || lockedOut(); }
         if (n) {
           n.hidden = !dxInfo || !can || fin || reading || !!(bonusView && !bonusView.done);
           var lbl = waiting ? "Start" : "Next";
@@ -4753,7 +4761,7 @@ function __qbMain(ctx) {
         var hb2 = body.querySelector("#mp-hostbadge"); if (hb2) hb2.hidden = !hostBadgeOn();
         return;
       }
-      if (b) { b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer || lockedOut(); }
+      if (b) { b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer || !!optBuzz || lockedOut(); }
       if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
       if (p) { p.hidden = !reading || mySpec || answering; p.textContent = paused ? "Resume" : "Pause"; }
       var qc = body.querySelector("#mp-qcount"); if (qc) qc.textContent = qCount ? "Question " + qCount : "";
