@@ -3042,7 +3042,7 @@ function __qbMain(ctx) {
           applyTyping(id, _tx);
         }
       }
-      else if (d.t === "buzz") { hostHandleBuzz(id); }
+      else if (d.t === "buzz") { if (!hostHandleBuzz(id)) { try { conn.send({ t: "buzzno" }); } catch (e) {} } }
       else if (d.t === "answer") { if (id === pendingBuzzer) hostHandleAnswer(id, d.text); }
       else if (d.t === "reqNext") { if (!players[id] || players[id].spec) return; hostNext(players[id].name); }
       else if (d.t === "banswer") { if (bonusState && id === bonusState.winner) hostHandleBonusAnswer(id, d.text, d.k); }
@@ -3328,12 +3328,13 @@ function __qbMain(ctx) {
     }
     function stopReveal() { if (revealTimer) { clearInterval(revealTimer); revealTimer = null; } }
 
+    // true when the buzz is taken
     function hostHandleBuzz(id) {
-      if (!current || ended || pendingBuzzer || paused) return;
-      var p = players[id]; if (!p) return;
-      if (p.spec) return; // spectators never buzz
-      if (lockedIds[id]) return;
-      if (p.team && lockedTeams[p.team]) return;
+      if (!current || ended || pendingBuzzer || paused) return false;
+      var p = players[id]; if (!p) return false;
+      if (p.spec) return false; // spectators never buzz
+      if (lockedIds[id]) return false;
+      if (p.team && lockedTeams[p.team]) return false;
       pendingBuzzer = id;
       pendingPrompted = false; pendingPromptFrom = "";
       liveTyped = "";
@@ -3347,6 +3348,7 @@ function __qbMain(ctx) {
       broadcast({ t: "buzz", id: id, name: p.name, index: revealIdx, secs: secs });
       applyBuzz(id, p.name, revealIdx, answerDeadline);
       startAnswerTimer();
+      return true;
     }
     // The host timer is a FALLBACK: the answering client submits whatever it
     // has typed at the deadline (armAutoSub), so the extra 1.5s here is grace
@@ -3619,23 +3621,25 @@ function __qbMain(ctx) {
       else if (d.t === "status") { setStatus(d.text || ""); }
       else if (d.t === "needConfig") { sendRoomConfig(true); }
       else if (d.t === "question") { clearOptBuzz(); stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
-      else if (d.t === "read") { clientStartRead(d.from, d.speed); }
+      else if (d.t === "read") { if (d.speed) pendingBuzzer = null; clientStartRead(d.from, d.speed); }
       else if (d.t === "reveal") { revealIdx = d.index; applyReveal(d.index); }  // legacy hosts
       else if (d.t === "buzz") {
-        var early = optBuzz; clearOptBuzz();
+        var early = optBuzz; clearOptBuzz(); pendingBuzzer = d.id || null;
         stopClientRead(); if (typeof d.index === "number") { revealIdx = d.index; applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyBuzz(d.id, d.name, d.index, answerDeadline);
         if (early && d.id === myId && early.answer != null) submitAnswer(early.answer);   // entered before the room said it was ours
       }
+      // the room didn't take this player's buzz (someone holds it, paused, locked out): close the box now
+      else if (d.t === "buzzno") { undoOptBuzz(); }
       else if (d.t === "buzzwin") { stopClientRead(); if (current) { revealIdx = current.text.length; applyReveal(revealIdx); } applyBuzzWindow(Date.now() + ((d.secs || settings.buzzWindow || 10) * 1000)); }
       else if (d.t === "result") {
-        stopClientRead();
+        stopClientRead(); clearOptBuzz(); pendingBuzzer = null;
         if (current && d.qid) current.id = d.qid;   // a server room names the question only now
         // a wrong answer with rebuzzes off locks its player (and their team) out of this question
         if (!d.correct && !d.noBuzz && d.id && !settings.rebuzz && current) { var bz = players[d.id], me0 = players[myId]; if (d.id === myId || (bz && me0 && bz.team && bz.team === me0.team)) lockedOn = current; }
         if (current && d.fullText && d.fullText.length > current.text.length) current.text = d.fullText; if (typeof d.index === "number" && !d.ended) revealIdx = d.index; buzzHistory = d.history || buzzHistory; if (d.ended) ended = true; applyResult(d); renderBuzzes(); }
       else if (d.t === "reading") { /* the host's "read" message restarts the local ticker */ }
       else if (d.t === "pause") { paused = d.paused; if (typeof d.idx === "number") { revealIdx = d.idx; applyReveal(revealIdx); } applyPause(d.paused); }
-      else if (d.t === "prompt") { answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyPrompt(d.id, d.name, d.ask, answerDeadline); }
+      else if (d.t === "prompt") { pendingBuzzer = d.id || pendingBuzzer; answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyPrompt(d.id, d.name, d.ask, answerDeadline); }
       else if (d.t === "typing") { if (d.id !== myId) applyTyping(d.id, d.text); }
       else if (d.t === "logentry") { sessionLog.push(d.entry); renderSessionLog(); }
       else if (d.t === "matchover") { if (active()) openMatchSheet(); }
@@ -3669,7 +3673,7 @@ function __qbMain(ctx) {
 
     // ── local actions (sent to host or handled if host) ──
     function requestBuzz() {
-      if (!current || ended || lockedOut()) return;   // locked out: no buzz (and no answer box flashing open)
+      if (!current || ended || lockedOut() || pendingBuzzer) return;   // locked out / someone answering: no buzz (and no answer box flashing open)
       if (inDiag() && players[myId] && players[myId].spec) return;   // a diagnostic's host who isn't playing
       if (players[myId] && players[myId].spec) { ctx.toast("You're spectating \u2014 no buzzing", "error"); return; }
       if (settings.tournament && !(players[myId] && players[myId].team)) { setStatus("Join a team to play"); return; }
@@ -8882,6 +8886,23 @@ const GREEK = new Map(Object.entries({
   "τ": "tau", "υ": "upsilon", "φ": "phi", "χ": "chi", "ψ": "psi", "ω": "omega", "Δ": "delta", "Σ": "sigma", "Ω": "omega",
   "Π": "pi", "Φ": "phi", "Ψ": "psi", "Γ": "gamma", "Λ": "lambda", "Θ": "theta",
 }));
+// a response of only a symbol is judged as its names too (judgeTop)
+const SYMBOL_NAMES = {
+  "#": ["number sign", "pound sign", "hash", "hashtag", "hash sign", "sharp", "octothorpe", "pound"],
+  "@": ["at sign", "at symbol", "commercial at"], "&": ["ampersand", "and"], "*": ["asterisk", "star"],
+  "%": ["percent sign", "percent"], "‰": ["per mille", "permille"], "$": ["dollar sign", "dollar"], "¢": ["cent sign", "cent"],
+  "€": ["euro sign", "euro"], "£": ["pound sign", "pound sterling", "pound"], "¥": ["yen sign", "yen"],
+  "§": ["section sign", "section"], "¶": ["pilcrow", "paragraph sign", "paragraph mark"], "~": ["tilde"], "^": ["caret", "circumflex"],
+  "|": ["vertical bar", "pipe"], "\\": ["backslash"], "/": ["slash", "solidus", "forward slash"], "!": ["exclamation mark", "exclamation point"],
+  "?": ["question mark"], ".": ["period", "full stop", "dot"], ",": ["comma"], ";": ["semicolon"], ":": ["colon"],
+  "-": ["hyphen", "minus sign", "dash"], "—": ["em dash", "dash"], "–": ["en dash", "dash"], "_": ["underscore"], "=": ["equals sign", "equal sign"],
+  "+": ["plus sign", "plus"], "<": ["less-than sign"], ">": ["greater-than sign"], "±": ["plus-minus sign", "plus or minus"],
+  "×": ["multiplication sign", "times"], "÷": ["division sign", "obelus"], "√": ["square root", "radical sign", "radical"],
+  "∞": ["infinity", "lemniscate"], "∑": ["summation", "sigma"], "∫": ["integral sign", "integral"], "∴": ["therefore"], "≠": ["not equal"],
+  "°": ["degree sign", "degrees"], "©": ["copyright symbol", "copyright"], "®": ["registered trademark"], "™": ["trademark"],
+  "†": ["dagger", "obelisk"], "‡": ["double dagger"], "•": ["bullet"], "…": ["ellipsis"], "♭": ["flat"], "♯": ["sharp"], "♮": ["natural"],
+  "\"": ["quotation mark"], "'": ["apostrophe"], "()": ["parentheses"], "[]": ["brackets", "square brackets"], "{}": ["braces", "curly brackets"],
+};
 const SYMBOL_WORD = new Map(Object.entries({ "&": "and", "%": "percent", "°": "degrees", "♭": "flat", "♯": "sharp", "♮": "natural" }));
 const APOS_RX = /['’ʼ`´‘]/;
 const ALNUM_RX = /[\p{L}\p{N}]/u;
@@ -10865,6 +10886,14 @@ function judgeTop(resp, P, strictness, opts, plain) {
   questionInfo(rc, P);
   const r = String(resp || "").replace(/[?!.]+\s*$/, "").trim();
   let v = judgeOnce(r, P, strictness, opts, rc, plain);
+  // a response that is only a symbol ("#") names it: any of its names the line takes is the answer
+  if (v.status !== "accept") {
+    const names = SYMBOL_NAMES[String(resp || "").replace(/\s+/g, "")];
+    for (const nm of names || []) {
+      const vs = judgeOnce(nm, P, strictness, opts, rc, plain);
+      if (vs.status === "accept") return { ...vs, note: "the symbol's name" };
+    }
+  }
   // a strict reject of the whole response (J4) is final: no filler, acronym or hedge retry may override it
   if (v.status === "accept" || v.rule === "J4") return v;
   const better = (x) => x.status === "accept" || (x.status === "prompt" && v.status !== "prompt");

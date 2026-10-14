@@ -1654,6 +1654,23 @@ const GREEK = new Map(Object.entries({
   "τ": "tau", "υ": "upsilon", "φ": "phi", "χ": "chi", "ψ": "psi", "ω": "omega", "Δ": "delta", "Σ": "sigma", "Ω": "omega",
   "Π": "pi", "Φ": "phi", "Ψ": "psi", "Γ": "gamma", "Λ": "lambda", "Θ": "theta",
 }));
+// a response of only a symbol is judged as its names too (judgeTop)
+const SYMBOL_NAMES = {
+  "#": ["number sign", "pound sign", "hash", "hashtag", "hash sign", "sharp", "octothorpe", "pound"],
+  "@": ["at sign", "at symbol", "commercial at"], "&": ["ampersand", "and"], "*": ["asterisk", "star"],
+  "%": ["percent sign", "percent"], "‰": ["per mille", "permille"], "$": ["dollar sign", "dollar"], "¢": ["cent sign", "cent"],
+  "€": ["euro sign", "euro"], "£": ["pound sign", "pound sterling", "pound"], "¥": ["yen sign", "yen"],
+  "§": ["section sign", "section"], "¶": ["pilcrow", "paragraph sign", "paragraph mark"], "~": ["tilde"], "^": ["caret", "circumflex"],
+  "|": ["vertical bar", "pipe"], "\\": ["backslash"], "/": ["slash", "solidus", "forward slash"], "!": ["exclamation mark", "exclamation point"],
+  "?": ["question mark"], ".": ["period", "full stop", "dot"], ",": ["comma"], ";": ["semicolon"], ":": ["colon"],
+  "-": ["hyphen", "minus sign", "dash"], "—": ["em dash", "dash"], "–": ["en dash", "dash"], "_": ["underscore"], "=": ["equals sign", "equal sign"],
+  "+": ["plus sign", "plus"], "<": ["less-than sign"], ">": ["greater-than sign"], "±": ["plus-minus sign", "plus or minus"],
+  "×": ["multiplication sign", "times"], "÷": ["division sign", "obelus"], "√": ["square root", "radical sign", "radical"],
+  "∞": ["infinity", "lemniscate"], "∑": ["summation", "sigma"], "∫": ["integral sign", "integral"], "∴": ["therefore"], "≠": ["not equal"],
+  "°": ["degree sign", "degrees"], "©": ["copyright symbol", "copyright"], "®": ["registered trademark"], "™": ["trademark"],
+  "†": ["dagger", "obelisk"], "‡": ["double dagger"], "•": ["bullet"], "…": ["ellipsis"], "♭": ["flat"], "♯": ["sharp"], "♮": ["natural"],
+  "\"": ["quotation mark"], "'": ["apostrophe"], "()": ["parentheses"], "[]": ["brackets", "square brackets"], "{}": ["braces", "curly brackets"],
+};
 const SYMBOL_WORD = new Map(Object.entries({ "&": "and", "%": "percent", "°": "degrees", "♭": "flat", "♯": "sharp", "♮": "natural" }));
 const APOS_RX = /['’ʼ`´‘]/;
 const ALNUM_RX = /[\p{L}\p{N}]/u;
@@ -3637,6 +3654,14 @@ function judgeTop(resp, P, strictness, opts, plain) {
   questionInfo(rc, P);
   const r = String(resp || "").replace(/[?!.]+\s*$/, "").trim();
   let v = judgeOnce(r, P, strictness, opts, rc, plain);
+  // a response that is only a symbol ("#") names it: any of its names the line takes is the answer
+  if (v.status !== "accept") {
+    const names = SYMBOL_NAMES[String(resp || "").replace(/\s+/g, "")];
+    for (const nm of names || []) {
+      const vs = judgeOnce(nm, P, strictness, opts, rc, plain);
+      if (vs.status === "accept") return { ...vs, note: "the symbol's name" };
+    }
+  }
   // a strict reject of the whole response (J4) is final: no filler, acronym or hedge retry may override it
   if (v.status === "accept" || v.rule === "J4") return v;
   const better = (x) => x.status === "accept" || (x.status === "prompt" && v.status !== "prompt");
