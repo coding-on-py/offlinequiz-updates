@@ -9486,6 +9486,16 @@ function wordFormEq(base, rt) {
   return sr === sb || (sb.length >= 4 && (rt.startsWith(sb) || sr.startsWith(sb)));
 }
 
+// A word form the line didn't name (14.86): the same stem exactly (photograph / photography, socialism /
+// socialist; not arpeggio / arpeggiation), and never a chemistry pair (sulfuric / sulfurous, chloride / chlorate)
+function wordFormAutoEq(base, rt) {
+  if (base.length < 3 || rt.length < 3 || /\d/.test(rt) || base === rt) return false;
+  const chem = (x) => (/(?:ic|ous|ide|ite|ate)$/.exec(x) || [""])[0];
+  if (chem(base) && chem(rt) && chem(base) !== chem(rt)) return false;
+  const sb = stem(base);
+  return sb.length >= 4 && stem(rt) === sb;
+}
+
 // The -ing / -ed forms of a base word of 4+ letters (bond → bonding, bonded; dance → dancing, danced;
 // stop → stopping), and whether c and r are such a pair either way, a plural base included
 // ("bonds" → bond → bonding).
@@ -9522,7 +9532,10 @@ function wordCost(w, r, ctx, fuzzy, required) {
   const prot = !!w.protect;
   for (const c of cands) if (c === rt || inflEq(c, rt, prot) || spellEq(c, rt)) return 0;
   const base = w.kind === "O" ? w.t : w.segs.filter((x) => x[0]).map((x) => x[1]).join("");
-  if (ctx.wordForms && required && wordFormEq(base, rt)) return 0;
+  // word forms: any word when the line accepts them; otherwise a lowercase (common) word's forms, unless the line
+  // rejects word forms ("photograph" for <u>photography</u>; a capitalised word may be a name)
+  if (required && ctx.wordForms && wordFormEq(base, rt)) return 0;
+  if (required && ctx.wordFormsAuto && !w.cap && wordFormAutoEq(base, rt)) { ctx.autoForm = true; return 0; }
   if (!fuzzy || /\d/.test(rt)) return -1;
   // never fuzz a one-letter required portion (an initial), digits or numerals (J10)
   if (w.kind !== "O" && w._rlen === 1) return -1;
@@ -10801,6 +10814,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   const policy = rules.partial_policy || null;
   const extraOk = strictness < 20 && !exact && !rules.closed;
   const wordFormsOk = (!!(rules.word_forms && rules.word_forms.some((x) => /^accept:/.test(x))) || lenient) && !exact;
+  ctx.wordFormsAuto = !exact && !rules.closed && !(rules.word_forms && rules.word_forms.some((x) => /^reject:/.test(x)));
   for (const f of liveAccepts) {
     if (f.src === "subst" || f.scope === "bare") continue;
     if (!partialOf(f, T, ctx, linePool, false)) continue;
@@ -10848,9 +10862,16 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   }
   // ---- J10 loose accept: typos within the budget (with the collision guard), word forms, extra words, classes
   ctx.wordForms = wordFormsOk;
+  // a word form the line didn't name never gets past one of its rejects, compared as plain text too
+  // (a reject "three-fourths" reads as a fraction in tokens)
+  const plainKey = (x) => String(x).toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]/gu, "");
+  const respKey0 = plainKey(rc && rc.rawResp != null ? rc.rawResp : resp);
+  const rejectedText = () => F.rejects.some((r) => r.terms.concat(r.exactQ || []).some((t) => Array.isArray(t) && plainKey(t.map((x) => x.orig || x.t).join("")) === respKey0));
   for (const f of liveAccepts) {
+    ctx.autoForm = false;
     const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk, prefixOk: !!f.specificEx }, linePool);
     if (!m || !m.full) continue;
+    if (ctx.autoForm && rejectedText()) continue;
     if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
     if (m.left.length && !extraWordsOk(T, m, opts, f)) continue;
     ctx.wordForms = false;
