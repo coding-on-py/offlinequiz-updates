@@ -5294,6 +5294,8 @@ function __qbMain(ctx) {
             isPower: (d.points || 0) >= 15, points: d.points || 0, celerity: _cel,
           });
         } catch (e) {}
+        // achievements pop up with the verdict (an older app has no such hook)
+        try { if (ctx.host && ctx.host.noteAchievementResult) ctx.host.noteAchievementResult({ type: "tossup", q: { id: current.id }, points: d.points || 0, correct: !!d.correct, isPower: (d.points || 0) >= 15 }); } catch (e) {}
       }
       var buzz = body && body.querySelector("#mp-buzz"); if (buzz) { buzz.className = "buzz-area hidden"; buzz.innerHTML = ""; }
       applyReveal(d.ended ? (current ? current.text.length : revealIdx) : revealIdx);

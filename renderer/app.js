@@ -6042,7 +6042,7 @@ function displayTossupResult(result, userAnswer) {
   renderResultPanels({ type: "tossup", result, question: state.currentQuestion, userAnswer });
   qbEmit("answer:result", { type: "tossup", result, userAnswer });
 
-  scheduleAchievementCheck();
+  achNoteResult({ type: "tossup", q: state.currentQuestion, points: result.points || 0, correct: !!result.correct, isPower: !!result.isPower });
 
   if (state.settings.autoReviewNoPower && result.correct && !result.isPower && state.currentQuestion?.id) {
     const hasMark = state.prePowerEnd > 0;
@@ -6995,7 +6995,7 @@ function displayBonusResult(result, userAnswers) {
   renderResultPanels({ type: "bonus", result, question: state.currentQuestion, userAnswers });
   qbEmit("bonus:result", { result, userAnswers });
 
-  scheduleAchievementCheck();
+  achNoteResult({ type: "bonus", q: state.currentQuestion, points: result.totalPoints || 0, correct: bonusAllCorrect(result) });
 
   setTimeout(() => {
     if (!state.resultAreaVisible) return;
@@ -9234,6 +9234,66 @@ function apClassCount(classMap, lock) {
   for (const key in classMap) if (apPathOk(key, lock)) n += classMap[key];
   return n;
 }
+// ACH-ENGINE BEGIN (scripts/achievement-audit.mjs runs this block as it is)
+// Topic achievements (14.87) are judged one powered tossup at a time — { q: id, a: its main answer (apNorm),
+// p: its category path } — so the app can say so the moment the power happens:
+//   topic    a category-tree subtree (or several): any power there ("a quantum mechanics question")
+//   answers  names or alias groups ("@name" = a person: the surname alone counts too), matched strictly against the main answer — inside `within` (default: the
+//            id prefix's category; "*" = anywhere). With topic too: both must hold, or either with `either`.
+//   count    "questions" (default: distinct questions), "targets" (distinct answer groups), "answers"
+//            (distinct main answers inside the topic)
+const ACH_ART = /^(?:the|a|an) /;
+const ACH_GENERIC = new Set(["ocean", "sea", "river", "dynasty", "empire", "lake", "mount", "mountains", "national", "park", "desert", "island", "islands", "peninsula", "kingdom"]);
+const achSing = (w) => (w.length > 4 && /[^s]s$/.test(w) ? w.slice(0, -1) : w);
+function achAnsHit(ans, target, person) {
+  if (!ans || !target) return false;
+  if (ans === target) return true;
+  const a = ans.replace(ACH_ART, ""), t = target.replace(ACH_ART, "");
+  if (a === t) return true;
+  const aw = a.split(" ").map(achSing), tw = t.split(" ").map(achSing);
+  if (aw.join(" ") === tw.join(" ")) return true;
+  // more of the same name ("emily elizabeth dickinson"), never a different thing that shares a word
+  if (tw.length >= 2 && aw.length <= tw.length + 2 && tw.every((w) => aw.includes(w))) return true;
+  // the main answer is the line's required part: a person's surname ("poe" for "edgar allan poe"), or the name
+  // without a generic word ("atlantic" for "atlantic ocean", "han" for "han dynasty")
+  // (a surname only for a name marked "@" as a person — never "japan" for "sea of japan" or "heart" for "the tell
+  // tale heart")
+  if (person && tw.length >= 2 && aw.length === 1 && aw[0].length >= 3 && aw[0] === tw[tw.length - 1]) return true;
+  return aw.length > 0 && aw.length < tw.length && aw.every((w) => tw.includes(w)) && tw.filter((w) => !aw.includes(w)).every((w) => ACH_GENERIC.has(w));
+}
+const achList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+const achPathIn = (path, topics) => topics.some((t) => path === t || path.startsWith(t + " > "));
+function achGroups(ach) {
+  if (!ach._groups) ach._groups = achList(ach.answers).map((g) => achList(g).map((x) => ({ t: apNorm(x), person: String(x)[0] === "@" })).filter((x) => x.t)).filter((g) => g.length);
+  return ach._groups;
+}
+// the answer group a record hits (0 for a topic hit), or -1
+function achRecordHit(ach, rec) {
+  const topics = achList(ach.topic), groups = achGroups(ach);
+  const inTopic = topics.length > 0 && achPathIn(rec.p, topics);
+  if (!groups.length) return inTopic ? 0 : -1;
+  const within = ach.within === "*" ? [] : achList(ach.within || apAchCategory(ach.id));
+  const g = within.length && !achPathIn(rec.p, within) ? -1 : groups.findIndex((gr) => gr.some((x) => achAnsHit(rec.a, x.t, x.person)));
+  if (!topics.length) return g;
+  if (ach.either) return g >= 0 ? g : inTopic ? 0 : -1;
+  return inTopic && g >= 0 ? g : -1;
+}
+function achTopicProgress(ach, records) {
+  const mode = ach.count || "questions", seen = new Set();
+  for (const r of records) {
+    const g = achRecordHit(ach, r);
+    if (g >= 0) seen.add(mode === "targets" ? g : mode === "answers" ? r.a : r.q);
+  }
+  return seen.size;
+}
+// /api/answer-powers' answer_questions ({ answer: { path: [ids] } }) as records
+function achRecordsOf(apQuestions) {
+  const out = [];
+  for (const a in apQuestions || {}) for (const ck in apQuestions[a]) for (const q of apQuestions[a][ck]) out.push({ q, a, p: apKeyPath(ck) });
+  return out;
+}
+// ACH-ENGINE END
+
 function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
   stats = stats || {};
   apCounts = apCounts || {};
@@ -9242,6 +9302,7 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
   const powers = stats.tossupPowers || 0;
   const negs = stats.tossupNegs || 0;
   const streak = computeDailyStreak(stats.questionsByDate);
+  const records = Array.isArray(apQuestions) ? apQuestions : achRecordsOf(apQuestions);
   const achData = {};
   for (const ach of ACHIEVEMENT_LIST) {
     let progress = 0;
@@ -9261,82 +9322,84 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
     } else if (ach.type === "streak") {
       progress = streak;
     } else if (ach.type === "answer_power") {
-      // A target entry is one name or an ALIAS GROUP (array). The DB spells
-      // Freyja "freya" 14× and "freyja" 12×, Kronos three ways, Heimdall mostly
-      // "heimdallr" — apMatch is exact per word, so without groups a figure the
-      // player powered under the other spelling was silently lost (Norse sat at
-      // 4/10 on a profile with 20 powered Norse questions). A group counts ONCE.
-      const groups = (Array.isArray(ach.target) ? ach.target : [ach.target])
-        .map((t) => (Array.isArray(t) ? t : [t]).map(apNorm).filter(Boolean)).filter((g) => g.length);
-      const lock = ach.path || ach.cat || apAchCategory(ach.id) || null;
-      const locked = !!lock;
-      const cnt = (ans) => (locked ? apClassCount(apClasses[ans], lock) : (apCounts[ans] || 0));
-      const matchesAny = (ans, g) => g.some((norm) => apMatch(ans, norm));
-      const answers = Object.keys(apCounts);
-      if (ach.distinct === "questions") {
-        // "N different <topic> QUESTIONS": distinct question ids across every
-        // answer matching any alias, class-locked. Ten powers on Thor are ten
-        // questions only if they were ten different questions.
-        const haveQ = apQuestions && Object.keys(apQuestions).length > 0;
-        if (haveQ) {
-          const seen = new Set();
-          for (const ans of answers) {
-            if (!groups.some((g) => matchesAny(ans, g))) continue;
-            const byClass = apQuestions[ans] || {};
-            for (const ck in byClass) {
-              if (locked && !apPathOk(ck, lock)) continue;
-              for (const qid of byClass[ck]) seen.add(qid);
-            }
-          }
-          progress = seen.size;
-        } else {
-          // Renderer updated before the main process restarted (Cmd+R vs
-          // Cmd+Q): no per-question data yet — count powers rather than show 0.
-          for (const ans of answers) if (groups.some((g) => matchesAny(ans, g))) progress += cnt(ans);
-        }
-      } else if (ach.distinct && groups.length > 1) {
-        for (const g of groups) {
-          if (answers.some((ans) => matchesAny(ans, g) && cnt(ans) > 0)) progress++;
-        }
-      } else {
-        for (const ans of answers) {
-          if (groups.some((g) => matchesAny(ans, g))) progress += cnt(ans);
-        }
-      }
+      progress = achTopicProgress(ach, records);
     }
     achData[ach.id] = { earned: progress >= ach.threshold, progress };
   }
   return achData;
 }
 
+// Achievements the moment they're earned (14.87). _achLive holds this profile's stats and powered-tossup records
+// (loaded at start, then re-read from the backend after results); a result is applied to it at once
+// (achNoteResult) and anything newly earned pops up with the verdict, before the backend has even saved it.
+const _achLive = { key: null, stats: null, records: null, loading: null };
 let _rtAchTimer = null;
-let _rtAchProfileKey = null;
-async function refreshAchievementsRealtime() {
-  try {
-    if (_rtAchProfileKey == null) {
-      try {
-        const ap = await API.get("/api/profiles/active");
-        const a = ap && (ap.profile || ap);
-        _rtAchProfileKey = (a && (a.id ?? a.profile_id)) || "default";
-      } catch (e) { _rtAchProfileKey = "default"; }
-    }
-    const [statsData, apData] = await Promise.all([
-      API.get("/api/stats").catch(() => ({ stats: {} })),
-      API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
-    ]);
-    const stats = statsData.stats || {};
-    const apCounts = apData.answer_counts || {};
-    const apClasses = apData.answer_classes || {};
-    const achData = computeAchievementData(stats, apCounts, apClasses, apData.answer_questions || {});
-    const pluginAchs = collectPluginAchievements(stats, apCounts);
-    maybeShowAchievementPopups(achData, pluginAchs, _rtAchProfileKey);
-  } catch (e) {}
+async function achProfileKey() {
+  try { const ap = await API.get("/api/profiles/active"); const a = ap && (ap.profile || ap); return String((a && (a.id ?? a.profile_id)) || "default"); }
+  catch (e) { return "default"; }
 }
+function achLiveCheck() {
+  if (!_achLive.stats) return;
+  const achData = computeAchievementData(_achLive.stats, null, null, _achLive.records || []);
+  maybeShowAchievementPopups(achData, collectPluginAchievements(_achLive.stats, {}), _achLive.key);
+}
+// (re)read from the backend; the first read for a profile only notes what's earned (no popups)
+function achLiveLoad() {
+  if (_achLive.loading) return _achLive.loading;
+  _achLive.loading = (async () => {
+    try {
+      const key = await achProfileKey();
+      const [statsData, apData] = await Promise.all([
+        API.get("/api/stats").catch(() => null),
+        API.get("/api/answer-powers").catch(() => null),
+      ]);
+      if (!statsData || !apData) return;
+      _achLive.key = key; _achLive.stats = statsData.stats || {}; _achLive.records = achRecordsOf(apData.answer_questions || {});
+      achLiveCheck();
+    } finally { _achLive.loading = null; }
+  })();
+  return _achLive.loading;
+}
+function achAddPath(byPath, path) {
+  const parts = path ? path.split(" > ") : [];
+  for (let i = 1; i <= parts.length; i++) { const k = parts.slice(0, i).join(" > "); (byPath[k] || (byPath[k] = { totalQuestions: 0, tossups: 0, bonuses: 0 })).totalQuestions++; }
+}
+// one answered question, as the backend's stats will count it: { type: "tossup" | "bonus", q, points, correct, isPower }
+function achLiveApply(e) {
+  const st = _achLive.stats, q = e.q || {};
+  const path = q.category_path || [q.category, q.subcategory, q.alternate_subcategory].filter(Boolean).join(" > ");
+  const cat = q.category || (path ? path.split(" > ")[0] : "");
+  st.totalQuestions = (st.totalQuestions || 0) + 1;
+  const power = e.type === "tossup" && (e.isPower || e.points >= 15);
+  if (power) st.tossupPowers = (st.tossupPowers || 0) + 1;
+  else if (e.type === "tossup" && !e.correct && e.points < 0) st.tossupNegs = (st.tossupNegs || 0) + 1;
+  if (cat) { const bc = st.byCategory || (st.byCategory = {}); (bc[cat] || (bc[cat] = { totalQuestions: 0 })).totalQuestions++; }
+  achAddPath(st.byPath || (st.byPath = {}), path);
+  const day = new Date().toISOString().split("T")[0], bd = st.questionsByDate || (st.questionsByDate = {});
+  (bd[day] || (bd[day] = { date: day, questions: 0, points: 0 })).questions++;
+  if (power && q.id != null) {
+    let head = "";
+    try { head = window.QBAnswerChecker ? window.QBAnswerChecker.primaryAnswer(q.answer || "", q.answer_sanitized || "") : ""; } catch (er) {}
+    const a = apNorm(head || q.answer_sanitized || q.answer || "");
+    if (a && !_achLive.records.some((r) => r.q === q.id)) _achLive.records.push({ q: q.id, a, p: path });
+  }
+}
+// a result: { type, q (the question, or just { id }), points, correct, isPower }
+function achNoteResult(e) {
+  if (!e) return;
+  const go = (q) => { if (_achLive.stats) { achLiveApply({ ...e, q }); achLiveCheck(); } scheduleAchievementCheck(); };
+  const q = e.q || {};
+  const whole = q.category_path != null && (e.type !== "tossup" || q.answer != null || q.answer_sanitized != null);
+  if (whole || q.id == null) go(q);
+  else API.get("/api/" + (e.type === "bonus" ? "bonuses/" : "tossups/") + encodeURIComponent(q.id)).then((r) => go((r && (r.tossup || r.bonus || r.question)) || r || q)).catch(() => go(q));
+}
+async function refreshAchievementsRealtime() {
+  try { await achLiveLoad(); } catch (e) {}
+}
+// a quiet re-read once the backend has the result (anything the live tally missed still pops up then)
 function scheduleAchievementCheck() {
   if (_rtAchTimer) clearTimeout(_rtAchTimer);
-  // 250ms: enough to coalesce a result + an override double-fire, short
-  // enough that the popup lands WITH the result — not on the next tossup.
-  _rtAchTimer = setTimeout(refreshAchievementsRealtime, 250);
+  _rtAchTimer = setTimeout(refreshAchievementsRealtime, 2500);
 }
 
 // A plugin's icons win (map, then function — e.g. "Achievement Glyphs" brings
@@ -9491,10 +9554,9 @@ function collectPluginAchievements(stats, apCounts) {
 }
 
 let _achPopupQueue = [];
-let _achPopupActive = false;
 
 function _earnedAchKey(profileKey) {
-  return "qb-earned-achs:" + (profileKey == null ? "default" : profileKey);
+  return "qb-earned-achs2:" + (profileKey == null ? "default" : profileKey);
 }
 function _loadEarnedAchRaw(profileKey) {
   try { return localStorage.getItem(_earnedAchKey(profileKey)); } catch (e) { return null; }
@@ -9529,35 +9591,41 @@ function maybeShowAchievementPopups(achData, pluginAchs, profileKey) {
   for (const a of fresh) queueAchievementPopup(a);
 }
 
+// Unlocked achievements show as cards stacked under the top bar (three at most; more wait their turn),
+// each for a few seconds — a click closes it.
+const ACH_POPUP_MAX = 3, ACH_POPUP_MS = 5000;
 function queueAchievementPopup(ach) {
   _achPopupQueue.push(ach);
-  if (!_achPopupActive) showNextAchievementPopup();
+  showNextAchievementPopup();
 }
-
 function showNextAchievementPopup() {
-  if (_achPopupQueue.length === 0) { _achPopupActive = false; return; }
-  _achPopupActive = true;
-  const ach = _achPopupQueue.shift();
-  const el = document.createElement("div");
-  el.className = "ach-popup";
-  el.innerHTML = `
-    <div class="ach-popup-icon">${achievementIconHTML(ach, "ach-popup-icon-inner")}</div>
-    <div class="ach-popup-text">
-      <div class="ach-popup-title">Achievement Unlocked!</div>
-      <div class="ach-popup-name">${escapeHtml(ach.name || "")}</div>
-      <div class="ach-popup-desc">${escapeHtml(ach.desc || "")}</div>
-    </div>`;
-  document.body.appendChild(el);
-  try { Sound.achievement(); } catch (e) {}
-  requestAnimationFrame(() => el.classList.add("show"));
-  let done = false;
-  const dismiss = () => {
-    if (done) return; done = true;
-    el.classList.remove("show");
-    setTimeout(() => { el.remove(); showNextAchievementPopup(); }, 350);
-  };
-  el.addEventListener("click", dismiss);
-  setTimeout(dismiss, 4200);
+  let stack = document.getElementById("ach-stack");
+  if (!stack) { stack = document.createElement("div"); stack.id = "ach-stack"; stack.className = "ach-stack"; stack.setAttribute("aria-live", "polite"); document.body.appendChild(stack); }
+  while (_achPopupQueue.length && stack.querySelectorAll(".ach-popup:not(.out)").length < ACH_POPUP_MAX) {
+    const ach = _achPopupQueue.shift();
+    const el = document.createElement("div");
+    el.className = "ach-popup";
+    el.setAttribute("role", "status");
+    el.innerHTML = `
+      <div class="ach-popup-icon">${achievementIconHTML(ach, "ach-popup-icon-inner")}</div>
+      <div class="ach-popup-text">
+        <div class="ach-popup-title">Achievement unlocked</div>
+        <div class="ach-popup-name">${escapeHtml(ach.name || "")}</div>
+        <div class="ach-popup-desc">${escapeHtml(ach.desc || "")}</div>
+      </div>
+      <div class="ach-popup-bar" style="animation-duration:${ACH_POPUP_MS}ms"></div>`;
+    stack.appendChild(el);
+    try { Sound.achievement(); } catch (e) {}
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("show")));
+    let done = false;
+    const dismiss = () => {
+      if (done) return; done = true;
+      el.classList.add("out"); el.classList.remove("show");
+      setTimeout(() => { el.remove(); showNextAchievementPopup(); }, 260);
+    };
+    el.addEventListener("click", dismiss);
+    setTimeout(dismiss, ACH_POPUP_MS);
+  }
 }
 
 const ACHIEVEMENT_LIST = [
@@ -9604,139 +9672,140 @@ const ACHIEVEMENT_LIST = [
   { id:"day50", name:"Prelims", desc:"Answer 50 questions in a day", type:"daily", threshold:50, icon:"予" },
   { id:"day100", name:"Playoffs", desc:"Answer 100 questions in a day", type:"daily", threshold:100, icon:"決" },
   { id:"day300", name:"Marathon", desc:"Answer 300 questions in a day", type:"daily", threshold:300, icon:"覇" },
-  {id:"ap-lit-mobydih",name:"Moby Dih",desc:"Power on a Moby Dick question",type:"answer_power",threshold:1,target:"moby dick",icon:"鯨"},
-  {id:"ap-lit-hope",name:"Hope is the Thing with Feathers",desc:"Power on an Emily Dickinson question",type:"answer_power",threshold:1,target:"emily dickinson",icon:"羽"},
-  {id:"ap-lit-raven",name:"The Raven",desc:"Power on an Edgar Allan Poe question",type:"answer_power",threshold:1,target:"edgar allan poe",icon:"鴉"},
-  {id:"ap-lit-shore",name:"On the Shore",desc:"Power on a Franz Kafka question",type:"answer_power",threshold:1,target:"franz kafka",icon:"岸"},
-  {id:"ap-lit-pewpew",name:"Pew Pew",desc:"Power on an Anton Chekhov question",type:"answer_power",threshold:1,target:"anton chekhov",icon:"銃"},
-  {id:"ap-lit-pottery",name:"Lover of Pottery",desc:"Power on a John Keats question",type:"answer_power",threshold:1,target:"john keats",icon:"壺"},
-  {id:"ap-lit-inimitable",name:"The Inimitable",desc:"Power on a Charles Dickens question",type:"answer_power",threshold:1,target:"charles dickens",icon:"筆"},
-  {id:"ap-lit-dear",name:"Dear Reader",desc:"Power on a Jane Austen question",type:"answer_power",threshold:1,target:"jane austen",icon:"淑"},
-  {id:"ap-lit-bronte",name:"Double Trouble",desc:"Power on Emily and Charlotte Brontë",type:"answer_power",threshold:2,target:["emily brontë","charlotte brontë"],distinct:true,icon:"姉"},
-  {id:"ap-lit-beowulf",name:"Epic of the North",desc:"Power on a Beowulf question",type:"answer_power",threshold:1,target:"beowulf",icon:"竜"},
-  {id:"ap-lit-magical",name:"Magical Realist",desc:"Power on a Gabriel García Márquez question",type:"answer_power",threshold:1,target:"gabriel garcía márquez",icon:"魔"},
-  {id:"ap-lit-norwegian",name:"Norwegian Wood",desc:"Power on a Haruki Murakami question",type:"answer_power",threshold:1,target:"haruki murakami",icon:"森"},
-  {id:"ap-lit-dante",name:"Descent into Hell",desc:"Power on a Dante question",type:"answer_power",threshold:1,target:"dante",icon:"獄"},
-  {id:"ap-lit-paradise",name:"Fall of Man",desc:"Power on a Paradise Lost question",type:"answer_power",threshold:1,target:"paradise lost",icon:"堕"},
-  {id:"ap-lit-twelfth",name:"Twelfth Night",desc:"Power on 12 different Shakespeare works",type:"answer_power",threshold:12,target:["hamlet","macbeth","othello","king lear","romeo and juliet","the tempest","a midsummer night's dream","julius caesar","antony and cleopatra","richard iii",["henry v","henry iv"],"much ado about nothing","twelfth night","the merchant of venice","as you like it","the taming of the shrew","the winter's tale","coriolanus","titus andronicus"],distinct:true,icon:"劇"},
-  {id:"ap-hist-wars",name:"Wars of the Three Meanings",desc:"Power on War of the Three Henries, War of the Triple Alliance, and Punic Wars",type:"answer_power",threshold:3,target:["war of the three henries","war of the triple alliance","punic wars"],distinct:true,icon:"戦"},
-  {id:"ap-hist-teto",name:"Kasane Teto",desc:"Power on a Tito or Yugoslavia question",type:"answer_power",threshold:1,target:["tito","yugoslavia"],icon:"統"},
-  {id:"ap-hist-memento",name:"Memento Mori",desc:"Power on a Goths, Vandals, or Huns question",type:"answer_power",threshold:1,target:["goths","vandals","huns"],icon:"蛮"},
-  {id:"ap-hist-alexander",name:"Conqueror of the Known World",desc:"Power on 9 Alexander the Great questions",type:"answer_power",threshold:9,target:"alexander the great",icon:"帝"},
-  {id:"ap-hist-grant",name:"Unconditional Surrender Grant",desc:"Power on a Ulysses S. Grant question",type:"answer_power",threshold:1,target:"ulysses s. grant",icon:"将"},
-  {id:"ap-hist-luther",name:"Hater of German Serfs",desc:"Power on a Martin Luther question",type:"answer_power",threshold:1,target:"martin luther",icon:"改"},
-  {id:"ap-hist-capet",name:"House of Capet",desc:"Power on 16 questions answered Louis",type:"answer_power",threshold:16,target:"louis",icon:"冠"},
-  {id:"ap-hist-union",name:"Union Jack",desc:"Power on England, Scotland, Wales, Ireland, and Britain",type:"answer_power",threshold:5,target:["england","scotland","wales","ireland",["britain","great britain","united kingdom"]],distinct:true,icon:"連"},
-  {id:"ap-hist-autumn",name:"Autumn of Nations",desc:"Power on a Berlin Wall or Soviet Union question",type:"answer_power",threshold:1,target:["berlin wall","soviet union"],icon:"壁"},
-  {id:"ap-hist-fdj",name:"Freie Deutsche Jugend",desc:"Power on an East Germany question",type:"answer_power",threshold:1,target:"east germany",icon:"東"},
-  {id:"ap-hist-bismarck",name:"Iron and Blood",desc:"Power on a Bismarck question",type:"answer_power",threshold:1,target:"bismarck",icon:"血"},
-  {id:"ap-hist-dynasty",name:"Dynasty of Dynasties",desc:"Power on 8 different Chinese dynasties",type:"answer_power",threshold:8,target:["han","tang","song","ming","qing","yuan","qin","zhou","sui","shang","xia","jin"],distinct:true,icon:"朝"},
-  {id:"ap-hist-treatises",name:"Treatises",desc:"Power on Versailles, Westphalia, Utrecht, Paris, and Tordesillas",type:"answer_power",threshold:5,target:["versailles","westphalia","utrecht","paris","tordesillas"],distinct:true,icon:"約"},
-  {id:"ap-hist-sun",name:"Sun Never Sets",desc:"Power on a British Empire or Victoria question",type:"answer_power",threshold:1,target:["british empire","victoria"],icon:"日"},
-  {id:"ap-hist-japan",name:"Land of the Rising Sun",desc:"Power on a Japan question",type:"answer_power",threshold:1,target:"japan",icon:"和"},
-  {id:"ap-hist-mansa",name:"I'm Mansa Musa",desc:"Power on a Mansa Musa question",type:"answer_power",threshold:1,target:"mansa musa",icon:"金"},
-  {id:"ap-hist-sunking",name:"The Sun King",desc:"Power on a Louis XIV question",type:"answer_power",threshold:1,target:"louis xiv",icon:"陽"},
-  {id:"ap-hist-thatcher",name:"Milk Snatcher",desc:"Power on a Margaret Thatcher question",type:"answer_power",threshold:1,target:"margaret thatcher",icon:"鉄"},
-  {id:"ap-hist-genghis",name:"Great Conqueror",desc:"Power on a Genghis Khan question",type:"answer_power",threshold:1,target:"genghis khan",icon:"征"},
-  {id:"ap-hist-workers",name:"Workers of the World, Unite!",desc:"Power on 12 different communist revolutionaries",type:"answer_power",threshold:12,target:["stalin","lenin","trotsky","mao","che guevara","ho chi minh","castro","engels","rosa luxemburg","tito","kim il-sung","pol pot","deng xiaoping","zhou enlai","honecker","ceausescu"],distinct:true,icon:"革"},
-  {id:"ap-geo-siberia",name:"Birthplace of Keskil",desc:"Power on a Siberia question",type:"answer_power",threshold:1,target:"siberia",icon:"寒"},
-  {id:"ap-geo-newfin",name:"New-fin-land",desc:"Power on a Newfoundland question",type:"answer_power",threshold:1,target:"newfoundland",icon:"島"},
-  {id:"ap-geo-mormon",name:"Land of the Mormons",desc:"Power on a Utah question",type:"answer_power",threshold:1,target:"utah",icon:"塩"},
-  {id:"ap-geo-faithful",name:"Old Faithful",desc:"Power on a Yellowstone question",type:"answer_power",threshold:1,target:"yellowstone",icon:"泉"},
-  {id:"ap-geo-carnival",name:"Carnival",desc:"Power on a Brazil question",type:"answer_power",threshold:1,target:"brazil",icon:"祭"},
-  {id:"ap-geo-lion",name:"Lion City",desc:"Power on a Singapore question",type:"answer_power",threshold:1,target:"singapore",icon:"獅"},
-  {id:"ap-geo-harbour",name:"Fragrant Harbour",desc:"Power on a Hong Kong question",type:"answer_power",threshold:1,target:"hong kong",icon:"港"},
-  {id:"ap-geo-capitals",name:"Capital of Capitals",desc:"Power on a London question",type:"answer_power",threshold:1,target:"london",icon:"都"},
-  {id:"ap-geo-pearl",name:"Pearl of the Orient",desc:"Power on a Shanghai question",type:"answer_power",threshold:1,target:"shanghai",icon:"珠"},
-  {id:"ap-geo-snow",name:"Abode of Snow",desc:"Power on a Himalayas question",type:"answer_power",threshold:1,target:"himalayas",icon:"雪"},
-  {id:"ap-geo-penguins",name:"Penguins",desc:"Power on a Madagascar question",type:"answer_power",threshold:1,target:"madagascar",icon:"狐"},
-  {id:"ap-geo-arteries",name:"Arteries of the World",desc:"Power on Nile, Yangtze, Amazon, Mississippi, and Danube",type:"answer_power",threshold:5,target:["nile","yangtze","amazon","mississippi","danube"],distinct:true,icon:"河"},
-  {id:"ap-geo-potassium",name:"Greatest Exporter of Potassium",desc:"Power on a Kazakhstan question",type:"answer_power",threshold:1,target:"kazakhstan",icon:"鉀"},
-  {id:"ap-geo-stans",name:"Stan(d) Up Comedy",desc:"Power on 5 different -stan countries",type:"answer_power",threshold:5,target:["kazakhstan","uzbekistan","turkmenistan","kyrgyzstan","tajikistan","afghanistan","pakistan"],distinct:true,icon:"邦"},
-  {id:"ap-geo-seas",name:"Seven Seas",desc:"Power on 7 oceans and major seas",type:"answer_power",threshold:7,target:["pacific","atlantic","indian","arctic","southern","mediterranean","caribbean","baltic","black","red","caspian","north sea"],distinct:true,icon:"海"},
-  {id:"ap-sci-alloys",name:"Too Complicated for Simple Wikipedia",desc:"Power on an alloys question",type:"answer_power",threshold:1,target:"alloys",icon:"合"},
-  {id:"ap-sci-mito",name:"Powerhouse of the Cell",desc:"Power on a mitochondria question",type:"answer_power",threshold:1,target:"mitochondria",icon:"粒"},
-  {id:"ap-sci-blackhole",name:"Hail Mary",desc:"Power on a black hole question",type:"answer_power",threshold:1,target:"black hole",icon:"孔"},
-  {id:"ap-sci-nobel",name:"Nobel Intentions",desc:"Power on a Nobel Prize-winning discovery",type:"answer_power",threshold:1,target:["nobel prize","nobel","penicillin","radioactivity","insulin","transistor","green fluorescent protein","crispr","graphene","prions","superconductivity","photoelectric effect","cosmic microwave background","higgs boson","gravitational waves","nuclear fission","telomeres","ribosome","polymerase chain reaction","quasicrystals","laser"],icon:"賞"},
-  {id:"ap-sci-dna",name:"Double Helix",desc:"Power on a DNA question",type:"answer_power",threshold:1,target:"dna",icon:"螺"},
-  {id:"ap-sci-gut",name:"Gut Instinct",desc:"Power on a digestive system or enzyme question",type:"answer_power",threshold:1,target:["digestive","enzyme","stomach","intestine"],icon:"腸"},
-  {id:"ap-sci-ideal",name:"Ideal Gas",desc:"Power on a thermodynamics question",type:"answer_power",threshold:1,target:"thermodynamics",icon:"熱"},
-  {id:"ap-sci-em",name:"Electromagnetism",desc:"Power on an electromagnetism question",type:"answer_power",threshold:1,target:["electromagnetism","electromagnetic","maxwell's equations","faraday's law","gauss's law","ampere's law","coulomb's law","lorentz force","magnetic field","electric field","magnetism","inductance"],icon:"磁"},
-  {id:"ap-sci-schrodinger",name:"Schrödinger's Cat",desc:"Power on a quantum mechanics question",type:"answer_power",threshold:1,target:"quantum",icon:"量"},
-  {id:"ap-sci-lagrangian",name:"Lagrangian",desc:"Power on a classical mechanics question",type:"answer_power",threshold:1,target:"lagrangian",icon:"力"},
-  {id:"ap-sci-selection",name:"Law of the Jungle",desc:"Power on a natural selection question",type:"answer_power",threshold:1,target:"natural selection",icon:"進"},
-  {id:"ap-sci-water",name:"Universal Solvent",desc:"Power on a water question",type:"answer_power",threshold:1,target:"water",icon:"水"},
-  {id:"ap-sci-standard",name:"Standard Model",desc:"Power on a particle physics question",type:"answer_power",threshold:1,target:["standard model","particle physics"],icon:"粒"},
-  {id:"ap-sci-speciation",name:"Speciation",desc:"Power on an evolution or speciation question",type:"answer_power",threshold:1,target:"speciation",icon:"種"},
-  {id:"ap-sci-chloroplast",name:"Chloroplast",desc:"Power on a photosynthesis question",type:"answer_power",threshold:1,target:"photosynthesis",icon:"葉"},
-  {id:"ap-sci-mendel",name:"Mendelian",desc:"Power on a genetics question",type:"answer_power",threshold:1,target:["genetics","mendel","gregor mendel","chromosomes","chromosome","alleles","allele","meiosis","genome","dna","genes","gene"],icon:"遺"},
-  {id:"ap-sci-aero",name:"Curious",desc:"Power on an aerospace or aerodynamics question",type:"answer_power",threshold:1,target:["aerospace","aerodynamics","airfoil","bernoulli","lift","drag","reynolds number","boundary layer","navier stokes","turbulence","mach","supersonic","airplanes","jet engine","flight"],icon:"翼"},
-  {id:"ap-sci-fibonacci",name:"Fibonacci",desc:"Power on a golden ratio question",type:"answer_power",threshold:1,target:"golden ratio",icon:"比"},
-  {id:"ap-sci-gaussian",name:"Gaussian",desc:"Power on a Gauss or normal distribution question",type:"answer_power",threshold:1,target:["gauss","normal distribution"],icon:"鐘"},
-  {id:"ap-sci-sort",name:"Stalin Sort",desc:"Power on a sorting question",type:"answer_power",threshold:1,target:"sorting",icon:"序"},
-  {id:"ap-sci-turing",name:"Turing Test",desc:"Power on an AI or machine learning question",type:"answer_power",threshold:1,target:["ai","machine learning","artificial intelligence","neural network"],icon:"機"},
-  {id:"ap-sci-compiler",name:"Compiler",desc:"Power on a compiler or programming language question",type:"answer_power",threshold:1,target:["compiler","programming language"],icon:"訳"},
-  {id:"ap-sci-kernels",name:"Kernels",desc:"Power on an operating system question",type:"answer_power",threshold:1,target:["linux","unix","windows","operating system"],icon:"核"},
-  {id:"ap-sci-sun",name:"The Sun Is a Deadly Laser",desc:"Power on a question about the sun",type:"answer_power",threshold:1,target:"sun",icon:"燃"},
-  {id:"ap-sci-v12",name:"V12 Engine",desc:"Power on an internal combustion or Otto cycle question",type:"answer_power",threshold:1,target:["internal combustion","otto cycle","engine"],icon:"輪"},
-  {id:"ap-sci-stress",name:"Stress-Strain Curve",desc:"Power on a materials science question",type:"answer_power",threshold:1,target:["materials science","stress-strain","material"],icon:"張"},
-  {id:"ap-sci-hydrology",name:"Water Cycle",desc:"Power on a hydrology or precipitation question",type:"answer_power",threshold:1,target:["hydrology","precipitation","water cycle"],icon:"雨"},
-  {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different element questions",type:"answer_power",threshold:7,target:["hydrogen","helium","lithium","beryllium","boron","carbon","nitrogen","oxygen","fluorine","neon","sodium","magnesium",["aluminium","aluminum"],"silicon","phosphorus",["sulfur","sulphur"],"chlorine","argon","potassium","calcium","iron","copper","zinc","silver","gold","mercury","lead","uranium","platinum","titanium","nickel","cobalt","manganese","chromium","vanadium","bromine","iodine","strontium","barium","radium","thorium"],distinct:true,icon:"元"},
-  {id:"ap-sci-spectroscopy",name:"Spectroscopy",desc:"Power on NMR, IR, UV-Vis, mass spec, and X-ray crystallography",type:"answer_power",threshold:5,target:["nmr","ir","uv-vis","mass spectrometry","x-ray crystallography"],distinct:true,icon:"光"},
-  {id:"ap-sci-solvay",name:"Solvay Conference",desc:"Power on Einstein, Bohr, Heisenberg, Dirac, Pauli, Curie, and Schrödinger",type:"answer_power",threshold:7,target:["einstein","bohr","heisenberg","dirac","pauli","curie","schrödinger"],distinct:true,icon:"学"},
-  {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on 5 different space missions or observatories",type:"answer_power",threshold:5,target:["apollo","gemini","mercury","soyuz","space shuttle","hubble","voyager","international space station","cassini","kepler","james webb","new horizons","curiosity","sputnik","vostok"],distinct:true,icon:"宙"},
-  {id:"ap-myth-lightning",name:"God of Lightning",desc:"Power on Thor, Zeus, and Indra",type:"answer_power",threshold:3,target:["thor","zeus","indra"],distinct:true,icon:"雷"},
-  {id:"ap-myth-freaky",name:"Freaky Deaky",desc:"Power on an Oedipus Rex question",type:"answer_power",threshold:1,target:"oedipus",icon:"眼"},
-  {id:"ap-myth-underworld",name:"Underworld",desc:"Power on Anubis, Hades, and Osiris",type:"answer_power",threshold:3,target:["anubis","hades","osiris"],distinct:true,icon:"冥"},
-  {id:"ap-myth-monkey",name:"Great Sage Equal to Heaven",desc:"Power on a Monkey King or Journey to the West question",type:"answer_power",threshold:1,target:["monkey king","journey to the west","sun wukong"],icon:"猿"},
-  {id:"ap-myth-trickster",name:"Trickster God",desc:"Power on Loki and Coyote",type:"answer_power",threshold:2,target:["loki","coyote"],distinct:true,icon:"狡"},
-  {id:"ap-myth-gilgamesh",name:"Uuudreeeeeeeaaaa",desc:"Power on a Gilgamesh question",type:"answer_power",threshold:1,target:"gilgamesh",icon:"王"},
-  {id:"ap-myth-ragnarok",name:"Ragnarök",desc:"Power on a Norse apocalypse question",type:"answer_power",threshold:1,target:"ragnarök",icon:"滅"},
-  {id:"ap-myth-shinto",name:"Shinto Shrine",desc:"Power on a Japanese mythology question",type:"answer_power",threshold:1,target:["japanese myth","amaterasu","susanoo","izanagi","izanami","shinto","kami","raijin","hachiman","jimmu"],icon:"社"},
-  {id:"ap-myth-morrigan",name:"The Morrigan",desc:"Power on a Celtic mythology question",type:"answer_power",threshold:1,target:["celtic","morrigan","cu chulainn","dagda","lugh","fionn","finn maccool","danu","fomorians","oisin"],icon:"巫"},
-  {id:"ap-myth-genesis",name:"Genesis",desc:"Power on a creation myth question",type:"answer_power",threshold:1,target:"creation myth",icon:"創"},
-  {id:"ap-myth-quetzal",name:"Feathered Serpent",desc:"Power on a Quetzalcoatl question",type:"answer_power",threshold:1,target:"quetzalcoatl",icon:"蛇"},
-  {id:"ap-myth-labours",name:"The Labours",desc:"Power on a Heracles or Hercules question",type:"answer_power",threshold:1,target:"heracles",icon:"獅"},
-  {id:"ap-myth-theogony",name:"Theogony",desc:"Power on 12 different Greek deities or Titans",type:"answer_power",threshold:12,target:["zeus","hera","poseidon","demeter",["athena","athene"],"apollo","artemis","ares",["hephaestus","hephaistos","vulcan"],"aphrodite","hermes",["dionysus","dionysos","bacchus"],["hades","pluto"],"hestia",["persephone","proserpina"],["cronus","kronos","cronos"],"rhea",["gaia","gaea"],["uranus","ouranos"],"eros","pan","helios","selene","eos","nike","iris","nemesis","hecate","asclepius","hebe","nyx","hypnos","thanatos","morpheus","tyche","eris","oceanus","tethys","hyperion","theia","coeus","phoebe","mnemosyne","themis","crius","iapetus","atlas","prometheus","epimetheus"],distinct:true,icon:"神"},
-  {id:"ap-myth-iliad",name:"Iliad Heroes",desc:"Power on Achilles, Hector, Agamemnon, Odysseus, Ajax, Diomedes, and Patroclus",type:"answer_power",threshold:7,target:["achilles","hector","agamemnon","odysseus","ajax","diomedes","patroclus"],distinct:true,icon:"英"},
-  {id:"ap-myth-allfather",name:"Allfather's Blessing",desc:"Power on 10 different Norse mythology questions",type:"answer_power",threshold:10,target:["odin","thor","loki","freyja","freya","freyr","baldr","balder","baldur","tyr","heimdall","heimdallr","frigg","frigga","hel","jörmungandr","midgard serpent","fenrir","fenris","yggdrasil","valhalla","ragnarök","valkyrie","valkyries","njord","njordr","skadi","mimir","norns","mjolnir","sleipnir","gungnir","bifrost","asgard","aesir","vanir","idunn","idun","bragi","sif","huginn","muninn","draupnir","gjallarhorn","kvasir","ymir","audhumla","nidhogg","norse","norse mythology","jotunheim","midgard","gleipnir","fafnir","sigurd","brunhild","brynhildr","volsung","nine worlds","einherjar"],distinct:"questions",icon:"北"},
-  {id:"ap-pop-kanye",name:"I Guess We'll Never Know",desc:"Power on a Kanye West question",type:"answer_power",threshold:1,target:"kanye",icon:"韻"},
-  {id:"ap-pop-mj",name:"King of Pop",desc:"Power on a Michael Jackson question",type:"answer_power",threshold:1,target:"michael jackson",icon:"舞"},
-  {id:"ap-pop-starwars",name:"Skywalker",desc:"Power on a Star Wars question",type:"answer_power",threshold:1,target:"star wars",icon:"星"},
-  {id:"ap-pop-minecraft",name:"Master of the Craft",desc:"Power on a Minecraft question",type:"answer_power",threshold:1,target:"minecraft",icon:"塊"},
-  {id:"ap-pop-nba",name:"Point Guard",desc:"Power on an NBA question",type:"answer_power",threshold:1,target:"nba",icon:"球"},
-  {id:"ap-pop-lebron",name:"LeSunshine",desc:"Power on a LeBron James question",type:"answer_power",threshold:1,target:"lebron james",icon:"覇"},
-  {id:"ap-pop-zelda",name:"Hyrule",desc:"Power on a Legend of Zelda question",type:"answer_power",threshold:1,target:"zelda",icon:"剣"},
-  {id:"ap-pop-fortnite",name:"Battle Royale",desc:"Power on a Fortnite or battle royale question",type:"answer_power",threshold:1,target:["fortnite","battle royale"],icon:"闘"},
-  {id:"ap-pop-harry",name:"Wizarding World",desc:"Power on a Harry Potter question",type:"answer_power",threshold:1,target:["harry potter","hogwarts","hermione","dumbledore","quidditch","rowling"],icon:"杖"},
-  {id:"ap-pop-lol",name:"Get a Life",desc:"Power on a League of Legends question",type:"answer_power",threshold:1,target:"league of legends",icon:"戯"},
-  {id:"ap-pop-nfl",name:"Touchdown",desc:"Power on an NFL question",type:"answer_power",threshold:1,target:["nfl","super bowl","tom brady","patrick mahomes","new england patriots","dallas cowboys","green bay packers","kansas city chiefs","peyton manning","philadelphia eagles","bill belichick","quarterback"],icon:"突"},
-  {id:"ap-pop-nintendo",name:"64",desc:"Power on a Nintendo franchise question",type:"answer_power",threshold:1,target:"nintendo",icon:"遊"},
-  {id:"ap-pop-mario",name:"Wahoo!",desc:"Power on a Mario question",type:"answer_power",threshold:1,target:"mario",icon:"跳"},
-  {id:"ap-fa-requiem",name:"Requiem",desc:"Power on a Mozart question",type:"answer_power",threshold:1,target:"mozart",icon:"奏"},
-  {id:"ap-fa-messiah",name:"Messiah",desc:"Power on a Handel question",type:"answer_power",threshold:1,target:"handel",icon:"唱"},
-  {id:"ap-fa-tmnt",name:"Teenage Mutant Ninja Turtles",desc:"Power on Raphael, Michelangelo, Donatello, and da Vinci",type:"answer_power",threshold:4,target:["raphael","michelangelo","donatello","da vinci"],distinct:true,icon:"絵"},
-  {id:"ap-fa-wagner",name:"Total Work of Art",desc:"Power on a Wagner question",type:"answer_power",threshold:1,target:"wagner",icon:"楽"},
-  {id:"ap-fa-rodin",name:"The Thinker",desc:"Power on a Rodin question",type:"answer_power",threshold:1,target:"rodin",icon:"想"},
-  {id:"ap-fa-monet",name:"Water Lilies",desc:"Power on a Monet question",type:"answer_power",threshold:1,target:"monet",icon:"蓮"},
-  {id:"ap-fa-lascala",name:"La Scala",desc:"Power on an Italian opera question",type:"answer_power",threshold:1,target:"opera",icon:"歌"},
-  {id:"ap-fa-ring",name:"Ring Cycle",desc:"Power on a Wagner Ring Cycle question",type:"answer_power",threshold:1,target:"ring cycle",icon:"環"},
-  {id:"ap-fa-debussy",name:"Clair de Lune",desc:"Power on a Debussy question",type:"answer_power",threshold:1,target:"debussy",icon:"月"},
-  {id:"ap-fa-vangogh",name:"Earless Man",desc:"Power on a van Gogh question",type:"answer_power",threshold:1,target:"van gogh",icon:"耳"},
-  {id:"ap-fa-dali",name:"The Persistence of Memory",desc:"Power on a Dalí question",type:"answer_power",threshold:1,target:"dalí",icon:"夢"},
-  {id:"ap-fa-impressionist",name:"Impressionist Circle",desc:"Power on Monet, Renoir, Degas, Cézanne, Pissarro, and Morisot",type:"answer_power",threshold:6,target:["monet","renoir","degas","cézanne","pissarro","morisot"],distinct:true,icon:"印"},
-  {id:"ap-fa-string",name:"String Quartets",desc:"Power on 4 different chamber music questions",type:"answer_power",threshold:4,target:["string quartet","chamber music","sonata","quartet"],distinct:true,icon:"弦"},
-  {id:"ap-phil-locke",name:"Essay Competition",desc:"Power on a John Locke question",type:"answer_power",threshold:1,target:"john locke",icon:"白"},
-  {id:"ap-phil-athens",name:"The Three Meanings of Athens",desc:"Power on Plato, Aristotle, and Socrates",type:"answer_power",threshold:3,target:["plato","aristotle","socrates"],distinct:true,icon:"知"},
-  {id:"ap-phil-cave",name:"The Cave Allegory",desc:"Power on a Plato's Republic question",type:"answer_power",threshold:1,target:"republic",icon:"洞"},
-  {id:"ap-phil-marx",name:"Gen Z Larper Handbook",desc:"Power on a Marx question",type:"answer_power",threshold:1,target:"marx",icon:"階"},
-  {id:"ap-phil-nietzsche",name:"Übermensch",desc:"Power on a Nietzsche question",type:"answer_power",threshold:1,target:"nietzsche",icon:"超"},
-  {id:"ap-phil-hobbes",name:"Leviathan",desc:"Power on a Hobbes question",type:"answer_power",threshold:1,target:"hobbes",icon:"獣"},
-  {id:"ap-phil-exist",name:"Existentialism",desc:"Power on a Sartre or Camus question",type:"answer_power",threshold:1,target:["sartre","camus"],icon:"存"},
-  {id:"ap-phil-machiavelli",name:"Il Principe",desc:"Power on a Machiavelli question",type:"answer_power",threshold:1,target:"machiavelli",icon:"君"},
-  {id:"ap-phil-kant",name:"Categorical Imperative",desc:"Power on a Kant question",type:"answer_power",threshold:1,target:"kant",icon:"徳"},
-  {id:"ap-phil-enlightened",name:"Enlightened Monarch",desc:"Power on Locke, Hume, Kant, Rousseau, Voltaire, and Montesquieu",type:"answer_power",threshold:6,target:["locke","hume","kant","rousseau","voltaire","montesquieu"],distinct:true,icon:"啓"},
-  {id:"ap-phil-school",name:"The School of Athens",desc:"Power on 5 figures from The School of Athens",type:"answer_power",threshold:5,target:["plato","aristotle","socrates","pythagoras","euclid","diogenes","heraclitus","ptolemy","zoroaster","raphael"],distinct:true,icon:"学"},
+  // ── topic achievements (14.87): a topic of the category tree, or a list of answers (see the ACH-ENGINE) ──
+  {id:"ap-lit-mobydih",name:"Moby Dih",desc:"Power on Moby-Dick or Herman Melville",type:"answer_power",threshold:1,answers:["moby dick","@herman melville"],icon:"鯨"},
+  {id:"ap-lit-hope",name:"Hope is the Thing with Feathers",desc:"Power on an Emily Dickinson question",type:"answer_power",threshold:1,answers:["@emily dickinson"],icon:"羽"},
+  {id:"ap-lit-raven",name:"The Raven",desc:"Power on Edgar Allan Poe or one of his works",type:"answer_power",threshold:1,answers:["@edgar allan poe","the raven","the tell tale heart","the fall of the house of usher","the cask of amontillado","the masque of the red death","the murders in the rue morgue"],icon:"鴉"},
+  {id:"ap-lit-shore",name:"On the Shore",desc:"Power on Franz Kafka or one of his works",type:"answer_power",threshold:1,answers:["@franz kafka","the metamorphosis","the trial","the castle","in the penal colony","a hunger artist","kafka on the shore"],icon:"岸"},
+  {id:"ap-lit-pewpew",name:"Pew Pew",desc:"Power on Anton Chekhov or one of his plays",type:"answer_power",threshold:1,answers:["@anton chekhov","the seagull","uncle vanya","three sisters","the cherry orchard"],icon:"銃"},
+  {id:"ap-lit-pottery",name:"Lover of Pottery",desc:"Power on John Keats or one of his odes",type:"answer_power",threshold:1,answers:["@john keats","ode on a grecian urn","ode to a nightingale","to autumn","endymion"],icon:"壺"},
+  {id:"ap-lit-inimitable",name:"The Inimitable",desc:"Power on Charles Dickens or one of his novels",type:"answer_power",threshold:1,answers:["@charles dickens","great expectations","bleak house","a tale of two cities","oliver twist","david copperfield","little dorrit","hard times","our mutual friend","a christmas carol","the pickwick papers","dombey and son","nicholas nickleby"],icon:"筆"},
+  {id:"ap-lit-dear",name:"Dear Reader",desc:"Power on Jane Austen or one of her novels",type:"answer_power",threshold:1,answers:["@jane austen","pride and prejudice","sense and sensibility","emma","persuasion","mansfield park","northanger abbey"],icon:"淑"},
+  {id:"ap-lit-bronte",name:"Double Trouble",desc:"Power on two of the Brontë sisters (or their novels)",type:"answer_power",threshold:2,count:"targets",answers:[["emily bronte","wuthering heights"],["charlotte bronte","jane eyre","villette"],["anne bronte","agnes grey","the tenant of wildfell hall"]],icon:"姉"},
+  {id:"ap-lit-beowulf",name:"Epic of the North",desc:"Power on Beowulf",type:"answer_power",threshold:1,answers:["beowulf","grendel"],within:["Literature","Mythology"],icon:"竜"},
+  {id:"ap-lit-magical",name:"Magical Realist",desc:"Power on Gabriel García Márquez or one of his works",type:"answer_power",threshold:1,answers:["@gabriel garcia marquez","one hundred years of solitude","love in the time of cholera","chronicle of a death foretold","the autumn of the patriarch"],icon:"魔"},
+  {id:"ap-lit-norwegian",name:"Norwegian Wood",desc:"Power on Haruki Murakami or one of his novels",type:"answer_power",threshold:1,answers:["@haruki murakami","norwegian wood","kafka on the shore","1q84","the wind up bird chronicle"],icon:"森"},
+  {id:"ap-lit-dante",name:"Descent into Hell",desc:"Power on Dante or the Divine Comedy",type:"answer_power",threshold:1,answers:["@dante alighieri","dante","the divine comedy","inferno","purgatorio","paradiso"],icon:"獄"},
+  {id:"ap-lit-paradise",name:"Fall of Man",desc:"Power on Paradise Lost or John Milton",type:"answer_power",threshold:1,answers:["paradise lost","@john milton"],icon:"堕"},
+  {id:"ap-lit-twelfth",name:"Twelfth Night",desc:"Power on 12 different Shakespeare answers",type:"answer_power",threshold:12,count:"answers",topic:"Literature > English Literature > British Literature > Shakespeare",icon:"劇"},
+  {id:"ap-hist-wars",name:"Wars of the Three Meanings",desc:"Power on the War of the Three Henries, the War of the Triple Alliance and the Punic Wars",type:"answer_power",threshold:3,count:"targets",answers:[["war of the three henries"],["war of the triple alliance","paraguayan war"],["punic wars","first punic war","second punic war","third punic war"]],icon:"戦"},
+  {id:"ap-hist-teto",name:"Kasane Teto",desc:"Power on Tito or Yugoslavia",type:"answer_power",threshold:1,answers:["@josip broz tito","yugoslavia"],icon:"統"},
+  {id:"ap-hist-memento",name:"Memento Mori",desc:"Power on the Goths, Vandals or Huns",type:"answer_power",threshold:1,answers:["goths","visigoths","ostrogoths","vandals","huns","attila the hun","attila"],icon:"蛮"},
+  {id:"ap-hist-alexander",name:"Conqueror of the Known World",desc:"Power on 9 Alexander the Great questions",type:"answer_power",threshold:9,answers:["alexander the great","alexander iii of macedon"],icon:"帝"},
+  {id:"ap-hist-grant",name:"Unconditional Surrender Grant",desc:"Power on a Ulysses S. Grant question",type:"answer_power",threshold:1,answers:["@ulysses s grant"],icon:"将"},
+  {id:"ap-hist-luther",name:"Hater of German Serfs",desc:"Power on a Martin Luther question",type:"answer_power",threshold:1,answers:["@martin luther"],icon:"改"},
+  {id:"ap-hist-capet",name:"House of Capet",desc:"Power on 16 questions on French kings named Louis",type:"answer_power",threshold:16,answers:["louis i","louis ii","louis iii","louis iv","louis v","louis vi","louis vii","louis viii","louis ix","louis x","louis xi","louis xii","louis xiii","louis xiv","louis xv","louis xvi","louis xviii","louis philippe"],icon:"冠"},
+  {id:"ap-hist-union",name:"Union Jack",desc:"Power on England, Scotland, Wales, Ireland and Britain",type:"answer_power",threshold:5,count:"targets",within:["History","Geography"],answers:["england","scotland","wales","ireland",["great britain","united kingdom","britain"]],icon:"連"},
+  {id:"ap-hist-autumn",name:"Autumn of Nations",desc:"Power on the Berlin Wall, the Revolutions of 1989 or the Soviet Union",type:"answer_power",threshold:1,answers:["berlin wall","fall of the berlin wall","revolutions of 1989","soviet union","ussr"],icon:"壁"},
+  {id:"ap-hist-fdj",name:"Freie Deutsche Jugend",desc:"Power on East Germany",type:"answer_power",threshold:1,answers:["east germany","german democratic republic"],icon:"東"},
+  {id:"ap-hist-bismarck",name:"Iron and Blood",desc:"Power on an Otto von Bismarck question",type:"answer_power",threshold:1,answers:["@otto von bismarck"],icon:"血"},
+  {id:"ap-hist-dynasty",name:"Dynasty of Dynasties",desc:"Power on 8 different Chinese dynasties",type:"answer_power",threshold:8,count:"targets",within:"History",answers:[["han dynasty","han"],["tang dynasty","tang"],["song dynasty","song"],["ming dynasty","ming"],["qing dynasty","qing"],["yuan dynasty","yuan"],["qin dynasty","qin"],["zhou dynasty","zhou"],["sui dynasty","sui"],["shang dynasty","shang"],["xia dynasty","xia"],["jin dynasty","jin"]],icon:"朝"},
+  {id:"ap-hist-treatises",name:"Treatises",desc:"Power on 5 different peace treaties (Versailles, Westphalia, Utrecht, Tordesillas, Vienna …)",type:"answer_power",threshold:5,count:"targets",answers:[["treaty of versailles","versailles"],["peace of westphalia","treaty of westphalia","westphalia"],["treaty of utrecht","peace of utrecht","utrecht"],["treaty of paris"],["treaty of tordesillas","tordesillas"],["congress of vienna"],["treaty of ghent"],["treaty of brest litovsk","brest litovsk"],["treaty of nanking","treaty of nanjing"],["treaty of guadalupe hidalgo"],["treaty of tilsit","tilsit"],["treaty of nerchinsk","nerchinsk"],["treaty of waitangi","waitangi"],["treaty of shimonoseki","shimonoseki"],["treaty of kanagawa","kanagawa"],["treaty of trianon","trianon"],["treaty of sevres"],["treaty of lausanne"],["treaty of verdun"],["treaty of westminster"],["peace of augsburg"],["treaty of nijmegen","nijmegen"],["treaty of aix la chapelle"]],icon:"約"},
+  {id:"ap-hist-sun",name:"Sun Never Sets",desc:"Power on the British Empire or Queen Victoria",type:"answer_power",threshold:1,answers:["british empire","queen victoria","victoria"],icon:"日"},
+  {id:"ap-hist-japan",name:"Land of the Rising Sun",desc:"Power on a Japanese history question",type:"answer_power",threshold:1,topic:"History > World History > Asian History > Japanese History",icon:"和"},
+  {id:"ap-hist-mansa",name:"I'm Mansa Musa",desc:"Power on Mansa Musa or the Mali Empire",type:"answer_power",threshold:1,answers:["mansa musa","musa i","mali empire"],icon:"金"},
+  {id:"ap-hist-sunking",name:"The Sun King",desc:"Power on a Louis XIV question",type:"answer_power",threshold:1,answers:["louis xiv"],icon:"陽"},
+  {id:"ap-hist-thatcher",name:"Milk Snatcher",desc:"Power on a Margaret Thatcher question",type:"answer_power",threshold:1,answers:["@margaret thatcher"],icon:"鉄"},
+  {id:"ap-hist-genghis",name:"Great Conqueror",desc:"Power on Genghis Khan or the Mongol Empire",type:"answer_power",threshold:1,answers:["genghis khan","temujin","mongol empire","mongols"],icon:"征"},
+  {id:"ap-hist-workers",name:"Workers of the World, Unite!",desc:"Power on 12 different communist revolutionaries",type:"answer_power",threshold:12,count:"targets",within:"*",answers:[["@joseph stalin"],["@vladimir lenin"],["@leon trotsky"],["mao zedong","mao tse tung"],["@che guevara"],["ho chi minh"],["@fidel castro"],["@friedrich engels"],["@rosa luxemburg"],["@josip broz tito"],["@karl marx"],["pol pot"],["kim il sung"],["@deng xiaoping"],["@enver hoxha"],["@antonio gramsci"],["raul castro"],["zhou enlai"],["@nikita khrushchev"],["@thomas sankara"]],icon:"革"},
+  {id:"ap-geo-siberia",name:"Birthplace of Keskil",desc:"Power on Siberia",type:"answer_power",threshold:1,within:["Geography","History"],answers:["siberia"],icon:"寒"},
+  {id:"ap-geo-newfin",name:"New-fin-land",desc:"Power on Newfoundland",type:"answer_power",threshold:1,answers:["newfoundland","newfoundland and labrador"],icon:"島"},
+  {id:"ap-geo-mormon",name:"Land of the Mormons",desc:"Power on Utah or Salt Lake City",type:"answer_power",threshold:1,answers:["utah","salt lake city","great salt lake"],icon:"塩"},
+  {id:"ap-geo-faithful",name:"Old Faithful",desc:"Power on Yellowstone",type:"answer_power",threshold:1,answers:["yellowstone national park","yellowstone","old faithful"],icon:"泉"},
+  {id:"ap-geo-carnival",name:"Carnival",desc:"Power on Brazil or Rio de Janeiro",type:"answer_power",threshold:1,answers:["brazil","rio de janeiro"],icon:"祭"},
+  {id:"ap-geo-lion",name:"Lion City",desc:"Power on Singapore",type:"answer_power",threshold:1,answers:["singapore"],icon:"獅"},
+  {id:"ap-geo-harbour",name:"Fragrant Harbour",desc:"Power on Hong Kong",type:"answer_power",threshold:1,answers:["hong kong"],icon:"港"},
+  {id:"ap-geo-capitals",name:"Capital of Capitals",desc:"Power on London",type:"answer_power",threshold:1,answers:["london"],icon:"都"},
+  {id:"ap-geo-pearl",name:"Pearl of the Orient",desc:"Power on Shanghai",type:"answer_power",threshold:1,answers:["shanghai"],icon:"珠"},
+  {id:"ap-geo-snow",name:"Abode of Snow",desc:"Power on the Himalayas or Mount Everest",type:"answer_power",threshold:1,answers:["himalayas","himalaya","mount everest"],icon:"雪"},
+  {id:"ap-geo-penguins",name:"Penguins",desc:"Power on Madagascar",type:"answer_power",threshold:1,answers:["madagascar"],icon:"狐"},
+  {id:"ap-geo-arteries",name:"Arteries of the World",desc:"Power on the Nile, Yangtze, Amazon, Mississippi and Danube",type:"answer_power",threshold:5,count:"targets",within:["Geography","Science and Math > Science > Earth Science"],answers:[["nile river","nile"],["yangtze river","yangtze","chang jiang"],["amazon river","amazon"],["mississippi river","mississippi"],["danube river","danube"]],icon:"河"},
+  {id:"ap-geo-potassium",name:"Greatest Exporter of Potassium",desc:"Power on Kazakhstan",type:"answer_power",threshold:1,answers:["kazakhstan"],icon:"鉀"},
+  {id:"ap-geo-stans",name:"Stan(d) Up Comedy",desc:"Power on 5 different -stan countries",type:"answer_power",threshold:5,count:"targets",within:["Geography","History","Current Events"],answers:["kazakhstan","uzbekistan","turkmenistan","kyrgyzstan","tajikistan","afghanistan","pakistan"],icon:"邦"},
+  {id:"ap-geo-seas",name:"Seven Seas",desc:"Power on 7 different oceans and seas",type:"answer_power",threshold:7,count:"targets",within:["Geography","Science and Math > Science > Earth Science"],answers:[["pacific ocean"],["atlantic ocean"],["indian ocean"],["arctic ocean"],["southern ocean"],["mediterranean sea"],["caribbean sea"],["baltic sea"],["black sea"],["red sea"],["caspian sea"],["north sea"],["south china sea"],["arabian sea"],["bering sea"],["sargasso sea"],["aral sea"],["dead sea"],["sea of japan"],["adriatic sea"],["aegean sea"]],icon:"海"},
+  {id:"ap-sci-alloys",name:"Too Complicated for Simple Wikipedia",desc:"Power on an alloy (steel, bronze, brass …)",type:"answer_power",threshold:1,answers:["alloys","steel","bronze","brass","pewter","solder","amalgam","stainless steel","cast iron","nichrome","invar","sterling silver"],icon:"合"},
+  {id:"ap-sci-mito",name:"Powerhouse of the Cell",desc:"Power on mitochondria",type:"answer_power",threshold:1,answers:["mitochondria","mitochondrion"],icon:"粒"},
+  {id:"ap-sci-blackhole",name:"Hail Mary",desc:"Power on black holes",type:"answer_power",threshold:1,answers:["black holes","supermassive black hole","event horizon","hawking radiation"],icon:"孔"},
+  {id:"ap-sci-nobel",name:"Nobel Intentions",desc:"Power on a landmark discovery or its scientist",type:"answer_power",threshold:1,topic:["Science and Math > Science > Biology > Any Biology > Biologists & Landmark Discoveries","Science and Math > Science > Chemistry > Any Chemistry > Chemists & Landmark Discoveries","Science and Math > Science > Physics > Any Physics > Physicists & Landmark Experiments"],icon:"賞"},
+  {id:"ap-sci-dna",name:"Double Helix",desc:"Power on DNA",type:"answer_power",threshold:1,answers:["dna","deoxyribonucleic acid","double helix"],icon:"螺"},
+  {id:"ap-sci-gut",name:"Gut Instinct",desc:"Power on digestion or a digestive enzyme",type:"answer_power",threshold:1,answers:["digestion","digestive system","stomach","small intestine","large intestine","pancreas","liver","bile","pepsin","trypsin","amylase","lipase","enzymes","gallbladder","esophagus"],icon:"腸"},
+  {id:"ap-sci-ideal",name:"Ideal Gas",desc:"Power on a thermodynamics question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Physics > FluidMechanics Thermo Optics Nuclear > Thermodynamics & Statistical Mechanics","Science and Math > Science > Chemistry > Non Element > Thermodynamics, Kinetics & Equilibrium"],icon:"熱"},
+  {id:"ap-sci-em",name:"Electromagnetism",desc:"Power on an electricity & magnetism question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > ClassicalMechanics and EM > Electricity & Magnetism",icon:"磁"},
+  {id:"ap-sci-schrodinger",name:"Schrödinger's Cat",desc:"Power on a quantum mechanics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > Other Physics > Quantum Mechanics",icon:"量"},
+  {id:"ap-sci-lagrangian",name:"Lagrangian",desc:"Power on a classical mechanics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > ClassicalMechanics and EM > Classical Mechanics",icon:"力"},
+  {id:"ap-sci-selection",name:"Law of the Jungle",desc:"Power on natural selection",type:"answer_power",threshold:1,answers:["natural selection","survival of the fittest","sexual selection","kin selection","artificial selection"],icon:"進"},
+  {id:"ap-sci-water",name:"Universal Solvent",desc:"Power on water",type:"answer_power",threshold:1,answers:["water","h2o"],icon:"水"},
+  {id:"ap-sci-standard",name:"Standard Model",desc:"Power on a particle physics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > Other Physics > Particle Physics & Quantum Field Theory",icon:"粒"},
+  {id:"ap-sci-speciation",name:"Speciation",desc:"Power on an evolution question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Biology > Organismal Population Biology > Evolution, Population Genetics & Taxonomy",icon:"種"},
+  {id:"ap-sci-chloroplast",name:"Chloroplast",desc:"Power on photosynthesis",type:"answer_power",threshold:1,answers:["photosynthesis","chloroplasts","chlorophyll","calvin cycle","light dependent reactions","rubisco","c4 carbon fixation","cam photosynthesis","photosystem ii","photosystem i"],icon:"葉"},
+  {id:"ap-sci-mendel",name:"Mendelian",desc:"Power on a genetics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Biology > Cell Molecular Biology > Molecular Biology & Genetics",icon:"遺"},
+  {id:"ap-sci-aero",name:"Curious",desc:"Power on an aerospace or fluid mechanics question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Other Science > Engineering > Mechanical & Aerospace Engineering","Science and Math > Science > Physics > FluidMechanics Thermo Optics Nuclear > Fluid Mechanics, Plasmas & Elasticity"],icon:"翼"},
+  {id:"ap-sci-fibonacci",name:"Fibonacci",desc:"Power on the golden ratio or the Fibonacci numbers",type:"answer_power",threshold:1,answers:["golden ratio","fibonacci numbers","fibonacci sequence","fibonacci"],icon:"比"},
+  {id:"ap-sci-gaussian",name:"Gaussian",desc:"Power on Gauss or the normal distribution",type:"answer_power",threshold:1,answers:["@carl friedrich gauss","normal distribution","gaussian distribution","gaussian elimination"],icon:"鐘"},
+  {id:"ap-sci-sort",name:"Stalin Sort",desc:"Power on an algorithms or data structures question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Computer Science > Algorithms & Data Structures",icon:"序"},
+  {id:"ap-sci-turing",name:"Turing Test",desc:"Power on an AI or machine learning question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Computer Science > Artificial Intelligence & Machine Learning","Current Events > Science > Technology & AI"],icon:"機"},
+  {id:"ap-sci-compiler",name:"Compiler",desc:"Power on a programming languages question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Computer Science > Programming Languages & Software Engineering",icon:"訳"},
+  {id:"ap-sci-kernels",name:"Kernels",desc:"Power on a computer hardware or operating systems question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Computer Science > Computer Architecture, Hardware & Operating Systems",icon:"核"},
+  {id:"ap-sci-sun",name:"The Sun Is a Deadly Laser",desc:"Power on a question about the Sun",type:"answer_power",threshold:1,topic:"Science and Math > Science > Astronomy > Any Astronomy > Solar System > The Sun & Space Weather",icon:"燃"},
+  {id:"ap-sci-v12",name:"V12 Engine",desc:"Power on an engine or its cycle",type:"answer_power",threshold:1,answers:["internal combustion engine","otto cycle","diesel engine","diesel cycle","carnot engine","carnot cycle","steam engine","jet engine","turbofan","wankel engine","four stroke engine","stirling engine","heat engine"],icon:"輪"},
+  {id:"ap-sci-stress",name:"Stress-Strain Curve",desc:"Power on a materials science question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Other Science > Engineering > Materials Science, Metallurgy & Manufacturing","Science and Math > Science > Physics > Other Physics > Condensed Matter & Materials Physics"],icon:"張"},
+  {id:"ap-sci-hydrology",name:"Water Cycle",desc:"Power on a weather or hydrology question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Earth Science > Meteorology & Weather","Science and Math > Science > Earth Science > Rivers, Glaciers, Soils & Landforms"],icon:"雨"},
+  {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different chemical elements",type:"answer_power",threshold:7,count:"answers",topic:"Science and Math > Science > Chemistry > Any Chemistry > Element",icon:"元"},
+  {id:"ap-sci-spectroscopy",name:"Spectroscopy",desc:"Power on 5 different analytical chemistry & spectroscopy answers",type:"answer_power",threshold:5,count:"answers",topic:"Science and Math > Science > Chemistry > Non Element > Analytical Chemistry, Separations & Spectroscopy",icon:"光"},
+  {id:"ap-sci-solvay",name:"Solvay Conference",desc:"Power on Einstein, Bohr, Heisenberg, Dirac, Pauli, Curie and Schrödinger",type:"answer_power",threshold:7,count:"targets",answers:[["@albert einstein"],["@niels bohr"],["@werner heisenberg"],["@paul dirac"],["@wolfgang pauli"],["@marie curie","marie sklodowska curie"],["@erwin schrodinger"]],icon:"学"},
+  {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on 5 space exploration questions",type:"answer_power",threshold:5,topic:["Science and Math > Science > Astronomy > Any Astronomy > Space Exploration & Missions","Current Events > Science > Space & Spaceflight"],icon:"宙"},
+  {id:"ap-myth-lightning",name:"God of Lightning",desc:"Power on Thor, Zeus and Indra",type:"answer_power",threshold:3,count:"targets",answers:["thor","zeus","indra"],icon:"雷"},
+  {id:"ap-myth-freaky",name:"Freaky Deaky",desc:"Power on Oedipus",type:"answer_power",threshold:1,within:["Mythology","Literature"],answers:["oedipus","oedipus rex","oedipus the king"],icon:"眼"},
+  {id:"ap-myth-underworld",name:"Underworld",desc:"Power on Anubis, Hades and Osiris",type:"answer_power",threshold:3,count:"targets",answers:["anubis","hades","osiris"],icon:"冥"},
+  {id:"ap-myth-monkey",name:"Great Sage Equal to Heaven",desc:"Power on Sun Wukong or Journey to the West",type:"answer_power",threshold:1,within:["Mythology","Literature"],answers:["sun wukong","monkey king","journey to the west"],icon:"猿"},
+  {id:"ap-myth-trickster",name:"Trickster God",desc:"Power on Loki and Coyote",type:"answer_power",threshold:2,count:"targets",answers:["loki","coyote"],icon:"狡"},
+  {id:"ap-myth-gilgamesh",name:"Uuudreeeeeeeaaaa",desc:"Power on Gilgamesh",type:"answer_power",threshold:1,within:["Mythology","Literature"],answers:["gilgamesh","epic of gilgamesh","enkidu"],icon:"王"},
+  {id:"ap-myth-ragnarok",name:"Ragnarök",desc:"Power on a Norse cosmology or Ragnarök question",type:"answer_power",threshold:1,topic:"Mythology > Scandinavian Myth > Cosmology & Ragnarok",icon:"滅"},
+  {id:"ap-myth-shinto",name:"Shinto Shrine",desc:"Power on a Japanese mythology question",type:"answer_power",threshold:1,answers:["amaterasu","susanoo","izanagi","izanami","tsukuyomi","raijin","fujin","hachiman","inari","kami","shinto","kojiki","nihon shoki","jimmu","ninigi","yamata no orochi","kitsune","tengu","oni","kappa"],icon:"社"},
+  {id:"ap-myth-morrigan",name:"The Morrigan",desc:"Power on an Irish, Welsh or Breton legend",type:"answer_power",threshold:1,topic:["Mythology > Nonclassical Myth > Irish & Gaelic Legend","Mythology > Nonclassical Myth > Welsh & Breton Legend"],icon:"巫"},
+  {id:"ap-myth-genesis",name:"Genesis",desc:"Power on a creation, flood or end-of-the-world myth",type:"answer_power",threshold:1,topic:["Mythology > Any Myth > Creation, Flood & the End of the World","Mythology > Classical Myth > Titans, Primordials & Creation"],icon:"創"},
+  {id:"ap-myth-quetzal",name:"Feathered Serpent",desc:"Power on Quetzalcoatl",type:"answer_power",threshold:1,answers:["quetzalcoatl","kukulkan"],icon:"蛇"},
+  {id:"ap-myth-labours",name:"The Labours",desc:"Power on Heracles or his labours",type:"answer_power",threshold:1,topic:"Mythology > Classical Myth > Heracles & His Labors",answers:["heracles","hercules"],either:true,icon:"獅"},
+  {id:"ap-myth-theogony",name:"Theogony",desc:"Power on 12 different Greek gods or Titans",type:"answer_power",threshold:12,count:"answers",topic:["Mythology > Classical Myth > Olympians & Major Gods","Mythology > Classical Myth > Titans, Primordials & Creation"],icon:"神"},
+  {id:"ap-myth-iliad",name:"Iliad Heroes",desc:"Power on Achilles, Hector, Agamemnon, Odysseus, Ajax, Diomedes and Patroclus",type:"answer_power",threshold:7,count:"targets",within:["Mythology","Literature"],answers:["achilles","hector","agamemnon",["odysseus","ulysses"],["ajax","ajax the great","telamonian ajax"],"diomedes","patroclus"],icon:"英"},
+  {id:"ap-myth-allfather",name:"Allfather's Blessing",desc:"Power on 10 different Norse mythology questions",type:"answer_power",threshold:10,topic:"Mythology > Scandinavian Myth",icon:"北"},
+  {id:"ap-pop-kanye",name:"I Guess We'll Never Know",desc:"Power on Kanye West",type:"answer_power",threshold:1,answers:["@kanye west","ye"],icon:"韻"},
+  {id:"ap-pop-mj",name:"King of Pop",desc:"Power on Michael Jackson",type:"answer_power",threshold:1,answers:["michael jackson","thriller"],icon:"舞"},
+  {id:"ap-pop-starwars",name:"Skywalker",desc:"Power on Star Wars",type:"answer_power",threshold:1,answers:["star wars","luke skywalker","darth vader","anakin skywalker","han solo","yoda","obi wan kenobi","the empire strikes back","return of the jedi","the mandalorian","@george lucas"],icon:"星"},
+  {id:"ap-pop-minecraft",name:"Master of the Craft",desc:"Power on Minecraft",type:"answer_power",threshold:1,answers:["minecraft"],icon:"塊"},
+  {id:"ap-pop-nba",name:"Point Guard",desc:"Power on an NBA or WNBA question",type:"answer_power",threshold:1,topic:["Pop Culture Sports > Sports > Major Sport > Basketball > Modern > NBA & WNBA","Pop Culture Sports > Sports > Major Sport > Basketball > Any Time > NBA & WNBA"],icon:"球"},
+  {id:"ap-pop-lebron",name:"LeSunshine",desc:"Power on LeBron James",type:"answer_power",threshold:1,answers:["@lebron james"],icon:"覇"},
+  {id:"ap-pop-zelda",name:"Hyrule",desc:"Power on The Legend of Zelda",type:"answer_power",threshold:1,answers:["the legend of zelda","zelda","hyrule","breath of the wild","ocarina of time","tears of the kingdom","majoras mask"],icon:"剣"},
+  {id:"ap-pop-fortnite",name:"Battle Royale",desc:"Power on Fortnite or a battle royale game",type:"answer_power",threshold:1,answers:["fortnite","battle royale","pubg","playerunknowns battlegrounds","apex legends","call of duty warzone"],icon:"闘"},
+  {id:"ap-pop-harry",name:"Wizarding World",desc:"Power on Harry Potter",type:"answer_power",threshold:1,within:["Pop Culture Sports","Literature"],answers:["harry potter","hogwarts","hermione granger","@albus dumbledore","lord voldemort","@severus snape","quidditch","@j k rowling","ron weasley","@rubeus hagrid"],icon:"杖"},
+  {id:"ap-pop-lol",name:"Get a Life",desc:"Power on League of Legends",type:"answer_power",threshold:1,answers:["league of legends"],icon:"戯"},
+  {id:"ap-pop-nfl",name:"Touchdown",desc:"Power on an NFL question",type:"answer_power",threshold:1,topic:["Pop Culture Sports > Sports > Major Sport > Football > Modern > NFL","Pop Culture Sports > Sports > Major Sport > Football > Any Time > NFL"],icon:"突"},
+  {id:"ap-pop-nintendo",name:"64",desc:"Power on a Nintendo franchise",type:"answer_power",threshold:1,answers:["nintendo","super mario","mario","the legend of zelda","pokemon","donkey kong","kirby","metroid","animal crossing","super smash bros","splatoon","fire emblem","star fox","nintendo switch","game boy","wii"],icon:"遊"},
+  {id:"ap-pop-mario",name:"Wahoo!",desc:"Power on Mario",type:"answer_power",threshold:1,answers:["mario","super mario","super mario bros","super mario 64","mario kart","luigi","princess peach","bowser"],icon:"跳"},
+  {id:"ap-fa-requiem",name:"Requiem",desc:"Power on Mozart",type:"answer_power",threshold:1,answers:["@wolfgang amadeus mozart","the magic flute","don giovanni","the marriage of figaro","requiem in d minor"],icon:"奏"},
+  {id:"ap-fa-messiah",name:"Messiah",desc:"Power on Handel",type:"answer_power",threshold:1,answers:["@george frideric handel","messiah","water music","music for the royal fireworks"],icon:"唱"},
+  {id:"ap-fa-tmnt",name:"Teenage Mutant Ninja Turtles",desc:"Power on Raphael, Michelangelo, Donatello and Leonardo",type:"answer_power",threshold:4,count:"targets",answers:[["raphael","raffaello sanzio"],["michelangelo","@michelangelo buonarroti"],["donatello"],["@leonardo da vinci","leonardo"]],icon:"絵"},
+  {id:"ap-fa-wagner",name:"Total Work of Art",desc:"Power on Wagner",type:"answer_power",threshold:1,answers:["@richard wagner","tristan und isolde","der ring des nibelungen","parsifal","lohengrin","tannhauser","the flying dutchman","die meistersinger von nurnberg"],icon:"楽"},
+  {id:"ap-fa-rodin",name:"The Thinker",desc:"Power on Rodin",type:"answer_power",threshold:1,answers:["@auguste rodin","the thinker","the gates of hell","the burghers of calais"],icon:"想"},
+  {id:"ap-fa-monet",name:"Water Lilies",desc:"Power on Monet",type:"answer_power",threshold:1,answers:["@claude monet","water lilies","impression sunrise","rouen cathedral","haystacks"],icon:"蓮"},
+  {id:"ap-fa-lascala",name:"La Scala",desc:"Power on an Italian opera question",type:"answer_power",threshold:1,topic:"Fine Arts > Performance > Opera > Italian Opera",icon:"歌"},
+  {id:"ap-fa-ring",name:"Ring Cycle",desc:"Power on Wagner's Ring cycle",type:"answer_power",threshold:1,answers:["der ring des nibelungen","the ring of the nibelung","ring cycle","das rheingold","die walkure","siegfried","gotterdammerung","brunnhilde"],icon:"環"},
+  {id:"ap-fa-debussy",name:"Clair de Lune",desc:"Power on Debussy",type:"answer_power",threshold:1,answers:["@claude debussy","clair de lune","la mer","prelude to the afternoon of a faun","pelleas et melisande"],icon:"月"},
+  {id:"ap-fa-vangogh",name:"Earless Man",desc:"Power on van Gogh",type:"answer_power",threshold:1,answers:["@vincent van gogh","the starry night","sunflowers","the potato eaters","cafe terrace at night"],icon:"耳"},
+  {id:"ap-fa-dali",name:"The Persistence of Memory",desc:"Power on Dalí",type:"answer_power",threshold:1,answers:["@salvador dali","the persistence of memory"],icon:"夢"},
+  {id:"ap-fa-impressionist",name:"Impressionist Circle",desc:"Power on Monet, Renoir, Degas, Cézanne, Pissarro and Morisot",type:"answer_power",threshold:6,count:"targets",answers:[["@claude monet"],["@pierre auguste renoir"],["@edgar degas"],["@paul cezanne"],["@camille pissarro"],["@berthe morisot"]],icon:"印"},
+  {id:"ap-fa-string",name:"String Quartets",desc:"Power on 4 different chamber music forms",type:"answer_power",threshold:4,count:"targets",answers:[["string quartet","string quartets"],["piano trio"],["piano quintet"],["string quintet"],["chamber music"],["trio sonata"],["divertimento"],["octet"],["sextet"],["piano quartet"],["clarinet quintet"],["serenade"]],icon:"弦"},
+  {id:"ap-phil-locke",name:"Essay Competition",desc:"Power on John Locke",type:"answer_power",threshold:1,answers:["@john locke","an essay concerning human understanding","two treatises of government"],icon:"白"},
+  {id:"ap-phil-athens",name:"The Three Meanings of Athens",desc:"Power on Plato, Aristotle and Socrates",type:"answer_power",threshold:3,count:"targets",answers:["plato","aristotle","socrates"],icon:"知"},
+  {id:"ap-phil-cave",name:"The Cave Allegory",desc:"Power on Plato's Republic",type:"answer_power",threshold:1,answers:["the republic","republic","allegory of the cave"],icon:"洞"},
+  {id:"ap-phil-marx",name:"Gen Z Larper Handbook",desc:"Power on Marx or his works",type:"answer_power",threshold:1,within:["Philosophy","Social Science","History"],answers:["@karl marx","das kapital","the communist manifesto","marxism"],icon:"階"},
+  {id:"ap-phil-nietzsche",name:"Übermensch",desc:"Power on Nietzsche",type:"answer_power",threshold:1,answers:["@friedrich nietzsche","thus spoke zarathustra","beyond good and evil","the birth of tragedy","on the genealogy of morality","ubermensch"],icon:"超"},
+  {id:"ap-phil-hobbes",name:"Leviathan",desc:"Power on Hobbes or Leviathan",type:"answer_power",threshold:1,answers:["@thomas hobbes","leviathan"],icon:"獣"},
+  {id:"ap-phil-exist",name:"Existentialism",desc:"Power on a phenomenology or existentialism question",type:"answer_power",threshold:1,topic:"Philosophy > Continental Philosophy > Phenomenology & Existentialism",answers:["@jean paul sartre","@albert camus"],either:true,within:["Philosophy","Literature"],icon:"存"},
+  {id:"ap-phil-machiavelli",name:"Il Principe",desc:"Power on Machiavelli or The Prince",type:"answer_power",threshold:1,within:["Philosophy","History","Literature"],answers:["@niccolo machiavelli","the prince"],icon:"君"},
+  {id:"ap-phil-kant",name:"Categorical Imperative",desc:"Power on Kant",type:"answer_power",threshold:1,topic:"Philosophy > Early Modern Philosophy > Kant & the German Enlightenment",answers:["@immanuel kant","critique of pure reason","categorical imperative"],either:true,icon:"徳"},
+  {id:"ap-phil-enlightened",name:"Enlightened Monarch",desc:"Power on Locke, Hume, Kant, Rousseau, Voltaire and Montesquieu",type:"answer_power",threshold:6,count:"targets",answers:[["@john locke"],["@david hume"],["@immanuel kant"],["@jean jacques rousseau"],["voltaire"],["montesquieu"]],icon:"啓"},
+  {id:"ap-phil-school",name:"The School of Athens",desc:"Power on 5 figures from The School of Athens",type:"answer_power",threshold:5,count:"targets",within:"*",answers:["plato","aristotle","socrates","pythagoras","euclid","diogenes","heraclitus","ptolemy","zoroaster","parmenides","epicurus","averroes","hypatia","alcibiades","xenophon","zeno of citium","plotinus"],icon:"学"},
 ];
 
 let _dbWired = false;
@@ -11073,6 +11142,8 @@ function init() {
       },
       getImportedPacket: () => null,   // packet files were removed (14.38); kept for older plugins
       // path = the category-tree prefix an achievement counts within (cat kept for older plugins)
+      // a result recorded outside practice (a multiplayer buzz): achievements pop up with it
+      noteAchievementResult: (e) => achNoteResult(e),
       getAchievementList: () => ACHIEVEMENT_LIST.map((a) => { const cat = a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined); return { ...a, cat, path: a.path || cat || undefined }; }),
       // Open the app's own session-history overlay over a supplied list, so a
       // plugin gets the real GUI — filters, compact/expand, buzz track, star
@@ -13095,6 +13166,8 @@ const QBSelect = (() => {
 window.QBSelect = QBSelect;
 
 init();
+// what's earned already, so the first result's achievements pop up at once
+setTimeout(() => { achLiveLoad().catch(() => {}); }, 1200);
 QBSelect.start();
 
 // Anything that scrolls (a page under the top bar, the Database's results, a list, a window…) fades

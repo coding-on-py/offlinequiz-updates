@@ -5686,3 +5686,39 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .rp-hist .t-grid { stroke: var(--line); stroke-width: 1; }
 .rp-hist .t-lbl { fill: var(--muted); font-family: var(--font); font-size: 11px; }
 .rp-hist .t-val { fill: var(--strong); font-family: var(--font); font-size: 11.5px; font-weight: 700; }
+
+/* ── Achievement unlocked (14.87): cards under the top bar, on the redesign's surfaces ── */
+.ach-stack {
+  position: fixed; top: calc(var(--topbar-h) + 12px); right: 16px; z-index: 9999;
+  display: flex; flex-direction: column; gap: 8px; width: min(360px, calc(100vw - 32px)); pointer-events: none;
+}
+.ach-stack .ach-popup {
+  position: relative; inset: auto; max-width: none; width: 100%; box-sizing: border-box; pointer-events: auto;
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px 14px 16px; overflow: hidden; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow);
+  font-family: var(--font); opacity: 0; transform: translateY(-8px);
+  transition: opacity 0.22s var(--ease-out), transform 0.22s var(--ease-out);
+}
+.ach-stack .ach-popup.show { opacity: 1; transform: none; }
+.ach-stack .ach-popup.out { opacity: 0; transform: translateX(12px); }
+.ach-stack .ach-popup::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
+.ach-stack .ach-popup-icon {
+  flex: none; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r); background: var(--sunken); border: 1px solid var(--line-soft); color: var(--accent);
+}
+.ach-stack .ach-popup-icon .achievement-icon { font-size: 24px; width: auto; }
+.ach-stack .ach-popup-icon .achievement-icon-graphic svg { width: 26px; height: 26px; }
+.ach-stack .ach-popup-text { min-width: 0; flex: 1; }
+.ach-stack .ach-popup-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.ach-stack .ach-popup-name { margin-top: 2px; font-size: 14px; font-weight: 700; color: var(--strong); overflow-wrap: anywhere; }
+.ach-stack .ach-popup-desc { margin-top: 2px; font-size: 12px; line-height: 1.35; color: var(--muted); }
+.ach-stack .ach-popup-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--accent); opacity: 0.7;
+  transform-origin: left; animation: ach-drain 5s linear forwards;
+}
+@keyframes ach-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (max-width: 600px) { .ach-stack { left: 16px; right: 16px; width: auto; } }
+@media (prefers-reduced-motion: reduce) {
+  .ach-stack .ach-popup, .ach-stack .ach-popup.out { transform: none; transition: opacity 0.15s; }
+  .ach-stack .ach-popup-bar { animation: none; }
+}
