@@ -4896,7 +4896,7 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 .setup-step.hidden { display: none; }
 .setup-sub { margin: 0 0 6px; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
 .setup-actions { display: flex; flex-direction: column; gap: 10px; }
-.setup-actions .btn, .setup-step > .btn { width: 100%; min-height: 42px; justify-content: center; }
+.setup-actions .btn, .setup-step > .btn { width: 100%; min-height: 42px; justify-content: center; margin: 0; }   /* margin: 0 — the global ".btn + .btn" gap pushed every button after the first 8px right */
 .setup-later { margin-top: 2px; color: var(--muted); }
 #setup-username { height: 42px; font-size: 15px; text-align: center; }
 
@@ -5818,3 +5818,8 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .td-name { margin: 0; color: var(--hue); font-size: 15px; font-weight: 700; }
 .td-why { margin: 0; max-width: 40ch; color: var(--muted); font-size: 13px; line-height: 1.5; }
 @media (max-width: 600px) { .tp-levels { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; } .tr-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* 14.89: these two windows stack as plain blocks and scroll as a whole when too tall — a flex column whose middle
+   is a shrinking scroll box collapsed the middle to nothing in some engines (the level picker showed no levels) */
+.ach-modal, .tp-modal { display: block; overflow-x: hidden; overflow-y: auto; }
+.ach-modal > .ad-body, .tp-modal > .ad-body { overflow: visible; }
+.ach-modal > .modal-head, .tp-modal > .modal-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
