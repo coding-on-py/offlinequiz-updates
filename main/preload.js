@@ -86,6 +86,8 @@ contextBridge.exposeInMainWorld("qbreader", {
   getAllSessionEntries: (opts) => ipcRenderer.invoke("get-all-session-entries", opts || {}),
 
   getAnswerPowers: () => ipcRenderer.invoke("get-answer-powers"),
+  getTrials: () => ipcRenderer.invoke("get-trials"),
+  trialAction: (d) => ipcRenderer.invoke("trial-action", d),
 
   pruneSessions: (days) => ipcRenderer.invoke("prune-sessions", { days }),
 

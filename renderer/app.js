@@ -78,6 +78,7 @@ const API = isElectron
         if (path === "/api/sessions/all-entries")
           return window.qbreader.getAllSessionEntries({ answers: q.answers === "1" || q.answers === "true" });
         if (path === "/api/answer-powers") return window.qbreader.getAnswerPowers();
+        if (path === "/api/trials") return window.qbreader.getTrials ? window.qbreader.getTrials() : { trials: {}, cats: [] };
         if (path === "/api/profiles") return window.qbreader.getProfiles();
         if (path === "/api/profiles/active") return window.qbreader.getActiveProfile();
         if (path === "/api/check-update") return window.qbreader.checkUpdate();
@@ -108,6 +109,7 @@ const API = isElectron
         if (path === "/api/parse-answerline") return window.qbreader.parseAnswerline(data.answerline, data.sanitized);
         if (path === "/api/profile-settings") return window.qbreader.saveProfileSettings(data.settings);
         if (path === "/api/review/dismiss") return window.qbreader.dismissReview(data.questionId);
+        if (path === "/api/trials") return window.qbreader.trialAction ? window.qbreader.trialAction(data) : { ok: false, error: "Restart the app to use trials." };
         if (path === "/api/review/manual") return window.qbreader.reviewManual(data.questionId, data.add !== false, data.type);
         if (path === "/api/review/clear") return window.qbreader.clearReview();
         if (path === "/api/sessions/prune") return window.qbreader.pruneSessions(data.days);
@@ -226,7 +228,13 @@ async function peekAppUpdate() {
     notes: typeof manifest.notes === "string" ? manifest.notes.slice(0, 400) : "",
   };
 }
+// While a multiplayer room holds the practice panel (host.lendPanel), what the panel changes is the ROOM's:
+// none of it is saved as this player's own practice setup (multiplayer puts that back when it returns the panel).
+let _panelLent = false;
+const PANEL_KEYS = new Set(["qb-filters", "qb-use-weights", "qb-strictness", "qb-speed", "qb-stop-on-power", "qb-allow-skips", "qb-allow-rebuzzes",
+  "qb-hide-pron", "qb-hide-notes", "qb-buzz-window", "qb-buzz-timeout", "qb-bonus-timer", "qb-bonus-after", "qb-auto-reveal"]);
 function lsSet(key, value) {
+  if (_panelLent && PANEL_KEYS.has(key)) return;
   window.localStorage.setItem(key, value);
   clearTimeout(_profileSyncTimer);
   _profileSyncTimer = setTimeout(pushProfileSettings, 800);
@@ -504,6 +512,8 @@ const ICON = {
   bag: '<path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
   home: '<path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+  award: '<circle cx="12" cy="9" r="6"/><path d="M8.6 13.8 7 22l5-3 5 3-1.6-8.2"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
 };
 function ic(name, size, extra) {
   const s = size || 18;
@@ -2359,8 +2369,8 @@ function saveModeFilters(fs) { const b = loadFilterBlob(); b[filtersMode()] = fs
 
 function saveFilterState() {
   // Never persist a panel that has no tree yet (the "Loading…" placeholder):
-  // that would save an empty selection over the real one.
-  if (_applyingSnapshot) return;
+  // that would save an empty selection over the real one. Nor a room's (a lent panel).
+  if (_applyingSnapshot || _panelLent) return;
   if (!document.querySelector("#category-filters .category-group")) return;
   // Custom list showing: save into the LIST's bucket (state.mode may already be
   // null or the other type by the time a debounced save fires) and substitute
@@ -4224,6 +4234,7 @@ function suspendSession() {
 }
 
 function endSession() {
+  if (_trial && !_trial.done) trialEnd(false, "left", true);
   endCustom();
   state.sessionActive = false;
   state.reviewIds = null;
@@ -4273,6 +4284,7 @@ async function nextQuestion() {
   placeholder.classList.add("hidden");
   placeholder.innerHTML = "";
 
+  if (_trial && !_trial.done && _trial.servedId && _trial.answeredId !== _trial.servedId) { trialEnd(false, "skipped"); return; }
   if (state.reviewIds && state.mode === "tossups") {
     if (!state.reviewIds.length) {
       state.reviewIds = null;
@@ -4280,6 +4292,7 @@ async function nextQuestion() {
       return;
     }
     const id = state.reviewIds.shift();
+    if (_trial && !_trial.done) { _trial.servedId = id; _trial.n++; paintTrialBar(); }
     _prefetchById("tossups", state.reviewIds);
     try {
       const d = await _questionById("tossups", id);
@@ -5487,6 +5500,7 @@ function revealText(text) {
 }
 
 function markDeadQuestion(text) {
+  if (_trial && !_trial.done && state.currentQuestion && state.currentQuestion.id === _trial.servedId) setTimeout(() => trialEnd(false, "nobody buzzed"), 900);
   if (state.isBuzzed || !state.sessionActive) return;
   if (ttsHold) return;
   state.isBuzzed = true;
@@ -6043,6 +6057,7 @@ function displayTossupResult(result, userAnswer) {
   qbEmit("answer:result", { type: "tossup", result, userAnswer });
 
   achNoteResult({ type: "tossup", q: state.currentQuestion, points: result.points || 0, correct: !!result.correct, isPower: !!result.isPower });
+  if (_trial && !_trial.done && state.currentQuestion && state.currentQuestion.id === _trial.servedId) trialOnResult(result);
 
   if (state.settings.autoReviewNoPower && result.correct && !result.isPower && state.currentQuestion?.id) {
     const hasMark = state.prePowerEnd > 0;
@@ -9051,11 +9066,12 @@ async function loadPlayer() {
   container.innerHTML = '<div class="text-muted">Loading player data...</div>';
 
   try {
-    const [statsData, sessionsData, apData, activeProfile] = await Promise.all([
+    const [statsData, sessionsData, apData, activeProfile, trialInfo] = await Promise.all([
       API.get("/api/stats"),
       API.get("/api/sessions"),
       API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
       API.get("/api/profiles/active").catch(() => null),
+      loadTrialInfo(),
     ]);
 
     const stats = statsData.stats || {};
@@ -9081,6 +9097,7 @@ async function loadPlayer() {
     const tile = (n, l, cls) => `<div class="pf-tile"><b class="num${cls ? " " + cls : ""}">${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
     container.innerHTML = `
       <div class="pf-page">
+        ${trialBadgesHtml(trialInfo && trialInfo.trials)}
         <section class="pf-card">
           <span class="pf-avatar" aria-hidden="true"${avatarStyle(myNeon())}>${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
           <div class="pf-id">
@@ -9089,6 +9106,7 @@ async function loadPlayer() {
           </div>
         </section>
         <div class="pf-tiles">${tile(totalQ, "questions")}${tile(powers, "powers", "pf-pwr")}${tile(negs, "negs", "pf-neg")}${tile(sessions.length, "sessions")}</div>
+        ${trialsSectionHtml(trialInfo)}
         <section class="pf-ach">
           <div class="pf-ach-head"><h2 class="eyebrow">Achievements</h2><span class="pf-ach-n"><b class="num">${earnedN}</b> of ${totalN} earned</span></div>
           <div class="achievements-grid">${achievementsHtml}</div>
@@ -9097,6 +9115,9 @@ async function loadPlayer() {
     `;
 
     initCollapsibles(container);
+    container._achWired = false;
+    wireTrials(container);
+    wireAchievementCards(container, { achData, records: achRecordsOf(apData.answer_questions || {}), stats, pluginAchs });
     window.QB?.neonField?.($("#player-username-input"), myNeon());   // a bought neon name glows here too
     paintProfileNeon();   // …and its colour is picked here too
 
@@ -9453,14 +9474,294 @@ function renderAchievementCard(ach, data) {
   const displayName = mystery ? "??? Mystery ???" : ach.name;
   const displayDesc = mystery ? "Secret achievement" : (ach.desc || "");
   return `
-    <div class="achievement-card ${earned ? "earned" : ""}">
+    <button type="button" class="achievement-card ${earned ? "earned" : ""}" data-ach="${escapeHtml(String(ach.id))}" aria-label="${escapeHtml(displayName)}: details">
       ${achievementIconHTML(ach)}
       <div class="achievement-info">
         <div class="achievement-top"><span class="achievement-name">${escapeHtml(displayName)}</span>${earned ? '<span class="achievement-done">Earned</span>' : `<span class="achievement-progress num">${Math.min(progress, threshold).toLocaleString()}/${threshold.toLocaleString()}</span>`}</div>
         <div class="achievement-desc">${escapeHtml(displayDesc)}</div>
         ${earned ? "" : `<div class="achievement-bar"><div class="achievement-bar-fill" style="width:${pct}%"></div></div>`}
       </div>
+    </button>`;
+}
+
+// ── Trials (14.88) ────────────────────────────────────────────────────────────────────────────────────────
+// Ten power-marked tossups of one category at one level (1–10), read like practice; power all ten — any
+// other verdict, a dead tossup, a skip or leaving ends it. Passing gives a badge ("Mythology I"), shown at the
+// top of the profile; a failed (or left) trial can be taken again an hour after it started. State and the
+// question pick are the backend's (/api/trials; src/main/index.js TRIAL_CATS), synced with the account.
+const TRIAL_CATS = [["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science and Math"], ["math", "Math", "Science and Math"],
+  ["fa", "Fine Arts", "Fine Arts"], ["myth", "Mythology", "Mythology"], ["phil", "Philosophy", "Philosophy"], ["rel", "Theology", "Theology"],
+  ["geo", "Geography", "Geography"], ["ss", "Social Science", "Social Science"], ["ce", "Current Events", "Current Events"],
+  ["pop", "Pop Culture", "Pop Culture Sports"], ["sports", "Sports", "Pop Culture Sports"], ["misc", "Miscellaneous", "Miscellaneous"]];
+const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+const TRIAL_LEN = 10, TRIAL_COOLDOWN = 3600e3;
+let _trial = null;   // the trial being played: { key, name, level, ids, n, powered, servedId, answeredId, done }
+let _trialInfo = null, _trialSkew = 0;
+const trialName = (key, level) => { const c = TRIAL_CATS.find((x) => x[0] === key); return (c ? c[1] : key) + " " + (ROMAN[level] || level); };
+const trialHue = (key) => { const c = TRIAL_CATS.find((x) => x[0] === key); return (c && ROOT_COLOR[c[2]]) || "var(--accent)"; };
+// the badges: each category's highest level passed
+function trialBest(trials) {
+  const best = {};
+  for (const [k, v] of Object.entries(trials || {})) {
+    const [key, lv] = k.split("|"), level = parseInt(lv, 10);
+    if (v && v.p && level > (best[key] || 0)) best[key] = level;
+  }
+  return best;
+}
+function trialBadgesHtml(trials) {
+  const best = trialBest(trials);
+  const keys = TRIAL_CATS.map((c) => c[0]).filter((k) => best[k]);
+  if (!keys.length) return "";
+  return `<div class="tr-badges" aria-label="Trial badges">${keys.map((k) => {
+    const lv = best[k], when = trials[k + "|" + lv] && trials[k + "|" + lv].p;
+    return `<span class="tr-badge tier${Math.ceil(lv / 3) > 3 ? 4 : Math.ceil(lv / 3)}" style="--hue:${trialHue(k)}" title="${escapeHtml(trialName(k, lv) + (when ? " — passed " + new Date(when).toLocaleDateString() : ""))}">${ic("award", 15)}<b>${escapeHtml(trialName(k, lv))}</b></span>`;
+  }).join("")}</div>`;
+}
+function trialState(info, key, level) {
+  const t = (info && info.trials && info.trials[key + "|" + level]) || {};
+  const now = Date.now() + _trialSkew;
+  const wait = t.s && now - t.s < TRIAL_COOLDOWN && !(t.l >= t.s) ? t.s + TRIAL_COOLDOWN - now : 0;
+  return { passed: !!t.p, wait };
+}
+const fmtWait = (ms) => { const m = Math.ceil(ms / 60000); return m >= 60 ? "1 h" : m + " min"; };
+function trialsSectionHtml(info) {
+  const best = trialBest(info && info.trials);
+  return `<section class="pf-trials"><div class="pf-ach-head"><h2 class="eyebrow">Trials</h2><span class="pf-ach-n">Power ten in a row for a badge</span></div>
+    <div class="tr-grid">${TRIAL_CATS.map(([key, name]) => {
+      const lv = best[key] || 0;
+      const pips = Array.from({ length: 10 }, (_, i) => { const st = trialState(info, key, i + 1); return `<i class="${st.passed ? "on" : st.wait ? "wait" : ""}"></i>`; }).join("");
+      return `<button type="button" class="tr-card" data-trial="${key}" style="--hue:${trialHue(key)}"><span class="tr-name">${escapeHtml(name)}</span>` +
+        `<span class="tr-lv">${lv ? escapeHtml(name + " " + ROMAN[lv]) : "No badge yet"}</span><span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
+    }).join("")}</div></section>`;
+}
+async function loadTrialInfo() {
+  try { const d = await API.get("/api/trials"); _trialInfo = d || { trials: {} }; if (d && d.now) _trialSkew = d.now - Date.now(); } catch (e) { _trialInfo = _trialInfo || { trials: {} }; }
+  return _trialInfo;
+}
+function wireTrials(container) {
+  container.querySelectorAll(".tr-card[data-trial]").forEach((b) => { b.onclick = () => openTrialPicker(b.dataset.trial); });
+}
+function openTrialPicker(key) {
+  const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
+  document.getElementById("trial-pick")?.remove();
+  const info = _trialInfo || { trials: {} };
+  let pick = 0;
+  const el = document.createElement("div");
+  el.id = "trial-pick";
+  el.className = "qb-overlay review-ovl ach-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "tp-h");
+  const levels = () => Array.from({ length: 10 }, (_, i) => {
+    const lv = i + 1, st = trialState(info, key, lv);
+    return `<button type="button" class="tp-lv${st.passed ? " passed" : ""}${st.wait ? " wait" : ""}${pick === lv ? " sel" : ""}" data-lv="${lv}" aria-pressed="${pick === lv}"${st.wait ? " disabled" : ""}>` +
+      `<b>${ROMAN[lv]}</b><small>${st.passed ? ic("check", 12) + "Passed" : st.wait ? ic("clock", 12) + fmtWait(st.wait) : "Level " + lv}</small></button>`;
+  }).join("");
+  const paint = () => {
+    el.querySelector(".tp-levels").innerHTML = levels();
+    const go = el.querySelector("#tp-go"), note = el.querySelector("#tp-note");
+    go.disabled = !pick;
+    go.innerHTML = ic("play", 14) + (pick ? "Start " + escapeHtml(trialName(key, pick)) : "Pick a level");
+    note.textContent = pick && trialState(info, key, pick).passed ? "You have this badge already — taking it again changes nothing, but a fail still waits an hour." : "";
+  };
+  el.innerHTML = `
+    <div class="settings-modal tp-modal" tabindex="-1" style="--hue:${trialHue(key)}">
+      <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-icon" id="tp-x" aria-label="Close">${ic("x")}</button></div>
+      <div class="ad-body">
+        <p class="tp-lead">Ten power-marked ${escapeHtml(cat[1])} tossups at the level you pick, read one after another. <b>Power all ten</b> to earn the <b>${escapeHtml(cat[1])}</b> badge for that level. A neg, a right answer after the power mark, no buzz, a skip or leaving ends the trial — and it can be taken again an hour after it started.</p>
+        <div class="tp-levels" role="group" aria-label="Level"></div>
+        <p class="ad-fine" id="tp-note"></p>
+        <p class="tp-err" id="tp-err" role="alert"></p>
+      </div>
+      <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn btn-primary" id="tp-go" disabled></button></div>
     </div>`;
+  const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); const b = ev.target.closest?.(".tp-lv[data-lv]"); if (b && !b.disabled) { pick = parseInt(b.dataset.lv, 10); paint(); } });
+  document.body.appendChild(el);
+  el.querySelector("#tp-x").onclick = close;
+  el.querySelector("#tp-go").onclick = async () => {
+    if (!pick) return;
+    const go = el.querySelector("#tp-go"), err = el.querySelector("#tp-err");
+    go.disabled = true; err.textContent = "";
+    let r = null;
+    try { r = await API.post("/api/trials", { action: "start", category: key, level: pick }); } catch (e) { r = { ok: false, error: (e && e.message) || "Couldn't start the trial." }; }
+    if (!r || !r.ok) {
+      err.textContent = r && r.cooldownUntil ? "This trial can be taken again in " + fmtWait(r.cooldownUntil - (Date.now() + _trialSkew)) + "." : (r && r.error) || "Couldn't start the trial.";
+      go.disabled = false; return;
+    }
+    close();
+    runTrial({ key, name: cat[1], level: pick, ids: r.ids });
+  };
+  paint();
+  try { el.querySelector(".tp-modal").focus({ preventScroll: true }); } catch (e) {}
+}
+function runTrial(t) {
+  _trial = { ...t, n: 0, powered: 0, servedId: null, answeredId: null, done: false };
+  if (state.sessionActive) { const tr = _trial; _trial = null; endSession(); _trial = tr; }
+  state.bonusIds = null;
+  state.customType = "tossups";
+  state.reviewIds = [...t.ids];
+  state._reviewRemoveAfter = false;
+  state.currentQuestion = null;
+  showScreen("practice-tossups");
+  setMode("tossups");
+  startSession();
+  paintTrialBar();
+}
+function paintTrialBar() {
+  let bar = document.getElementById("trial-bar");
+  if (!_trial) { bar?.remove(); return; }
+  const area = document.getElementById("question-area"); if (!area) return;
+  if (!bar) { bar = document.createElement("div"); bar.id = "trial-bar"; bar.className = "trial-bar"; area.insertBefore(bar, area.firstChild); }
+  bar.style.setProperty("--hue", trialHue(_trial.key));
+  const pips = Array.from({ length: TRIAL_LEN }, (_, i) => `<i class="${i < _trial.powered ? "on" : i === _trial.powered && !_trial.done && _trial.n > i ? "now" : ""}"></i>`).join("");
+  bar.innerHTML = `<span class="tb-k">${ic("award", 14)}Trial</span><b class="tb-name">${escapeHtml(trialName(_trial.key, _trial.level))}</b>` +
+    `<span class="tb-pips" aria-label="${_trial.powered} of ${TRIAL_LEN} powered">${pips}</span><span class="tb-n num">${_trial.powered}/${TRIAL_LEN}</span>` +
+    (_trial.done ? "" : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
+  const lv = bar.querySelector("#tb-leave");
+  if (lv) lv.onclick = () => confirmDialog("Leave the trial? It counts as a fail, and it can be taken again an hour after it started.", () => trialEnd(false, "left"), { yes: "Leave" });
+}
+function trialOnResult(result) {
+  _trial.answeredId = _trial.servedId;
+  if (result && result.isPower) {
+    _trial.powered++;
+    paintTrialBar();
+    if (_trial.powered >= TRIAL_LEN) setTimeout(() => trialEnd(true), 700);
+  } else setTimeout(() => trialEnd(false, result && result.correct ? "answered after the power mark" : result && result.points < 0 ? "a neg" : "not a power"), 700);
+}
+async function trialEnd(passed, why, quiet) {
+  if (!_trial || _trial.done) return;
+  const t = _trial; t.done = true;
+  let r = null;
+  try { r = await API.post("/api/trials", { action: passed ? "pass" : "fail", category: t.key, level: t.level }); } catch (e) {}
+  if (passed && r && r.trials && _trialInfo) _trialInfo.trials = r.trials;
+  else if (_trialInfo && _trialInfo.trials) { const k = t.key + "|" + t.level; _trialInfo.trials[k] = _trialInfo.trials[k] || {}; if (passed) { _trialInfo.trials[k].l = Date.now() + _trialSkew; _trialInfo.trials[k].p = _trialInfo.trials[k].p || _trialInfo.trials[k].l; } }
+  if (passed && r && !r.ok) passed = false;
+  if (quiet) { _trial = null; paintTrialBar(); return; }
+  paintTrialBar();
+  showTrialResult(t, passed, why);
+}
+function showTrialResult(t, passed, why) {
+  document.getElementById("trial-done")?.remove();
+  const el = document.createElement("div");
+  el.id = "trial-done";
+  el.className = "qb-overlay review-ovl ach-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "td-h");
+  const q = Math.min(TRIAL_LEN, t.powered + 1);
+  el.innerHTML = `
+    <div class="settings-modal tp-modal td-modal" tabindex="-1" style="--hue:${trialHue(t.key)}">
+      <div class="ad-body td-body">
+        <span class="td-medal${passed ? " on" : ""}">${ic("award", 40)}</span>
+        <h2 id="td-h">${passed ? "Badge earned" : "Trial over"}</h2>
+        <p class="td-name">${escapeHtml(trialName(t.key, t.level))}</p>
+        <p class="td-why">${passed ? "You powered all ten. The badge is on your profile." : why === "left" ? "You left the trial after " + t.powered + " of 10 powers." : "Question " + q + ": " + escapeHtml(why || "not a power") + ". You powered " + t.powered + " of 10."}${passed ? "" : " You can take it again an hour after it started."}</p>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn btn-primary" id="td-trials">${ic("award", 14)}Trials</button></div>
+    </div>`;
+  const finish = (toTrials) => {
+    document.removeEventListener("keydown", onKey, true);
+    animateRemove(el);
+    _trial = null; paintTrialBar();
+    if (state.sessionActive) endSession();
+    if (toTrials) goTo("player");
+  };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); } };
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(el);
+  el.querySelector("#td-close").onclick = () => finish(false);
+  el.querySelector("#td-trials").onclick = () => finish(true);
+  if (passed) { try { Sound.achievement(); } catch (e) {} }
+  try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
+}
+
+// ── Achievement details (14.88): a click on a card ─────────────────────────────────────────────────────
+// ctx = { achData, records, stats, pluginAchs } — whoever's achievements the cards show (you, or a friend)
+const ACH_HOW = {
+  total: (a) => `Answer ${a.threshold.toLocaleString()} questions in all — tossups and bonuses, any mode (practice, review, multiplayer).`,
+  powers: (a) => `Power ${a.threshold.toLocaleString()} tossups: buzz before the power mark (*) and answer right.`,
+  negs: (a) => `Neg ${a.threshold.toLocaleString()} tossups: buzz before the end and answer wrong.`,
+  cat: (a) => `Answer ${a.threshold.toLocaleString()} questions in any one category.`,
+  daily: (a) => `Answer ${a.threshold.toLocaleString()} questions in one day (days run on UTC).`,
+  streak: (a) => `Practice ${a.threshold.toLocaleString()} days in a row (at least one question a day, UTC).`,
+};
+const achPathLabel = (p) => String(p || "").split(" > ").join(" › ");
+function wireAchievementCards(container, ctx) {
+  if (!container || container._achWired) return;
+  container._achWired = true;
+  container.addEventListener("click", (e) => {
+    const card = e.target.closest?.(".achievement-card[data-ach]");
+    if (!card || !container.contains(card)) return;
+    const id = card.dataset.ach, c = typeof ctx === "function" ? ctx() : ctx;
+    const ach = ACHIEVEMENT_LIST.find((a) => String(a.id) === id) || ((c && c.pluginAchs) || []).find((p) => String(p.id) === id);
+    if (ach) openAchievementDetail(ach, c || {});
+  });
+}
+function openAchievementDetail(ach, ctx) {
+  document.getElementById("ach-detail")?.remove();
+  const data = (ctx.achData && ctx.achData[ach.id]) || (ach.earned != null ? { earned: ach.earned, progress: ach.progress } : { earned: false, progress: 0 });
+  const earned = !!data.earned, thr = ach.threshold || 1, prog = Math.min(data.progress || 0, thr);
+  const mystery = ach.type === "cat_specific" && !earned;
+  const name = mystery ? "??? Mystery ???" : ach.name, desc = mystery ? "A secret achievement." : (ach.desc || "");
+  const sec = (title, body) => body ? `<section class="ad-sec"><h3>${title}</h3>${body}</section>` : "";
+  const chips = (items) => `<div class="ad-chips">${items.map(([t, on]) => `<span class="ad-chip${on ? " on" : ""}">${on ? ic("check", 12) : ""}${escapeHtml(t)}</span>`).join("")}</div>`;
+  let how = "", what = "", mine = "";
+  if (ACH_HOW[ach.type]) how = `<p>${escapeHtml(ACH_HOW[ach.type](ach))}</p>`;
+  if (ach.type === "cat") {
+    const top = Object.entries((ctx.stats && ctx.stats.byCategory) || {}).map(([k, v]) => [k, (v && v.totalQuestions) || 0]).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    if (top.length) mine = `<ul class="ad-list">${top.map(([k, n]) => `<li><span>${escapeHtml(k)}</span><b class="num">${n.toLocaleString()}</b></li>`).join("")}</ul>`;
+  } else if (ach.type === "daily") {
+    const best = Object.values((ctx.stats && ctx.stats.questionsByDate) || {}).sort((a, b) => (b.questions || 0) - (a.questions || 0))[0];
+    if (best) mine = `<p>Your best day: <b class="num">${(best.questions || 0).toLocaleString()}</b> questions (${escapeHtml(best.date || "")}).</p>`;
+  } else if (ach.type === "cat_specific") {
+    how = mystery ? "<p>Keep playing — what it takes shows once it's earned.</p>" : `<p>Answer ${thr.toLocaleString()} questions in ${escapeHtml(achPathLabel(ach.path || ach.category))}.</p>`;
+  } else if (ach.type === "answer_power") {
+    const topics = achList(ach.topic), groups = achGroups(ach), mode = ach.count || "questions";
+    const within = ach.within === "*" ? [] : achList(ach.within || apAchCategory(ach.id));
+    const counted = mode === "targets" ? `${thr} different ${thr === 1 ? "one" : "ones"} of the list` : mode === "answers" ? `${thr} different answers` : `${thr} different ${thr === 1 ? "question" : "questions"}`;
+    how = `<p>Power ${counted}${topics.length && !groups.length ? " in the topic below" : ""}. A power is a right answer buzzed before the power mark (*); each question counts once.</p>` +
+      (groups.length && topics.length ? `<p>${ach.either ? "Either a question in the topic or one whose answer is on the list counts." : "The question has to be in the topic and its answer on the list."}</p>` : "") +
+      (groups.length ? `<p class="ad-fine">An answer counts when it is the question's main answer (a person's surname alone is enough)${within.length ? `, in ${within.map((w) => escapeHtml(achPathLabel(w))).join(" or ")}` : ""}.</p>` : "");
+    const recs = (ctx.records || []).filter((r) => achRecordHit(ach, r) >= 0);
+    if (topics.length) what += `<div class="ad-topics">${topics.map((t) => `<span class="ad-topic">${escapeHtml(achPathLabel(t))}</span>`).join("")}</div>`;
+    if (groups.length) {
+      const hit = new Set(recs.map((r) => achRecordHit(ach, r)));
+      const show = (g) => { const lead = achList(ach.answers[groups.indexOf(g)])[0]; return String(lead || g[0].t).replace(/^@/, ""); };
+      what += chips(groups.map((g, i) => [show(g), hit.has(i)]));
+    }
+    const answers = [...new Set(recs.map((r) => r.a))];
+    mine = recs.length ? `<p>${recs.length.toLocaleString()} powered ${recs.length === 1 ? "question counts" : "questions count"}${answers.length ? ": " : "."}</p>` + (answers.length ? chips(answers.slice(0, 40).map((a) => [a, true])) + (answers.length > 40 ? `<p class="ad-fine">and ${answers.length - 40} more</p>` : "") : "")
+      : "<p>Nothing counts yet.</p>";
+  } else if (!ACH_HOW[ach.type]) {
+    how = `<p>${escapeHtml(desc)}</p>`;
+  }
+  const el = document.createElement("div");
+  el.id = "ach-detail";
+  el.className = "qb-overlay review-ovl ach-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "ad-h");
+  el.innerHTML = `
+    <div class="settings-modal ach-modal" tabindex="-1">
+      <div class="modal-head"><h2 id="ad-h">Achievement</h2><span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-icon" id="ad-x" aria-label="Close">${ic("x")}</button></div>
+      <div class="ad-body">
+        <div class="ad-top${earned ? " earned" : ""}">
+          <div class="ad-icon">${achievementIconHTML(ach)}</div>
+          <div class="ad-id"><div class="ad-name">${escapeHtml(name)}</div><div class="ad-desc">${escapeHtml(desc)}</div></div>
+          <span class="ad-state${earned ? " on" : ""}">${earned ? "Earned" : `<span class="num">${prog.toLocaleString()} / ${thr.toLocaleString()}</span>`}</span>
+        </div>
+        ${earned ? "" : `<div class="achievement-bar ad-bar"><div class="achievement-bar-fill" style="width:${Math.min(100, Math.round((prog / thr) * 100))}%"></div></div>`}
+        ${sec("How to get it", how)}
+        ${sec(ach.type === "answer_power" ? (achGroups(ach).length ? "What counts" : "Topic") : "", what)}
+        ${sec(ach.type === "cat" ? "Your top categories" : "Your progress", mine)}
+      </div>
+    </div>`;
+  const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
+  document.body.appendChild(el);
+  el.querySelector("#ad-x").onclick = close;
+  try { el.querySelector(".ach-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 
 function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
@@ -9930,9 +10231,9 @@ function renderSearchTab() {
           `<div class="pop left years-pop" id="db-years-pop" hidden><form id="db-years-form"><div class="yrow"><label class="ifield"><span>From</span><input id="db-year-from" inputmode="numeric" autocomplete="off" value="${q.yearMin || 2000}" aria-label="From year"></label><label class="ifield"><span>To</span><input id="db-year-to" inputmode="numeric" autocomplete="off" value="${q.yearMax || 2026}" aria-label="To year"></label></div>` +
           `<div class="yrow"><button type="button" class="btn btn-sm" id="db-years-any" style="flex:1">Any year</button><button type="submit" class="btn btn-sm btn-primary" style="flex:1">Apply</button></div></form></div></div>` +
         '<span class="spacer"></span>' +
-        `<button type="button" class="btn" id="db-more-toggle" aria-expanded="${_dbMoreOpen}" aria-controls="db-more">${ic("sliders", 16)}Filters<span class="count-badge num db-more-count" id="db-more-count"></span></button>` +
+        `<button type="button" class="btn" id="db-more-toggle" aria-expanded="${_dbMoreOpen}" aria-controls="db-more">${ic("sliders", 16)}More<span class="count-badge num db-more-count" id="db-more-count"></span></button>` +
       "</div>" +
-      `<section class="drawer-panel" id="db-more"${_dbMoreOpen ? "" : " hidden"} aria-label="More filters">` +
+      `<section class="drawer-panel" id="db-more"${_dbMoreOpen ? "" : " hidden"} aria-label="More">` +
         `<label class="f"><span>Match</span><select id="db-match" title="How the words must match">${opt("phrase", "Exact phrase", q.match)}${opt("all", "All words", q.match)}${opt("any", "Any word", q.match)}</select></label>` +
         `<label class="f"><span>Exclude words</span><input type="text" id="db-exclude" class="mode-input" autocomplete="off" value="${escapeHtml(q.exclude)}" aria-label="Exclude words"></label>` +
         '<label class="f"><span>Set</span><select id="db-set-filter"><option value="">All sets</option></select></label>' +
@@ -11035,6 +11336,9 @@ function init() {
       getActiveFilters: () => getActiveFilters({ real: true }),
       ensureFiltersLoaded: () => { if (!document.querySelector("#category-filters .category-group")) setMode(state.mode || "tossups"); },
       resetPracticeFilters: () => resetPracticeFiltersToDefaults(),
+      // multiplayer: the panel is the room's (true) / this player's own again (false) — nothing the room changes
+      // is saved as the player's own practice setup meanwhile
+      lendPanel: (on) => { _panelLent = !!on; },
       // Lossless panel-selection mirror (multiplayer keeps every player's
       // category panel in sync through this pair).
       getFilterSelectionSnapshot: () => getFilterSelectionSnapshot(),
@@ -11689,8 +11993,9 @@ async function openUserProfile(handle, shownName) {
     achNote = `<div class="up-stats"><span><b class="num">${num(st.totalQuestions)}</b><small>questions</small></span><span><b class="num">${num(st.tossupPowers)}</b><small>powers</small></span><span><b class="num">${st.totalQuestions ? Math.round((st.tossupAccuracy || 0) * 100) + "%" : "—"}</b><small>tossup accuracy</small></span><span><b class="num">${got}</b><small>achievements</small></span></div>`;
     achHtml = `<div class="stats-section"><div class="stats-section-title">ACHIEVEMENTS</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
   }
-  body.innerHTML = `<div class="up-actions">${friendBtn}</div>${achNote}${achHtml}`;
+  body.innerHTML = `<div class="up-actions">${friendBtn}</div>${trialBadgesHtml(d.trials)}${achNote}${achHtml}`;
   try { initCollapsibles(body); } catch (e) {}
+  if (!d.private) { const p = d.powers || {}; body._achWired = false; wireAchievementCards(body, { achData: computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, p.answer_questions || {}), records: achRecordsOf(p.answer_questions || {}), stats: st }); }
   body.querySelectorAll("[data-up]").forEach((b) => b.onclick = async () => {
     const k = b.dataset.up;
     if (k === "signin" || k === "handle") { close(); openAccount(k); return; }

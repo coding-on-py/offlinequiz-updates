@@ -2435,6 +2435,16 @@ function __qbMain(ctx) {
     var bonusTimer = null;
     var bonusPending = false;    // a random bonus is being fetched after a correct TU
     var roomConfig = null;       // shared question filters (anyone can edit)
+    // A room's setup and this player's own practice setup never mix (14.88): the panel holds the room's only
+    // while the room screen has it (borrowPanel); returnPanel keeps the room's here and puts the player's back.
+    var roomSelCache = null, roomCfgCache = null;
+    var panelHolds = "solo", _soloRestoring = null, _owedRoomConfig = false;   // whose setup the panel shows; a restore in flight
+    function lend(on) { try { if (ctx.host && ctx.host.lendPanel) ctx.host.lendPanel(on); } catch (e) {} }
+    // the room's practice config: the live panel while the room holds it, else the one kept at returnPanel
+    function panelCfg() {
+      if (!borrowedPanel && roomCfgCache) return roomCfgCache;
+      try { return ctx.host.getPracticeConfig(); } catch (e) { return roomCfgCache || { filters: {}, strictness: 10, revealSpeed: 25, filterSummary: "" }; }
+    }
     var leftIntentionally = false;
     var curFilters = {};         // filters used for the current tossup (so the bonus matches)
     var curPowerEnd = 0, curStopPower = false, pausedAtPower = false;
@@ -2748,7 +2758,7 @@ function __qbMain(ctx) {
     function restoreSoloPanel() {
       var b = soloBackup;
       soloBackup = null;
-      if (!b || !(ctx.host && ctx.host.applyFilterSelectionSnapshot)) return;
+      if (!b || !(ctx.host && ctx.host.applyFilterSelectionSnapshot)) return null;
       var fire = function (el, evt) { try { el.dispatchEvent(new Event(evt, { bubbles: true })); } catch (e) {} };
       var setVal = function (id, v, evts) {
         var el = document.getElementById(id);
@@ -2766,7 +2776,7 @@ function __qbMain(ctx) {
         var msNow = document.getElementById("mode-select");
         if (!(msNow && msNow.value === "custom")) setVal("mode-select", b.mode);
         if (b.mode === "set") { setVal("mode-set-name", b.setName); setVal("mode-packet", b.packet); }
-        Promise.resolve(ctx.host.applyFilterSelectionSnapshot(b.sel)).catch(function () {}).then(function () {
+        return Promise.resolve(ctx.host.applyFilterSelectionSnapshot(b.sel)).catch(function () {}).then(function () {
           setVal("strictness-slider", b.cfg.strictness, ["input", "change"]);
           // the slider holds a level (1 … 50, 51 = Instant); the config is ms per character
           setVal("panel-speed-slider", window.qbSpeedLevel ? window.qbSpeedLevel(b.cfg.revealSpeed) : b.cfg.revealSpeed, ["input", "change"]);
@@ -2777,7 +2787,7 @@ function __qbMain(ctx) {
           var panel = document.getElementById("filters-panel");
           if (panel) fire(panel, "change");
         });
-      } catch (e) {}
+      } catch (e) { return null; }
     }
 
     // ── join ──
@@ -3082,7 +3092,7 @@ function __qbMain(ctx) {
       // weighted categories: the server draws each question from the asker's
       // fresh roll (every panel mirrors the room, so any roll is the same draw)
       var roll = null;
-      if (serverMode && weightedOn()) { try { roll = ctx.host.getPracticeConfig().filters || null; } catch (e) {} }
+      if (serverMode && weightedOn()) { try { roll = panelCfg().filters || null; } catch (e) {} }
       toHost(roll ? { t: "reqNext", roll: roll } : { t: "reqNext" });
     }
     function skipsAllowed() { return settings.allowSkips !== false; }
@@ -3097,7 +3107,7 @@ function __qbMain(ctx) {
       }
       hostFinalize();
       // Reuse the host's Tossups Practice filters + strictness + reading speed.
-      var cfg = roomConfig || ((ctx.host && ctx.host.getPracticeConfig) ? ctx.host.getPracticeConfig() : { filters: {}, strictness: 10, revealSpeed: 25, filterSummary: "" });
+      var cfg = roomConfig || ((ctx.host && ctx.host.getPracticeConfig) ? panelCfg() : { filters: {}, strictness: 10, revealSpeed: 25, filterSummary: "" });
       curRevealSpeed = cfg.revealSpeed != null ? cfg.revealSpeed : 25;
       curStrictness = cfg.strictness != null ? cfg.strictness : 10;
       curStopPower = !!settings.stopPower;
@@ -3113,7 +3123,7 @@ function __qbMain(ctx) {
         // sync), so it is safe to re-derive the roll live.
         var wEl = document.getElementById("enable-cat-weights");
         if (roomConfig && wEl && wEl.checked && mode === "random" && !(f.setNames && f.setNames.length) && ctx.host && ctx.host.getPracticeConfig) {
-          try { f = ctx.host.getPracticeConfig().filters || f; curFilters = f; } catch (e2) {}
+          try { f = panelCfg().filters || f; curFilters = f; } catch (e2) {}
         }
         if (f.setNames && f.setNames.length) {
           q = await nextSetQuestion(f);           // ordered set mode
@@ -3171,7 +3181,7 @@ function __qbMain(ctx) {
       if (f && f.setNames && f.setNames.length) return;      // ordered local queue
       var wt = weightedOn();
       if (wt && ctx.host && ctx.host.getPracticeConfig) {
-        try { f = ctx.host.getPracticeConfig().filters || f; } catch (e) {}
+        try { f = panelCfg().filters || f; } catch (e) {}
       }
       var key = wt ? "W" : filtersToQuery(f);
       if (mpPre.busy || (mpPre.q && mpPre.key === key)) return;
@@ -3185,7 +3195,7 @@ function __qbMain(ctx) {
     // Fetch ahead as soon as this machine is hosting (room created, promoted,
     // or filters settled) — the FIRST press of N should be instant too.
     function mpPrefetchNow() {
-      try { if (isHost && ctx.host && ctx.host.getPracticeConfig) mpPrefetchNext(((roomConfig || ctx.host.getPracticeConfig()) || {}).filters || {}); } catch (e) {}
+      try { if (isHost && ctx.host && ctx.host.getPracticeConfig) mpPrefetchNext(((roomConfig || panelCfg()) || {}).filters || {}); } catch (e) {}
     }
     // With "bonus after every question" on, fetch the matching bonus while the
     // tossup is still being read, so a correct buzz starts the bonus instantly.
@@ -3520,7 +3530,7 @@ function __qbMain(ctx) {
       startBonusTimer();
     }
     function curHidePron() {
-      try { var c = roomConfig || (ctx.host && ctx.host.getPracticeConfig && ctx.host.getPracticeConfig()); return !!(c && c.hidePron); } catch (e) { return false; }
+      try { var c = roomConfig || (ctx.host && ctx.host.getPracticeConfig && panelCfg()); return !!(c && c.hidePron); } catch (e) { return false; }
     }
     async function hostHandleBonusAnswer(id, text, k) {
       if (!bonusState || id !== bonusState.winner || bonusState.judging) return;
@@ -3600,7 +3610,9 @@ function __qbMain(ctx) {
         if (admitting) { admitting = false; door = null; render(); }   // let in: now the room shows
         if (rejoining || reconnectN) reconnected();
         srvHost = d.host || null;
+        var wasOfficial = !!officialRoom;
         officialRoom = d.official || null;
+        if (!!officialRoom !== wasOfficial && borrowedPanel && lobby && !admitting) { returnPanel(true); var lay = body && body.querySelector(".practice-layout"); if (lay) borrowPanel(lay); paintOfficial(); }
         players = {}; order = []; (d.players || []).forEach(function (p) { players[p.id] = p; order.push(p.id); });
         settings = d.settings || settings;
         match = d.match || null;
@@ -3609,10 +3621,14 @@ function __qbMain(ctx) {
         // toggle-only sync is the fallback for older hosts. Deduped: state is
         // re-broadcast on every score change, and re-applying an unchanged
         // selection would thrash the panel while this player is mid-edit.
+        // The room's selection is the ROOM's: it goes into the panel only while the room holds the panel
+        // (never into this player's own practice setup on the Practice screen); otherwise it waits.
         if (d.roomSel) {
+          roomSelCache = d.roomSel;
           var sj = JSON.stringify(d.roomSel);
-          if (sj !== _lastSelJson) { _lastSelJson = sj; applyRemoteSel(d.roomSel); }
-        } else if (d.roomFilters) applyRoomFiltersToPanel(d.roomFilters);
+          if (sj !== _lastSelJson && borrowedPanel) { _lastSelJson = sj; applyRemoteSel(d.roomSel); }
+        } else if (d.roomFilters && borrowedPanel) applyRoomFiltersToPanel(d.roomFilters);
+        if (officialRoom) syncDiagDrawer();
         renderScores(); renderSettings(); renderFilterSummary(); updateTopBar();
         if (inDiag()) renderDiag();   // who's here (the waiting view)
       }
@@ -3799,7 +3815,7 @@ function __qbMain(ctx) {
     function paintOfficial() {
       if (!body) return;
       var rs = body.querySelector("#mp-roomset"), b = body.querySelector("#mp-offbadge");
-      if (rs) rs.hidden = !!officialRoom;
+      if (rs) rs.hidden = false;   // an official room's Setup has its reading speed and strictness
       if (b) {
         b.hidden = !officialRoom;
         if (officialRoom) b.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' + esc(officialRoom.name) +
@@ -4276,6 +4292,21 @@ function __qbMain(ctx) {
     // A diagnostic room's settings: only Reading & timers (reading speed, strictness) and the two
     // Game rules timers — the rest is fixed by the diagnostic. Its own sliders (the practice panel's
     // own controls stay hidden and untouched); the room's values, moved by its host only.
+    // an official room's Setup: only its reading speed and strictness (anyone may change them; its questions
+    // and rules stay fixed) — room values, never this player's own practice setup
+    function officialSectionsHtml() {
+      var o = officialRoom || {};
+      var ms = o.revealSpeed != null ? o.revealSpeed : 25, lvl = window.qbSpeedLevel ? window.qbSpeedLevel(ms) : 13, strict = o.strictness != null ? o.strictness : 10;
+      var slider = function (id, label, tip, min, max, v, text) {
+        return '<div class="slider-group"><span class="sg-label">' + label + (tip ? ' <span class="qb-info" data-tip="' + esc(tip) + '">i</span>' : "") + '</span>' +
+          '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + esc(v) + '" aria-label="' + esc(label) + '"><span class="slider-value" id="' + id + '-val">' + esc(text) + "</span></div>";
+      };
+      return '<div class="filter-section mp-injected"><div class="filter-label">Reading</div>' +
+          slider("mp-dx-speed", "Reading speed", "How fast this room reads its questions, for everyone in it: 1 is the slowest and 50 the fastest; past 50 the whole question shows at once (Instant).", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
+          slider("mp-dx-strict", "Strictness", "How close a typed answer must be to the answer line, for everyone in this room. Higher is stricter.", 0, 20, strict, String(strict)) +
+        "</div>" +
+        '<p class="mp-off-note mp-injected">This room\u2019s questions are fixed: ' + esc(filterSummary || o.name || "") + '. These two are the room\u2019s, not your own practice setup.</p>';
+    }
     function diagSectionsHtml() {
       var s = (dxInfo && dxInfo.settings) || {};
       var slider = function (id, label, tip, min, max, v, text) {
@@ -4295,8 +4326,9 @@ function __qbMain(ctx) {
     }
 
     function renderRoom() {
-      // Always return any borrowed panel before re-rendering (innerHTML wipes it).
-      returnPanel();
+      // Always return any borrowed panel before re-rendering (innerHTML wipes it) — a redraw: the room's
+      // setup stays in it.
+      returnPanel(true);
       body.innerHTML =
         '<div class="mp-room">' +
           '<div class="room-head">' +
@@ -4447,8 +4479,8 @@ function __qbMain(ctx) {
     }
     // the drawer shows the room's values; only a host moves them (everyone else: the ⓘ says why)
     function syncDiagDrawer() {
-      var panel = borrowedPanel; if (!panel || !inDiag()) return;
-      var can = amHost(), s = (dxInfo && dxInfo.settings) || {};
+      var panel = borrowedPanel; if (!panel || !(inDiag() || officialRoom)) return;
+      var can = officialRoom ? true : amHost(), s = officialRoom ? { revealSpeed: officialRoom.revealSpeed, strictness: officialRoom.strictness } : (dxInfo && dxInfo.settings) || {};
       var setRange = function (id, v, label) {
         var el = panel.querySelector("#" + id); if (!el) return;
         el.disabled = !can;
@@ -4458,6 +4490,7 @@ function __qbMain(ctx) {
       };
       if (s.revealSpeed != null) setRange("mp-dx-speed", window.qbSpeedLevel ? window.qbSpeedLevel(s.revealSpeed) : 13, window.qbSpeedLabel ? window.qbSpeedLabel(s.revealSpeed) : String(s.revealSpeed));
       if (s.strictness != null) setRange("mp-dx-strict", s.strictness, String(s.strictness));
+      if (officialRoom) return;
       setRange("mp-ans", s.answerSeconds != null ? s.answerSeconds : settings.answerSeconds, (s.answerSeconds != null ? s.answerSeconds : settings.answerSeconds) + "s");
       setRange("mp-bwin", s.buzzWindow != null ? s.buzzWindow : settings.buzzWindow, (s.buzzWindow != null ? s.buzzWindow : settings.buzzWindow) + "s");
       var ft = panel.querySelector(".fp-title"), tip = ft && ft.querySelector(".mp-dx-tip");
@@ -4809,6 +4842,7 @@ function __qbMain(ctx) {
           if (!window.qbSpeedMs) return;
           var ms = window.qbSpeedMs(dsp.value);
           if (dxInfo && dxInfo.settings) dxInfo.settings.revealSpeed = ms;
+          if (officialRoom) officialRoom.revealSpeed = ms;
           toHost({ t: "setConfig", config: { revealSpeed: ms }, change: "changed reading speed to " + spLabel(dsp.value) });
         });
       }
@@ -4818,6 +4852,7 @@ function __qbMain(ctx) {
         dst.addEventListener("change", function () {
           var v = parseInt(dst.value, 10) || 0;
           if (dxInfo && dxInfo.settings) dxInfo.settings.strictness = v;
+          if (officialRoom) officialRoom.strictness = v;
           toHost({ t: "setConfig", config: { strictness: v }, change: "changed strictness to " + v });
         });
       }
@@ -4834,21 +4869,34 @@ function __qbMain(ctx) {
       var gameOpt = document.querySelector('#mode-select option[value="game"]');
       if (gameOpt) { gameOpt.hidden = true; gameOpt.disabled = true; }
       if (!panelHome) panelHome = { parent: panel.parentNode, next: panel.nextSibling };
+      if (panelHolds !== "room") {
+        panelHolds = "room";
+        Promise.resolve(_soloRestoring).then(function () {
+          if (panelHolds !== "room") return;
+          if (!soloBackup) soloBackup = backupSoloPanel();   // this player's own setup, put back by returnPanel
+          lend(true);
+          // the room's setup into the panel: a fresh room starts from the defaults, never this player's own
+          if (inDiag() || officialRoom) return;
+          if (roomSelCache) { _lastSelJson = JSON.stringify(roomSelCache); try { Promise.resolve(ctx.host.applyFilterSelectionSnapshot(roomSelCache)).catch(function () {}); } catch (e) {} }
+          else if (!roomCfgCache) { try { if (ctx.host && ctx.host.resetPracticeFilters) ctx.host.resetPracticeFilters(); } catch (e) {} }
+          if (_owedRoomConfig) { var fr = _owedRoomConfig === "fresh"; _owedRoomConfig = false; sendRoomConfig(fr); }
+        });
+      }
       panel.classList.add("mp-borrowed");
       panel.classList.remove("open");
       layout.insertBefore(panel, layout.firstChild);
       borrowedPanel = panel;
       var ft = panel.querySelector(".fp-title"); if (ft) ft.textContent = "Room settings";
       var fs = panel.querySelector("#btn-drawer-start"); if (fs) fs.textContent = "Done";
-      if (inDiag()) {
-        // a diagnostic room: every practice section goes out of sight (put back in returnPanel);
-        // only its own two sections show
+      if (inDiag() || officialRoom) {
+        // a diagnostic room / an official room: every practice section goes out of sight (put back in
+        // returnPanel); only the room's own knobs show (an official room: reading speed and strictness)
         dxHidden = [];
         [].forEach.call(panel.children, function (c) {
           if (!c.classList.contains("filter-section") || c.classList.contains("mp-injected") || c.style.display === "none") return;
           dxHidden.push([c, c.style.display]); c.style.display = "none";
         });
-        var dsec = document.createElement("div"); dsec.innerHTML = diagSectionsHtml();
+        var dsec = document.createElement("div"); dsec.innerHTML = inDiag() ? diagSectionsHtml() : officialSectionsHtml();
         while (dsec.firstChild) panel.appendChild(dsec.firstChild);
         wireControls();
         syncDiagDrawer();
@@ -4973,6 +5021,8 @@ function __qbMain(ctx) {
     // The first player in a new server room hands it their (reset) practice setup.
     function sendRoomConfig(fresh) {
       if (!serverMode) return;
+      // the room's setup comes from the panel only while the room holds it (never this player's own)
+      if (!borrowedPanel || panelHolds !== "room") { _owedRoomConfig = fresh ? "fresh" : (_owedRoomConfig || true); return; }
       if (fresh) { try { if (ctx.host && ctx.host.resetPracticeFilters) ctx.host.resetPracticeFilters(); } catch (e) {} }
       setTimeout(function () {
         if (!serverMode || !lobby || !ctx.host || !ctx.host.getPracticeConfig) return;
@@ -4983,10 +5033,10 @@ function __qbMain(ctx) {
       }, 150);
     }
     // Put the panel back where it belongs and strip the injected MP sections.
-    function returnPanel() {
+    function returnPanel(redraw) {
       var gameOpt = document.querySelector('#mode-select option[value="game"]');
       if (gameOpt) { gameOpt.hidden = false; gameOpt.disabled = false; }
-      if (!borrowedPanel) return;
+      if (!borrowedPanel) { if (!redraw) giveSoloBack(); return; }
       borrowedPanel.removeEventListener("change", onAnyFilterChange, true);
       borrowedPanel.removeEventListener("input", onAnyFilterChange, true);
       borrowedPanel.querySelectorAll(".mp-injected").forEach(function (n) { n.remove(); });
@@ -4997,11 +5047,24 @@ function __qbMain(ctx) {
       var rb = body && body.querySelector("#mp-roomset"); if (rb) rb.setAttribute("aria-expanded", "false");
       if (panelHome) { panelHome.parent.insertBefore(borrowedPanel, panelHome.next); }
       borrowedPanel = null;
+      if (!redraw) giveSoloBack();
+    }
+    // the panel goes back to being this player's own: the room's setup is kept here (roomSelCache /
+    // roomCfgCache, read by panelCfg and the next borrow) and the player's own is put back
+    function giveSoloBack() {
+      if (panelHolds !== "room") return;
+      panelHolds = "solo";
+      lend(false);
+      if (lobby && !inDiag() && !officialRoom) {
+        try { roomCfgCache = ctx.host.getPracticeConfig(); roomSelCache = ctx.host.getFilterSelectionSnapshot(); } catch (e) {}
+      }
+      _lastSelJson = "";
+      _soloRestoring = restoreSoloPanel();
     }
 
     function renderFilterSummary() {
       var el = body && body.querySelector("#mp-filter-summary"); if (!el) return;
-      if (isHost && ctx.host && ctx.host.getPracticeConfig) { try { filterSummary = ctx.host.getPracticeConfig().filterSummary || "All categories"; } catch (e) {} }
+      if (isHost && ctx.host && ctx.host.getPracticeConfig) { try { filterSummary = panelCfg().filterSummary || "All categories"; } catch (e) {} }
       el.textContent = filterSummary || "All categories";
     }
 
@@ -5506,6 +5569,7 @@ function __qbMain(ctx) {
       var dc = body && body.querySelector("#mp-disconnect"); if (dc) dc.remove();
       returnPanel();
       restoreSoloPanel();
+      roomSelCache = null; roomCfgCache = null; _owedRoomConfig = false;   // the next room starts from its own defaults
       stopReveal(); stopAnswerTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub();
       stopBuzzWindowTimer(); stopTick();   // a stale buzz-window timeout must never fire into the NEXT lobby
       chatScope = "all"; mpPre = { key: "", q: null, busy: false }; _lastSelJson = ""; chatHist = [];

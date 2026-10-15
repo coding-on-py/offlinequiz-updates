@@ -39,6 +39,17 @@ const DEFAULT_USER_DB_PATH = join(
 // ("Brontë" -> "bronte", "García" -> "garcia"), and the map covers the letters
 // NFD does not decompose. Before this, diacritics became SPACES ("bront",
 // "garc a m rquez"), so ASCII-spelled answers never matched their targets.
+// Trials: [key, name, category-tree path] — Science / Math and Pop Culture / Sports are trials of their own
+const TRIAL_CATS = [
+  ["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science and Math > Science"],
+  ["math", "Math", "Science and Math > Math"], ["fa", "Fine Arts", "Fine Arts"], ["myth", "Mythology", "Mythology"],
+  ["phil", "Philosophy", "Philosophy"], ["rel", "Theology", "Theology"], ["geo", "Geography", "Geography"],
+  ["ss", "Social Science", "Social Science"], ["ce", "Current Events", "Current Events"],
+  ["pop", "Pop Culture", "Pop Culture Sports > Pop Culture"], ["sports", "Sports", "Pop Culture Sports > Sports"],
+  ["misc", "Miscellaneous", "Miscellaneous"],
+];
+const TRIAL_COOLDOWN_MS = 3600e3, TRIAL_LEN = 10;
+
 function apFold(s) {
   return String(s == null ? "" : s)
     .toLowerCase()
@@ -1052,6 +1063,41 @@ export class App {
   getSessionStats(sessionId) {
     const entries = this.userData.getSessionEntries(sessionId);
     return computeStats(this._relabel(entries));
+  }
+
+  // ── Trials (14.88): ten power-marked tossups of one category at one level; power all ten (no neg) for the
+  // badge ("Mythology I"). Starting one marks it: a fail — or a quit — waits out the cooldown, unless a pass
+  // came after that start. Kept in the profile's "trials" key (synced, merged per trial: userData.mergeTrials).
+  _trialsOf() {
+    const pid = this.userData.getActiveProfileId();
+    let t = {}; try { t = JSON.parse(this.userData.getConfig("trials:" + pid) || "{}") || {}; } catch { t = {}; }
+    return { pid, t: t && typeof t === "object" && !Array.isArray(t) ? t : {} };
+  }
+  getTrials() {
+    return { trials: this._trialsOf().t, cats: TRIAL_CATS.map(([key, name, path]) => ({ key, name, path })), cooldownMs: TRIAL_COOLDOWN_MS, length: TRIAL_LEN, now: Date.now() };
+  }
+  trialAction(action, category, level) {
+    const cat = TRIAL_CATS.find((c) => c[0] === category); level = parseInt(level, 10);
+    if (!cat || !(level >= 1 && level <= 10)) throw Object.assign(new Error("No such trial."), { status: 400 });
+    const { pid, t: all } = this._trialsOf(), key = cat[0] + "|" + level, t = all[key] || {}, now = Date.now();
+    const save = () => { all[key] = t; this.userData.setConfig("trials:" + pid, JSON.stringify(all)); };
+    if (action === "start") {
+      if (t.s && now - t.s < TRIAL_COOLDOWN_MS && !(t.l >= t.s)) return { ok: false, cooldownUntil: t.s + TRIAL_COOLDOWN_MS };
+      const node = (this.questionDb._loadTree().nodes || []).find((n) => n.path === cat[2]);
+      if (!node) return { ok: false, error: "This category isn't in the question database." };
+      const r = this.questionDb.queryTossups({ categoryIds: [node.id], difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN });
+      const ids = ((r && r.rows) || []).map((q) => q.id).filter(Boolean);
+      if (ids.length < TRIAL_LEN) return { ok: false, error: "There aren't enough power-marked questions for this trial yet." };
+      t.s = now; save();
+      return { ok: true, ids, startedAt: now };
+    }
+    if (action === "pass") {
+      if (!t.s || now - t.s > 3 * 3600e3) return { ok: false, error: "Start the trial first." };
+      t.l = now; if (!t.p) t.p = now; save();
+      return { ok: true, trials: all };
+    }
+    if (action === "fail") return { ok: true, cooldownUntil: (t.s || now) + TRIAL_COOLDOWN_MS };   // its start already counts
+    throw Object.assign(new Error("Unknown trial action."), { status: 400 });
   }
 
   getAnswerPowers() {

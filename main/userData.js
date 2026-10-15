@@ -11,10 +11,23 @@ import { existsSync, mkdirSync } from "node:fs";
 // halves of POST /api/sync — the app sends what changed since its last push and
 // applies what the server returns; the server does the same on the account's
 // own database. The newest mtime wins (review dismissals merge instead).
-const SYNC_KEY = /^(settings|review_dismissed|review_manual|plug):/;
-const SYNC_NAME = /^(settings|review_dismissed|review_manual)$|^plug:[^:]+:.+$/;
+const SYNC_KEY = /^(settings|review_dismissed|review_manual|trials|plug):/;
+const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials)$|^plug:[^:]+:.+$/;
 const MAX_SYNC_VALUE = 900 * 1024;   // a bigger config value stays on its device
 const sessionKey = (r) => JSON.stringify([String(r.session_id), String(r.type), r.question_id == null ? "" : String(r.question_id), Number(r.timestamp)]);
+
+// Trials (14.88): { "<category>|<level>": { s: last start, p: first pass, l: last pass } } (ms)
+export function mergeTrials(a, b) {
+  const out = {};
+  for (const src of [a || {}, b || {}]) for (const [k, v] of Object.entries(src)) {
+    if (!/^[a-z]+\|\d{1,2}$/.test(k) || !v || typeof v !== "object") continue;
+    const o = out[k] || (out[k] = {});
+    if (Number(v.s) > (o.s || 0)) o.s = Number(v.s);
+    if (Number(v.p) > 0 && (!o.p || Number(v.p) < o.p)) o.p = Number(v.p);
+    if (Number(v.l) > (o.l || 0)) o.l = Number(v.l);
+  }
+  return out;
+}
 
 export class UserData {
   constructor(dbPath) {
@@ -188,7 +201,7 @@ export class UserData {
       ...this.db.prepare("SELECT question_id, type, starred_at, mtime, seq, src FROM starred WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n").all(p).map((r) => ({ k: "r", ...r })),
       ...this.db.prepare("SELECT kind, key, mtime, seq, src FROM sync_tomb WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n").all(p).map((r) => ({ k: "t", ...r })),
       ...this.db.prepare(`SELECT m.key, m.mtime, m.seq, m.src, c.value FROM sync_meta m JOIN config c ON c.key = m.key
-          WHERE m.seq > :since AND (m.key IN ('settings:' || :pid, 'review_dismissed:' || :pid, 'review_manual:' || :pid) OR m.key LIKE 'plug:' || :pid || ':%')
+          WHERE m.seq > :since AND (m.key IN ('settings:' || :pid, 'review_dismissed:' || :pid, 'review_manual:' || :pid, 'trials:' || :pid) OR m.key LIKE 'plug:' || :pid || ':%')
           ORDER BY m.seq LIMIT :n`).all(p).map((r) => ({ k: "c", ...r })),
     ].sort((a, b) => a.seq - b.seq);
     const out = [];
@@ -296,6 +309,15 @@ export class UserData {
             // the sender lacks some of these: the merged list goes back to it
             // (the app pushes it; the server stops treating it as the sender's)
             if (Object.keys(merged).length > Object.keys(theirs).length) { seq = this._nextSeq(); from = null; }
+          } else if (name === "trials") {
+            // trials merge per trial: the last start, the first pass and the last pass (a badge is never lost)
+            let mine = {}, theirs = {};
+            try { mine = JSON.parse(this.getConfig(key) || "{}") || {}; } catch {}
+            try { theirs = JSON.parse(value) || {}; } catch { continue; }
+            const merged = mergeTrials(mine, theirs);
+            value = JSON.stringify(merged);
+            mtime = Math.max(mt, meta ? meta.mtime : 0);
+            if (value !== JSON.stringify(theirs)) { seq = this._nextSeq(); from = null; }
           } else if (meta && meta.mtime >= mt) continue;
           this.db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run(key, value);
           this.db.prepare("INSERT OR REPLACE INTO sync_meta (key, mtime, seq, src) VALUES (?, ?, ?, ?)").run(key, mtime, seq, from);

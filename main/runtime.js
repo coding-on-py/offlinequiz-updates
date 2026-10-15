@@ -383,6 +383,8 @@ export async function start(env) {
       return { entries: qbApp.getAllSessionEntries(opts || {}) };
     });
 
+    ipcMain.handle("get-trials", () => qbApp.getTrials());
+    ipcMain.handle("trial-action", (_e, d) => qbApp.trialAction(String((d && d.action) || ""), String((d && d.category) || ""), d && d.level));
     ipcMain.handle("get-answer-powers", () => {
       return qbApp.getAnswerPowers();
     });
