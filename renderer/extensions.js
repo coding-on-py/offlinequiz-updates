@@ -903,15 +903,11 @@
   QB.getPluginSetting = QB.getSetting;
   QB.setPluginSetting = QB.setSetting;
 
-  // Retired plugins: a stored copy is dropped at boot and the zip is refused on import —
-  // either folded into the app itself (it already does what they did) or no longer part of
-  // OfflineQuiz (14.50: the plugin list was cut to the nine kept in plugins/).
+  // Plugins folded into the app itself (it already does what they did): a stored copy is dropped at
+  // boot and the zip is refused on import (multiplayer is refused as a registered builtin). Since 14.85
+  // the plugins retired in 14.50 (plugins/retired/) can be imported again; none is listed here.
   const BUILT_IN_PLUGINS = { "achievement-icons": "Achievement Icons" };
-  const REMOVED_PLUGINS = {
-    "advanced-freq": "Advanced Frequency Lists", "power-facts": "Power Facts", "clue-recall": "Clue Recall",
-    "buzz-trainer": "Buzz Trainer", "answer-rules": "Answer Rules", "answerline-lab": "Answerline Lab",
-    "achievement-lab": "Achievement Lab", "class-sync": "Class Sync", "class-admin": "Class Admin",
-  };
+  const REMOVED_PLUGINS = {};
   const RETIRED_PLUGINS = { ...BUILT_IN_PLUGINS, ...REMOVED_PLUGINS };
   function finalizePlugin(filename, code, manifest, pkg) {
     if (!manifest || !manifest.id) { importFail("Plugin must call QB.registerPlugin({ id, ... })"); return null; }
