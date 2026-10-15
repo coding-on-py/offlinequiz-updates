@@ -1,34 +1,34 @@
 {
   "format": 1,
-  "version": "1791275706103",
-  "name": "Question database 2026-10-06",
+  "version": "1792037056886",
+  "name": "Question database 2026-10-15",
   "schema": 2,
   "mode": "final",
   "tree": "v3.7",
-  "tossups": 187088,
-  "bonuses": 159257,
-  "size": 1628614656,
-  "sha256": "899758e9a311b91b9040de6511cf80bcd411594a4c352d30365cde2b6864d2b9",
+  "tossups": 187083,
+  "bonuses": 159309,
+  "size": 1646104576,
+  "sha256": "4e0bd62a708695dd93bb426c95504eb16f5b2c2aa2d0b1c669bdec1d970fc8bc",
   "compression": "br",
   "parts": [
     {
       "name": "questions.db.br.000",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1791275706103/questions.db.br.000",
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792037056886/questions.db.br.000",
       "size": 99614720,
-      "sha256": "fbbe8a8c07b3d8a31e9952ce1b96c2e49168f9265fceac0fbdc59d6a8cc6f66e"
+      "sha256": "26d6ef76d0a5975f6b3f5ad72b393b16fdae08a04137dfaac99e46cd6322a223"
     },
     {
       "name": "questions.db.br.001",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1791275706103/questions.db.br.001",
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792037056886/questions.db.br.001",
       "size": 99614720,
-      "sha256": "45b4de4dc1f479edb1962b54a7d29ed8312d8d0544db2c929e2ffe2e14c9e115"
+      "sha256": "db04e5058da5f99b21890d9e42a2df01f5c6199bc633a14f81cf4d24c8613d8b"
     },
     {
       "name": "questions.db.br.002",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1791275706103/questions.db.br.002",
-      "size": 77109786,
-      "sha256": "ba98d7192290034d237ec893b684b301d64a8b8c8ac7467a8c7b67d3df782326"
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792037056886/questions.db.br.002",
+      "size": 78806388,
+      "sha256": "18b7d3e8a8809cd6421b5f8b0599fc3df61131758b7a21d30bb767cc97cb7f6f"
     }
   ],
-  "signature": "RarwwDKYix7LM+1vkmJmrowPEXz7qke/w8lwP5Z5d2n4/Qg5FZnK8iSE4s3RBp2lAdf8Kp389vYWHt4Wn4ZpCg=="
+  "signature": "dPbBMxUpieCjahrzcp4AUKUJrIvbkgOULaeQQQ0iyO2jZCW6ZWtOIdziCX5+3LCZNX1/Wz1SisYPCPDloDnIDQ=="
 }

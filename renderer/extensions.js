@@ -10448,6 +10448,182 @@ function partialOf(form, T, ctx, pool, anyWord) {
   return hitW.size < req.length ? hitW.size : 0;
 }
 
+// ---------------------------------------------------------------- M1: math-aware normaliser (accept_math, G3)
+// A port of the database's abbrev/mathnorm.py m1() (version M1/2, hidden_answers_spec.md §8.2): √, ^, /, π, !
+// and % survive, so "sqrt(2)", "√2" and "square root of 2" are one form and "1/2" is never "12". Only the
+// hidden accept_math entries are compared with it (whole response, exact), never the J1 path.
+const M1_VULGAR = { "½": "1/2", "⅓": "1/3", "⅔": "2/3", "¼": "1/4", "¾": "3/4", "⅕": "1/5", "⅖": "2/5", "⅗": "3/5", "⅘": "4/5", "⅙": "1/6",
+  "⅚": "5/6", "⅐": "1/7", "⅛": "1/8", "⅜": "3/8", "⅝": "5/8", "⅞": "7/8", "⅑": "1/9", "⅒": "1/10", "↉": "0/3" };
+const M1_SUPER = { "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁺": "+", "⁻": "-", "⁼": "=",
+  "⁽": "(", "⁾": ")", "ⁿ": "n", "ⁱ": "i", "ᵃ": "a", "ᵇ": "b", "ᶜ": "c", "ᵈ": "d", "ᵉ": "e", "ᶠ": "f", "ᵍ": "g", "ʰ": "h", "ʲ": "j", "ᵏ": "k",
+  "ˡ": "l", "ᵐ": "m", "ᵒ": "o", "ᵖ": "p", "ʳ": "r", "ˢ": "s", "ᵗ": "t", "ᵘ": "u", "ᵛ": "v", "ʷ": "w", "ˣ": "x", "ʸ": "y", "ᶻ": "z" };
+const M1_SUB = { "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9", "₊": "+", "₋": "-", "₌": "=",
+  "₍": "(", "₎": ")", "ₐ": "a", "ₑ": "e", "ₒ": "o", "ₓ": "x", "ₕ": "h", "ₖ": "k", "ₗ": "l", "ₘ": "m", "ₙ": "n", "ₚ": "p", "ₛ": "s", "ₜ": "t",
+  "ᵢ": "i", "ⱼ": "j", "ᵣ": "r", "ᵤ": "u", "ᵥ": "v" };
+const M1_GREEK = { "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "ϵ": "epsilon", "ζ": "zeta", "η": "eta", "θ": "theta",
+  "ϑ": "theta", "ι": "iota", "κ": "kappa", "λ": "lambda", "μ": "mu", "ν": "nu", "ξ": "xi", "ο": "omicron", "π": "pi", "ϖ": "pi", "ρ": "rho",
+  "ϱ": "rho", "σ": "sigma", "ς": "sigma", "τ": "tau", "υ": "upsilon", "φ": "phi", "ϕ": "phi", "χ": "chi", "ψ": "psi", "ω": "omega" };
+const M1_SYMBOLS = { "√": " sqrt ", "∛": " cbrt ", "∞": " inf ", "×": "*", "·": "*", "⋅": "*", "∙": "*", "∗": "*", "✕": "*", "✖": "*", "⨯": "*",
+  "÷": "/", "∕": "/", "⁄": "/", "−": "-", "–": "-", "—": "-", "‒": "-", "‐": "-", "‑": "-", "﹣": "-", "°": " deg ", "≤": "<=", "≥": ">=",
+  "≠": "!=", "[": "(", "]": ")", "{": "(", "}": ")" };
+const M1_FUNCS = ["sqrt", "cbrt", "sin", "cos", "tan", "sec", "csc", "cot", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "ln", "log",
+  "exp", "lim", "det", "max", "min", "gcd", "lcm", "mod", "abs"];
+const M1_NAMES = [...new Set([...M1_FUNCS, "pi", "phi", "inf", "deg", ...Object.values(M1_GREEK)])]
+  .sort((a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0));
+const M1_BY_FIRST = {};
+for (const n of M1_NAMES) (M1_BY_FIRST[n[0]] = M1_BY_FIRST[n[0]] || []).push(n);
+const M1_FILLER = /^\s*(?:(?:what\s+is|what['’]s|whats|it\s+is|it['’]s|is\s+it|um+|uh+)\s+)+/i;
+const M1_FUNCS_OF = ["arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "sqrt", "cbrt", "sin", "cos", "tan", "sec", "csc", "cot", "ln", "log", "exp", "abs", "det"];
+const m1w = (p) => new RegExp("(?<![a-z])" + p + "(?![a-z])", "g");
+const M1_WORDS = [
+  [m1w("square\\s*roots?\\s+of"), " sqrt "], [m1w("square\\s*roots?"), " sqrt "], [m1w("cube\\s*roots?\\s+of"), " cbrt "], [m1w("cube\\s*roots?"), " cbrt "],
+  [m1w("sqrt\\s+of"), " sqrt "], [m1w("root\\s+of"), " sqrt "], [m1w("radical\\s+of"), " sqrt "], [m1w("radical"), " sqrt "],
+  [m1w("root"), " sqrt "], [m1w("infinity"), " inf "], [m1w("per\\s*cent"), " % "], [m1w("degrees?"), " deg "],
+  [m1w("natural\\s+log(?:arithm)?(?:\\s+of)?"), " ln "], [m1w("logarithm"), " log "], [m1w("sine"), " sin "], [m1w("cosine"), " cos "],
+  [m1w("tangent"), " tan "], [m1w("(" + M1_FUNCS_OF.join("|") + ")\\s+of"), " $1 "],
+];
+const M1_THOUSANDS = /(?<![\d.,])\d{1,3}(?:,\d{3})+(?![\d]|,\d)/g;
+const M1_ENT = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ", minus: "−", times: "×", divide: "÷", radic: "√", pi: "π", deg: "°", frac12: "½", sup2: "²", sup3: "³" };
+function m1Runs(s, table, mark) {
+  let out = "", i = 0;
+  const cs = Array.from(s);
+  while (i < cs.length) {
+    if (table[cs[i]] !== undefined) { let j = i, run = ""; while (j < cs.length && table[cs[j]] !== undefined) run += table[cs[j++]]; out += mark + "(" + run + ")"; i = j; }
+    else out += cs[i++];
+  }
+  return out;
+}
+function m1Prepare(s) {
+  s = String(s || "").replace(/<[^>]*>/g, " ").replace(/&(#x[0-9a-f]+|#\d+|[a-z0-9]+);/gi, (m, e) => {
+    if (e[0] === "#") { const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10); return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : m; }
+    return M1_ENT[e.toLowerCase()] !== undefined ? M1_ENT[e.toLowerCase()] : m;
+  });
+  s = Array.from(s).map((c) => (M1_VULGAR[c] ? " " + M1_VULGAR[c] + " " : c)).join("");
+  s = m1Runs(s, M1_SUPER, "^");
+  s = m1Runs(s, M1_SUB, "_");
+  s = s.replace(/[º˚]/g, " deg ");
+  s = s.normalize("NFKC").toLowerCase().replace(/ß/g, "ss");
+  s = Array.from(s).map((c) => (M1_GREEK[c] ? " " + M1_GREEK[c] + " " : M1_SYMBOLS[c] !== undefined ? M1_SYMBOLS[c] : c)).join("");
+  s = s.split("**").join("^");
+  s = s.replace(M1_FILLER, " ");
+  s = s.replace(/^\s*the\s+/, " ");
+  s = s.replace(/[\s?.]+$/, "");
+  for (const [rx, rep] of M1_WORDS) s = s.replace(rx, rep);
+  return s.replace(M1_THOUSANDS, (m) => m.replace(/,/g, ""));
+}
+const m1Alnum = (t) => t.k === "num" || t.k === "name" || t.k === "letter" || t.k === "word";
+function m1SplitLetters(run) {
+  const out = [];
+  let i = 0;
+  while (i < run.length) {
+    const hit = (M1_BY_FIRST[run[i]] || []).find((n) => run.startsWith(n, i));
+    if (hit) { out.push({ t: hit, k: "name", sp: false }); i += hit.length; }
+    else { out.push({ t: run[i], k: "letter", sp: false }); i++; }
+  }
+  const singles = out.filter((x) => x.k === "letter").length;
+  let word = run.length >= 4 && singles >= 2;
+  for (let j = 0; j < out.length && !word;) {
+    let k = j;
+    while (k < out.length && out[k].k === "letter") k++;
+    if (k - j >= 3) word = true;
+    j = Math.max(k, j + 1);
+  }
+  return word ? [{ t: run, k: "word", sp: false }] : out;
+}
+function m1Tokenize(str) {
+  const s = Array.from(m1Prepare(str)), toks = [];
+  let i = 0, sp = false;
+  const digit = (c) => c >= "0" && c <= "9";
+  while (i < s.length) {
+    const c = s[i];
+    if (/\s/u.test(c)) { sp = true; i++; continue; }
+    if (digit(c) || (c === "." && digit(s[i + 1] || ""))) {
+      let j = i;
+      if (c === ".") { j++; while (j < s.length && digit(s[j])) j++; }
+      else {
+        while (j < s.length && digit(s[j])) j++;
+        if (s[j] === "." && digit(s[j + 1] || "")) { j++; while (j < s.length && digit(s[j])) j++; }
+      }
+      toks.push({ t: s.slice(i, j).join(""), k: "num", sp }); i = j;
+    } else if (/\p{L}/u.test(c)) {
+      let j = i;
+      while (j < s.length && /\p{L}/u.test(s[j])) j++;
+      const parts = m1SplitLetters(s.slice(i, j).join(""));
+      parts[0].sp = sp; toks.push(...parts); i = j;
+    } else if (["<=", ">=", "!=", "->"].includes(c + (s[i + 1] || ""))) { toks.push({ t: c + s[i + 1], k: "op", sp }); i += 2; }
+    else { toks.push({ t: c, k: "op", sp }); i++; }
+    sp = false;
+  }
+  return toks;
+}
+function m1CanonNum(t) {
+  if (t[0] === ".") t = "0" + t;
+  if (t.includes(".")) t = t.replace(/0+$/, "").replace(/\.$/, "");
+  return t || "0";
+}
+function m1Rewrite(toks) {
+  const T = (t, k, sp = false) => ({ t, k, sp });
+  const isInt = (t) => !!t && t.k === "num" && !t.t.includes(".");
+  toks = toks.map((t) => (t.k === "num" ? T(m1CanonNum(t.t), t.k, t.sp) : t));
+  // b. x between two numbers
+  for (let i = 1; i < toks.length - 1; i++) if (toks[i].k === "letter" && toks[i].t === "x" && toks[i - 1].k === "num" && toks[i + 1].k === "num") toks[i] = T("*", "op", toks[i].sp);
+  // c. scientific notation
+  let out = [];
+  for (let i = 0; i < toks.length;) {
+    const t = toks[i];
+    if (t.k === "num" && i + 2 < toks.length && toks[i + 1].k === "letter" && toks[i + 1].t === "e" && !toks[i + 1].sp) {
+      let j = i + 2, sign = null;
+      if (toks[j].k === "op" && (toks[j].t === "+" || toks[j].t === "-") && !toks[j].sp && j + 1 < toks.length) { sign = toks[j].t; j++; }
+      if (isInt(toks[j]) && !toks[j].sp && !(j + 1 < toks.length && toks[j + 1].k === "num")) {
+        out.push(t, T("*", "op"), T("10", "num"), T("^", "op"));
+        if (sign === "-") out.push(T("-", "op"));
+        out.push(T(toks[j].t, "num"));
+        i = j + 1; continue;
+      }
+    }
+    out.push(t); i++;
+  }
+  toks = out;
+  // d. unary plus
+  toks = toks.filter((t, i) => !(t.k === "op" && t.t === "+" && (i === 0 || (toks[i - 1].k === "op" && (toks[i - 1].t === "(" || toks[i - 1].t === "=")))));
+  // e. log base
+  out = [];
+  toks.forEach((t, i) => {
+    out.push(t);
+    if (t.k === "name" && t.t === "log" && i + 2 < toks.length && toks[i + 1].k === "num" && !toks[i + 1].sp && toks[i + 2].t === "(") out.push(T("_", "op"));
+  });
+  toks = out;
+  // f. redundant parentheses
+  for (let changed = true; changed;) {
+    changed = false; out = [];
+    for (let i = 0; i < toks.length;) {
+      if (toks[i].t === "(" && toks[i].k === "op" && i + 2 < toks.length && m1Alnum(toks[i + 1]) && toks[i + 2].k === "op" && toks[i + 2].t === ")") { out.push(toks[i + 1]); i += 3; changed = true; continue; }
+      const prev = out[out.length - 1];
+      if (toks[i].t === "(" && toks[i].k === "op" && prev && (prev.t === "^" || prev.t === "sqrt" || prev.t === "cbrt") && i + 3 < toks.length && toks[i + 1].t === "-" && m1Alnum(toks[i + 2]) && toks[i + 3].t === ")") {
+        out.push(toks[i + 1], toks[i + 2]); i += 4; changed = true; continue;
+      }
+      out.push(toks[i]); i++;
+    }
+    toks = out;
+  }
+  // g. explicit multiplication stays only between two numbers
+  toks = toks.filter((t, i) => !(t.k === "op" && t.t === "*") || (i > 0 && i + 1 < toks.length && toks[i - 1].k === "num" && toks[i + 1].k === "num"));
+  // h. 1 * 10 ^
+  out = [];
+  for (let i = 0; i < toks.length;) {
+    if (toks[i].k === "num" && toks[i].t === "1" && i + 3 < toks.length && toks[i + 1].t === "*" && toks[i + 2].t === "10" && toks[i + 3].t === "^"
+      && (i === 0 || (toks[i - 1].k === "op" && ![")", "!", "%"].includes(toks[i - 1].t)))) { i += 2; continue; }
+    out.push(toks[i]); i++;
+  }
+  return out;
+}
+function m1(s) {
+  const toks = m1Rewrite(m1Tokenize(s));
+  let out = "";
+  toks.forEach((t, i) => { if (i && m1Alnum(t) && m1Alnum(toks[i - 1])) out += " "; out += t.t; });
+  return out;
+}
+
 // ---------------------------------------------------------------- strict comparisons (J4 rejects, hidden entries)
 function contentToks(toks) {
   let i = 0;
@@ -10492,10 +10668,18 @@ function containsRun(T, term) {
 
 // ---------------------------------------------------------------- the judge
 function verdict(status, extra) { return { status, matchedAnswer: null, prompt: null, ...extra }; }
+// G3: the whole response (as typed) under M1 equals a hidden accept_math entry's
+function mathAccept(resp, opts, rc) {
+  const h = opts && opts.hidden, list = h && typeof h === "object" && Array.isArray(h.accept_math) ? h.accept_math : null;
+  if (!list || !list.length) return null;
+  const mr = m1(rc && rc.rawResp != null ? rc.rawResp : resp);
+  const hit = mr && list.find((e) => m1(String(e)) === mr);
+  return hit ? verdict("accept", { rule: "J5", via: "hidden-math", matchedAnswer: String(hit) }) : null;
+}
 
 function judgeOnce(resp, P, strictness, opts, rc, plain) {
   const T = respTokens(resp, plain);
-  if (!T.length) return verdict("reject", { rule: "J14" });
+  if (!T.length) return mathAccept(resp, opts, rc) || verdict("reject", { rule: "J14" });
   const rules = rc.rules;
   const F = linesForms(P, plain, opts.jointPieces, rules);
   const exact = !!rules.exact;
@@ -10564,6 +10748,10 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   const hTok = (list) => (Array.isArray(list) ? list : []).map((e) => respTokens(String(e), plain)).filter((t) => t.length);
   const H = hidden ? { accept: hTok(hidden.accept), prompt: hTok(hidden.prompt), antiprompt: hTok(hidden.antiprompt), reject: hTok(hidden.reject) } : null;
   if (H && H.reject.some((t) => strictEq(t, T, true)) && !wholeAccept()) return verdict("reject", { rule: "J4", via: "hidden" });
+  // ---- G3 (at J5, before the partial rule could call "sqrt(2)" part of "square root of 2"): the whole response
+  // as math notation, M1 against the hidden accept_math entries, exact
+  const g3 = mathAccept(resp, opts, rc);
+  if (g3) return g3;
   let noPrompt = false;
   for (const r of F.noprompts) if (live(r) && !r.superset && r.terms.some((t) => strictEq(t, T, false))) noPrompt = true;
   // ---- J5 exact accept
@@ -10745,6 +10933,7 @@ function hiddenFuzzy(entry, T, ctx) {
 function hiddenExtra(entry, T) {
   const a = contentToks(entry);
   if (!a.length || a.every((t) => numInfo(t.t))) return false; // number guard
+  if (a.map((t) => t.t).join("").length <= 2) return false;    // a 1–2 character entry is the whole answer only ("vitamin C" isn't carbon's "C")
   const b = contentToks(T);
   if (b.length <= a.length || b.some((t) => NEVER_ACCOUNTED.has(t.t))) return false;
   for (let i = 0; i + a.length <= b.length; i++) {
@@ -10892,6 +11081,7 @@ function qualifierRetry(r, P, strictness, opts, rc, plain) {
 function judgeTop(resp, P, strictness, opts, plain) {
   const rc = makeReadCtx(opts);
   questionInfo(rc, P);
+  rc.rawResp = String(resp || "");   // G3 reads the response as typed ("3!" keeps its factorial)
   const r = String(resp || "").replace(/[?!.]+\s*$/, "").trim();
   let v = judgeOnce(r, P, strictness, opts, rc, plain);
   // a response that is only a symbol ("#") names it: any of its names the line takes is the answer
@@ -11107,7 +11297,7 @@ function __debugLine(answerline, sanitized, opts = {}) {
     issues: P.L.issues };
 }
 
-return { stripTags, normalizeText, stripLeadingArticle, parseAnswerline, parseSanitizedAnswerline, healAnswerline, primaryAnswer, frequencyKey, answersSimilar, similarityKeys, similarKeysMatch, evaluateAnswer, parseDirectives, checkAnswer, checkBonusPart, checkBonus, parseAnswerLineForms, __debugLine };
+return { stripTags, normalizeText, stripLeadingArticle, parseAnswerline, parseSanitizedAnswerline, healAnswerline, primaryAnswer, frequencyKey, answersSimilar, similarityKeys, similarKeysMatch, m1, evaluateAnswer, parseDirectives, checkAnswer, checkBonusPart, checkBonus, parseAnswerLineForms, __debugLine };
 })();
 window.QBScoring = (function () {
 "use strict";
