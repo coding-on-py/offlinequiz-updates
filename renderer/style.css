@@ -5836,7 +5836,7 @@ html.hw {
 }
 html.hw body { background: radial-gradient(1200px 500px at 50% -180px, rgba(255, 122, 26, 0.07), transparent 70%), var(--bg); }
 /* the logo's jack-o'-lantern */
-.hw-o { display: inline-block; width: 0.84em; height: 0.84em; margin: 0 0.02em; vertical-align: -0.08em; }
+.hw-o { display: inline-block; width: 0.72em; height: 0.75em; margin: 0 0.1em 0 0; vertical-align: -0.03em; }
 .hw-o .hw-pumpkin { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 4px rgba(255, 122, 26, 0.5)); }
 .hw-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* bats across the top, once a visit */
@@ -5848,12 +5848,15 @@ html.hw body { background: radial-gradient(1200px 500px at 50% -180px, rgba(255,
 .hw-bat.b2 { top: 32px; width: 26px; animation-delay: 1.5s; animation-duration: 6.4s; }
 @keyframes hw-fly { 0% { transform: translate(0, 0); opacity: 0; } 8% { opacity: 1; } 50% { transform: translate(55vw, 28px); } 92% { opacity: 1; } 100% { transform: translate(calc(100vw + 140px), -12px); opacity: 0; } }
 @keyframes hw-flap { from { transform: scaleY(1); } to { transform: scaleY(0.5); } }
-/* cobwebs in the corners of the bigger cards */
-html.hw :is(.pf-card, .pf-ach, .pf-trials, .setup-box, .hw-card) { position: relative; }
-html.hw :is(.pf-card, .pf-ach, .pf-trials, .setup-box, .hw-card)::after {
-  content: ""; position: absolute; top: 0; right: 0; width: 86px; height: 86px; pointer-events: none; opacity: 0.2;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23d9c8ea' stroke-width='0.9'%3E%3Cpath d='M100 0L0 100M100 0L32 100M100 0L64 100M100 0L0 32M100 0L0 64'/%3E%3Cpath d='M86 0Q88 12 100 14M70 0Q75 25 100 30M52 0Q60 40 100 48M34 0Q45 55 100 66M16 0Q30 70 100 84'/%3E%3C/g%3E%3C/svg%3E") no-repeat top right / contain; border-top-right-radius: inherit;
+/* cobwebs: each box its own (app.js hwWebs — the web, its corner, size and strength) */
+html.hw [data-hw-web]:not([data-hw-web="none"])::after {
+  content: ""; position: absolute; z-index: 0; width: var(--hw-web-size, 86px); height: var(--hw-web-size, 86px); pointer-events: none;
+  opacity: var(--hw-web-o, 0.2); background: var(--hw-web) no-repeat center / contain;
 }
+html.hw [data-hw-web="tr"]::after { top: 0; right: 0; }
+html.hw [data-hw-web="tl"]::after { top: 0; left: 0; transform: scaleX(-1); }
+html.hw [data-hw-web="br"]::after { bottom: 0; right: 0; transform: scaleY(-1); }
+html.hw [data-hw-web="bl"]::after { bottom: 0; left: 0; transform: scale(-1, -1); }
 /* Buzz is a pumpkin; Power flickers like a candle; popups glow */
 html.hw :is(#pa-buzz, #mp-buzz-btn)::before { content: ""; flex: none; width: 17px; height: 17px; margin-right: 6px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 6.2c-.4-1.9.3-3.3 1.6-3.9' fill='none' stroke='%235d9a2e' stroke-width='1.9' stroke-linecap='round'/%3E%3Cellipse cx='7.4' cy='14' rx='5.1' ry='7' fill='%23d9661a'/%3E%3Cellipse cx='16.6' cy='14' rx='5.1' ry='7' fill='%23d9661a'/%3E%3Cellipse cx='12' cy='14' rx='5.6' ry='7.6' fill='%23ff8a24'/%3E%3Cpath d='M7.2 12.3 9.6 10l.7 2.9zM16.8 12.3 14.4 10l-.7 2.9z' fill='%233b1600'/%3E%3Cpath d='M7.3 15.5c1.7 2.4 7.7 2.4 9.4 0l-1.5.3-.8 1.1-1.1-.9-1.3 1-1.3-1-1.1.9-.8-1.1z' fill='%233b1600'/%3E%3C/svg%3E") center / contain no-repeat; }
 html.hw .result-banner.power { text-shadow: 0 0 10px rgba(255, 150, 50, 0.55); animation: hw-flicker 2.6s ease-in-out infinite; }
@@ -5885,3 +5888,18 @@ html.hw .ach-stack .ach-popup { box-shadow: var(--shadow), 0 0 0 1px rgba(255, 1
 .hw-pk { flex: none; padding: 0 !important; border: 0 !important; background: none !important; width: 16px; height: 16px; }
 .hw-pk > svg { flex: none; width: 16px !important; height: 16px !important; }
 .hw-pk-mini > svg { width: 13px; height: 13px; }
+
+/* 14.91: Halloween's buttons and checkmarks are orange (no green buttons) */
+html.hw { --go: #ff7a1a !important; --go-strong: #e0620d !important; }
+html.hw .btn-go, html.hw .btn-go:hover { color: #1a0d04; }
+html.hw :is(.mp-plan-ic.yes, .tp-item.ok .tp-ico, .pgm-okcircle, .shop-done-badge) { background: rgba(255, 122, 26, 0.16) !important; color: #ff9d40 !important; }
+html.hw :is(.shop-check.ok, .shop-check.ok b, .acct-ok) { color: #ff9d40 !important; }
+/* the top bar (and the avatar menu that drops from it) over the Setup panel and every page's own layers */
+.app-topbar { z-index: 50; }
+.app-topbar:has(.tb-menu:not([hidden]):not(.hidden)) { z-index: 9000; }
+/* 14.91: a room's Session history sits inside the window with room under it (it fell past the bottom edge):
+   while it shows, the question area leaves space for it below the docked bar */
+@media (min-width: 761px) {
+  .mp-room .question-area:has(> .mp-history:not([style*="none"])) { min-height: calc(100vh - var(--topbar-h) - 60px - 20px); min-height: calc(100dvh - var(--topbar-h) - 60px - 20px); }
+  .mp-room .question-area > .mp-history { margin-bottom: 24px; }
+}

@@ -3907,10 +3907,10 @@ function __qbMain(ctx) {
         // the game server's official rooms (levels, then subjects), listed like the public rooms below
         var off = d.rooms.filter(function (r) { return r.official; }).sort(function (a, b) { var rk = function (k) { return k === "event" ? -1 : k === "level" ? 0 : 1; }; return rk(a.official.kind) - rk(b.official.kind) || (a.official.order || 0) - (b.official.order || 0); });
         var rooms = d.rooms.filter(function (r) { return !r.official; });
-        // a room as a row: its name, who's in it, players and online, Join
+        // a room as a row: its name, how many players and how many online (no names, 14.91), Join
         var roomRow = function (r, name) {
-          var who = (r.names || []).join(", ") + (r.players > (r.names || []).length ? " +" + (r.players - (r.names || []).length) : "");
-          var state = countText(r.online == null ? { players: r.players, online: r.players } : r) + (r.spectators ? " · " + r.spectators + " watching" : "") + (r.official ? "" : r.questions ? " · Q" + r.questions : " · waiting");
+          var who = countText(r.online == null ? { players: r.players, online: r.players } : r);
+          var state = [r.spectators ? r.spectators + " watching" : "", r.official ? "" : r.questions ? "Q" + r.questions : "waiting"].filter(Boolean).join(" · ");
           return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(name) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
         };
         var osec = body.querySelector("#mp-official");

@@ -9707,7 +9707,8 @@ function hwLogos(on) {
       const tn = [...el.childNodes].find((n) => n.nodeType === 3 && /^\s*o/i.test(n.nodeValue));
       if (!tn) continue;
       const i = tn.nodeValue.search(/o/i), span = document.createElement("span");
-      span.className = "hw-o"; span.innerHTML = PUMPKIN_SVG + '<span class="hw-sr">' + tn.nodeValue[i] + "</span>";
+      // cropped to the pumpkin, so its body sits on the baseline at the letters' height
+      span.className = "hw-o"; span.innerHTML = PUMPKIN_SVG.replace('viewBox="0 0 24 24"', 'viewBox="2.2 1.6 19.6 20.4"') + '<span class="hw-sr">' + tn.nodeValue[i] + "</span>";
       const after = tn.splitText(i); after.nodeValue = after.nodeValue.slice(1);
       el.insertBefore(span, after);
     } else if (!on && o) {
@@ -9728,10 +9729,67 @@ function hwBats() {
   document.body.appendChild(box);
   setTimeout(() => box.remove(), 9500);
 }
+// Cobwebs: each box gets its own — a web drawn from a seed (the box's kind, place and text): how many threads and
+// rings, where they sag, a broken strand, now and then a spider; its corner, size and strength vary too. The big
+// boxes all get one; a few of the small cards do.
+const HW_WEB_BIG = ".pf-card, .pf-ach, .pf-trials, .hw-card, .setup-box, .hcard, .mp-plan, .fr-card, .mp-recent > .list, .stats-section";
+const HW_WEB_SMALL = ".tr-card, .achievement-card";
+function hwSeed(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
+function hwRng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function hwWebSvg(seed) {
+  const r = hwRng(seed), n = 4 + Math.floor(r() * 4), L = [], ang = [];
+  for (let i = 0; i < n; i++) { ang.push(((i / (n - 1)) * 90 + (r() - 0.5) * 14) * Math.PI / 180); L.push(78 + r() * 26); }
+  const pt = (i, d) => [100 - d * Math.cos(ang[i]), d * Math.sin(ang[i])];
+  let d = "";
+  for (let i = 0; i < n; i++) { const [x, y] = pt(i, L[i]); d += `M100 0L${x.toFixed(1)} ${y.toFixed(1)}`; }
+  const rings = 3 + Math.floor(r() * 3);
+  for (let k = 1; k <= rings; k++) {
+    const base = (k / (rings + 0.6)) * 92;
+    for (let i = 0; i < n - 1; i++) {
+      if (r() < 0.1) continue;   // a broken strand
+      const r1 = Math.min(base * (0.9 + r() * 0.2), L[i] - 2), r2 = Math.min(base * (0.9 + r() * 0.2), L[i + 1] - 2);
+      const [x1, y1] = pt(i, r1), [x2, y2] = pt(i + 1, r2);
+      const am = (ang[i] + ang[i + 1]) / 2, rm = ((r1 + r2) / 2) * (0.8 + r() * 0.08);
+      d += `M${x1.toFixed(1)} ${y1.toFixed(1)}Q${(100 - rm * Math.cos(am)).toFixed(1)} ${(rm * Math.sin(am)).toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+    }
+  }
+  let spider = "";
+  if (r() < 0.35) {
+    const i = Math.floor(r() * n), [x, y] = pt(i, L[i] * (0.4 + r() * 0.3)), drop = 10 + r() * 22;
+    spider = `<path d='M${x.toFixed(1)} ${y.toFixed(1)}V${(y + drop).toFixed(1)}'/><circle cx='${x.toFixed(1)}' cy='${(y + drop + 2.6).toFixed(1)}' r='2.6' fill='%23d9c8ea' stroke='none'/>`;
+  }
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><g fill='none' stroke='%23d9c8ea' stroke-width='${(0.7 + r() * 0.4).toFixed(2)}' stroke-linecap='round'><path d='${d}'/>${spider}</g></svg>`;
+  return 'url("data:image/svg+xml,' + svg.replace(/</g, "%3C").replace(/>/g, "%3E").replace(/"/g, "'") + '")';
+}
+function hwWebs(root) {
+  if (!document.documentElement.classList.contains("hw")) return;
+  (root || document).querySelectorAll(HW_WEB_BIG + ", " + HW_WEB_SMALL).forEach((el, idx) => {
+    if (el.dataset.hwWeb) return;
+    const big = el.matches(HW_WEB_BIG);
+    const seed = hwSeed(el.className + "|" + idx + "|" + (el.textContent || "").slice(0, 40));
+    const r = hwRng(seed ^ 0x9e3779b9);
+    if (!big && r() > 0.28) { el.dataset.hwWeb = "none"; return; }
+    const corners = big ? ["tr", "tr", "tl", "tl", "br"] : ["tr", "tl", "br", "bl"];
+    el.dataset.hwWeb = corners[Math.floor(r() * corners.length)];
+    el.style.setProperty("--hw-web", hwWebSvg(seed));
+    el.style.setProperty("--hw-web-size", Math.round(big ? 64 + r() * 52 : 34 + r() * 22) + "px");
+    el.style.setProperty("--hw-web-o", (0.13 + r() * 0.12).toFixed(2));
+    if (getComputedStyle(el).position === "static") el.style.position = "relative";
+  });
+}
+let _hwWebObs = null, _hwWebT = null;
+function hwWebsWatch(on) {
+  if (on && !_hwWebObs && window.MutationObserver) {
+    _hwWebObs = new MutationObserver(() => { clearTimeout(_hwWebT); _hwWebT = setTimeout(() => hwWebs(), 120); });
+    _hwWebObs.observe(document.body, { childList: true, subtree: true });
+  } else if (!on && _hwWebObs) { _hwWebObs.disconnect(); _hwWebObs = null; }
+  if (on) hwWebs();
+}
 function applyHwTheme() {
   const on = hwThemeWanted();
   document.documentElement.classList.toggle("hw", on);
   hwLogos(on);
+  hwWebsWatch(on);
   if (on) setTimeout(hwBats, 600);
   const row = document.getElementById("hw-theme-row"), sel = document.getElementById("hw-theme");
   if (row) row.classList.toggle("hidden", !hwOn());
