@@ -5984,3 +5984,24 @@ html.hw :is(.shop-check.ok, .shop-check.ok b, .acct-ok) { color: #ff9d40 !import
 .td-xp { margin: 4px 0 2px; font-size: 26px; font-weight: 800; color: color-mix(in srgb, var(--hue) 75%, var(--strong)); }
 .td-wait { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
 .tp-lv .tr-wait { font-size: 11px; }
+
+/* 15.1: XP badges — how close the next one is; a trial's Setup has no Start of its own (the page's starts it) */
+#practice-screen #filters-panel.trial-setup .fp-foot { display: none !important; }
+.tr-prog { display: block; width: 100%; height: 4px; margin-top: 2px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.tr-prog i { display: block; height: 100%; border-radius: 2px; background: var(--hue); }
+.tr-need { color: var(--yellow, #e3b341); font-size: 11px; white-space: nowrap; }
+.tp-prog { margin: 12px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); text-align: left; }
+.tp-prog.done { display: flex; align-items: center; gap: 8px; color: var(--strong); font-size: 13px; }
+.tp-prog.done svg { color: var(--hue); }
+.tp-prog-h { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.tp-prog-h b { color: var(--strong); font-weight: 600; }
+.tp-prog-h .num { color: var(--text); white-space: nowrap; }
+.tp-prog-bar { height: 8px; margin: 8px 0; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.tp-prog-bar i { display: block; height: 100%; border-radius: 4px; background: var(--hue); transition: width 0.9s var(--ease-out); }
+.tp-prog-req { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+.tp-prog-req span { display: inline-flex; align-items: center; gap: 4px; }
+.tp-prog-req span.ok { color: var(--green, #56d364); }
+.td-emb { display: inline-flex; animation: bd-pop 0.6s var(--ease-out); }
+@media (prefers-reduced-motion: reduce) { .tp-prog-bar i { transition: none; } .td-emb { animation: none; } }
+.tr-meta { flex-wrap: wrap; row-gap: 2px; }
+.tr-xp { white-space: nowrap; }
