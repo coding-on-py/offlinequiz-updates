@@ -5823,3 +5823,65 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .ach-modal, .tp-modal { display: block; overflow-x: hidden; overflow-y: auto; }
 .ach-modal > .ad-body, .tp-modal > .ad-body { overflow: visible; }
 .ach-modal > .modal-head, .tp-modal > .modal-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+
+/* ── Halloween 2026 (14.90): html.hw — app.js applyHwTheme (index.html sets it before the first paint); until Nov 1 ── */
+html.hw {
+  --bg: #100b16 !important; --bg-secondary: #181021 !important; --bg-tertiary: #21172d !important;
+  --border: #3b2a4d !important; --border-light: #2a1e38 !important;
+  --text: #e9ddf2 !important; --text-secondary: #a995bb !important; --text-muted: #6f5d82 !important;
+  --accent: #ff7a1a !important; --accent-dim: #ff7a1a33 !important;
+  --green: #8bdc3c !important; --green-dim: #8bdc3c33 !important; --red: #ff5a5f !important; --red-dim: #ff5a5f33 !important;
+  --yellow: #ffb340 !important; --power-mark: #ffb340 !important; --star: #ffb340 !important; --buzz-mark: #ff7a1a !important;
+  --strong: #f6ecfb !important; --on-accent: #1a0d04 !important;
+}
+html.hw body { background: radial-gradient(1200px 500px at 50% -180px, rgba(255, 122, 26, 0.07), transparent 70%), var(--bg); }
+/* the logo's jack-o'-lantern */
+.hw-o { display: inline-block; width: 0.84em; height: 0.84em; margin: 0 0.02em; vertical-align: -0.08em; }
+.hw-o .hw-pumpkin { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 4px rgba(255, 122, 26, 0.5)); }
+.hw-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* bats across the top, once a visit */
+.hw-bats { position: fixed; left: 0; right: 0; top: 0; height: 170px; z-index: 60; overflow: hidden; pointer-events: none; }
+.hw-bat { position: absolute; left: -70px; width: 46px; color: #6a4a8c; opacity: 0; animation: hw-fly 7s ease-in-out forwards; }
+.hw-bat svg { display: block; width: 100%; height: auto; filter: drop-shadow(0 0 3px rgba(255, 140, 60, 0.45)); animation: hw-flap 0.26s ease-in-out infinite alternate; transform-origin: center; }
+.hw-bat.b0 { top: 16px; }
+.hw-bat.b1 { top: 58px; width: 34px; animation-delay: 0.8s; animation-duration: 8s; }
+.hw-bat.b2 { top: 32px; width: 26px; animation-delay: 1.5s; animation-duration: 6.4s; }
+@keyframes hw-fly { 0% { transform: translate(0, 0); opacity: 0; } 8% { opacity: 1; } 50% { transform: translate(55vw, 28px); } 92% { opacity: 1; } 100% { transform: translate(calc(100vw + 140px), -12px); opacity: 0; } }
+@keyframes hw-flap { from { transform: scaleY(1); } to { transform: scaleY(0.5); } }
+/* cobwebs in the corners of the bigger cards */
+html.hw :is(.pf-card, .pf-ach, .pf-trials, .setup-box, .hw-card) { position: relative; }
+html.hw :is(.pf-card, .pf-ach, .pf-trials, .setup-box, .hw-card)::after {
+  content: ""; position: absolute; top: 0; right: 0; width: 86px; height: 86px; pointer-events: none; opacity: 0.2;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23d9c8ea' stroke-width='0.9'%3E%3Cpath d='M100 0L0 100M100 0L32 100M100 0L64 100M100 0L0 32M100 0L0 64'/%3E%3Cpath d='M86 0Q88 12 100 14M70 0Q75 25 100 30M52 0Q60 40 100 48M34 0Q45 55 100 66M16 0Q30 70 100 84'/%3E%3C/g%3E%3C/svg%3E") no-repeat top right / contain; border-top-right-radius: inherit;
+}
+/* Buzz is a pumpkin; Power flickers like a candle; popups glow */
+html.hw :is(#pa-buzz, #mp-buzz-btn)::before { content: ""; flex: none; width: 17px; height: 17px; margin-right: 6px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 6.2c-.4-1.9.3-3.3 1.6-3.9' fill='none' stroke='%235d9a2e' stroke-width='1.9' stroke-linecap='round'/%3E%3Cellipse cx='7.4' cy='14' rx='5.1' ry='7' fill='%23d9661a'/%3E%3Cellipse cx='16.6' cy='14' rx='5.1' ry='7' fill='%23d9661a'/%3E%3Cellipse cx='12' cy='14' rx='5.6' ry='7.6' fill='%23ff8a24'/%3E%3Cpath d='M7.2 12.3 9.6 10l.7 2.9zM16.8 12.3 14.4 10l-.7 2.9z' fill='%233b1600'/%3E%3Cpath d='M7.3 15.5c1.7 2.4 7.7 2.4 9.4 0l-1.5.3-.8 1.1-1.1-.9-1.3 1-1.3-1-1.1.9-.8-1.1z' fill='%233b1600'/%3E%3C/svg%3E") center / contain no-repeat; }
+html.hw .result-banner.power { text-shadow: 0 0 10px rgba(255, 150, 50, 0.55); animation: hw-flicker 2.6s ease-in-out infinite; }
+@keyframes hw-flicker { 0%, 100% { text-shadow: 0 0 10px rgba(255, 150, 50, 0.55); } 40% { text-shadow: 0 0 16px rgba(255, 170, 60, 0.8); } 46% { text-shadow: 0 0 6px rgba(255, 140, 40, 0.35); } 70% { text-shadow: 0 0 13px rgba(255, 160, 50, 0.7); } }
+html.hw .ach-stack .ach-popup { box-shadow: var(--shadow), 0 0 0 1px rgba(255, 122, 26, 0.35), 0 0 26px rgba(255, 122, 26, 0.2); }
+/* a pumpkin tossup's mark, the candy it gives, the profile's event card (shown whatever the theme) */
+.hw-pk { display: inline-flex; width: 16px; height: 16px; margin-left: 8px; vertical-align: -3px; animation: hw-glow 2s ease-in-out infinite alternate; }
+.hw-pk svg, .hw-pk-mini svg, .hw-candy svg, .hw-card-pk svg, .hw-badge svg { display: block; width: 100%; height: 100%; }
+.hw-pk-mini { display: inline-block; width: 13px; height: 13px; vertical-align: -2px; }
+@keyframes hw-glow { from { filter: drop-shadow(0 0 1px rgba(255, 122, 26, 0.3)); } to { filter: drop-shadow(0 0 6px rgba(255, 122, 26, 0.8)); } }
+.hw-candy { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; padding: 2px 10px 2px 6px; border-radius: 99px; background: rgba(255, 122, 26, 0.16); color: #ffb066; font-size: 12px; font-weight: 600; letter-spacing: 0; vertical-align: middle; animation: hw-pop 0.5s var(--ease-out); }
+.hw-candy svg { width: 16px; height: 16px; }
+@keyframes hw-pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+.tr-badge.hw-badge svg { width: 16px; height: 16px; }
+.hw-card { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border: 1px solid color-mix(in srgb, #ff7a1a 45%, var(--line)); border-radius: var(--r-lg); background: color-mix(in srgb, #ff7a1a 7%, var(--surface)); }
+.hw-card-pk { flex: none; width: 46px; height: 46px; filter: drop-shadow(0 0 8px rgba(255, 122, 26, 0.45)); }
+.hw-card-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.hw-card-id b { color: var(--strong); font-size: 14px; }
+.hw-card-id small { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.hw-card-bar { height: 6px; margin-top: 4px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.hw-card-bar > div { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #ff9d2e, #ff6a00); }
+.hw-card-n { color: var(--muted); font-size: 12px; }
+.hw-card-n b { color: #ffb066; }
+.hw-card-act { flex: none; display: flex; flex-direction: column; gap: 6px; }
+.hw-card-act .btn { margin: 0; }
+@media (max-width: 640px) { .hw-card { flex-wrap: wrap; } .hw-card-act { flex-direction: row; width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .hw-bats { display: none; } .hw-pk, .hw-candy, html.hw .result-banner.power { animation: none; } }
+/* the pumpkin marker keeps its own size inside the question's meta row (its badge rules sized it to nothing) */
+.hw-pk { flex: none; padding: 0 !important; border: 0 !important; background: none !important; width: 16px; height: 16px; }
+.hw-pk > svg { flex: none; width: 16px !important; height: 16px !important; }
+.hw-pk-mini > svg { width: 13px; height: 13px; }

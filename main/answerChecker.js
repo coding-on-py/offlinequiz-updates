@@ -3577,6 +3577,17 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   // ---- J9 partial policy
   const policy = rules.partial_policy || null;
   const extraOk = strictness < 20 && !exact && !rules.closed;
+  // at strictness 20, extra words only on a plain common-noun answer: every word of the form required and lowercase
+  // ("tectonic plates" / "plate tectonics" for <u>plate</u>s) — never a name or title, nor a form with optional words
+  // of its own that a different word could replace ("vegetable oil" for crude <u>oil</u>)
+  const plainReq = (w) => !w.cap && !w.num && (w.kind === "R" || (w.kind === "M" && Array.isArray(w.segs) && w.segs.length > 0 && w.segs[0][0] && w.segs.slice(1).every(([r, str]) => r || String(str).length <= 3)));
+  const extraOk20 = (f) => strictness >= 20 && !exact && !rules.closed && rc && rc.hasText && f.words.length > 0 && f.words.every(plainReq);   // (a partly underlined word: only a short ending optional, never "cell<u>membrane</u>")
+  // …and only words the question itself uses, in some form ("tectonic" / "tectonics", "lithospheric" / "lithosphere"):
+  // never a narrowing word from elsewhere ("internal resistance" for <u>resistance</u>)
+  const fromText = (left) => {
+    if (!rc._qStems) rc._qStems = new Set(tokenize(rc.folded || "", null, false).flatMap((t) => [t.t, stem(t.t)]));
+    return left.every((k) => rc._qStems.has(T[k].t) || rc._qStems.has(stem(T[k].t)));
+  };
   const wordFormsOk = (!!(rules.word_forms && rules.word_forms.some((x) => /^accept:/.test(x))) || lenient) && !exact;
   ctx.wordFormsAuto = !exact && !rules.closed && !(rules.word_forms && rules.word_forms.some((x) => /^reject:/.test(x)));
   for (const f of liveAccepts) {
@@ -3633,8 +3644,9 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   const rejectedText = () => F.rejects.some((r) => r.terms.concat(r.exactQ || []).some((t) => Array.isArray(t) && plainKey(t.map((x) => x.orig || x.t).join("")) === respKey0));
   for (const f of liveAccepts) {
     ctx.autoForm = false;
-    const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk, prefixOk: !!f.specificEx }, linePool);
+    const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk: extraOk || extraOk20(f), prefixOk: !!f.specificEx }, linePool);
     if (!m || !m.full) continue;
+    if (m.left.length && !extraOk && extraOk20(f) && !f.specificEx && !fromText(m.left)) continue;
     if (ctx.autoForm && rejectedText()) continue;
     if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
     if (m.left.length && !extraWordsOk(T, m, opts, f)) continue;

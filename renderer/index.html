@@ -14,6 +14,9 @@
       var c = localStorage.getItem("qb-boot-bg");
       if (c) document.documentElement.style.setProperty("--boot-bg", c);
       if (localStorage.getItem("qb-scheme") === "light") document.documentElement.setAttribute("data-theme", "light");
+      // Halloween 2026 (app.js HW): its theme from the first frame, unless this viewer picked Default
+      var hwNow = Date.now();
+      if (hwNow >= Date.UTC(2026, 9, 16) && hwNow < Date.UTC(2026, 10, 2, 8) && localStorage.getItem("qb-hw-theme") !== "default") { document.documentElement.classList.add("hw"); document.documentElement.style.setProperty("--boot-bg", "#120c18"); }
     } catch (e) {}
   </script>
 </head>
@@ -618,6 +621,13 @@
             <section class="set-pane" data-pane="appearance">
               <h3>Appearance</h3>
               <div class="stats-section" id="appearance-section">
+                <div class="setting-row hidden" id="hw-theme-row">
+                  <span class="setting-label">Theme <span class="qb-info" data-tip="Halloween is on for everyone until November 1. Pick Default to switch back; it ends by itself after Halloween.">i</span></span>
+                  <select id="hw-theme" class="mode-input">
+                    <option value="halloween">Halloween</option>
+                    <option value="default">Default</option>
+                  </select>
+                </div>
                 <div id="default-appearance">
                   <div class="setting-row" id="app-mode-row">
                     <span class="setting-label">Appearance mode</span>

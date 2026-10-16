@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { QuestionDatabase } from "./database.js";
-import { UserData } from "./userData.js";
+import { UserData, EVENT, eventOn, isPumpkin } from "./userData.js";
 import { checkAnswer, checkBonus, evaluateAnswer, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer } from "./answerChecker.js";
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
@@ -233,6 +233,8 @@ export class App {
     if (q && typeof q === "object" && q.id != null && !Object.prototype.hasOwnProperty.call(q, "_hidden")) {
       try { q._hidden = this.questionDb.getHiddenAnswers ? this.questionDb.getHiddenAnswers(q.id) : null; } catch { q._hidden = null; }
     }
+    // the event: a pumpkin tossup says so (a bonus never is one)
+    if (q && typeof q === "object" && q.id != null && q.leadin === undefined && q.parts === undefined && eventOn() && isPumpkin(q.id)) q._pumpkin = true;
     return q;
   }
   _rowsWithHidden(r) {
@@ -1126,7 +1128,10 @@ export class App {
       const list = qm[ck] || (qm[ck] = []);
       if (!list.includes(qid)) list.push(qid);
     }
-    return { answer_counts: counts, answer_classes: classes, answer_questions: questions };
+    let poweredAt = {}, event = null;
+    try { poweredAt = this.userData.getPowerTimes(); } catch { poweredAt = {}; }
+    try { event = { id: EVENT.id, start: EVENT.start, end: EVENT.end, goal: EVENT.goal, on: eventOn(), pumpkins: this.userData.eventPumpkins() }; } catch { event = null; }
+    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, powered_at: poweredAt, event };
   }
 
   getSessionBreakdown(category, difficulty, categoryIds) {

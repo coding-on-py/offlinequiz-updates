@@ -4893,7 +4893,7 @@ function renderQuestion(question) {
   // result (renderResultTags) reveals them.
   $("#question-meta").classList.add("qm-reading");
   $("#question-meta").innerHTML = `
-    <span class="q-num">Question ${state.questionCount || 1}</span>
+    <span class="q-num">Question ${state.questionCount || 1}${isTossup && question._pumpkin && hwOn() ? `<span class="hw-pk" title="A pumpkin tossup: power it for a piece of candy">${PUMPKIN_SVG}</span>` : ""}</span>
     <span class="qm-info">${catBadgeHtml(qPathOf(question))}${questionWarnHtml(question)}
     <span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[parseInt(diffLabel)] || diffName)}">Diff ${escapeHtml(String(diffLabel))}</span>
     ${yearBadgeHtml(question.set_year)}</span>
@@ -6058,6 +6058,7 @@ function displayTossupResult(result, userAnswer) {
 
   achNoteResult({ type: "tossup", q: state.currentQuestion, points: result.points || 0, correct: !!result.correct, isPower: !!result.isPower });
   if (_trial && !_trial.done && state.currentQuestion && state.currentQuestion.id === _trial.servedId) trialOnResult(result);
+  if (result.isPower && state.currentQuestion && state.currentQuestion._pumpkin && hwOn()) hwCandyFlash($("#result-banner"));
 
   if (state.settings.autoReviewNoPower && result.correct && !result.isPower && state.currentQuestion?.id) {
     const hasMark = state.prePowerEnd > 0;
@@ -9086,7 +9087,7 @@ async function loadPlayer() {
     const powers = stats.tossupPowers || 0;
     const negs = stats.tossupNegs || 0;
 
-    const achData = computeAchievementData(stats, apCounts, apClasses, apData.answer_questions || {});
+    const achData = computeAchievementData(stats, apCounts, apClasses, achRecordsFrom(apData));
     const pluginAchs = collectPluginAchievements(stats, apCounts);
     const achievementsHtml = buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs);
     maybeShowAchievementPopups(achData, pluginAchs, profileKey);
@@ -9097,7 +9098,8 @@ async function loadPlayer() {
     const tile = (n, l, cls) => `<div class="pf-tile"><b class="num${cls ? " " + cls : ""}">${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
     container.innerHTML = `
       <div class="pf-page">
-        ${trialBadgesHtml(trialInfo && trialInfo.trials)}
+        ${trialBadgesHtml(trialInfo && trialInfo.trials, hwBadgeHtml(apData.event))}
+        ${hwCardHtml(apData.event)}
         <section class="pf-card">
           <span class="pf-avatar" aria-hidden="true"${avatarStyle(myNeon())}>${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
           <div class="pf-id">
@@ -9117,7 +9119,8 @@ async function loadPlayer() {
     initCollapsibles(container);
     container._achWired = false;
     wireTrials(container);
-    wireAchievementCards(container, { achData, records: achRecordsOf(apData.answer_questions || {}), stats, pluginAchs });
+    wireHwCard(container);
+    wireAchievementCards(container, { achData, records: achRecordsFrom(apData), stats, pluginAchs });
     window.QB?.neonField?.($("#player-username-input"), myNeon());   // a bought neon name glows here too
     paintProfileNeon();   // …and its colour is picked here too
 
@@ -9264,7 +9267,7 @@ function apClassCount(classMap, lock) {
 //   count    "questions" (default: distinct questions), "targets" (distinct answer groups), "answers"
 //            (distinct main answers inside the topic)
 const ACH_ART = /^(?:the|a|an) /;
-const ACH_GENERIC = new Set(["ocean", "sea", "river", "dynasty", "empire", "lake", "mount", "mountains", "national", "park", "desert", "island", "islands", "peninsula", "kingdom"]);
+const ACH_GENERIC = new Set(["ocean", "sea", "river", "dynasty", "empire", "war", "lake", "mount", "mountains", "national", "park", "desert", "island", "islands", "peninsula", "kingdom"]);
 const achSing = (w) => (w.length > 4 && /[^s]s$/.test(w) ? w.slice(0, -1) : w);
 function achAnsHit(ans, target, person) {
   if (!ans || !target) return false;
@@ -9302,17 +9305,20 @@ function achRecordHit(ach, rec) {
 function achTopicProgress(ach, records) {
   const mode = ach.count || "questions", seen = new Set();
   for (const r of records) {
+    if (ach.during && !(r.t >= ach.during[0] && r.t < ach.during[1])) continue;   // a limited one: powers in its window only
     const g = achRecordHit(ach, r);
     if (g >= 0) seen.add(mode === "targets" ? g : mode === "answers" ? r.a : r.q);
   }
   return seen.size;
 }
-// /api/answer-powers' answer_questions ({ answer: { path: [ids] } }) as records
-function achRecordsOf(apQuestions) {
-  const out = [];
-  for (const a in apQuestions || {}) for (const ck in apQuestions[a]) for (const q of apQuestions[a][ck]) out.push({ q, a, p: apKeyPath(ck) });
+// /api/answer-powers' answer_questions ({ answer: { path: [ids] } }) as records; with powered_at (first power, ms)
+// and the event's pumpkins (14.90) each record also has t and pk
+function achRecordsOf(apQuestions, poweredAt, pumpkins) {
+  const out = [], pk = new Set(pumpkins || []);
+  for (const a in apQuestions || {}) for (const ck in apQuestions[a]) for (const q of apQuestions[a][ck]) out.push({ q, a, p: apKeyPath(ck), t: (poweredAt && poweredAt[q]) || 0, pk: pk.has(q) });
   return out;
 }
+const achRecordsFrom = (d) => achRecordsOf((d && d.answer_questions) || {}, d && d.powered_at, d && d.event && d.event.pumpkins);
 // ACH-ENGINE END
 
 function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
@@ -9344,6 +9350,8 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
       progress = streak;
     } else if (ach.type === "answer_power") {
       progress = achTopicProgress(ach, records);
+    } else if (ach.type === "candy") {
+      progress = records.filter((r) => r.pk && (!ach.during || (r.t >= ach.during[0] && r.t < ach.during[1]))).length;
     }
     achData[ach.id] = { earned: progress >= ach.threshold, progress };
   }
@@ -9375,7 +9383,7 @@ function achLiveLoad() {
         API.get("/api/answer-powers").catch(() => null),
       ]);
       if (!statsData || !apData) return;
-      _achLive.key = key; _achLive.stats = statsData.stats || {}; _achLive.records = achRecordsOf(apData.answer_questions || {});
+      _achLive.key = key; _achLive.stats = statsData.stats || {}; _achLive.records = achRecordsFrom(apData);
       achLiveCheck();
     } finally { _achLive.loading = null; }
   })();
@@ -9402,7 +9410,7 @@ function achLiveApply(e) {
     let head = "";
     try { head = window.QBAnswerChecker ? window.QBAnswerChecker.primaryAnswer(q.answer || "", q.answer_sanitized || "") : ""; } catch (er) {}
     const a = apNorm(head || q.answer_sanitized || q.answer || "");
-    if (a && !_achLive.records.some((r) => r.q === q.id)) _achLive.records.push({ q: q.id, a, p: path });
+    if (a && !_achLive.records.some((r) => r.q === q.id)) _achLive.records.push({ q: q.id, a, p: path, t: Date.now(), pk: !!q._pumpkin && hwOn() });
   }
 }
 // a result: { type, q (the question, or just { id }), points, correct, isPower }
@@ -9427,6 +9435,7 @@ function scheduleAchievementCheck() {
 // back the Chinese characters); otherwise the built-in line icons
 // (achievement-icons.js); the achievement's own glyph is the last resort.
 function resolveAchievementIcon(ach) {
+  if (ach.svg) return ach.svg;
   let icon = null;
   try {
     const map = window.QB && window.QB._achievementIcons;
@@ -9508,11 +9517,11 @@ function trialBest(trials) {
   }
   return best;
 }
-function trialBadgesHtml(trials) {
+function trialBadgesHtml(trials, extra) {
   const best = trialBest(trials);
   const keys = TRIAL_CATS.map((c) => c[0]).filter((k) => best[k]);
-  if (!keys.length) return "";
-  return `<div class="tr-badges" aria-label="Trial badges">${keys.map((k) => {
+  if (!keys.length && !extra) return "";
+  return `<div class="tr-badges" aria-label="Badges">${extra || ""}${keys.map((k) => {
     const lv = best[k], when = trials[k + "|" + lv] && trials[k + "|" + lv].p;
     return `<span class="tr-badge tier${Math.ceil(lv / 3) > 3 ? 4 : Math.ceil(lv / 3)}" style="--hue:${trialHue(k)}" title="${escapeHtml(trialName(k, lv) + (when ? " — passed " + new Date(when).toLocaleDateString() : ""))}">${ic("award", 15)}<b>${escapeHtml(trialName(k, lv))}</b></span>`;
   }).join("")}</div>`;
@@ -9675,6 +9684,94 @@ function showTrialResult(t, passed, why) {
   try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 
+// ── Halloween 2026 (14.90) ─────────────────────────────────────────────────────────────────────────────────
+// The seasonal event, until November 1 (src/main/userData.js EVENT: the same window): a theme on for everyone
+// (Settings → Appearance → Theme; "Default" sticks per device), pumpkin tossups — one in eight, the same on every
+// device and in every room — whose power is a piece of candy (31 = the "Halloween 2026" badge; the leaderboards'
+// Halloween board), the Haunted House official room, and limited achievements (powers inside the window only).
+const HW = { id: "halloween-2026", start: Date.UTC(2026, 9, 16), end: Date.UTC(2026, 10, 2, 8), goal: 31, boardUntil: Date.UTC(2026, 10, 16) };
+const HW_WIN = [HW.start, HW.end];
+const hwOn = () => { const n = Date.now(); return n >= HW.start && n < HW.end; };
+function hwThemeWanted() { if (!hwOn()) return false; try { return localStorage.getItem("qb-hw-theme") !== "default"; } catch (e) { return true; } }
+const PUMPKIN_SVG = '<svg class="hw-pumpkin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.2c-.4-1.9.3-3.3 1.6-3.9" fill="none" stroke="#5d9a2e" stroke-width="1.9" stroke-linecap="round"/>' +
+  '<ellipse cx="7.4" cy="14" rx="5.1" ry="7" fill="#d9661a"/><ellipse cx="16.6" cy="14" rx="5.1" ry="7" fill="#d9661a"/><ellipse cx="12" cy="14" rx="5.6" ry="7.6" fill="#ff8a24"/>' +
+  '<path d="M7.2 12.3 9.6 10l.7 2.9zM16.8 12.3 14.4 10l-.7 2.9z" fill="#3b1600"/><path d="M7.3 15.5c1.7 2.4 7.7 2.4 9.4 0l-1.5.3-.8 1.1-1.1-.9-1.3 1-1.3-1-1.1.9-.8-1.1z" fill="#3b1600"/></svg>';
+const BAT_SVG = '<svg viewBox="0 0 48 20" aria-hidden="true"><path d="M24 7c-1.3 0-2.1.8-2.6 1.8C19.6 6 15.8 4.5 8 5c3.6 1.6 5 3.8 5.4 6.4 2-.9 4-.6 5.6.7 1-1.3 2.6-1.3 3.6 0 .5-.9 1.2-1.4 1.4-1.4s.9.5 1.4 1.4c1-1.3 2.6-1.3 3.6 0 1.6-1.3 3.6-1.6 5.6-.7.4-2.6 1.8-4.8 5.4-6.4-7.8-.5-11.6 1-13.4 3.8C26.1 7.8 25.3 7 24 7z" fill="currentColor"/></svg>';
+window.qbPumpkinSvg = () => PUMPKIN_SVG;
+window.qbHwOn = hwOn;
+// the logo's first "o" becomes a jack-o'-lantern (the word stays for screen readers)
+function hwLogos(on) {
+  for (const el of document.querySelectorAll("#tb-brand, .wordmark")) {
+    const o = el.querySelector(":scope > .hw-o");
+    if (on && !o) {
+      const tn = [...el.childNodes].find((n) => n.nodeType === 3 && /^\s*o/i.test(n.nodeValue));
+      if (!tn) continue;
+      const i = tn.nodeValue.search(/o/i), span = document.createElement("span");
+      span.className = "hw-o"; span.innerHTML = PUMPKIN_SVG + '<span class="hw-sr">' + tn.nodeValue[i] + "</span>";
+      const after = tn.splitText(i); after.nodeValue = after.nodeValue.slice(1);
+      el.insertBefore(span, after);
+    } else if (!on && o) {
+      o.replaceWith(document.createTextNode(o.querySelector(".hw-sr")?.textContent || "o"));
+      el.normalize();
+    }
+  }
+}
+// a few bats cross the top once a visit
+let _hwBats = false;
+function hwBats() {
+  if (_hwBats) return;
+  _hwBats = true;
+  try { if (matchMedia("(prefers-reduced-motion: reduce)").matches) return; } catch (e) {}
+  const box = document.createElement("div");
+  box.className = "hw-bats"; box.setAttribute("aria-hidden", "true");
+  box.innerHTML = [0, 1, 2].map((i) => `<span class="hw-bat b${i}">${BAT_SVG}</span>`).join("");
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), 9500);
+}
+function applyHwTheme() {
+  const on = hwThemeWanted();
+  document.documentElement.classList.toggle("hw", on);
+  hwLogos(on);
+  if (on) setTimeout(hwBats, 600);
+  const row = document.getElementById("hw-theme-row"), sel = document.getElementById("hw-theme");
+  if (row) row.classList.toggle("hidden", !hwOn());
+  if (sel) { sel.value = on ? "halloween" : "default"; try { _syncSel(sel); } catch (e) {} }
+  try { syncScheme(); } catch (e) {}
+}
+document.getElementById("hw-theme")?.addEventListener("change", (e) => {
+  try { localStorage.setItem("qb-hw-theme", e.target.value === "default" ? "default" : "halloween"); } catch (er) {}
+  applyHwTheme();
+  try { applyDefaultAppearance(); } catch (er) {}
+});
+// a powered pumpkin: "+1 candy" pops on the verdict
+function hwCandyFlash(host) {
+  if (!host) return;
+  const c = document.createElement("span");
+  c.className = "hw-candy";
+  c.innerHTML = PUMPKIN_SVG + "<b>+1 candy</b>";
+  host.appendChild(c);
+}
+window.qbHwCandy = hwCandyFlash;
+// the profile's event card: candy so far, the room, the board
+function hwCardHtml(ev) {
+  if (!hwOn()) return "";
+  const n = (ev && Array.isArray(ev.pumpkins) ? ev.pumpkins.length : 0), goal = HW.goal;
+  return `<section class="hw-card"><span class="hw-card-pk">${PUMPKIN_SVG}</span>
+    <div class="hw-card-id"><b>Halloween · Pumpkin hunt</b><small>One tossup in eight is a pumpkin <span class="hw-pk-mini">${PUMPKIN_SVG}</span> — power it for a piece of candy. ${goal} candies earn the Halloween 2026 badge. Until November 1.</small>
+      <div class="hw-card-bar"><div style="width:${Math.min(100, Math.round((n / goal) * 100))}%"></div></div><span class="hw-card-n"><b class="num">${n}</b> / ${goal} candies</span></div>
+    <div class="hw-card-act"><button type="button" class="btn btn-sm" id="hw-room">Haunted House</button><button type="button" class="btn btn-sm" id="hw-board">Leaderboard</button></div></section>`;
+}
+function wireHwCard(container) {
+  container.querySelector("#hw-room")?.addEventListener("click", () => { if (window.QB && QB.mpJoin) QB.mpJoin("haunted-house"); else goTo("multiplayer"); });
+  container.querySelector("#hw-board")?.addEventListener("click", () => { try { _lb.period = "halloween"; _lb.tab = "global"; } catch (e) {} goTo("leaderboards"); });
+}
+// the badge for 31 candies (also on other players' profiles)
+function hwBadgeHtml(ev) {
+  const n = ev && Array.isArray(ev.pumpkins) ? ev.pumpkins.length : 0;
+  return n >= HW.goal ? `<span class="tr-badge tier4 hw-badge" style="--hue:#ff7a1a" title="${n} candies in the Halloween 2026 pumpkin hunt">${PUMPKIN_SVG}<b>Halloween 2026</b></span>` : "";
+}
+applyHwTheme();
+
 // ── Achievement details (14.88): a click on a card ─────────────────────────────────────────────────────
 // ctx = { achData, records, stats, pluginAchs } — whoever's achievements the cards show (you, or a friend)
 const ACH_HOW = {
@@ -9789,13 +9886,20 @@ function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
       list.map(([a, d]) => renderAchievementCard(a, d)).join("") + "</div>";
   };
 
-  let html = '<div class="achievement-section-title">Global</div>';
+  let html = "";
+  const evAchs = ACHIEVEMENT_LIST.filter((a) => a.event && achData[a.id]);
+  if (evAchs.length && (hwOn() || evAchs.some((a) => achData[a.id].earned))) {
+    const evName = evAchs[0].event;
+    html += `<div class="achievement-section-title">${escapeHtml(evName)}${hwOn() ? " · limited" : ""}</div>`;
+    html += group("ev:" + evName, hwOn() ? "Until November 1" : "Earned during the event", evAchs.filter((a) => hwOn() || achData[a.id].earned).map((a) => [a, achData[a.id]]), false);
+  }
+  html += '<div class="achievement-section-title">Global</div>';
   for (const [type, label] of globalSections) {
     const list = ACHIEVEMENT_LIST.filter(a => a.type === type && achData[a.id]).map((a) => [a, achData[a.id]]);
     html += group("g:" + type, label, list, false);
   }
 
-  const apAchs = ACHIEVEMENT_LIST.filter(a => a.type === "answer_power");
+  const apAchs = ACHIEVEMENT_LIST.filter(a => a.type === "answer_power" && !a.event);
   if (apAchs.length) {
     html += '<div class="achievement-section-title">Answer Powers</div>';
     for (const [prefix, label] of AP_CATEGORY_PREFIXES) {
@@ -9973,6 +10077,15 @@ const ACHIEVEMENT_LIST = [
   { id:"day50", name:"Prelims", desc:"Answer 50 questions in a day", type:"daily", threshold:50, icon:"予" },
   { id:"day100", name:"Playoffs", desc:"Answer 100 questions in a day", type:"daily", threshold:100, icon:"決" },
   { id:"day300", name:"Marathon", desc:"Answer 300 questions in a day", type:"daily", threshold:300, icon:"覇" },
+  // ── Halloween 2026 (14.90): limited — only powers inside the event's window count; kept for good once earned ──
+  {id:"hw26-candy13",name:"Sweet Tooth",desc:"Collect 13 candies (power 13 pumpkin tossups)",type:"candy",threshold:13,during:HW_WIN,event:"Halloween 2026",svg:PUMPKIN_SVG,icon:"糖"},
+  {id:"hw26-candy31",name:"King-Size Bar",desc:"Collect 31 candies",type:"candy",threshold:31,during:HW_WIN,event:"Halloween 2026",svg:PUMPKIN_SVG,icon:"菓"},
+  {id:"hw26-monster",name:"Monster Mash",desc:"Power on Frankenstein, Dracula and Jekyll & Hyde",type:"answer_power",threshold:3,count:"targets",answers:[["frankenstein","@mary shelley","victor frankenstein","frankensteins monster","frankenstein or the modern prometheus"],["dracula","@bram stoker","count dracula"],["strange case of dr jekyll and mr hyde","dr jekyll and mr hyde","jekyll and hyde","henry jekyll","edward hyde"]],within:"*",during:HW_WIN,event:"Halloween 2026",icon:"怪"},
+  {id:"hw26-nevermore",name:"Nevermore",desc:"Power on 3 Edgar Allan Poe questions",type:"answer_power",threshold:3,answers:["@edgar allan poe","the raven","the tell tale heart","the fall of the house of usher","the cask of amontillado","the masque of the red death","the murders in the rue morgue","the pit and the pendulum","annabel lee","the black cat","the purloined letter","the gold bug"],within:"*",during:HW_WIN,event:"Halloween 2026",icon:"鴉"},
+  {id:"hw26-creature",name:"Creature Feature",desc:"Power on 3 questions about legendary creatures, cryptids or urban legends",type:"answer_power",threshold:3,topic:"Mythology > Any Myth > Legendary Creatures, Cryptids & Urban Legends",during:HW_WIN,event:"Halloween 2026",icon:"妖"},
+  {id:"hw26-witch",name:"Witching Hour",desc:"Power on a witch (Baba Yaga, Circe, Hecate, the Salem witch trials …)",type:"answer_power",threshold:1,answers:["salem witch trials","the crucible","baba yaga","circe","hecate","medea","morgan le fay","the weird sisters","witchcraft","witches","walpurgis night","witch of endor","glinda","wicked witch of the west","the witches","witch"],within:"*",during:HW_WIN,event:"Halloween 2026",icon:"魔"},
+  {id:"hw26-dead",name:"Day of the Dead",desc:"Power on 3 questions about the dead and the underworld",type:"answer_power",threshold:3,answers:["day of the dead","dia de los muertos","mictlan","mictlantecuhtli","hades","anubis","osiris","hel","yama","charon","underworld","duat","book of the dead","tibetan book of the dead","persephone","orpheus","eurydice","valhalla","purgatory","inferno","ghosts","ghost","banshee","grim reaper","danse macabre","sheol","tartarus","river styx","styx","cerberus"],within:"*",during:HW_WIN,event:"Halloween 2026",icon:"骨"},
+  {id:"hw26-moon",name:"Full Moon",desc:"Power on a vampire or a werewolf",type:"answer_power",threshold:1,answers:["vampire","vampires","werewolf","werewolves","lycanthropy","nosferatu","carmilla","count dracula","dracula","vlad the impaler","vlad iii","strigoi","vampire bats","vampire bat"],within:"*",during:HW_WIN,event:"Halloween 2026",icon:"月"},
   // ── topic achievements (14.87): a topic of the category tree, or a list of answers (see the ACH-ENGINE) ──
   {id:"ap-lit-mobydih",name:"Moby Dih",desc:"Power on Moby-Dick or Herman Melville",type:"answer_power",threshold:1,answers:["moby dick","@herman melville"],icon:"鯨"},
   {id:"ap-lit-hope",name:"Hope is the Thing with Feathers",desc:"Power on an Emily Dickinson question",type:"answer_power",threshold:1,answers:["@emily dickinson"],icon:"羽"},
@@ -9989,41 +10102,41 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-lit-dante",name:"Descent into Hell",desc:"Power on Dante or the Divine Comedy",type:"answer_power",threshold:1,answers:["@dante alighieri","dante","the divine comedy","inferno","purgatorio","paradiso"],icon:"獄"},
   {id:"ap-lit-paradise",name:"Fall of Man",desc:"Power on Paradise Lost or John Milton",type:"answer_power",threshold:1,answers:["paradise lost","@john milton"],icon:"堕"},
   {id:"ap-lit-twelfth",name:"Twelfth Night",desc:"Power on 12 different Shakespeare answers",type:"answer_power",threshold:12,count:"answers",topic:"Literature > English Literature > British Literature > Shakespeare",icon:"劇"},
-  {id:"ap-hist-wars",name:"Wars of the Three Meanings",desc:"Power on the War of the Three Henries, the War of the Triple Alliance and the Punic Wars",type:"answer_power",threshold:3,count:"targets",answers:[["war of the three henries"],["war of the triple alliance","paraguayan war"],["punic wars","first punic war","second punic war","third punic war"]],icon:"戦"},
+  {id:"ap-hist-wars",name:"Wars of the Three Meanings",desc:"Power on 3 wars with a number in the name (Hundred Years', Thirty Years', Seven Years', the Three Henries …)",type:"answer_power",threshold:3,count:"targets",answers:[["war of the three henries"], ["war of the triple alliance", "paraguayan war"], ["hundred years war"], ["thirty years war"], ["seven years war"], ["eighty years war"], ["six day war"], ["war of 1812", "1812"], ["world war i", "first world war"], ["world war ii", "second world war"], ["first punic war"], ["second punic war"], ["third punic war"], ["punic wars"]],within:"*",icon:"戦"},
   {id:"ap-hist-teto",name:"Kasane Teto",desc:"Power on Tito or Yugoslavia",type:"answer_power",threshold:1,answers:["@josip broz tito","yugoslavia"],icon:"統"},
   {id:"ap-hist-memento",name:"Memento Mori",desc:"Power on the Goths, Vandals or Huns",type:"answer_power",threshold:1,answers:["goths","visigoths","ostrogoths","vandals","huns","attila the hun","attila"],icon:"蛮"},
   {id:"ap-hist-alexander",name:"Conqueror of the Known World",desc:"Power on 9 Alexander the Great questions",type:"answer_power",threshold:9,answers:["alexander the great","alexander iii of macedon"],icon:"帝"},
   {id:"ap-hist-grant",name:"Unconditional Surrender Grant",desc:"Power on a Ulysses S. Grant question",type:"answer_power",threshold:1,answers:["@ulysses s grant"],icon:"将"},
   {id:"ap-hist-luther",name:"Hater of German Serfs",desc:"Power on a Martin Luther question",type:"answer_power",threshold:1,answers:["@martin luther"],icon:"改"},
   {id:"ap-hist-capet",name:"House of Capet",desc:"Power on 16 questions on French kings named Louis",type:"answer_power",threshold:16,answers:["louis i","louis ii","louis iii","louis iv","louis v","louis vi","louis vii","louis viii","louis ix","louis x","louis xi","louis xii","louis xiii","louis xiv","louis xv","louis xvi","louis xviii","louis philippe"],icon:"冠"},
-  {id:"ap-hist-union",name:"Union Jack",desc:"Power on England, Scotland, Wales, Ireland and Britain",type:"answer_power",threshold:5,count:"targets",within:["History","Geography"],answers:["england","scotland","wales","ireland",["great britain","united kingdom","britain"]],icon:"連"},
+  {id:"ap-hist-union",name:"Union Jack",desc:"Power on 4 of England, Scotland, Wales, Ireland and Britain",type:"answer_power",threshold:4,count:"targets",answers:["england","scotland","wales","ireland",["great britain","united kingdom","britain"]],within:["History","Geography"],icon:"連"},
   {id:"ap-hist-autumn",name:"Autumn of Nations",desc:"Power on the Berlin Wall, the Revolutions of 1989 or the Soviet Union",type:"answer_power",threshold:1,answers:["berlin wall","fall of the berlin wall","revolutions of 1989","soviet union","ussr"],icon:"壁"},
   {id:"ap-hist-fdj",name:"Freie Deutsche Jugend",desc:"Power on East Germany",type:"answer_power",threshold:1,answers:["east germany","german democratic republic"],icon:"東"},
   {id:"ap-hist-bismarck",name:"Iron and Blood",desc:"Power on an Otto von Bismarck question",type:"answer_power",threshold:1,answers:["@otto von bismarck"],icon:"血"},
-  {id:"ap-hist-dynasty",name:"Dynasty of Dynasties",desc:"Power on 8 different Chinese dynasties",type:"answer_power",threshold:8,count:"targets",within:"History",answers:[["han dynasty","han"],["tang dynasty","tang"],["song dynasty","song"],["ming dynasty","ming"],["qing dynasty","qing"],["yuan dynasty","yuan"],["qin dynasty","qin"],["zhou dynasty","zhou"],["sui dynasty","sui"],["shang dynasty","shang"],["xia dynasty","xia"],["jin dynasty","jin"]],icon:"朝"},
-  {id:"ap-hist-treatises",name:"Treatises",desc:"Power on 5 different peace treaties (Versailles, Westphalia, Utrecht, Tordesillas, Vienna …)",type:"answer_power",threshold:5,count:"targets",answers:[["treaty of versailles","versailles"],["peace of westphalia","treaty of westphalia","westphalia"],["treaty of utrecht","peace of utrecht","utrecht"],["treaty of paris"],["treaty of tordesillas","tordesillas"],["congress of vienna"],["treaty of ghent"],["treaty of brest litovsk","brest litovsk"],["treaty of nanking","treaty of nanjing"],["treaty of guadalupe hidalgo"],["treaty of tilsit","tilsit"],["treaty of nerchinsk","nerchinsk"],["treaty of waitangi","waitangi"],["treaty of shimonoseki","shimonoseki"],["treaty of kanagawa","kanagawa"],["treaty of trianon","trianon"],["treaty of sevres"],["treaty of lausanne"],["treaty of verdun"],["treaty of westminster"],["peace of augsburg"],["treaty of nijmegen","nijmegen"],["treaty of aix la chapelle"]],icon:"約"},
+  {id:"ap-hist-dynasty",name:"Dynasty of Dynasties",desc:"Power on 7 different Chinese dynasties",type:"answer_power",threshold:7,count:"targets",answers:[["han dynasty","han"],["tang dynasty","tang"],["song dynasty","song"],["ming dynasty","ming"],["qing dynasty","qing"],["yuan dynasty","yuan"],["qin dynasty","qin"],["zhou dynasty","zhou"],["sui dynasty","sui"],["shang dynasty","shang"],["xia dynasty","xia"],["jin dynasty","jin"]],within:"History",icon:"朝"},
+  {id:"ap-hist-treatises",name:"Treatises",desc:"Power on 5 peace-treaty questions (Versailles, Westphalia, Utrecht, the Congress of Vienna …)",type:"answer_power",threshold:5,answers:[["treaty of versailles","versailles"],["peace of westphalia","treaty of westphalia","westphalia"],["treaty of utrecht","peace of utrecht","utrecht"],["treaty of paris"],["treaty of tordesillas","tordesillas"],["congress of vienna"],["treaty of ghent"],["treaty of brest litovsk","brest litovsk"],["treaty of nanking","treaty of nanjing"],["treaty of guadalupe hidalgo"],["treaty of tilsit","tilsit"],["treaty of nerchinsk","nerchinsk"],["treaty of waitangi","waitangi"],["treaty of shimonoseki","shimonoseki"],["treaty of kanagawa","kanagawa"],["treaty of trianon","trianon"],["treaty of sevres"],["treaty of lausanne"],["treaty of verdun"],["treaty of westminster"],["peace of augsburg"],["treaty of nijmegen","nijmegen"],["treaty of aix la chapelle"]],icon:"約"},
   {id:"ap-hist-sun",name:"Sun Never Sets",desc:"Power on the British Empire or Queen Victoria",type:"answer_power",threshold:1,answers:["british empire","queen victoria","victoria"],icon:"日"},
   {id:"ap-hist-japan",name:"Land of the Rising Sun",desc:"Power on a Japanese history question",type:"answer_power",threshold:1,topic:"History > World History > Asian History > Japanese History",icon:"和"},
   {id:"ap-hist-mansa",name:"I'm Mansa Musa",desc:"Power on Mansa Musa or the Mali Empire",type:"answer_power",threshold:1,answers:["mansa musa","musa i","mali empire"],icon:"金"},
   {id:"ap-hist-sunking",name:"The Sun King",desc:"Power on a Louis XIV question",type:"answer_power",threshold:1,answers:["louis xiv"],icon:"陽"},
   {id:"ap-hist-thatcher",name:"Milk Snatcher",desc:"Power on a Margaret Thatcher question",type:"answer_power",threshold:1,answers:["@margaret thatcher"],icon:"鉄"},
   {id:"ap-hist-genghis",name:"Great Conqueror",desc:"Power on Genghis Khan or the Mongol Empire",type:"answer_power",threshold:1,answers:["genghis khan","temujin","mongol empire","mongols"],icon:"征"},
-  {id:"ap-hist-workers",name:"Workers of the World, Unite!",desc:"Power on 12 different communist revolutionaries",type:"answer_power",threshold:12,count:"targets",within:"*",answers:[["@joseph stalin"],["@vladimir lenin"],["@leon trotsky"],["mao zedong","mao tse tung"],["@che guevara"],["ho chi minh"],["@fidel castro"],["@friedrich engels"],["@rosa luxemburg"],["@josip broz tito"],["@karl marx"],["pol pot"],["kim il sung"],["@deng xiaoping"],["@enver hoxha"],["@antonio gramsci"],["raul castro"],["zhou enlai"],["@nikita khrushchev"],["@thomas sankara"]],icon:"革"},
-  {id:"ap-geo-siberia",name:"Birthplace of Keskil",desc:"Power on Siberia",type:"answer_power",threshold:1,within:["Geography","History"],answers:["siberia"],icon:"寒"},
-  {id:"ap-geo-newfin",name:"New-fin-land",desc:"Power on Newfoundland",type:"answer_power",threshold:1,answers:["newfoundland","newfoundland and labrador"],icon:"島"},
+  {id:"ap-hist-workers",name:"Workers of the World, Unite!",desc:"Power on 7 different communist revolutionaries",type:"answer_power",threshold:7,count:"targets",answers:[["@joseph stalin"],["@vladimir lenin"],["@leon trotsky"],["mao zedong","mao tse tung"],["@che guevara"],["ho chi minh"],["@fidel castro"],["@friedrich engels"],["@rosa luxemburg"],["@josip broz tito"],["@karl marx"],["pol pot"],["kim il sung"],["@deng xiaoping"],["@enver hoxha"],["@antonio gramsci"],["raul castro"],["zhou enlai"],["@nikita khrushchev"],["@thomas sankara"]],within:"*",icon:"革"},
+  {id:"ap-geo-siberia",name:"Birthplace of Keskil",desc:"Power on Siberia or one of its places (Baikal, Kamchatka, the Yenisei …)",type:"answer_power",threshold:1,answers:["siberia", "lake baikal", "kamchatka peninsula", "kamchatka", "yenisei river", "yenisei", "lena river", "ob river", "novosibirsk", "yakutsk", "trans siberian railway", "vladivostok"],within:["Geography", "History", "Science and Math > Science > Earth Science"],icon:"寒"},
+  {id:"ap-geo-newfin",name:"New-fin-land",desc:"Power on Newfoundland or Finland",type:"answer_power",threshold:1,answers:["newfoundland", "newfoundland and labrador", "labrador", "finland", "helsinki"],within:["Geography", "History", "Current Events"],icon:"島"},
   {id:"ap-geo-mormon",name:"Land of the Mormons",desc:"Power on Utah or Salt Lake City",type:"answer_power",threshold:1,answers:["utah","salt lake city","great salt lake"],icon:"塩"},
-  {id:"ap-geo-faithful",name:"Old Faithful",desc:"Power on Yellowstone",type:"answer_power",threshold:1,answers:["yellowstone national park","yellowstone","old faithful"],icon:"泉"},
+  {id:"ap-geo-faithful",name:"Old Faithful",desc:"Power on Yellowstone or another U.S. national park",type:"answer_power",threshold:1,topic:"Geography > North American Geography > US Physical Features & Parks",answers:["yellowstone national park", "yellowstone", "old faithful"],either:true,within:["Geography", "Science and Math > Science > Earth Science"],icon:"泉"},
   {id:"ap-geo-carnival",name:"Carnival",desc:"Power on Brazil or Rio de Janeiro",type:"answer_power",threshold:1,answers:["brazil","rio de janeiro"],icon:"祭"},
-  {id:"ap-geo-lion",name:"Lion City",desc:"Power on Singapore",type:"answer_power",threshold:1,answers:["singapore"],icon:"獅"},
+  {id:"ap-geo-lion",name:"Lion City",desc:"Power on Singapore",type:"answer_power",threshold:1,answers:["singapore"],within:["Geography", "History", "Current Events"],icon:"獅"},
   {id:"ap-geo-harbour",name:"Fragrant Harbour",desc:"Power on Hong Kong",type:"answer_power",threshold:1,answers:["hong kong"],icon:"港"},
-  {id:"ap-geo-capitals",name:"Capital of Capitals",desc:"Power on London",type:"answer_power",threshold:1,answers:["london"],icon:"都"},
-  {id:"ap-geo-pearl",name:"Pearl of the Orient",desc:"Power on Shanghai",type:"answer_power",threshold:1,answers:["shanghai"],icon:"珠"},
-  {id:"ap-geo-snow",name:"Abode of Snow",desc:"Power on the Himalayas or Mount Everest",type:"answer_power",threshold:1,answers:["himalayas","himalaya","mount everest"],icon:"雪"},
+  {id:"ap-geo-capitals",name:"Capital of Capitals",desc:"Power on London",type:"answer_power",threshold:1,answers:["london"],within:["Geography", "History", "Current Events"],icon:"都"},
+  {id:"ap-geo-pearl",name:"Pearl of the Orient",desc:"Power on Shanghai",type:"answer_power",threshold:1,answers:["shanghai"],within:["Geography", "History", "Current Events"],icon:"珠"},
+  {id:"ap-geo-snow",name:"Abode of Snow",desc:"Power on the Himalayas, Everest or K2",type:"answer_power",threshold:1,answers:["himalayas", "himalaya", "mount everest", "k2", "annapurna", "kangchenjunga", "tibetan plateau"],within:["Geography", "Science and Math > Science > Earth Science", "History"],icon:"雪"},
   {id:"ap-geo-penguins",name:"Penguins",desc:"Power on Madagascar",type:"answer_power",threshold:1,answers:["madagascar"],icon:"狐"},
-  {id:"ap-geo-arteries",name:"Arteries of the World",desc:"Power on the Nile, Yangtze, Amazon, Mississippi and Danube",type:"answer_power",threshold:5,count:"targets",within:["Geography","Science and Math > Science > Earth Science"],answers:[["nile river","nile"],["yangtze river","yangtze","chang jiang"],["amazon river","amazon"],["mississippi river","mississippi"],["danube river","danube"]],icon:"河"},
-  {id:"ap-geo-potassium",name:"Greatest Exporter of Potassium",desc:"Power on Kazakhstan",type:"answer_power",threshold:1,answers:["kazakhstan"],icon:"鉀"},
-  {id:"ap-geo-stans",name:"Stan(d) Up Comedy",desc:"Power on 5 different -stan countries",type:"answer_power",threshold:5,count:"targets",within:["Geography","History","Current Events"],answers:["kazakhstan","uzbekistan","turkmenistan","kyrgyzstan","tajikistan","afghanistan","pakistan"],icon:"邦"},
-  {id:"ap-geo-seas",name:"Seven Seas",desc:"Power on 7 different oceans and seas",type:"answer_power",threshold:7,count:"targets",within:["Geography","Science and Math > Science > Earth Science"],answers:[["pacific ocean"],["atlantic ocean"],["indian ocean"],["arctic ocean"],["southern ocean"],["mediterranean sea"],["caribbean sea"],["baltic sea"],["black sea"],["red sea"],["caspian sea"],["north sea"],["south china sea"],["arabian sea"],["bering sea"],["sargasso sea"],["aral sea"],["dead sea"],["sea of japan"],["adriatic sea"],["aegean sea"]],icon:"海"},
+  {id:"ap-geo-arteries",name:"Arteries of the World",desc:"Power on 5 of the world's great rivers",type:"answer_power",threshold:5,count:"targets",answers:[["nile river", "nile"], ["yangtze river", "yangtze", "chang jiang"], ["amazon river", "amazon"], ["mississippi river", "mississippi"], ["danube river", "danube"], ["congo river", "congo"], ["volga river", "volga"], ["rhine river", "rhine"], ["ganges river", "ganges"], ["mekong river", "mekong"], ["indus river", "indus"], ["tigris river", "tigris"], ["euphrates river", "euphrates"], ["niger river", "niger"], ["zambezi river", "zambezi"], ["missouri river", "missouri"], ["saint lawrence river", "st lawrence river"], ["colorado river"], ["rio grande"], ["thames"], ["seine"], ["yellow river", "huang he"], ["orinoco river", "orinoco"]],within:["Geography","Science and Math > Science > Earth Science"],icon:"河"},
+  {id:"ap-geo-potassium",name:"Greatest Exporter of Potassium",desc:"Power on Kazakhstan or one of its places",type:"answer_power",threshold:1,answers:["kazakhstan", "astana", "almaty", "nursultan nazarbayev", "baikonur cosmodrome", "aral sea"],within:["Geography", "History", "Current Events"],icon:"鉀"},
+  {id:"ap-geo-stans",name:"Stan(d) Up Comedy",desc:"Power on 3 different -stan countries",type:"answer_power",threshold:3,count:"targets",answers:["kazakhstan","uzbekistan","turkmenistan","kyrgyzstan","tajikistan","afghanistan","pakistan"],within:["Geography","History","Current Events"],icon:"邦"},
+  {id:"ap-geo-seas",name:"Seven Seas",desc:"Power on 7 different oceans and seas",type:"answer_power",threshold:7,count:"targets",answers:[["pacific ocean"],["atlantic ocean"],["indian ocean"],["arctic ocean"],["southern ocean"],["mediterranean sea"],["caribbean sea"],["baltic sea"],["black sea"],["red sea"],["caspian sea"],["north sea"],["south china sea"],["arabian sea"],["bering sea"],["sargasso sea"],["aral sea"],["dead sea"],["sea of japan"],["adriatic sea"],["aegean sea"]],within:"*",icon:"海"},
   {id:"ap-sci-alloys",name:"Too Complicated for Simple Wikipedia",desc:"Power on an alloy (steel, bronze, brass …)",type:"answer_power",threshold:1,answers:["alloys","steel","bronze","brass","pewter","solder","amalgam","stainless steel","cast iron","nichrome","invar","sterling silver"],icon:"合"},
   {id:"ap-sci-mito",name:"Powerhouse of the Cell",desc:"Power on mitochondria",type:"answer_power",threshold:1,answers:["mitochondria","mitochondrion"],icon:"粒"},
   {id:"ap-sci-blackhole",name:"Hail Mary",desc:"Power on black holes",type:"answer_power",threshold:1,answers:["black holes","supermassive black hole","event horizon","hawking radiation"],icon:"孔"},
@@ -10034,7 +10147,7 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-sci-em",name:"Electromagnetism",desc:"Power on an electricity & magnetism question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > ClassicalMechanics and EM > Electricity & Magnetism",icon:"磁"},
   {id:"ap-sci-schrodinger",name:"Schrödinger's Cat",desc:"Power on a quantum mechanics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > Other Physics > Quantum Mechanics",icon:"量"},
   {id:"ap-sci-lagrangian",name:"Lagrangian",desc:"Power on a classical mechanics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > ClassicalMechanics and EM > Classical Mechanics",icon:"力"},
-  {id:"ap-sci-selection",name:"Law of the Jungle",desc:"Power on natural selection",type:"answer_power",threshold:1,answers:["natural selection","survival of the fittest","sexual selection","kin selection","artificial selection"],icon:"進"},
+  {id:"ap-sci-selection",name:"Law of the Jungle",desc:"Power on natural selection or Darwin",type:"answer_power",threshold:1,answers:["natural selection", "sexual selection", "kin selection", "artificial selection", "survival of the fittest", "@charles darwin", "on the origin of species", "evolution"],within:["Science and Math", "History"],icon:"進"},
   {id:"ap-sci-water",name:"Universal Solvent",desc:"Power on water",type:"answer_power",threshold:1,answers:["water","h2o"],icon:"水"},
   {id:"ap-sci-standard",name:"Standard Model",desc:"Power on a particle physics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > Other Physics > Particle Physics & Quantum Field Theory",icon:"粒"},
   {id:"ap-sci-speciation",name:"Speciation",desc:"Power on an evolution question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Biology > Organismal Population Biology > Evolution, Population Genetics & Taxonomy",icon:"種"},
@@ -10048,14 +10161,14 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-sci-compiler",name:"Compiler",desc:"Power on a programming languages question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Computer Science > Programming Languages & Software Engineering",icon:"訳"},
   {id:"ap-sci-kernels",name:"Kernels",desc:"Power on a computer hardware or operating systems question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Computer Science > Computer Architecture, Hardware & Operating Systems",icon:"核"},
   {id:"ap-sci-sun",name:"The Sun Is a Deadly Laser",desc:"Power on a question about the Sun",type:"answer_power",threshold:1,topic:"Science and Math > Science > Astronomy > Any Astronomy > Solar System > The Sun & Space Weather",icon:"燃"},
-  {id:"ap-sci-v12",name:"V12 Engine",desc:"Power on an engine or its cycle",type:"answer_power",threshold:1,answers:["internal combustion engine","otto cycle","diesel engine","diesel cycle","carnot engine","carnot cycle","steam engine","jet engine","turbofan","wankel engine","four stroke engine","stirling engine","heat engine"],icon:"輪"},
+  {id:"ap-sci-v12",name:"V12 Engine",desc:"Power on a technology or invention question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Other Science > Technology & Inventions",icon:"輪"},
   {id:"ap-sci-stress",name:"Stress-Strain Curve",desc:"Power on a materials science question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Other Science > Engineering > Materials Science, Metallurgy & Manufacturing","Science and Math > Science > Physics > Other Physics > Condensed Matter & Materials Physics"],icon:"張"},
   {id:"ap-sci-hydrology",name:"Water Cycle",desc:"Power on a weather or hydrology question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Earth Science > Meteorology & Weather","Science and Math > Science > Earth Science > Rivers, Glaciers, Soils & Landforms"],icon:"雨"},
   {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different chemical elements",type:"answer_power",threshold:7,count:"answers",topic:"Science and Math > Science > Chemistry > Any Chemistry > Element",icon:"元"},
   {id:"ap-sci-spectroscopy",name:"Spectroscopy",desc:"Power on 5 different analytical chemistry & spectroscopy answers",type:"answer_power",threshold:5,count:"answers",topic:"Science and Math > Science > Chemistry > Non Element > Analytical Chemistry, Separations & Spectroscopy",icon:"光"},
   {id:"ap-sci-solvay",name:"Solvay Conference",desc:"Power on Einstein, Bohr, Heisenberg, Dirac, Pauli, Curie and Schrödinger",type:"answer_power",threshold:7,count:"targets",answers:[["@albert einstein"],["@niels bohr"],["@werner heisenberg"],["@paul dirac"],["@wolfgang pauli"],["@marie curie","marie sklodowska curie"],["@erwin schrodinger"]],icon:"学"},
   {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on 5 space exploration questions",type:"answer_power",threshold:5,topic:["Science and Math > Science > Astronomy > Any Astronomy > Space Exploration & Missions","Current Events > Science > Space & Spaceflight"],icon:"宙"},
-  {id:"ap-myth-lightning",name:"God of Lightning",desc:"Power on Thor, Zeus and Indra",type:"answer_power",threshold:3,count:"targets",answers:["thor","zeus","indra"],icon:"雷"},
+  {id:"ap-myth-lightning",name:"God of Lightning",desc:"Power on 3 different gods of thunder and lightning (Thor, Zeus, Indra, Perun, Raijin …)",type:"answer_power",threshold:3,count:"targets",answers:["thor", "zeus", "indra", "perun", "raijin", "shango", "taranis", "jupiter", "tlaloc", "teshub", "baal", "thunderbird", "donar", "ukko", "perkunas", "raiden"],within:["Mythology", "Theology"],icon:"雷"},
   {id:"ap-myth-freaky",name:"Freaky Deaky",desc:"Power on Oedipus",type:"answer_power",threshold:1,within:["Mythology","Literature"],answers:["oedipus","oedipus rex","oedipus the king"],icon:"眼"},
   {id:"ap-myth-underworld",name:"Underworld",desc:"Power on Anubis, Hades and Osiris",type:"answer_power",threshold:3,count:"targets",answers:["anubis","hades","osiris"],icon:"冥"},
   {id:"ap-myth-monkey",name:"Great Sage Equal to Heaven",desc:"Power on Sun Wukong or Journey to the West",type:"answer_power",threshold:1,within:["Mythology","Literature"],answers:["sun wukong","monkey king","journey to the west"],icon:"猿"},
@@ -10068,18 +10181,18 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-myth-quetzal",name:"Feathered Serpent",desc:"Power on Quetzalcoatl",type:"answer_power",threshold:1,answers:["quetzalcoatl","kukulkan"],icon:"蛇"},
   {id:"ap-myth-labours",name:"The Labours",desc:"Power on Heracles or his labours",type:"answer_power",threshold:1,topic:"Mythology > Classical Myth > Heracles & His Labors",answers:["heracles","hercules"],either:true,icon:"獅"},
   {id:"ap-myth-theogony",name:"Theogony",desc:"Power on 12 different Greek gods or Titans",type:"answer_power",threshold:12,count:"answers",topic:["Mythology > Classical Myth > Olympians & Major Gods","Mythology > Classical Myth > Titans, Primordials & Creation"],icon:"神"},
-  {id:"ap-myth-iliad",name:"Iliad Heroes",desc:"Power on Achilles, Hector, Agamemnon, Odysseus, Ajax, Diomedes and Patroclus",type:"answer_power",threshold:7,count:"targets",within:["Mythology","Literature"],answers:["achilles","hector","agamemnon",["odysseus","ulysses"],["ajax","ajax the great","telamonian ajax"],"diomedes","patroclus"],icon:"英"},
+  {id:"ap-myth-iliad",name:"Iliad Heroes",desc:"Power on 5 heroes of the Trojan War",type:"answer_power",threshold:5,count:"targets",answers:["achilles", "hector", "agamemnon", ["odysseus", "ulysses"], ["ajax", "ajax the great", "telamonian ajax"], "diomedes", "patroclus", "menelaus", ["paris", "alexandros"], "nestor", "priam", "aeneas", ["helen of troy", "helen"], "andromache", "cassandra", "philoctetes", "neoptolemus", "penthesilea", "memnon"],within:["Mythology","Literature"],icon:"英"},
   {id:"ap-myth-allfather",name:"Allfather's Blessing",desc:"Power on 10 different Norse mythology questions",type:"answer_power",threshold:10,topic:"Mythology > Scandinavian Myth",icon:"北"},
   {id:"ap-pop-kanye",name:"I Guess We'll Never Know",desc:"Power on Kanye West",type:"answer_power",threshold:1,answers:["@kanye west","ye"],icon:"韻"},
-  {id:"ap-pop-mj",name:"King of Pop",desc:"Power on Michael Jackson",type:"answer_power",threshold:1,answers:["michael jackson","thriller"],icon:"舞"},
-  {id:"ap-pop-starwars",name:"Skywalker",desc:"Power on Star Wars",type:"answer_power",threshold:1,answers:["star wars","luke skywalker","darth vader","anakin skywalker","han solo","yoda","obi wan kenobi","the empire strikes back","return of the jedi","the mandalorian","@george lucas"],icon:"星"},
+  {id:"ap-pop-mj",name:"King of Pop",desc:"Power on a pop music question",type:"answer_power",threshold:1,topic:"Pop Culture Sports > Pop Culture > Music",icon:"舞"},
+  {id:"ap-pop-starwars",name:"Skywalker",desc:"Power on Star Wars",type:"answer_power",threshold:1,answers:["star wars", "luke skywalker", "darth vader", "anakin skywalker", "han solo", "yoda", "obi wan kenobi", "the empire strikes back", "return of the jedi", "the mandalorian", "@george lucas", "jedi", "sith", "death star", "lightsaber", "princess leia", "boba fett", "chewbacca", "r2 d2", "c 3po", "palpatine"],within:"*",icon:"星"},
   {id:"ap-pop-minecraft",name:"Master of the Craft",desc:"Power on Minecraft",type:"answer_power",threshold:1,answers:["minecraft"],icon:"塊"},
   {id:"ap-pop-nba",name:"Point Guard",desc:"Power on an NBA or WNBA question",type:"answer_power",threshold:1,topic:["Pop Culture Sports > Sports > Major Sport > Basketball > Modern > NBA & WNBA","Pop Culture Sports > Sports > Major Sport > Basketball > Any Time > NBA & WNBA"],icon:"球"},
-  {id:"ap-pop-lebron",name:"LeSunshine",desc:"Power on LeBron James",type:"answer_power",threshold:1,answers:["@lebron james"],icon:"覇"},
-  {id:"ap-pop-zelda",name:"Hyrule",desc:"Power on The Legend of Zelda",type:"answer_power",threshold:1,answers:["the legend of zelda","zelda","hyrule","breath of the wild","ocarina of time","tears of the kingdom","majoras mask"],icon:"剣"},
-  {id:"ap-pop-fortnite",name:"Battle Royale",desc:"Power on Fortnite or a battle royale game",type:"answer_power",threshold:1,answers:["fortnite","battle royale","pubg","playerunknowns battlegrounds","apex legends","call of duty warzone"],icon:"闘"},
+  {id:"ap-pop-lebron",name:"LeSunshine",desc:"Power on LeBron James or one of his teams",type:"answer_power",threshold:1,answers:["@lebron james", "cleveland cavaliers", "miami heat", "los angeles lakers"],within:"*",icon:"覇"},
+  {id:"ap-pop-zelda",name:"Hyrule",desc:"Power on The Legend of Zelda",type:"answer_power",threshold:1,answers:["the legend of zelda", "zelda", "hyrule", "link", "ganon", "ganondorf", "triforce", "breath of the wild", "ocarina of time", "tears of the kingdom", "majoras mask", "twilight princess", "the wind waker", "skyward sword", "a link to the past", "links awakening", "@shigeru miyamoto"],within:"*",icon:"剣"},
+  {id:"ap-pop-fortnite",name:"Battle Royale",desc:"Power on a video game question",type:"answer_power",threshold:1,topic:"Pop Culture Sports > Pop Culture > Video Games",icon:"闘"},
   {id:"ap-pop-harry",name:"Wizarding World",desc:"Power on Harry Potter",type:"answer_power",threshold:1,within:["Pop Culture Sports","Literature"],answers:["harry potter","hogwarts","hermione granger","@albus dumbledore","lord voldemort","@severus snape","quidditch","@j k rowling","ron weasley","@rubeus hagrid"],icon:"杖"},
-  {id:"ap-pop-lol",name:"Get a Life",desc:"Power on League of Legends",type:"answer_power",threshold:1,answers:["league of legends"],icon:"戯"},
+  {id:"ap-pop-lol",name:"Get a Life",desc:"Power on 5 different video game questions",type:"answer_power",threshold:5,topic:"Pop Culture Sports > Pop Culture > Video Games",icon:"戯"},
   {id:"ap-pop-nfl",name:"Touchdown",desc:"Power on an NFL question",type:"answer_power",threshold:1,topic:["Pop Culture Sports > Sports > Major Sport > Football > Modern > NFL","Pop Culture Sports > Sports > Major Sport > Football > Any Time > NFL"],icon:"突"},
   {id:"ap-pop-nintendo",name:"64",desc:"Power on a Nintendo franchise",type:"answer_power",threshold:1,answers:["nintendo","super mario","mario","the legend of zelda","pokemon","donkey kong","kirby","metroid","animal crossing","super smash bros","splatoon","fire emblem","star fox","nintendo switch","game boy","wii"],icon:"遊"},
   {id:"ap-pop-mario",name:"Wahoo!",desc:"Power on Mario",type:"answer_power",threshold:1,answers:["mario","super mario","super mario bros","super mario 64","mario kart","luigi","princess peach","bowser"],icon:"跳"},
@@ -10090,12 +10203,12 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-fa-rodin",name:"The Thinker",desc:"Power on Rodin",type:"answer_power",threshold:1,answers:["@auguste rodin","the thinker","the gates of hell","the burghers of calais"],icon:"想"},
   {id:"ap-fa-monet",name:"Water Lilies",desc:"Power on Monet",type:"answer_power",threshold:1,answers:["@claude monet","water lilies","impression sunrise","rouen cathedral","haystacks"],icon:"蓮"},
   {id:"ap-fa-lascala",name:"La Scala",desc:"Power on an Italian opera question",type:"answer_power",threshold:1,topic:"Fine Arts > Performance > Opera > Italian Opera",icon:"歌"},
-  {id:"ap-fa-ring",name:"Ring Cycle",desc:"Power on Wagner's Ring cycle",type:"answer_power",threshold:1,answers:["der ring des nibelungen","the ring of the nibelung","ring cycle","das rheingold","die walkure","siegfried","gotterdammerung","brunnhilde"],icon:"環"},
+  {id:"ap-fa-ring",name:"Ring Cycle",desc:"Power on Wagner's Ring cycle or a German opera",type:"answer_power",threshold:1,topic:"Fine Arts > Performance > Opera > German Opera",answers:["der ring des nibelungen","the ring of the nibelung","ring cycle","das rheingold","die walkure","siegfried","gotterdammerung","brunnhilde"],either:true,icon:"環"},
   {id:"ap-fa-debussy",name:"Clair de Lune",desc:"Power on Debussy",type:"answer_power",threshold:1,answers:["@claude debussy","clair de lune","la mer","prelude to the afternoon of a faun","pelleas et melisande"],icon:"月"},
   {id:"ap-fa-vangogh",name:"Earless Man",desc:"Power on van Gogh",type:"answer_power",threshold:1,answers:["@vincent van gogh","the starry night","sunflowers","the potato eaters","cafe terrace at night"],icon:"耳"},
   {id:"ap-fa-dali",name:"The Persistence of Memory",desc:"Power on Dalí",type:"answer_power",threshold:1,answers:["@salvador dali","the persistence of memory"],icon:"夢"},
-  {id:"ap-fa-impressionist",name:"Impressionist Circle",desc:"Power on Monet, Renoir, Degas, Cézanne, Pissarro and Morisot",type:"answer_power",threshold:6,count:"targets",answers:[["@claude monet"],["@pierre auguste renoir"],["@edgar degas"],["@paul cezanne"],["@camille pissarro"],["@berthe morisot"]],icon:"印"},
-  {id:"ap-fa-string",name:"String Quartets",desc:"Power on 4 different chamber music forms",type:"answer_power",threshold:4,count:"targets",answers:[["string quartet","string quartets"],["piano trio"],["piano quintet"],["string quintet"],["chamber music"],["trio sonata"],["divertimento"],["octet"],["sextet"],["piano quartet"],["clarinet quintet"],["serenade"]],icon:"弦"},
+  {id:"ap-fa-impressionist",name:"Impressionist Circle",desc:"Power on 5 different Impressionist painters",type:"answer_power",threshold:5,count:"targets",answers:[["@claude monet"], ["@pierre auguste renoir"], ["@edgar degas"], ["@paul cezanne"], ["@camille pissarro"], ["@berthe morisot"], ["@edouard manet"], ["@alfred sisley"], ["@mary cassatt"], ["@gustave caillebotte"], ["@frederic bazille"]],icon:"印"},
+  {id:"ap-fa-string",name:"String Quartets",desc:"Power on 4 different musical forms and terms (string quartet, sonata, fugue …)",type:"answer_power",threshold:4,count:"answers",topic:"Fine Arts > Music > Instruments Theory ClassicalPerformers > Theory, Forms & Notation",icon:"弦"},
   {id:"ap-phil-locke",name:"Essay Competition",desc:"Power on John Locke",type:"answer_power",threshold:1,answers:["@john locke","an essay concerning human understanding","two treatises of government"],icon:"白"},
   {id:"ap-phil-athens",name:"The Three Meanings of Athens",desc:"Power on Plato, Aristotle and Socrates",type:"answer_power",threshold:3,count:"targets",answers:["plato","aristotle","socrates"],icon:"知"},
   {id:"ap-phil-cave",name:"The Cave Allegory",desc:"Power on Plato's Republic",type:"answer_power",threshold:1,answers:["the republic","republic","allegory of the cave"],icon:"洞"},
@@ -10105,7 +10218,7 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-phil-exist",name:"Existentialism",desc:"Power on a phenomenology or existentialism question",type:"answer_power",threshold:1,topic:"Philosophy > Continental Philosophy > Phenomenology & Existentialism",answers:["@jean paul sartre","@albert camus"],either:true,within:["Philosophy","Literature"],icon:"存"},
   {id:"ap-phil-machiavelli",name:"Il Principe",desc:"Power on Machiavelli or The Prince",type:"answer_power",threshold:1,within:["Philosophy","History","Literature"],answers:["@niccolo machiavelli","the prince"],icon:"君"},
   {id:"ap-phil-kant",name:"Categorical Imperative",desc:"Power on Kant",type:"answer_power",threshold:1,topic:"Philosophy > Early Modern Philosophy > Kant & the German Enlightenment",answers:["@immanuel kant","critique of pure reason","categorical imperative"],either:true,icon:"徳"},
-  {id:"ap-phil-enlightened",name:"Enlightened Monarch",desc:"Power on Locke, Hume, Kant, Rousseau, Voltaire and Montesquieu",type:"answer_power",threshold:6,count:"targets",answers:[["@john locke"],["@david hume"],["@immanuel kant"],["@jean jacques rousseau"],["voltaire"],["montesquieu"]],icon:"啓"},
+  {id:"ap-phil-enlightened",name:"Enlightened Monarch",desc:"Power on Locke, Hume, Kant, Rousseau, Voltaire and Montesquieu",type:"answer_power",threshold:6,count:"targets",answers:[["@john locke"],["@david hume"],["@immanuel kant"],["@jean jacques rousseau"],["voltaire"],["montesquieu"]],within:["Philosophy", "Literature", "History", "Social Science"],icon:"啓"},
   {id:"ap-phil-school",name:"The School of Athens",desc:"Power on 5 figures from The School of Athens",type:"answer_power",threshold:5,count:"targets",within:"*",answers:["plato","aristotle","socrates","pythagoras","euclid","diogenes","heraclitus","ptolemy","zoroaster","parmenides","epicurus","averroes","hypatia","alcibiades","xenophon","zeno of citium","plotinus"],icon:"学"},
 ];
 
@@ -11466,7 +11579,7 @@ function init() {
           API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
         ]);
         const stats = statsData.stats || {};
-        const achData = computeAchievementData(stats, apData.answer_counts || {}, apData.answer_classes || {}, apData.answer_questions || {});
+        const achData = computeAchievementData(stats, apData.answer_counts || {}, apData.answer_classes || {}, achRecordsFrom(apData));
         const out = ACHIEVEMENT_LIST.map((a) => ({
           id: a.id, name: a.name, desc: a.desc, threshold: a.threshold,
           earned: !!(achData[a.id] && achData[a.id].earned),
@@ -11988,14 +12101,14 @@ async function openUserProfile(handle, shownName) {
   if (d.private) achNote = `<p class="fr-empty">${ic("lock", 14)} @${escapeHtml(d.handle)} keeps their practice private — it shows to friends and on leaderboards you share.</p>`;
   else {
     const p = d.powers || {};
-    const achData = computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, p.answer_questions || {});
+    const achData = computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p));
     const all = Object.values(achData || {}), got = all.filter((a) => a && a.earned).length;
     achNote = `<div class="up-stats"><span><b class="num">${num(st.totalQuestions)}</b><small>questions</small></span><span><b class="num">${num(st.tossupPowers)}</b><small>powers</small></span><span><b class="num">${st.totalQuestions ? Math.round((st.tossupAccuracy || 0) * 100) + "%" : "—"}</b><small>tossup accuracy</small></span><span><b class="num">${got}</b><small>achievements</small></span></div>`;
     achHtml = `<div class="stats-section"><div class="stats-section-title">ACHIEVEMENTS</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
   }
-  body.innerHTML = `<div class="up-actions">${friendBtn}</div>${trialBadgesHtml(d.trials)}${achNote}${achHtml}`;
+  body.innerHTML = `<div class="up-actions">${friendBtn}</div>${trialBadgesHtml(d.trials, hwBadgeHtml(d.powers && d.powers.event))}${achNote}${achHtml}`;
   try { initCollapsibles(body); } catch (e) {}
-  if (!d.private) { const p = d.powers || {}; body._achWired = false; wireAchievementCards(body, { achData: computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, p.answer_questions || {}), records: achRecordsOf(p.answer_questions || {}), stats: st }); }
+  if (!d.private) { const p = d.powers || {}; body._achWired = false; wireAchievementCards(body, { achData: computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p)), records: achRecordsFrom(p), stats: st }); }
   body.querySelectorAll("[data-up]").forEach((b) => b.onclick = async () => {
     const k = b.dataset.up;
     if (k === "signin" || k === "handle") { close(); openAccount(k); return; }
@@ -12316,6 +12429,8 @@ function wireLbKinds(c) {
 // Preloaded while you're on the home page (preloadLeaderboards): the page paints
 // those numbers at once, then fetches fresh ones and repaints only if they changed.
 const _lbCache = new Map();   // url → response
+// the periods; while the event runs (and two weeks after) its board, ranked by candy
+const lbPeriods = () => [["week", "This week"], ["month", "This month"], ["all", "All time"], ...(Date.now() >= HW.start && Date.now() < HW.boardUntil ? [["halloween", "Halloween"]] : [])];
 const _lbUrl = (period) => "/api/leaderboards?period=" + period;
 const _lbBoardUrl = (id, period) => "/api/leaderboards/board?id=" + encodeURIComponent(id) + "&period=" + period;
 let _lbPreloadAt = 0;
@@ -12597,7 +12712,7 @@ async function renderLeaderboards(note) {
   if (!note) { const af = accountFresh(); if (!Account.known) await af; }
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need onlinequiz accounts, which aren't open yet.</p></div>`; return; }
   if (_lb.kind !== "individuals" && window.QBClubs) {
-    const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
+    const periods = lbPeriods().map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
     c.innerHTML = `<div class="lb-page"><div class="lb-bar">${lbKindSeg()}<div class="seg lb-periods" role="group" aria-label="Period">${periods}</div></div><div id="lb-groups"></div></div>`;
     wireLbKinds(c);
     c.querySelectorAll("[data-lb-period]").forEach((b) => b.onclick = () => { _lb.period = b.dataset.lbPeriod; renderLeaderboards(); });
@@ -12626,12 +12741,12 @@ async function renderLeaderboards(note) {
 async function paintLeaderboards(c, d, board, note) {
   const tabs = [["global", "Global"], ...(d.boards || []).filter((b) => !(_lb.gone && _lb.gone.has(b.id))).map((b) => [b.id, b.name])].map(([k, l]) => `<button type="button" class="db-tab${_lb.tab === k ? " active" : ""}" data-lb-tab="${escapeHtml(k)}">${escapeHtml(l)}</button>`).join("") +
     (d.signedIn ? '<button type="button" class="db-tab lb-new" data-lb-new>+ New leaderboard</button>' : "");
-  const periods = [["week", "This week"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
+  const periods = lbPeriods().map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const avN = (h, n) => `<span class="fr-av"${avatarStyle(n)}>${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${avN(r.displayName || r.handle, r.neon)}` +
     `<span class="fr-name"><b>${neonName(r.displayName || r.handle, r.neon)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
-    `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>points</small></span>` +
+    `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>${_lb.period === "halloween" ? "candy" : "points"}</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.questions || 0).toLocaleString()}</b><small>questions</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small>powers</small></span>` +
     `<span class="fr-stat"><b class="num">${r.accuracy == null ? "—" : r.accuracy + "%"}</b><small>accuracy</small></span>` +

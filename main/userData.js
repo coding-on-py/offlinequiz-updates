@@ -16,6 +16,20 @@ const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials)$|^plug:[^:]
 const MAX_SYNC_VALUE = 900 * 1024;   // a bigger config value stays on its device
 const sessionKey = (r) => JSON.stringify([String(r.session_id), String(r.type), r.question_id == null ? "" : String(r.question_id), Number(r.timestamp)]);
 
+// The seasonal event (14.90): Halloween 2026 — through Nov 1 (08:00 UTC on Nov 2 is midnight on the U.S. west coast).
+// One tossup in `pumpkinEvery` is a pumpkin (a hash of its id, the same everywhere: the app, the website, the game
+// server, the leaderboard); powering one during the event is a piece of candy (each question once); `goal` candies
+// is the "Halloween 2026" badge. Kept here: the over-the-air update ships only the existing main files.
+export const EVENT = { id: "halloween-2026", name: "Halloween", start: Date.UTC(2026, 9, 16), end: Date.UTC(2026, 10, 2, 8), pumpkinEvery: 8, goal: 31 };
+export const eventOn = (now = Date.now()) => now >= EVENT.start && now < EVENT.end;
+export function isPumpkin(id) {
+  if (id == null || id === "") return false;
+  const s = EVENT.id + ":" + id;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h % EVENT.pumpkinEvery === 0;
+}
+
 // Trials (14.88): { "<category>|<level>": { s: last start, p: first pass, l: last pass } } (ms)
 export function mergeTrials(a, b) {
   const out = {};
@@ -345,7 +359,10 @@ export class UserData {
       }
       return o;
     };
-    return { week: sum(now - 7 * DAY), month: sum(now - 30 * DAY), all: sum(0) };
+    const all = sum(0);
+    // the event's board (the leaderboards' "Halloween" period): its practice and its candy
+    all.ev = { ...sum(EVENT.start), candy: this.eventPumpkins().length };
+    return { week: sum(now - 7 * DAY), month: sum(now - 30 * DAY), all };
   }
 
   // A friend-list summary of the active profile's practice: today, the last 7
@@ -693,6 +710,20 @@ export class UserData {
   getAllSessionEntries() {
     const pid = this.getActiveProfileId();
     return this.db.prepare("SELECT * FROM sessions WHERE profile_id = ? ORDER BY timestamp").all(pid);
+  }
+
+  // the event's candy: the pumpkin tossups this profile powered during it (each question once)
+  eventPumpkins() {
+    const pid = this.getActiveProfileId();
+    return this.db.prepare("SELECT DISTINCT question_id FROM sessions WHERE profile_id = ? AND type = 'tossup' AND correct = 1 AND points >= 15 AND timestamp >= ? AND timestamp < ?")
+      .all(pid, EVENT.start, EVENT.end).map((r) => r.question_id).filter(isPumpkin);
+  }
+  // when each powered tossup was first powered (limited achievements count only their window)
+  getPowerTimes() {
+    const pid = this.getActiveProfileId();
+    const out = {};
+    for (const r of this.db.prepare("SELECT question_id, MIN(timestamp) AS t FROM sessions WHERE points >= 15 AND correct = 1 AND type = 'tossup' AND profile_id = ? GROUP BY question_id").all(pid)) if (r.question_id) out[r.question_id] = r.t;
+    return out;
   }
 
   getPoweredAnswerIds() {
