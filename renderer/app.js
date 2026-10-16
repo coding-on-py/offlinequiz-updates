@@ -9519,7 +9519,7 @@ function renderAchievementCard(ach, data) {
 // Ten power-marked tossups of one category at one level (1–10), read like practice; the first tossup not powered
 // ends it (no skipping). Its powers earn XP (trialXp: 10 × the level a power, ×1.25 for 5, ×1.5 for 6–9, ×2.5 for
 // all ten); powering all ten passes the level and opens the next. A category's badge is XP-based (15.1,
-// trialBadgeOf): level n needs 250 × n² XP in it and level n passed. A level can be tried again after its cooldown
+// trialBadgeOf): level n needs 250 × n² XP in it, nothing else (15.2: no level to pass). A level can be tried again after its cooldown
 // (trialCooldownMs: none for I, 5 min for II–III, 10 min for IV–X), counted from the last attempt. State and the
 // question pick are the backend's (/api/trials; src/main/index.js), synced with the account.
 const TRIAL_CATS = [["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science"], ["math", "Math", "Math"],
@@ -9537,30 +9537,28 @@ function trialXpOf(trials, key) {
   return n;
 }
 const fmtXp = (n) => Number(n || 0).toLocaleString() + " XP";
-// 15.1: badges by XP. Level n of a category's badge needs 250 × n² XP in it (250, 1,000, 2,250 … 25,000) and level
-// n passed, so one perfect level I run is the first badge and each later one takes more play. A pass from before
-// trial XP (TRIAL_XP_EPOCH) keeps its badge whatever the XP.
+// 15.1: badges by XP. Level n of a category's badge needs 250 × n² XP in it (250, 1,000, 2,250 … 25,000), whatever
+// levels are passed (15.2), so one perfect level I run is the first badge. Passing a level only opens the next one.
+// A pass from before trial XP (TRIAL_XP_EPOCH) keeps its badge whatever the XP.
 const trialBadgeXp = (n) => 250 * n * n;
 const TRIAL_XP_EPOCH = 1792162633223;
 function trialBadgeOf(trials, key) {
   const xp = trialXpOf(trials, key);
   let passed = 0, legacy = 0, byXp = 0;
   for (let n = 1; n <= 10; n++) { const t = (trials || {})[key + "|" + n]; if (t && t.p) { passed = n; if (t.p < TRIAL_XP_EPOCH) legacy = n; } }
-  for (let n = 1; n <= passed; n++) if (xp >= trialBadgeXp(n)) byXp = n;
+  for (let n = 1; n <= 10; n++) if (xp >= trialBadgeXp(n)) byXp = n;
   const level = Math.max(legacy, byXp), next = level < 10 ? level + 1 : 0, need = next ? trialBadgeXp(next) : 0;
-  return { level, xp, passed, next, need, xpOk: !next || xp >= need, passOk: !next || passed >= next };
+  return { level, xp, passed, next, need, xpOk: !next || xp >= need };
 }
 function trialBadges(trials) { const out = {}; for (const [k] of TRIAL_CATS) { const b = trialBadgeOf(trials, k).level; if (b) out[k] = b; } return out; }
-// how close a category is to its next badge: the XP bar and the two things it needs
+// how close a category is to its next badge: the XP bar and the XP still to earn
 function trialProgressHtml(trials, key, fromXp) {
   const b = trialBadgeOf(trials, key);
   if (!b.next) return `<div class="tp-prog done" style="--hue:${trialHue(key)}">${ic("award", 14)}<span>Top badge, ${fmtXp(b.xp)}</span></div>`;
   const pct = (x) => Math.min(100, Math.round((x / b.need) * 1000) / 10);
-  const lv = ROMAN[b.next];
   return `<div class="tp-prog" style="--hue:${trialHue(key)}"><div class="tp-prog-h"><span>${b.level ? "Next badge" : "First badge"} <b>${escapeHtml(trialName(key, b.next))}</b></span><span class="num">${b.xp.toLocaleString()} / ${b.need.toLocaleString()} XP</span></div>` +
     `<div class="tp-prog-bar"><i style="width:${pct(fromXp != null ? fromXp : b.xp)}%" data-to="${pct(b.xp)}"></i></div>` +
-    `<div class="tp-prog-req"><span class="${b.xpOk ? "ok" : ""}">${ic(b.xpOk ? "check" : "sparkle", 12)}${b.xpOk ? fmtXp(b.need) : (b.need - b.xp).toLocaleString() + " XP to go"}</span>` +
-    `<span class="${b.passOk ? "ok" : ""}">${ic(b.passOk ? "check" : "lock", 12)}${b.passOk ? "Level " + lv + " passed" : "Pass level " + lv}</span></div></div>`;
+    `<div class="tp-prog-req"><span>${ic("sparkle", 12)}${(b.need - b.xp).toLocaleString()} XP to go</span></div></div>`;
 }
 // a bar drawn at its old width slides to its new one (after a run)
 function growProgress(root) { requestAnimationFrame(() => requestAnimationFrame(() => root.querySelectorAll(".tp-prog-bar i[data-to]").forEach((i) => { i.style.width = i.dataset.to + "%"; }))); }
@@ -9735,7 +9733,7 @@ function trialsSectionHtml(info) {
       const pips = Array.from({ length: 10 }, (_, i) => { const st = trialState(info, key, i + 1); return `<i class="${st.passed ? "on" : st.wait ? "wait" : st.locked ? "lock" : ""}"></i>`; }).join("");
       return `<button type="button" class="tr-card${bl ? "" : " none"}" data-trial="${key}" style="--hue:${trialHue(key)}"><span class="tr-card-emb" aria-hidden="true">${trialEmblem(key, bl || 1, 40)}</span><span class="tr-name">${escapeHtml(name)}</span>` +
         `<span class="tr-lv">${bl ? escapeHtml(name + " " + ROMAN[bl]) : "No badge yet"}</span>` +
-        `<span class="tr-meta"><span class="tr-xp num">${b.next ? b.xp.toLocaleString() + " / " + fmtXp(b.need) : fmtXp(b.xp)}</span>${b.next && b.xpOk && !b.passOk ? `<span class="tr-need">Pass ${ROMAN[b.next]}</span>` : ""}${(() => { const nx = trialState(info, key, Math.min(10, lv + 1)); return nx.wait && !nx.locked ? waitHtml(nx.wait) : ""; })()}</span>` +
+        `<span class="tr-meta"><span class="tr-xp num">${b.next ? b.xp.toLocaleString() + " / " + fmtXp(b.need) : fmtXp(b.xp)}</span>${(() => { const nx = trialState(info, key, Math.min(10, lv + 1)); return nx.wait && !nx.locked ? waitHtml(nx.wait) : ""; })()}</span>` +
         `<span class="tr-prog" title="${escapeHtml(b.next ? b.xp.toLocaleString() + " of " + b.need.toLocaleString() + " XP to " + trialName(key, b.next) : "Top badge")}"><i style="width:${b.next ? Math.min(100, (b.xp / b.need) * 100) : 100}%"></i></span>` +
         `<span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
     }).join("")}</div></section>`;
