@@ -1,5 +1,5 @@
 {
-  "version": "14.93",
+  "version": "14.94",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,10 +55,10 @@
     }
   ],
   "main": true,
-  "notes": "bug fixes",
+  "notes": "minor ui fixes",
   "files": {
     "renderer/index.html": "ffd387879b02d39aa3cdac59bcacdc7a42014cf8aa46627645d5b1a9ef040f26",
-    "renderer/style.css": "0a5a6e46bc9a7df2a310cc17cdf814b9c71390fbff8a1cbe621e5a1e83071aae",
+    "renderer/style.css": "4203cb903ffded5f5ca759ed5392a41ec2eb6f9f9922d22da61538673699846c",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "6ea9e7aa5090fdfb95f30daa4337117cbaf164824010b2a66cb5eaaa5da06757",
     "renderer/app.js": "20c00f368d65dfeb5bdb0aab6f3838aa83807d3f7cfe1636a86c1336b55af831",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "1442044528ffd61e05b6d74396589e541f33d0ceafbd3c72d9d69b4a60a28d5b",
     "plugins/packet-builder.zip": "c87f7b924d0c3c1dadbfab87d480573784013e2da23118918789381e3fac05e6"
   },
-  "signature": "U6JTlAm2VGSYiym6eULQn1dDfRT+I25kAlMHW6ZC0NExLOLSZU8QLHlKIv0MIZlpZ4vKJ9jeBa2WD5HX4GlHDQ=="
+  "signature": "N0WBK9u5MUfS1EomFyvKQiTuDEtj/7dsH8RG+9TAICHnXr2qSCPa+vAlSyJbQX749y9HQFthLHXL9KBoLl1RCQ=="
 }
