@@ -1577,7 +1577,7 @@ QB.registerTheme({
   name: "Daylight Cards Studio",
   version: "1.3.0",
   author: "OfflineQuiz",
-  description: "Light card-based restyle with a fully CUSTOM Appearance panel: palette cards, a live accent picker, font + layout buttons, and a shadow toggle — all built by the theme via registerAppearancePanel.",
+  description: "A light card style with its own Appearance panel for colors, fonts, layout and shadows.",
   // Settings still exist (defaults + persistence) but are NOT auto-rendered —
   // location:"hidden" keeps them out of every section so our panel owns the UI.
   settings: [
@@ -1792,7 +1792,7 @@ QB.registerTheme({
         var ca = el.querySelector("#dls-clearall"); if (ca) ca.onclick = function () { ctx.setSetting("custom", ""); build(); };
       }
       build();
-    }, { title: "Daylight Studio — Appearance" });
+    }, { title: "Daylight Studio Appearance" });
 
     // Re-apply the palette whenever any setting changes.
     ctx.onSetting(function () { apply(); });
@@ -2171,7 +2171,7 @@ QB.registerTheme({
       const rows = visible.slice().sort((a, b) => GROUP_ORDER.indexOf(groupOf(a.id)) - GROUP_ORDER.indexOf(groupOf(b.id)) || String(a.name).localeCompare(String(b.name))).map((p) => {
         const g = groupOf(p.id);
         const on = p.enabled && !QB.pluginLocked(p.id), set = on ? settingsHtml(p, "card") : "";
-        return '<div class="ext-row ext-card' + (on ? " active" : "") + '" data-guide="' + esc(p.id) + '" tabindex="0" role="button" aria-label="' + esc(p.name) + ' — how to use it">' +
+        return '<div class="ext-row ext-card' + (on ? " active" : "") + '" data-guide="' + esc(p.id) + '" tabindex="0" role="button" aria-label="' + esc(p.name) + ', how to use it">' +
           piconHtml(p, GROUP_COLOR[g]) +
           '<span class="er-name"><b>' + esc(p.name) +
             (p._error ? ' <span class="ext-badge err">failed</span><span class="qb-info" data-tip="' + esc(p._error) + '">i</span>' : "") + "</b>" +
@@ -2220,12 +2220,12 @@ QB.registerTheme({
         const have = QB._plugins.find((x) => x.id === item.id && !x._builtin);
         const busy = st.busy[item.id];
         const btn = busy ? '<button type="button" class="btn btn-sm" disabled>' + esc(busy) + "</button>"
-          : st.failed[item.id] ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '" title="Couldn\'t add it — try again">Retry</button>'
+          : st.failed[item.id] ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '" title="Couldn\'t add it. Try again">Retry</button>'
           : QB.pluginLocked(item.id) ? buyBtn(item.id)
           : !have ? '<button type="button" class="btn btn-sm btn-primary" data-store-get="' + esc(item.id) + '">Get</button>'
           : verNewer(item.version, have.version) ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '">Update</button>'
           : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
-        return '<div class="store-card" data-guide="' + esc(item.id) + '" tabindex="0" role="button" aria-label="' + esc(item.name) + ' — how to use it">' + piconHtml(item, GROUP_COLOR[g]) +
+        return '<div class="store-card" data-guide="' + esc(item.id) + '" tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it">' + piconHtml(item, GROUP_COLOR[g]) +
           '<span class="store-main"><b>' + esc(item.name) + '</b><small>v' + esc(item.version) + (item.author ? " · " + esc(item.author) : "") + "</small></span>" +
           btn + "</div>";
       }).join("") + "</div></section>").join("");
@@ -2842,7 +2842,7 @@ function __qbMain(ctx) {
     function dxUnreachable() {
       admitting = false; lobby = ""; ws = null; markBusy(false);
       render();
-      setStatus("Couldn’t reach the diagnostic room — try again in a moment.");
+      setStatus("Couldn’t reach the diagnostic room. Try again in a moment.");
     }
     // ── relay transport: one outbound WebSocket per player ──
     // `fallback` runs instead of an error when this server never answers.
@@ -2898,26 +2898,26 @@ function __qbMain(ctx) {
           // If our hello was swallowed by the dying host (we joined during the
           // detection gap and never got seated), introduce ourselves again.
           if (!players[myId]) toHost(helloMsg());
-          setStatus("Host left \u2014 " + (((players[m.id] || {}).name) || "another player") + " is now the host.");
+          setStatus("The host left. " + (((players[m.id] || {}).name) || "Another player") + " is now the host.");
           return;
         }
-        if (m.t === "hostleft") { setStatus("Host left \u2014 lobby closed."); }
+        if (m.t === "hostleft") { setStatus("The host left and the lobby closed."); }
       };
       sock.onclose = function () {
         if (!opened && fallback) { giveUp(); return; }
-        if (!opened) setStatus("Couldn't reach the relay \u2014 check the URL (and that the worker is deployed).");
+        if (!opened) setStatus("Couldn't reach the relay. Check the URL and that the worker is deployed.");
         else if (admitting && ws === sock) {
           // closed before it let us in (too many wrong passwords, the server restarting …)
           admitting = false; lobby = ""; ws = null; markBusy(false);
           if (door) door.live = false;
           render();
-          if (!door) setStatus("Couldn't join that room \u2014 try again.");
+          if (!door) setStatus("Couldn't join that room. Try again.");
           return;
         }
         else if (!leftIntentionally && lobby) showDisconnected();
         if (ws === sock) ws = null;
       };
-      sock.onerror = function () { if (!opened && fallback) { giveUp(); return; } if (!opened) setStatus("Couldn't reach the relay \u2014 check the URL."); };
+      sock.onerror = function () { if (!opened && fallback) { giveUp(); return; } if (!opened) setStatus("Couldn't reach the relay. Check the URL."); };
     }
 
     // The relay promoted THIS client to host (the old host disconnected). The
@@ -2942,7 +2942,7 @@ function __qbMain(ctx) {
       // using. When they return, onShow renders with the host UI.
       if (active()) render();
       broadcast({ t: "qreset" });   // reset clients BEFORE the announcement lands
-      sysChat("The host left — " + myName + " is the new host" + (hadQ ? " (that question was cancelled — press N)" : ""));
+      sysChat("The host left. " + myName + " is the new host" + (hadQ ? ", and that question was cancelled. Press N" : ""));
       pushState();
       mpPrefetchNow();   // this machine serves questions now — fetch ahead
     }
@@ -2951,10 +2951,10 @@ function __qbMain(ctx) {
     // under the same name continues where they left off; abandon their bonus.
     function hostPeerGone(id) {
       var p = players[id];
-      if (p && !p.off) { p.off = true; sysChat(p.name + " disconnected \u2014 seat and score saved"); pushState(); }
+      if (p && !p.off) { p.off = true; sysChat(p.name + " disconnected. Their seat and score are saved"); pushState(); }
       if (bonusState && id === bonusState.winner) {
         bonusState = null; stopBonusTimer();
-        sysChat("Bonus abandoned \u2014 the answerer left.");
+        sysChat("Bonus dropped because the answerer left.");
         broadcast({ t: "bcancel" }); applyBonusCancel();
       }
     }
@@ -3080,7 +3080,7 @@ function __qbMain(ctx) {
         }
       }
       if (!setQueue.length) { setStatus("No questions found in that set."); return null; }
-      if (setIndex >= setQueue.length) { setStatus("Packet finished — no more questions."); sysChat("Packet finished — no more questions."); return null; }
+      if (setIndex >= setQueue.length) { setStatus("Packet finished."); sysChat("Packet finished."); return null; }
       return setQueue[setIndex++];
     }
 
@@ -3100,9 +3100,9 @@ function __qbMain(ctx) {
       if (!isHost || bonusState || bonusPending) return;
       // Never advance while a buzz is live or being judged — the in-flight
       // verdict would otherwise land on (and instantly end) the NEXT question.
-      if (pendingBuzzer || answerJudging) { setStatus("Someone is answering — wait for the verdict."); return; }
+      if (pendingBuzzer || answerJudging) { setStatus("Someone is answering."); return; }
       if (current && !ended) {
-        if (!skipsAllowed()) { setStatus("Skips are off (OPTIONS) \u2014 finish this question first."); return; }
+        if (!skipsAllowed()) { setStatus("Skips are off. Finish this question first."); return; }
         if (byName) sysChat(byName + " skipped the question");
       }
       hostFinalize();
@@ -3255,7 +3255,7 @@ function __qbMain(ctx) {
           applyReveal(revealIdx);
           pausedAtPower = true;
           paused = true;
-          sysChat("Stopped at power \u2014 press P to resume");
+          sysChat("Stopped at power. Press P to resume");
           broadcast({ t: "pause", paused: true, idx: revealIdx });
           applyPause(true);
           return;
@@ -3307,7 +3307,7 @@ function __qbMain(ctx) {
         if (curStopPower && curPowerEnd > 0 && revealIdx >= curPowerEnd && !pausedAtPower && revealIdx < current.text.length) {
           pausedAtPower = true;
           paused = true;
-          sysChat("Stopped at power \u2014 press P to resume");
+          sysChat("Stopped at power. Press P to resume");
           broadcast({ t: "pause", paused: true, idx: revealIdx });
           applyPause(true);
         }
@@ -3452,7 +3452,7 @@ function __qbMain(ctx) {
         bonusPending = false;
         // Still on the same (ended) question, and nobody advanced meanwhile?
         if (b && hostQ && hostQ === forQ && ended && !bonusState) { hostQ._mpBonus = b; hostStartBonus(winnerId); }
-        else if (!b) sysChat("No bonus matched the filters \u2014 skipping.");
+        else if (!b) sysChat("No bonus matched the filters, so it was skipped.");
       }).catch(function () { bonusPending = false; });
     }
     // Category-tree node for the tossup's level-2 subtree ("A > B"), looked up
@@ -3697,7 +3697,7 @@ function __qbMain(ctx) {
     function requestBuzz() {
       if (!current || ended || lockedOut() || pendingBuzzer) return;   // locked out / someone answering: no buzz (and no answer box flashing open)
       if (inDiag() && players[myId] && players[myId].spec) return;   // a diagnostic's host who isn't playing
-      if (players[myId] && players[myId].spec) { ctx.toast("You're spectating \u2014 no buzzing", "error"); return; }
+      if (players[myId] && players[myId].spec) { ctx.toast("Spectators can't buzz", "error"); return; }
       if (settings.tournament && !(players[myId] && players[myId].team)) { setStatus("Join a team to play"); return; }
       ctx.playSound("buzz");
       if (isHost) { hostHandleBuzz(myId); return; }
@@ -3819,7 +3819,7 @@ function __qbMain(ctx) {
       if (b) {
         b.hidden = !officialRoom;
         if (officialRoom) b.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' + esc(officialRoom.name) +
-          ' <span class="qb-info" data-tip="' + esc("An official room, open to everyone: " + (filterSummary || officialRoom.name) + ". Its settings are fixed. After an hour with no activity, it starts over.") + '">i</span>';
+          ' <span class="qb-info" data-tip="' + esc("An official room for " + (filterSummary || officialRoom.name) + ". It resets after an hour with no activity.") + '">i</span>';
       }
     }
     // ── rendering ──
@@ -3859,7 +3859,7 @@ function __qbMain(ctx) {
           '<div class="mp-lobby-main">' +
           '<label class="mp-who"><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.myNeon && window.QB.neonAvatar(window.QB.myNeon())) || "") + '">' + esc(initial) + '</span><span class="mp-who-txt"><span class="eyebrow">Playing as</span>' +
             '<input id="mp-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name"' + (fixedName ? " readonly" : "") + '></span>' +
-            (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name — change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
+            (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name. Change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
           '<section class="mp-card mp-join-card">' +
             '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="The grey code is a new room, ready for you: press Join/Create Room to open it, or type another room\u2019s code to join that one. Share the code so others can join.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code" placeholder="' + esc(suggested) + '"></label>' +
             '<label class="checkbox-row"><input type="checkbox" id="mp-spectate"> Join as spectator</label>' +
@@ -4037,7 +4037,7 @@ function __qbMain(ctx) {
     }
     // (markup: fixed text with the lead words in bold, as on the product picture)
     var CAPTAIN_PERKS = ["This room, <b>kept for good</b>, with its password, members and admins", "<b>Keyword Frequency</b>, <b>Canon Tracker</b>, <b>Buzzwords</b> and <b>Fact Sheet</b>", "A <b>glowing neon name</b> in rooms and on leaderboards"];
-    var BUY_PERKS = ["<b>Never resets</b> by itself: scores, settings and chat stay", "<b>Members</b> you add by username always get in", "A <b>password</b> for everyone else, or open it to anyone", "<b>Admins</b> you choose, and a Reset button"];
+    var BUY_PERKS = ["Scores, settings and chat <b>never reset</b>", "<b>Members</b> you add by username always get in", "A <b>password</b> for everyone else, or open it to anyone", "<b>Admins</b> you choose, and a Reset button"];
     // ── "Your own room": the shop's section at the very bottom of the lobby ──
     var IC_OWN = {
       keep: '<path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
@@ -4047,17 +4047,17 @@ function __qbMain(ctx) {
     };
     var ownSvg = function (k) { return '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + IC_OWN[k] + "</svg>"; };
     var OWN_FEATURES = [
-      ["keep", "It never closes", "A free room is cleared an hour after everyone leaves. Yours keeps its scores, settings, question history and chat, however long you\u2019re away."],
-      ["people", "Your team gets straight in", "Add teammates by their onlinequiz username. Members always get in, with no code or password to remember."],
-      ["lock", "You decide who joins", "Lock it to your members, ask everyone else for a password, or leave it open. Change it any time, and look up the password whenever someone asks."],
-      ["crown", "Run it your way", "Choose admins to help run it, take players out, and start a fresh game with Reset. Members and settings stay."],
+      ["keep", "It never closes", "Free rooms clear an hour after everyone leaves. Yours keeps everything, however long you\u2019re away."],
+      ["people", "Your team gets straight in", "Add teammates by username. Members get in without a code or password."],
+      ["lock", "You decide who joins", "Members only, a password, or open to anyone. Change it any time."],
+      ["crown", "Run it your way", "Pick admins, remove players and start fresh with Reset."],
     ];
     // two plans side by side, the same lines in the same order: what a free room has, what yours adds
     var OWN_PLANS = [
       ["Any room name that isn\u2019t taken", "A name that\u2019s yours for good"],
       ["Anyone with the name can join", "You decide who joins"],
       [false, "Kept when everyone leaves", "Cleared an hour after everyone leaves"],
-      [false, "Its own link: onlinequiz.net/room/<i>name</i>"],
+      [false, "Its own link at onlinequiz.net/room/<i>name</i>"],
       [false, "Members added by username"],
       [false, "Locked, or a password for everyone else"],
       [false, "Admins, and a Reset button"],
@@ -4069,13 +4069,13 @@ function __qbMain(ctx) {
       return '<section class="mp-shop mp-own" id="mp-shop" hidden>' +
         '<div class="mp-own-head"><div class="mp-promo-eyebrow">Your own room</div>' +
           '<h2 class="mp-own-h">A room your team <span>keeps for good</span></h2>' +
-          '<p class="mp-own-sub">Buy a room once and it\u2019s yours: a name you choose, its own link, and everything in it saved between practices.</p></div>' +
+          '<p class="mp-own-sub">Buy it once and keep it. Your name, your link, and everything saved between practices.</p></div>' +
         '<div class="mp-own-features">' + OWN_FEATURES.map(function (f) {
           return '<div class="mp-own-feat"><span class="mp-own-ico">' + ownSvg(f[0]) + '</span><div><b>' + f[1] + "</b><p>" + f[2] + "</p></div></div>";
         }).join("") + "</div>" +
         '<div class="mp-plans">' +
           '<div class="mp-plan"><div class="mp-plan-top"><b class="mp-plan-name">Free room</b><span class="mp-plan-price"><b>Free</b></span></div><ul>' + free + "</ul></div>" +
-          '<div class="mp-plan mp-plan-own"><div class="mp-plan-top"><b class="mp-plan-name">Your own room</b><span class="mp-plan-price"><b id="mp-shop-price">' + priceText() + '</b><small>1 time charge</small></span></div><ul>' + mine + "</ul>" +
+          '<div class="mp-plan mp-plan-own"><div class="mp-plan-top"><b class="mp-plan-name">Your own room</b><span class="mp-plan-price"><b id="mp-shop-price">' + priceText() + '</b><small>one time</small></span></div><ul>' + mine + "</ul>" +
             '<button type="button" class="btn btn-primary btn-lg mp-buy-btn" id="mp-buy">Buy a room</button></div>' +
         "</div>" +
       "</section>";
@@ -4105,11 +4105,11 @@ function __qbMain(ctx) {
     function openBuy(prefill, sku) {
       sku = sku === "captain" ? "captain" : "room";
       if (!acctOf()) {
-        if (ctx.host && ctx.host.openAccount) ctx.host.openAccount("signin", { reason: sku === "captain" ? "Sign in to buy the Team Captain Bundle — it's kept with your account." : "Sign in to buy a room — it's kept with your account." });
+        if (ctx.host && ctx.host.openAccount) ctx.host.openAccount("signin", { reason: sku === "captain" ? "Sign in to buy the Team Captain Bundle. It stays with your account." : "Sign in to buy a room. It stays with your account." });
         return;
       }
       var el = shopDialog(
-        shopHead(sku === "captain" ? "Team Captain Bundle" : "Buy a room", '<b class="shop-price">' + priceText(sku) + '</b> USD · 1 time charge') +
+        shopHead(sku === "captain" ? "Team Captain Bundle" : "Buy a room", '<b class="shop-price">' + priceText(sku) + '</b> USD, one time') +
         // your room as it'll look, with the name you type
         '<div class="shop-preview" aria-hidden="true"><div class="shop-pv-bar"><i></i><i></i><i></i><span>Multiplayer \u00b7 Room</span></div>' +
           '<div class="shop-pv-body"><b class="shop-pv-code" id="shop-pv-code">YOUR-ROOM</b><span class="badge shop-pv-badge">Your room</span></div></div>' +
@@ -4135,9 +4135,9 @@ function __qbMain(ctx) {
         check._t = setTimeout(function () {
           Promise.resolve(hostApi().get("/api/shop/room-available?name=" + encodeURIComponent(v))).then(function (r) {
             if (my !== gen) return;
-            if (r && r.ok) { okName = v; pay.disabled = false; chk.className = "shop-check ok"; chk.innerHTML = "<b>" + esc(v.toUpperCase()) + "</b> is yours to take — onlinequiz.net/room/" + esc(v); }
+            if (r && r.ok) { okName = v; pay.disabled = false; chk.className = "shop-check ok"; chk.innerHTML = "<b>" + esc(v.toUpperCase()) + "</b> is available at onlinequiz.net/room/" + esc(v); }
             else { chk.className = "shop-check bad"; chk.textContent = (r && r.error) || "Couldn't check that name."; }
-          }).catch(function () { if (my === gen) { chk.className = "shop-check bad"; chk.textContent = "Couldn't check that name — try again."; } });
+          }).catch(function () { if (my === gen) { chk.className = "shop-check bad"; chk.textContent = "Couldn't check that name. Try again."; } });
         }, 300);
       };
       inp.addEventListener("input", check);
@@ -4147,13 +4147,13 @@ function __qbMain(ctx) {
         if (!okName) return;
         pay.disabled = true; pay.textContent = "Opening payment…";
         Promise.resolve(hostApi().post("/api/shop/checkout", { name: okName, sku: sku })).then(function (r) {
-          if (!r || r.error || !r.url) { pay.disabled = false; pay.textContent = "Continue to payment"; chk.className = "shop-check bad"; chk.textContent = (r && r.error) || "Couldn't start the payment — try again."; return; }
+          if (!r || r.error || !r.url) { pay.disabled = false; pay.textContent = "Continue to payment"; chk.className = "shop-check bad"; chk.textContent = (r && r.error) || "Couldn't start the payment. Try again."; return; }
           // the website goes to Stripe's page (and comes back to /shop/done); the app opens it in
           // the browser and waits here for the payment to land
           if (!window.qbreader && window.QB_WEB) { location.href = r.url; return; }
           if (ctx.host && ctx.host.openUrl) ctx.host.openUrl(r.url);
           watchOrder(r.order, el, okName);
-        }).catch(function () { pay.disabled = false; pay.textContent = "Continue to payment"; chk.className = "shop-check bad"; chk.textContent = "Couldn't start the payment — try again."; });
+        }).catch(function () { pay.disabled = false; pay.textContent = "Continue to payment"; chk.className = "shop-check bad"; chk.textContent = "Couldn't start the payment. Try again."; });
       };
       if (prefill) { inp.value = prefill; check(); }
       setTimeout(function () { inp.focus(); }, 30);
@@ -4165,8 +4165,8 @@ function __qbMain(ctx) {
       return (p && p.name) || PRODUCT_NAMES[sku] || "Your purchase";
     }
     function boughtLines(sku) {
-      if (sku === "starter") return "<li><b>Keyword Frequency</b>, <b>Canon Tracker</b>, <b>Buzzwords</b> and <b>Fact Sheet</b> are on — they’re under <b>Plugins</b></li><li>Pick your neon name’s colour in the <b>Store</b></li>";
-      return "<li><b>" + esc(productName(sku)) + "</b> is on — it’s under <b>Plugins</b></li><li>It’s kept with your account, in the app and on onlinequiz.net</li>";
+      if (sku === "starter") return "<li><b>Keyword Frequency</b>, <b>Canon Tracker</b>, <b>Buzzwords</b> and <b>Fact Sheet</b> are on in <b>Plugins</b></li><li>Pick your neon name’s colour in the <b>Store</b></li>";
+      return "<li><b>" + esc(productName(sku)) + "</b> is on in <b>Plugins</b></li><li>It stays with your account, in the app and on the website</li>";
     }
     // an order's progress: waiting for the payment → the room is ready (Join it) / the plugins are on
     function watchOrder(id, el, name) {
@@ -4184,9 +4184,9 @@ function __qbMain(ctx) {
           box.innerHTML = '<div class="shop-done">' +
             '<span class="shop-done-badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>' +
             '<div class="confirm-title">Purchase complete!</div>' +
-            '<div class="shop-sub">' + (room ? "<b>" + esc(String(o.item).toUpperCase()) + "</b> is yours — onlinequiz.net/room/" + esc(o.item) + (o.kind === "captain" ? "<br>with the <b>Team Captain Bundle</b>" : "")
+            '<div class="shop-sub">' + (room ? "<b>" + esc(String(o.item).toUpperCase()) + "</b> is yours at onlinequiz.net/room/" + esc(o.item) + (o.kind === "captain" ? "<br>with the <b>Team Captain Bundle</b>" : "")
               : "<b>" + esc(productName(o.kind)) + "</b> is yours") + "</div>" +
-            '<ul class="shop-perks shop-next">' + (room ? "<li>Set a password or add members in the room’s <b>Room</b> tab</li><li>Share its name (or link) with your team</li>" +
+            '<ul class="shop-perks shop-next">' + (room ? "<li>Set a password or add members in the <b>Room</b> tab</li><li>Share the name or link with your team</li>" +
               (o.kind === "captain" ? "<li>Your four study plugins are on, and your neon name is in the <b>Store</b></li>" : "") : boughtLines(o.kind)) + "</ul>" +
             '<div class="confirm-actions">' + (room ? '<button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" id="shop-go">Go to my room</button>'
               : '<button type="button" class="btn btn-primary" id="shop-close">Done</button>') + "</div></div>";
@@ -4195,7 +4195,7 @@ function __qbMain(ctx) {
           if (ctx.host && ctx.host.confetti) ctx.host.confetti(box);
           return;
         }
-        var msg = st === "paid" ? (o.item ? "Payment received — setting up your room…" : "Payment received — adding it to your account…") : st === "expired" || st === "failed" || st === "replaced" ? "That payment didn’t go through. Nothing was charged." : "Waiting for your payment" + (!window.QB_WEB ? " — finish it in your browser." : "…");
+        var msg = st === "paid" ? (o.item ? "Payment received. Setting up your room…" : "Payment received. Adding it to your account…") : st === "expired" || st === "failed" || st === "replaced" ? "That payment didn’t go through. Nothing was charged." : "Waiting for your payment" + (!window.QB_WEB ? ". Finish it in your browser." : "…");
         box.innerHTML = shopHead(st === "expired" || st === "failed" || st === "replaced" ? "No payment" : "Almost there", esc(name ? String(name).toUpperCase() : (o && o.item ? String(o.item).toUpperCase() : o && o.kind ? productName(o.kind) : "")), !!(o && !o.item)) +
           '<div class="shop-wait"><span class="shop-spin" aria-hidden="true"></span><span>' + esc(msg) + "</span></div>" +
           '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button></div>' +
@@ -4208,7 +4208,7 @@ function __qbMain(ctx) {
       var notMine = function () {
         clearInterval(el._poll);
         box.innerHTML = shopHead("Payment received", "It’s kept with the account you bought it with") +
-          '<ul class="shop-perks shop-next"><li>Bought in the app? Go back to it — it’s there already</li><li>Or sign in here with that account</li></ul>' +
+          '<ul class="shop-perks shop-next"><li>Bought in the app? It’s already there</li><li>Or sign in here with that account</li></ul>' +
           '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="shop-close">Close</button><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button></div>' +
           (supportLine() ? '<div class="shop-fine">' + supportLine().slice(4) + "</div>" : "");
         box.querySelector("#shop-close").onclick = el._close;
@@ -4276,7 +4276,7 @@ function __qbMain(ctx) {
       var tour = !!settings.tournament;
       return '<div class="filter-section mp-injected"><div class="filter-label">Game rules</div>' +
         // tournament: two teams play one packet with its bonuses (game-server rooms keep the scoresheet)
-        (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-tourney"' + (tour ? " checked" : "") + '> Tournament</label><span class="qb-info" data-tip="Two teams play one packet in order — pick a set and one packet in Setup → Mode, and join teams in Players. Each correct tossup earns the packet\'s bonus for that team. 15 / 10 / −5; a neg locks the team out; every tossup plays out. The scoresheet is in the side panel.">i</span></span>' : "") +
+        (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-tourney"' + (tour ? " checked" : "") + '> Tournament</label><span class="qb-info" data-tip="Two teams play one packet in order. Pick the packet in Setup and join a team in Players. A correct tossup earns that team the bonus, and a neg locks the team out.">i</span></span>' : "") +
         '<div class="slider-group"><span style="font-size:11px;min-width:78px" title="Time to type an answer after buzzing">Answer time</span><input type="range" id="mp-ans" min="3" max="30" step="1" value="' + (settings.answerSeconds) + '"><span class="slider-value" id="mp-ans-val">' + (settings.answerSeconds) + "s</span></div>" +
         '<div class="slider-group" style="margin-top:6px"><span style="font-size:11px;min-width:78px" title="Time to buzz once the question finishes reading">Buzz window</span><input type="range" id="mp-bwin" min="3" max="30" step="1" value="' + (settings.buzzWindow || 10) + '"><span class="slider-value" id="mp-bwin-val">' + (settings.buzzWindow || 10) + "s</span></div>" +
         '<label class="checkbox-row"><input type="checkbox" id="mp-rebuzz" ' + (settings.rebuzz ? "checked" : "") + (tour ? " disabled" : "") + "> Allow rebuzzes</label>" +
@@ -4302,8 +4302,8 @@ function __qbMain(ctx) {
           '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + esc(v) + '" aria-label="' + esc(label) + '"><span class="slider-value" id="' + id + '-val">' + esc(text) + "</span></div>";
       };
       return '<div class="filter-section mp-injected"><div class="filter-label">Reading</div>' +
-          slider("mp-dx-speed", "Reading speed", "How fast this room reads its questions, for everyone in it: 1 is the slowest and 50 the fastest; past 50 the whole question shows at once (Instant).", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
-          slider("mp-dx-strict", "Strictness", "How close a typed answer must be to the answer line, for everyone in this room. Higher is stricter.", 0, 20, strict, String(strict)) +
+          slider("mp-dx-speed", "Reading speed", "How fast this room reads, for everyone. 1 is the slowest and 50 the fastest. Past 50 the whole question shows at once.", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
+          slider("mp-dx-strict", "Strictness", "How close answers must be, for everyone in this room. Higher is stricter.", 0, 20, strict, String(strict)) +
         "</div>" +
         '<p class="mp-off-note mp-injected">This room\u2019s questions are fixed: ' + esc(filterSummary || o.name || "") + '. These two are the room\u2019s, not your own practice setup.</p>';
     }
@@ -4316,11 +4316,11 @@ function __qbMain(ctx) {
       var ms = s.revealSpeed != null ? s.revealSpeed : 25, lvl = window.qbSpeedLevel ? window.qbSpeedLevel(ms) : 13;
       var strict = s.strictness != null ? s.strictness : 10, ans = s.answerSeconds || settings.answerSeconds || 10, bw = s.buzzWindow || settings.buzzWindow || 10;
       return '<div class="filter-section mp-injected"><div class="filter-label">Reading &amp; timers</div>' +
-          slider("mp-dx-speed", "Reading speed", "How fast questions are read: 1 is the slowest and 50 the fastest; past 50 the whole question shows at once (Instant).", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
-          slider("mp-dx-strict", "Strictness", "How close a typed answer must be to the answer line. Higher is stricter.", 0, 20, strict, String(strict)) +
+          slider("mp-dx-speed", "Reading speed", "1 is the slowest and 50 the fastest. Past 50 the whole question shows at once.", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
+          slider("mp-dx-strict", "Strictness", "How close your answer must be. Higher is stricter.", 0, 20, strict, String(strict)) +
         "</div>" +
         '<div class="filter-section mp-injected"><div class="filter-label">Game rules</div>' +
-          slider("mp-ans", "Answer time", "Seconds to type an answer after buzzing (and for each bonus part).", 3, 30, ans, ans + "s") +
+          slider("mp-ans", "Answer time", "Seconds to answer after buzzing, and for each bonus part.", 3, 30, ans, ans + "s") +
           slider("mp-bwin", "Buzz window", "Seconds to buzz once the question finishes reading.", 3, 30, bw, bw + "s") +
         "</div>";
     }
@@ -4539,7 +4539,7 @@ function __qbMain(ctx) {
         "</div>" +
         (mgr ? people("Members", R.members, "member", true) + people("Admins", R.admins, "admin", owner) : "") +
         (roomOpErr ? '<div class="ri-err" role="alert">' + esc(roomOpErr) + "</div>" : "") +
-        (mgr ? '<div class="ri-sec ri-danger"><button type="button" class="btn btn-sm btn-danger" id="ri-reset">Reset room</button><div class="ri-note">Scores, the question log and chat start over. Members, admins, the password and settings stay.</div></div>' : "");
+        (mgr ? '<div class="ri-sec ri-danger"><button type="button" class="btn btn-sm btn-danger" id="ri-reset">Reset room</button><div class="ri-note">Clears scores, the question log and chat. Members and settings stay.</div></div>' : "");
       // Changes show at once (show(R) edits a copy of the room's info); the game server's
       // answer confirms them, or its "no" puts the old info back with the reason.
       var op = function (o, show) {
@@ -4580,7 +4580,7 @@ function __qbMain(ctx) {
       var rs = el.querySelector("#ri-reset");
       if (rs) rs.onclick = function () {
         var go2 = function () { op({ op: "reset" }); };
-        if (ctx.host && ctx.host.confirm) ctx.host.confirm("Reset " + String(R.name).toUpperCase() + "?", go2, { yes: "Reset", danger: true, detail: "Everyone's score goes back to 0, and the question log and chat are cleared." });
+        if (ctx.host && ctx.host.confirm) ctx.host.confirm("Reset " + String(R.name).toUpperCase() + "?", go2, { yes: "Reset", danger: true, detail: "Scores go back to 0 and the question log and chat are cleared." });
         else go2();
       };
       if (keep) { var k = el.querySelector('[data-k="' + keep + '"]'); if (k) k.focus(); }
@@ -4631,7 +4631,7 @@ function __qbMain(ctx) {
         // a diagnostic room (closed, or not for this account): back to Clubs, where it's opened from
         var dxDoor = !!D.dx && !!(window.QB && typeof window.QB.openClubs === "function");
         st.innerHTML = '<div class="mp-door">' + (D.kicked ? esc(D.text || "You were taken off this room.") :
-          "<b>" + name + "</b> is for its members. Ask its owner or an admin to add your username" + (D.signedIn ? "." : " — and sign in first.")) +
+          "<b>" + name + "</b> is for its members. Ask its owner or an admin to add your username" + (D.signedIn ? "." : ", and sign in first.")) +
           (D.signedIn ? "" : ' <button type="button" class="btn btn-sm" data-acct="signin">Sign in</button>') +
           (dxDoor ? ' <button type="button" class="btn btn-sm" id="mp-door-clubs">Back to Clubs</button>' : "") + "</div>";
         var dcb = st.querySelector("#mp-door-clubs"); if (dcb) dcb.onclick = function () { door = null; render(); qbCall("openClubs", "diagnostics"); };
@@ -4705,7 +4705,7 @@ function __qbMain(ctx) {
       return { tally: tally, teams: teams, header: header, table: table, players: playerLines() };
     }
     function matchSheetText(d) {
-      var lines = ["Scoresheet — " + (match && match.set ? match.set + ", Packet " + match.packet : "")];
+      var lines = ["Scoresheet · " + (match && match.set ? match.set + ", Packet " + match.packet : "")];
       lines.push(d.teams.map(function (tm) { return tm + " " + ((d.tally.t[tm] || {}).pts || 0); }).join("  ·  "), "");
       d.table.forEach(function (row) { lines.push(row.join(" | ")); });
       lines.push("", "Players (15 / 10 / −5, tossup points)");
@@ -5130,7 +5130,7 @@ function __qbMain(ctx) {
       var nb = el.querySelector(".mp-edit-name");
       if (nb) nb.onclick = function () { editInPlace(nb, (players[myId] || {}).name || myName, 24, "Your name", function (v) { if (v) { changeName(v); var mi = body.querySelector("#mp-myname"); if (mi) mi.value = v; } }); };
       var tb = el.querySelector(".mp-edit-team");
-      if (tb) tb.onclick = function () { editInPlace(tb, (players[myId] || {}).team || "", 24, "Team name (empty: no team)", function (v) { changeTeam(v); var ti = body.querySelector("#mp-myteam"); if (ti) ti.value = v; }); };
+      if (tb) tb.onclick = function () { editInPlace(tb, (players[myId] || {}).team || "", 24, "Team name (leave empty for none)", function (v) { changeTeam(v); var ti = body.querySelector("#mp-myteam"); if (ti) ti.value = v; }); };
       el.querySelectorAll(".mp-join-team").forEach(function (b) { b.onclick = function () { changeTeam(b.dataset.team); var ti = body.querySelector("#mp-myteam"); if (ti) ti.value = b.dataset.team; }; });
       syncChatScope();   // team changes can invalidate the "Team" chat scope
     }
@@ -5228,7 +5228,7 @@ function __qbMain(ctx) {
         buzz.innerHTML =
           '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span>' +
           '<input type="text" id="mp-ans-input" placeholder="type answer and press Enter..." autocomplete="off" autocorrect="off" spellcheck="false"></div>' +
-          '<div class="buzz-hints">You buzzed — <span id="mp-timer"></span></div>' +
+          '<div class="buzz-hints">You buzzed · <span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         var inp = buzz.querySelector("#mp-ans-input");
         var grab = function () { try { inp.focus({ preventScroll: true }); } catch (e2) { inp.focus(); } };
@@ -5258,7 +5258,7 @@ function __qbMain(ctx) {
         buzz.innerHTML =
           '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span>' +
           '<input type="text" id="mp-ans-input" placeholder="answer again…" autocomplete="off" autocorrect="off" spellcheck="false"></div>' +
-          '<div class="buzz-hints"><span style="color:var(--yellow);font-weight:700">PROMPT' + (ask ? ":</span> " + esc(ask) : "</span>") + ' — <span id="mp-timer"></span></div>' +
+          '<div class="buzz-hints"><span style="color:var(--yellow);font-weight:700">PROMPT' + (ask ? "</span> " + esc(ask) : "</span>") + ' · <span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         var inp = buzz.querySelector("#mp-ans-input"); inp.focus();
         resetTyping();
@@ -5370,10 +5370,10 @@ function __qbMain(ctx) {
       if (d.ended) {
         res.className = "result-area";
         var banner = d.correct
-          ? '<div class="result-banner correct">' + neonNameHtml(d.name, players[d.id] || playerNamed(d.name)) + " — +" + d.points + " pts</div>"
+          ? '<div class="result-banner correct">' + neonNameHtml(d.name, players[d.id] || playerNamed(d.name)) + " +" + d.points + " pts</div>"
           : d.noBuzz
             ? '<div class="result-banner incorrect">Time! Nobody buzzed.</div>'
-            : '<div class="result-banner incorrect">Nobody got it — everyone is locked out</div>';
+            : '<div class="result-banner incorrect">Nobody got it</div>';
         res.innerHTML =
           banner +
           '<div class="result-answer">ANSWER: <span class="actual">' + ansHtml(d.answerRaw, d.answer || "") + "</span></div>";
@@ -5418,7 +5418,7 @@ function __qbMain(ctx) {
       // no tossup result above it (a diagnostic's bonuses-only round): no dividing line either
       var top = current ? "" : "0"; el.style.borderTop = top; el.style.paddingTop = top; el.style.marginTop = top;
       var mine = bonusView.winner === myId;
-      var html = '<div class="filter-label">BONUS \u2014 ' + neonNameHtml(bonusView.name, players[bonusView.winner]) + (mine ? " (you)" : "") + " answers</div>" +
+      var html = '<div class="filter-label">BONUS · ' + neonNameHtml(bonusView.name, players[bonusView.winner]) + (mine ? " (you)" : "") + " answers</div>" +
         // a diagnostic's bonuses-only round has no tossup above: its leadin reads like a question
         (bonusView.leadin ? '<div class="question-text" style="' + (current ? "font-size:13px;" : "") + 'min-height:0">' + esc(bonusView.leadin) + "</div>" : "");
       for (var k = 0; k < bonusView.parts.length && k <= bonusView.k; k++) {
@@ -5426,7 +5426,7 @@ function __qbMain(ctx) {
         var r = bonusView.results[k];
         if (r) {
           html += '<div style="font-size:12px">' + (r.ok ? '<span class="bonus-verdict correct">\u2713 </span>' : '<span class="bonus-verdict incorrect">\u2717 </span>') +
-            (r.given ? "\u201c" + esc(r.given) + "\u201d \u2014 " : "") + 'ANSWER: <span class="ans">' + ansHtml(r.answerRaw, r.answer) + "</span></div>";
+            (r.given ? "\u201c" + esc(r.given) + "\u201d · " : "") + 'ANSWER: <span class="ans">' + ansHtml(r.answerRaw, r.answer) + "</span></div>";
         } else if (k === bonusView.k && !bonusView.done) {
           html += mine
             ? '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span><input type="text" class="mp-binput" placeholder="your answer\u2026 (Enter)" autocomplete="off" autocorrect="off" spellcheck="false"></div>'
@@ -5754,9 +5754,9 @@ function __qbMain(ctx) {
   const catColor = (c) => (typeof rootColorOf === "function" ? rootColorOf(c) : "#8b949e");
   const catChip = (c) => '<span class="cat-chip" style="--c:' + catColor(c) + '">' + esc(c) + "</span>";
   const FORMATS = {
-    tu: { label: "Tossups only", tip: "Tossups and no bonuses. Play together in a room, each on your own before a deadline, or IRL Reading." },
-    bo: { label: "Bonuses only", tip: "Only bonuses. The whole team plays together, in a room or IRL Reading, and talks over every part." },
-    tb: { label: "Tossups + Bonuses", tip: "Like a real game: your team gets a bonus whenever it gets the tossup. Played together, in a room or IRL Reading." },
+    tu: { label: "Tossups only", tip: "No bonuses. Play together in a room, on your own before a deadline, or IRL Reading." },
+    bo: { label: "Bonuses only", tip: "The whole team plays every bonus together, in a room or IRL Reading." },
+    tb: { label: "Tossups + Bonuses", tip: "Like a real game. Your team gets a bonus whenever it gets the tossup." },
   };
   const PLACE = { room: "in a room", own: "on their own", irl: "IRL Reading" };
   const DIFF_NAMES = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
@@ -5769,34 +5769,34 @@ function __qbMain(ctx) {
     return a[a.length - 1] - a[0] === a.length - 1 ? a[0] + "–" + a[a.length - 1] : a.join(", ");
   };
   const TIP = {
-    na: "No onlinequiz account, so they can only play IRL Reading, where the reader records their buzzes.",
-    addName: "For a player with no onlinequiz account. They can play IRL Reading, where the reader records their buzzes, and can be replaced with their account later.",
-    replace: "They get an invite under Clubs. Once they accept, their account takes this player's place: the same teams and the same recorded results. The name stays as their nickname here, which they or an admin can change.",
-    invite: "They see the invite under Clubs, on the website and in the app. Pick a team to put them straight onto it.",
-    code: "Anyone with the code can join from Clubs, Join or create. A captain or admin then puts them on a team.",
-    approve: "When this is on, someone who joins with the code waits until an admin accepts them.",
-    roster: "The team's roster is picked. Changes here are for this diagnostic only; the roster stays the same.",
+    na: "No onlinequiz account, so they can only play IRL Reading.",
+    addName: "For a player without an account. They can play IRL Reading and switch to their account later.",
+    replace: "They get an invite under Clubs. Once they accept, their account takes over this player's teams and results.",
+    invite: "They see the invite under Clubs. Pick a team to add them to it right away.",
+    code: "Anyone with the code can join from Clubs. A captain or admin then adds them to a team.",
+    approve: "People who join with the code wait until an admin accepts them.",
+    roster: "Changes here only apply to this diagnostic.",
     own: "Only Tossups only can be played on your own.",
-    irl: "In person: the team practices together in a real room, and one person reads the packet aloud from this page and records every buzz and bonus part. Works with all three formats.",
-    dist: "Drawn at random by NAQT's high school distribution, drawn again when a category strays too far from it, and every category gets at least one question. Miscellaneous is left out (its questions belong to other categories). Questions that test their category cleanly come first: no common-link or trick questions, nothing that spans two categories, current events from the last few years. Every tossup has a power mark and a \"For 10 points\" giveaway; every bonus has a lead-in and three parts worth 10. Within the difficulties you pick, the easier ones come up most (2–5: about 40% 2, 30% 3, 20% 4, 10% 5).",
-    avg: "Ranked by average points per active member (anyone who practiced in the period), so a big roster can't win by size alone. A team needs 3 active members and an organization 4 to be ranked.",
-    cov: "Team conversion is the share of tossups the team got. Strength: 70% or more. Middling: 30 to 69%. Gap: under 30%. Overlap: two or more players each got 40% or more of an area. Open a category to see its subcategories.",
-    plan: "In order: gaps first (categories, then the subcategories to learn, with the answers missed), then habits that cost points, then overlaps.",
-    find: "What stands out in this diagnostic, each with the numbers behind it. A subcategory needs 3 or more tossups and bonus parts from 2 or more questions; a pattern (era, region, answer type) needs 4 or more on each side.",
-    sheet: "Heard: tossups read. Got: the team answered first. Conversion: got ÷ heard. Buzz depth: how far into the question the right buzzes came, on average (lower is earlier). PPB: points per bonus.",
-    levels: "Each question's own difficulty. The draw leans to the easier end of the range picked, so the lower levels have more questions.",
-    halves: "Tossups got in the first and the second half of the packet, in the order they were read.",
-    buzzes: "Every buzz by how far into the question it came, in tenths. A power is a right buzz before the power mark (*).",
-    qs: "Every question in the order it was read: the answer, where it's from, every buzz (who, how far in, right or not, the points) and the bonus parts. Question shows the full text, with the buzzes marked where they came.",
-    topics: "Every tossup and bonus part, by subcategory: what it was about, the answer, and whether the team got it. Bonus parts are Easy, Medium or Hard by their place in the bonus.",
-    dims: "Tossups and bonus parts by the era, region and kind of answer they're about, from each question's tags. A bonus's era or region counts for its parts only when the whole bonus has one.",
-    bonus: "The team confers on every bonus, so bonus parts count for the team. Parts are labeled by their place in the bonus.",
+    irl: "The team meets in person. One person reads the packet aloud from this page and records every buzz.",
+    dist: "Picked at random to match NAQT's high school distribution, with every category at least once. Clean questions come first, and easier levels come up more often.",
+    avg: "Ranked by average points per active member, so big rosters don't win by size. Teams need 3 active members and organizations need 4.",
+    cov: "The share of tossups the team got. Strength is 70% or more, middling is 30 to 69%, and a gap is under 30%. An overlap is two or more players each getting 40% of an area.",
+    plan: "Gaps come first, then habits that cost points, then overlaps.",
+    find: "What stands out in this diagnostic, with the numbers behind it.",
+    sheet: "Heard is tossups read. Got is tossups the team answered first. Buzz depth is how far in the right buzzes came, and lower is earlier. PPB is points per bonus.",
+    levels: "Each question's difficulty. Easier levels come up more often.",
+    halves: "Tossups the team got in each half of the packet.",
+    buzzes: "Every buzz by how far into the question it came.",
+    qs: "Every question in the order it was read, with its answer, buzzes and bonus parts.",
+    topics: "Every tossup and bonus part by subcategory, and whether the team got it.",
+    dims: "Tossups and bonus parts by era, region and kind of answer.",
+    bonus: "The team works on every bonus together, so bonus parts count for the team.",
     got: "First correct buzz on each tossup. Bars are relative to the top scorer.",
-    locked: "The report is released to everyone at once when the diagnostic ends.",
-    lbOrg: "The same numbers as the global leaderboard: everyone's practice on onlinequiz. Players without an account aren't on it.",
-    years: "Only questions from sets of those years (a set's year is when it was written). Leave either end empty for no limit.",
-    transfer: "The new owner can make and remove admins and delete the organization. You become an admin.",
-    nick: "Only members of {org} see it, in place of the display name: on its teams, diagnostics, reports and leaderboard. Everywhere else, like the global leaderboards, multiplayer and profiles, the display name stays.",
+    locked: "The report opens for everyone when the diagnostic ends.",
+    lbOrg: "The same numbers as the global leaderboard. Players without an account aren't on it.",
+    years: "Only questions from sets written in those years. Leave either end empty for no limit.",
+    transfer: "The new owner can manage admins and delete the organization. You become an admin.",
+    nick: "Only members of {org} see this name. Everywhere else your display name shows.",
   };
   // ── the top bar's Clubs count: invites waiting for you + join requests you can answer ──
   // Checked with friend requests (app.js friendPoll: sign-in, every minute, the window coming back).
@@ -5830,7 +5830,7 @@ function __qbMain(ctx) {
     if (typeof Account === "undefined") return true;
     if (!Account.known && typeof accountFresh === "function") { try { await accountFresh(); } catch (e) {} }
     if (!Account.available) { container.innerHTML = plainPanel(icon, what + " need onlinequiz accounts, which aren't open yet."); return true; }
-    if (!Account.user) { container.innerHTML = signInPanel(icon, what === "Clubs" ? "Clubs need an onlinequiz account. Sign in to create an organization or join your school's." : what + " need an onlinequiz account."); return true; }
+    if (!Account.user) { container.innerHTML = signInPanel(icon, what === "Clubs" ? "Sign in to create an organization or join your school's." : what + " need an onlinequiz account."); return true; }
     if (!Account.user.handle) { container.innerHTML = plainPanel(icon, "Choose a username first.", '<button type="button" class="btn btn-primary" data-acct="account">Account</button>'); return true; }
     return false;
   }
@@ -5949,7 +5949,7 @@ function __qbMain(ctx) {
     if (!inv.length && !joins.length && !reps.length) return "";
     const rows = inv.map((i) => {
       const sub = [(i.by ? neonHtml(esc(i.by.name || i.by.handle), i.by.neon) + " invited you" : "Invited"), i.team ? "to " + esc(i.team) : "", ago(i.at)].filter(Boolean).join(" · ") +
-        (i.replaces ? '<br><span class="cl-replaces">' + ico("swap", 13) + " replaces " + esc(i.replaces) + info("Your account takes this player's place in the organization: the same teams and the same recorded results.", "About replacing a player") + "</span>" : "");
+        (i.replaces ? '<br><span class="cl-replaces">' + ico("swap", 13) + " replaces " + esc(i.replaces) + info("Your account takes over this player's teams and results.", "About replacing a player") + "</span>" : "");
       return '<div class="fr-row"><span class="club-tile sm" aria-hidden="true">' + esc(i.org.tag) + '</span><span class="fr-name"><b>' + esc(i.org.name) + "</b><small>" + sub + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-inv-no="' + esc(i.id) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-inv-yes="' + esc(i.id) + '">Accept</button></span></div>';
     }).join("") + joins.map((r) =>
       '<div class="fr-row" data-user="' + esc(r.handle) + '" data-user-name="' + esc(r.name || r.handle) + '" data-user-neon="' + esc(r.neon || "") + '">' + av({ name: r.name || r.handle, neon: r.neon }) + '<span class="fr-name"><b>' + neonHtml(esc(r.name || r.handle), r.neon) + "</b><small>@" + esc(r.handle) + " wants to join " + esc(O().name) + " · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-cl="req-no" data-h="' + esc(r.handle) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-cl="req-yes" data-h="' + esc(r.handle) + '">Accept</button></span></div>').join("") + reps.map((r) =>
@@ -6280,7 +6280,7 @@ function __qbMain(ctx) {
       case "remove": return confirmDialog("Remove " + p.name + " from " + o.name + "?", () => act(null, "/api/clubs/member/remove", { org, mid }), { yes: "Remove", danger: true });
       case "leave": return confirmDialog("Leave " + o.name + "?", () => act(null, "/api/clubs/leave", { org }, () => { S.org = null; ls.set("qb-club-org", ""); S.orgId = ""; }), { yes: "Leave", danger: true });
       case "rename-org": case "settings": return settingsDialog();
-      case "delete-org": return confirmDialog("Delete " + o.name + " for everyone in it? Its teams, invites and diagnostic reports go too.", () => act(null, "/api/clubs/delete", { org }, () => { S.org = null; S.orgId = ""; ls.set("qb-club-org", ""); }), { yes: "Delete", danger: true });
+      case "delete-org": return confirmDialog("Delete " + o.name + " for everyone? Its teams, invites and reports are deleted too.", () => act(null, "/api/clubs/delete", { org }, () => { S.org = null; S.orgId = ""; ls.set("qb-club-org", ""); }), { yes: "Delete", danger: true });
       case "copy-code": {
         try { await navigator.clipboard.writeText(o.code); } catch (e) { const r = document.createRange(), el = document.getElementById("cl-code"); if (el) { r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } }
         const sp = t.querySelector("span"); if (sp) { sp.textContent = "Copied"; setTimeout(() => { if (sp.isConnected) sp.textContent = "Copy"; }, 1600); }
@@ -6288,8 +6288,8 @@ function __qbMain(ctx) {
       }
       case "new-code": return confirmDialog("Make a new code? The old one stops working.", () => act(null, "/api/clubs/code", { org }), { yes: "New code" });
       case "req-yes": case "req-no": return act(t, "/api/clubs/request", { org, handle: t.dataset.h, accept: a === "req-yes" });
-      case "release": return confirmDialog("Release the report now? Anyone who hasn't finished is counted on what they read.", () => act(null, "/api/diag/release", { id: t.dataset.id }), { yes: "Release now", danger: true });
-      case "dx-delete": return confirmDialog(t.dataset.done ? "Delete this report for everyone? It can't be brought back." : "Delete this diagnostic? What was played so far is dropped, for everyone.", () => act(null, "/api/diag/delete", { id: t.dataset.id }), { yes: "Delete", danger: true });
+      case "release": return confirmDialog("Release the report now? Anyone who hasn't finished is scored on what they read.", () => act(null, "/api/diag/release", { id: t.dataset.id }), { yes: "Release now", danger: true });
+      case "dx-delete": return confirmDialog(t.dataset.done ? "Delete this report for everyone? It can't be brought back." : "Delete this diagnostic for everyone?", () => act(null, "/api/diag/delete", { id: t.dataset.id }), { yes: "Delete", danger: true });
     }
   }
   // a name-only player → an account: an invite that carries the player's place
@@ -6323,13 +6323,13 @@ function __qbMain(ctx) {
     const el = overlay('<form class="confirm-box cl-modal cl-settings" novalidate><div class="cl-modal-head"><div class="confirm-title">Organization settings</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-x aria-label="Close">' + ico("x", 16) + "</button></div>" +
       '<div class="cl-set-body">' +
       '<section class="cl-set-sec"><h3 class="eyebrow">Organization' + (owner ? "" : info("Only the owner can rename the organization.", "Who can rename it")) + '</h3><div class="two-in"><label class="cl-field"><span class="cl-lbl">Name</span><input class="mode-input" id="cs-name" maxlength="40" value="' + esc(o.name) + '" autocomplete="off"' + (owner ? "" : " disabled") + '></label><label class="cl-field"><span class="cl-lbl">Tag</span><input class="mode-input" id="cs-tag" maxlength="5" value="' + esc(o.tag) + '" autocomplete="off"' + (owner ? "" : " disabled") + "></label></div></section>" +
-      '<section class="cl-set-sec"><h3 class="eyebrow">Leaderboards</h3>' + sw("cs-lb", o.lbShow !== false, "Show on the Teams and Organizations leaderboards", "When this is off, the organization and its teams are left out of the global rankings. The organization's own leaderboard isn't affected.") + "</section>" +
+      '<section class="cl-set-sec"><h3 class="eyebrow">Leaderboards</h3>' + sw("cs-lb", o.lbShow !== false, "Show on the Teams and Organizations leaderboards", "When off, your teams are left out of the global rankings.") + "</section>" +
       '<section class="cl-set-sec"><h3 class="eyebrow">Joining</h3>' + sw("cs-code", o.codeJoin !== false, "Anyone with the invite code can join", "When this is off, people join only by an invite.") +
         sw("cs-approve", !!o.approve, "Admins approve code joins", TIP.approve, o.codeJoin === false) + "</section>" +
       '<section class="cl-set-sec"><h3 class="eyebrow">Permissions</h3>' +
         '<label class="cl-set-row"><span>Who can invite people</span>' + sel("cs-invite", o.inviteBy || "captains", [["captains", "Captains and admins"], ["admins", "Admins only"]]) + "</label>" +
-        '<label class="cl-set-row"><span>Who can run diagnostics' + info("Setting up a team's diagnostics, reading them aloud with IRL Reading, releasing and deleting them.", "About running diagnostics") + "</span>" + sel("cs-run", o.runBy || "captains", [["captains", "Captains and admins"], ["admins", "Admins only"]]) + "</label>" +
-        '<label class="cl-set-row"><span>Who sees every player card' + info("Every report shows each player their own card. This decides who else sees all of them.", "About player cards") + "</span>" + sel("cs-cards", o.cardsFor || "captains", [["captains", "The team's captain and admins"], ["admins", "Admins only"], ["everyone", "Everyone in the organization"]]) + "</label></section>" +
+        '<label class="cl-set-row"><span>Who can run diagnostics' + info("Set up, read, release and delete diagnostics.", "About running diagnostics") + "</span>" + sel("cs-run", o.runBy || "captains", [["captains", "Captains and admins"], ["admins", "Admins only"]]) + "</label>" +
+        '<label class="cl-set-row"><span>Who sees every player card' + info("Players always see their own card. This decides who sees everyone's.", "About player cards") + "</span>" + sel("cs-cards", o.cardsFor || "captains", [["captains", "The team's captain and admins"], ["admins", "Admins only"], ["everyone", "Everyone in the organization"]]) + "</label></section>" +
       '</div><p class="fr-msg err" id="cs-msg" role="status"></p><div class="confirm-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>');
     const f = el.querySelector("form"), $f = (id) => f.querySelector("#" + id);
     $f("cs-code").onchange = () => { $f("cs-approve").disabled = !$f("cs-code").checked; };
@@ -6356,7 +6356,7 @@ function __qbMain(ctx) {
     const el = overlay('<div class="confirm-box cl-modal cl-jc" role="document"><div class="cl-modal-head"><div class="confirm-title">Join or create an organization</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-x aria-label="Close">' + ico("x", 16) + "</button></div>" +
       '<form class="cl-mform" id="cl-join-form" novalidate><h3 class="eyebrow">Join with a code' + info("Ask your coach or captain for the code, like LHS-7Q2K.", "About codes") + '</h3><div class="cl-field-row"><input type="text" id="cl-join-code" class="mode-input" placeholder="ABC-1234" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Invite code"><button type="submit" class="btn btn-primary">Join</button></div><p class="fr-msg" id="cl-join-msg" role="status"></p></form>' +
       '<div class="cl-or">or</div>' +
-      '<form class="cl-mform" id="cl-create-form" novalidate><h3 class="eyebrow">Create an organization' + info("You'll be the owner. Add your teams next, then invite people.", "About creating an organization") + "</h3>" +
+      '<form class="cl-mform" id="cl-create-form" novalidate><h3 class="eyebrow">Create an organization' + info("You'll be the owner. Add teams next, then invite people.", "About creating an organization") + "</h3>" +
       '<div class="two-in"><label class="cl-field"><span class="cl-lbl">School or club name</span><input type="text" id="cl-new-name" class="mode-input" placeholder="Harbor View High School" maxlength="40" autocomplete="off"></label><label class="cl-field"><span class="cl-lbl">Tag</span><input type="text" id="cl-new-tag" class="mode-input" placeholder="HVHS" maxlength="5" autocomplete="off" autocapitalize="characters"></label></div>' +
       '<button type="submit" class="btn btn-primary cl-self-start">Create organization</button><p class="fr-msg" id="cl-create-msg" role="status"></p></form></div>');
     const say = (id, t, err) => { const m = el.querySelector(id); m.textContent = t; m.classList.toggle("err", !!err); };
@@ -6459,7 +6459,7 @@ function __qbMain(ctx) {
       const o = S.orgId ? await get("/api/clubs/org?id=" + encodeURIComponent(S.orgId)) : null;
       if (o && !o.error) S.org = o;
     }
-    if (!S.org) { c.innerHTML = plainPanel("users", "Diagnostics are for an organization's teams. Join yours or create one first.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+    if (!S.org) { c.innerHTML = plainPanel("users", "Join or create an organization to run diagnostics.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
     if (!canRunAny()) { c.innerHTML = plainPanel("shield", "Team captains and admins set up diagnostics.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
     if (!S.dx || S.dx.org !== S.orgId || S.dxFor) { S.dx = newDx(S.dxFor && S.dxFor.team); S.dxFor = null; }
     if (!canRunTarget(S.dx.target)) S.dx = newDx();
@@ -6705,7 +6705,7 @@ function __qbMain(ctx) {
     let head = '<div class="irl-qh"><span class="irl-num">Bonus ' + it.n + "</span>" + catChip(b.cat);
     if (!earned && !anyway) {
       return '<section class="cl-card irl-q" id="irl-b-' + it.i + '" aria-label="Bonus ' + it.n + '">' + head + "</div>" +
-        '<div class="irl-skip">' + (after && after.done ? '<span>Not earned: skip</span><button type="button" class="btn btn-sm btn-ghost" data-irl="anyway" data-q="' + it.i + '">Read anyway</button>' + info("For practice: it doesn't count toward the score or the report.", "About reading it anyway") : "<span>Earned if your team gets tossup " + it.n + "</span>") + "</div></section>";
+        '<div class="irl-skip">' + (after && after.done ? '<span>Not earned, so skip it</span><button type="button" class="btn btn-sm btn-ghost" data-irl="anyway" data-q="' + it.i + '">Read anyway</button>' + info("For practice only. It doesn't count toward the score or the report.", "About reading it anyway") : "<span>Earned if your team gets tossup " + it.n + "</span>") + "</div></section>";
     }
     const parts = S.irl.state.parts[it.i] || [];
     let got = 0, marked = 0;
@@ -6848,10 +6848,10 @@ function __qbMain(ctx) {
         if (!ed.p) { m.textContent = "Pick who buzzed."; return; }
         if (ed.ok == null) { m.textContent = "Mark it correct or wrong."; return; }
         const list = st.buzzes[keyOf(ed.i)] = st.buzzes[keyOf(ed.i)] || [];
-        if (ed.ok && list.some((x, j) => x.ok && j !== ed.idx)) { m.textContent = "This tossup already has a correct buzz. Edit or delete that one first."; return; }
+        if (ed.ok && list.some((x, j) => x.ok && j !== ed.idx)) { m.textContent = "This tossup already has a correct buzz. Edit or delete it first."; return; }
         // one buzz per player (the other team can be several), and nothing after the tossup was answered
         if (ed.p !== "opp" && list.some((x, j) => j !== ed.idx && x.p === ed.p)) { m.textContent = "That player already buzzed on this tossup."; return; }
-        if (list.some((x, j) => j !== ed.idx && (x.ok ? x.k < ed.k : ed.ok && x.k > ed.k))) { m.textContent = ed.ok ? "A wrong buzz comes after this point. Move this buzz later or delete that one." : "The tossup was already answered before this point."; return; }
+        if (list.some((x, j) => j !== ed.idx && (x.ok ? x.k < ed.k : ed.ok && x.k > ed.k))) { m.textContent = ed.ok ? "A wrong buzz comes after this point. Move this buzz later or delete the other one." : "The tossup was already answered before this point."; return; }
         const rec = { p: ed.p, k: ed.k, ok: ed.ok };
         if (ed.idx != null) list[ed.idx] = rec; else list.push(rec);
         list.sort((x, y) => x.k - y.k);
@@ -6897,7 +6897,7 @@ function __qbMain(ctx) {
     const c = document.getElementById("irl-container");
     if (S.irl.edit) { S.irl.edit = null; if (c) paintIrl(c); return true; }
     if (!irlRecorded()) { leaveIrl(); return true; }
-    confirmDialog("Leave IRL Reading?", leaveIrl, { detail: "What you've recorded so far is kept. To keep reading, open it again from Clubs → Diagnostics.", yes: "Leave", no: "Stay" });
+    confirmDialog("Leave IRL Reading?", leaveIrl, { detail: "Your progress is saved. Open it again from Clubs to keep reading.", yes: "Leave", no: "Stay" });
     return true;
   }
   // the browser's Back on the website: the same question first
@@ -6926,7 +6926,7 @@ function __qbMain(ctx) {
       if (S.rep !== R) return;
       R.canManage = !!(dg && dg.diag && dg.diag.canManage);
       if (!d || d.error) { c.innerHTML = plainPanel("chart", (d && d.error) || OFFLINE, '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
-      if (d.locked) { c.innerHTML = plainPanel("lock", "This report isn't released yet. It opens for everyone at once when the diagnostic ends.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
+      if (d.locked) { c.innerHTML = plainPanel("lock", "This report opens for everyone when the diagnostic ends.", '<button type="button" class="btn btn-primary" data-go="clubs">Go to Clubs</button>'); return; }
       R.d = d.report || d;
     }
     paintReport(c);
@@ -7032,7 +7032,7 @@ function __qbMain(ctx) {
       if (a + b) g += '<text class="t-val" x="' + (x + w / 2) + '" y="' + (base - ha - hb - 5) + '" text-anchor="middle">' + (a + b) + "</text>";
       g += '<text class="t-lbl" x="' + (i * bw + bw / 2) + '" y="' + (base + 18) + '" text-anchor="middle">' + i * 10 + "%</text>";
     }
-    return '<svg class="rp-hist" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Buzzes by how far into the question: right ' + ok.join(", ") + "; negs " + ng.join(", ") + '">' + g + "</svg>";
+    return '<svg class="rp-hist" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Buzzes by how far into the question, right ' + ok.join(", ") + "; negs " + ng.join(", ") + '">' + g + "</svg>";
   }
   function buzzesHtml(d) {
     const z = d.buzzes; if (!z || !z.n) return "";
@@ -7131,7 +7131,7 @@ function __qbMain(ctx) {
     const got = (d.got || []).filter((g) => g.n > 0), maxGot = Math.max(1, ...got.map((g) => g.n));
     const partsCard = hasBo && (s.parts || []).length ? '<div class="cl-card"><h3 class="eyebrow">Bonus parts' + info(TIP.bonus, "About bonus parts") + "</h3>" + s.parts.map((b) => brow(esc(b.label), pct(b.got, b.n), b.got + "/" + b.n)).join("") +
       '<p class="pc-line rp-ppb"><b>' + (s.ppb == null ? "—" : s.ppb.toFixed(1)) + "</b> points per bonus on " + plural(s.bonuses || 0, "bonus", "bonuses") + (prev && prev.ppb != null ? " · " + (prev.date ? dayText(prev.date) : "before") + ": " + prev.ppb.toFixed(1) : "") + "</p></div>" : "";
-    const gotCard = hasTu ? '<div class="cl-card"><h3 class="eyebrow">Who got the tossups' + info(d.place === "own" ? "Tossups each player answered correctly. Bars are relative to the top scorer." : TIP.got, "About this chart") + "</h3>" +
+    const gotCard = hasTu ? '<div class="cl-card"><h3 class="eyebrow">Who got the tossups' + info(d.place === "own" ? "Tossups each player got. Bars are relative to the top scorer." : TIP.got, "About this chart") + "</h3>" +
       (got.length ? got.map((g) => '<div class="brow"><span class="l">' + nmFirst(who(g.mid)) + "</span>" + bar(pct(g.n, maxGot), "acc") + '<span class="p">' + g.n + '</span><span class="f">' + pct(g.n, s.got || 1) + "%</span></div>").join("") : '<p class="cl-none">Nobody got a tossup.</p>') + "</div>" : "";
     if (partsCard || gotCard) html += '<div class="split2">' + (partsCard || "") + (gotCard || "") + "</div>";
     html += "</section>";
@@ -7154,7 +7154,7 @@ function __qbMain(ctx) {
     // players
     // you first, then by tossups got and points
     const cards = (d.cards || []).slice().sort((a, b) => (who(b.mid).you - who(a.mid).you) || (b.got - a.got) || (b.points - a.points)).map((x) => playerCard(x, d, who)).join("");
-    html += '<section class="rp-sec" id="rp-players" aria-label="Players"><div class="rp-sec-head"><h2>' + (seeAll ? "Players" : "Your card") + "</h2>" + (seeAll ? "" : info("The team's captain and the organization's admins see every player's card.", "Who sees every card")) + '</div><div class="pcards">' + (cards || '<div class="cl-card pc-note"><p>You didn\'t play in this one.</p></div>') + "</div></section></div>";
+    html += '<section class="rp-sec" id="rp-players" aria-label="Players"><div class="rp-sec-head"><h2>' + (seeAll ? "Players" : "Your card") + "</h2>" + (seeAll ? "" : info("The captain and admins see every player's card.", "Who sees every card")) + '</div><div class="pcards">' + (cards || '<div class="cl-card pc-note"><p>You didn\'t play in this one.</p></div>') + "</div></section></div>";
     c.innerHTML = html;
     c.onclick = (e) => {
       const b = e.target.closest("button"); if (!b) return;

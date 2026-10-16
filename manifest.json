@@ -1,5 +1,5 @@
 {
-  "version": "14.95",
+  "version": "14.96",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,22 +55,22 @@
     }
   ],
   "main": true,
-  "notes": "improvements",
+  "notes": "minor ui fixes",
   "files": {
-    "renderer/index.html": "ffd387879b02d39aa3cdac59bcacdc7a42014cf8aa46627645d5b1a9ef040f26",
+    "renderer/index.html": "a5d27573d6bdbb571d8ede347308b92779a594dccd9e08669e70734ba489ec7a",
     "renderer/style.css": "4187c30c19ce3921529ba0ca2d9e834f40ab6bcaa0a46d3596d48b4998293eef",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "6ea9e7aa5090fdfb95f30daa4337117cbaf164824010b2a66cb5eaaa5da06757",
-    "renderer/app.js": "127a6a424d99a54442eeb72317cbc6c08519840bf5be346e9f636b0a4475e0d7",
-    "plugins/achievement-glyphs.zip": "8a4fd1632df36a70017618ce25e6e913207f6fdaede3d5a5dc8bed98669cfd7c",
-    "plugins/buzz-words.zip": "fb96b9b4b8c0bc654868eadba64bf20d5789ec062aa6d9523e1d77e6e9597119",
-    "plugins/canon-tracker.zip": "fdc2f1c541f9ea828801400f729ca00187982e6a2e97c0524bde3bd14cb72db5",
-    "plugins/coach-mode.zip": "f1b86b1cd87862aee1fc5eeb282c171f19754b388a48b69f8ffa5766a7c6bb5c",
-    "plugins/fact-sheet.zip": "e1564b171571828bf3e9b7dc9da973b6ea52afce90de541dba65cb3f9e67e896",
-    "plugins/flashcards.zip": "528f87bd37c2da7a1b67583f5a636da5bfe8898d435dec17432b81469b5753ee",
-    "plugins/folders.zip": "85bc0d14ee700297a1e6a8f902b943cbce87e6fd381e966bd6a84646de1d2c7b",
-    "plugins/keyword-freq.zip": "1442044528ffd61e05b6d74396589e541f33d0ceafbd3c72d9d69b4a60a28d5b",
-    "plugins/packet-builder.zip": "c87f7b924d0c3c1dadbfab87d480573784013e2da23118918789381e3fac05e6"
+    "renderer/extensions.js": "0ccf349ce6693b3816dd11a6e635ac59bc2ea49f4e444d53f98a0547e06212c2",
+    "renderer/app.js": "8e75b449cf7432d4065ca6e6a678f60df1d20c5cad2a8dd4465439ac370a8abc",
+    "plugins/achievement-glyphs.zip": "b599187c01003c7881d9d75048f11622e8de7e5465a5196f4dd7f1af5ab0e6ba",
+    "plugins/buzz-words.zip": "87b3172c5554412e09182e63a5c593dd547ac513867c425e949d36f115782a07",
+    "plugins/canon-tracker.zip": "c28d6cbed98efb8b831e4637dbdcbfdff0a3d53f7c5779a6137a62a7e221253f",
+    "plugins/coach-mode.zip": "870486c07a6a0281b56dabcb5b71a453e5e127934d5085c0543cfba76f23c4a3",
+    "plugins/fact-sheet.zip": "e7f6157bef344401939aabc98a56a2a01c8357c9423f705ed60c22f8705e7463",
+    "plugins/flashcards.zip": "379215d3effa5c008e72c49a38ce9ead8251e34df51707ea9e5baafbc1431467",
+    "plugins/folders.zip": "d855bb05feb61e1e147cf32f36092c70617267a59b922e957ec258dd14a18ef1",
+    "plugins/keyword-freq.zip": "33f38298a52e85ee0cea79d25dec253462c68173745a930a3cfaf4e8424386f2",
+    "plugins/packet-builder.zip": "34bb38e29359357825c43ec3fc87217b2240faca31805dae0fb6b6078d6d092e"
   },
-  "signature": "3xFPYEMWcX64LJpAUUm8/8rdtUGt94zdbjOMAzgm++8gC7iR6nuCnFmsvCaNYNA8q7lGYTi0s0zlRDTS+XNVBg=="
+  "signature": "8fIutJtFYUA113D02AZnh0z+f406Q2/oLfJqy3/aFsP5yUJ+u1DA8yRiZV3yjmbxGnBqZxEu6jVBZUJA4WxFDg=="
 }

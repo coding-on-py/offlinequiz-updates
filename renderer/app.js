@@ -144,8 +144,8 @@ const API = isElectron
           const r = await fetch(url, { signal: controller.signal });
           return r.json();
         } catch (e) {
-          if (controller.signal.aborted) throw new Error("the server took too long to answer — try again in a moment");
-          if (e && e.name === "TypeError") throw new Error("couldn't reach the server — check your connection");
+          if (controller.signal.aborted) throw new Error("the server took too long to answer. Try again in a moment");
+          if (e && e.name === "TypeError") throw new Error("couldn't reach the server. Check your connection");
           throw e;
         } finally {
           clearTimeout(timer);
@@ -163,8 +163,8 @@ const API = isElectron
           });
           return r.json();
         } catch (e) {
-          if (controller.signal.aborted) throw new Error("the server took too long to answer — try again in a moment");
-          if (e && e.name === "TypeError") throw new Error("couldn't reach the server — check your connection");
+          if (controller.signal.aborted) throw new Error("the server took too long to answer. Try again in a moment");
+          if (e && e.name === "TypeError") throw new Error("couldn't reach the server. Check your connection");
           throw e;
         } finally {
           clearTimeout(timer);
@@ -696,7 +696,7 @@ function TagField(opts) {
   };
   function chipHtml(c, i) {
     const fam = TAG_FAM[c.f] || TAG_FAM.subject;
-    return `<span class="qchip${c.x ? " ex" : ""}" style="--c:${fam.color}"><button type="button" class="qchip-main" data-i="${i}" title="${c.x ? "Skipping — click to require it" : "Required — click to skip it"}"><span class="qchip-fam">${escapeHtml(fam.label)}${c.x ? " not" : ""}</span><span class="qchip-val">${escapeHtml(c.v)}</span></button><button type="button" class="qchip-x" data-i="${i}" aria-label="Remove ${escapeHtml(c.v)}">×</button></span>`;
+    return `<span class="qchip${c.x ? " ex" : ""}" style="--c:${fam.color}"><button type="button" class="qchip-main" data-i="${i}" title="${c.x ? "Skipped. Click to require it" : "Required. Click to skip it"}"><span class="qchip-fam">${escapeHtml(fam.label)}${c.x ? " not" : ""}</span><span class="qchip-val">${escapeHtml(c.v)}</span></button><button type="button" class="qchip-x" data-i="${i}" aria-label="Remove ${escapeHtml(c.v)}">×</button></span>`;
   }
   function paint(focusCompose) {
     let h = self.chips.map(chipHtml).join("");
@@ -735,7 +735,7 @@ function TagField(opts) {
     self._list = list;
     const hi = Math.min(self.compose.hi || 0, Math.max(0, list.length - 1));
     sugg.hidden = false;
-    sugg.innerHTML = `<div class="sugg-head"><span class="sh-l">${self.compose.q ? "Tags matching “" + escapeHtml(self.compose.q) + "”" : "Tags — type to narrow"}</span><span class="sh-r">↵ add · esc close</span></div>` +
+    sugg.innerHTML = `<div class="sugg-head"><span class="sh-l">${self.compose.q ? "Tags matching “" + escapeHtml(self.compose.q) + "”" : "Type to find a tag"}</span><span class="sh-r">↵ add · esc close</span></div>` +
       (list.length ? '<div class="sugg-list">' + list.map((x, i) => `<button type="button" role="option" class="sugg-item${i === hi ? " hi" : ""}" data-i="${i}" style="--c:${(TAG_FAM[x.f] || TAG_FAM.subject).color}"><span class="f">${escapeHtml((TAG_FAM[x.f] || TAG_FAM.subject).label)}</span><span class="v">${escapeHtml(x.v)}</span><span class="c">${Number(x.n || 0).toLocaleString()}</span></button>`).join("") + "</div>"
         : '<div class="sugg-empty">No tag matches</div>');
     sugg.querySelector(".sugg-item.hi")?.scrollIntoView({ block: "nearest" });
@@ -4310,7 +4310,7 @@ async function nextQuestion() {
   }
 
   if (state.bonusIds && state.mode === "bonuses") {
-    if (!state.bonusIds.length) { state.bonusIds = null; endOfQueue("Done — Press Esc to leave."); return; }
+    if (!state.bonusIds.length) { state.bonusIds = null; endOfQueue("Done. Press Esc to leave."); return; }
     const id = state.bonusIds.shift();
     _prefetchById("bonuses", state.bonusIds);
     try {
@@ -4395,7 +4395,7 @@ async function nextQuestion() {
     question = state.mode === "tossups" ? data.tossup : data.bonus;
     if (data.error) { endOfQueue("Error: " + data.error); return; }
     if (!question) {
-      endOfQueue("No questions match your filters — change Setup, then press Next");
+      endOfQueue("No questions match your filters. Change Setup and press Next");
       return;
     }
     for (let tries = 0; tries < 8 && !fresh(question); tries++) {
@@ -4788,7 +4788,7 @@ async function serveStarredQuestion(filters) {
       const d = await API.get("/api/starred?type=" + type);
       list = (d.starred || []).map((s) => s.question).filter(Boolean).filter((q) => _starredPasses(q, filters));
     } catch { failed = true; }
-    if (failed) { endOfQueue("Couldn't load your starred questions \u2014 check your connection and try again."); return; }
+    if (failed) { endOfQueue("Couldn't load your starred questions. Check your connection and try again."); return; }
     for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
     state._starredQueue = list;
     state._starredSig = sig;
@@ -4799,7 +4799,7 @@ async function serveStarredQuestion(filters) {
   // Hidden questions are never served — skip at serve time so mid-session
   // hides take effect immediately.
   while (state._starredIdx < queue.length && queue[state._starredIdx] && isQuestionHidden(queue[state._starredIdx].id, type)) state._starredIdx++;
-  if (!queue.length) { endOfQueue(`No starred ${noun} match these filters — change Setup, then press Next`); return; }
+  if (!queue.length) { endOfQueue(`No starred ${noun} match these filters. Change Setup and press Next`); return; }
   if (state._starredIdx >= queue.length) {
     endOfQueue(`All ${queue.length} starred ${noun} done`);
     return;
@@ -5366,7 +5366,7 @@ async function revealBonusPartAnswer(idx) {
     // A prompt left standing after the prompt round is not an accept.
     const r = await judgeBonusPart(idx, userAns);
     if (r && r.status === "accept") { verdict = '<span class="bonus-verdict correct">✓ </span>'; mark = bpMark("correct"); }
-    else if (r && r.unsure) { verdict = '<span class="bonus-verdict unsure">? </span><span class="qb-info bonus-unsure-tip" data-tip="This answer line accepts equivalents, and your answer matched none of the ones it lists.">i</span> '; mark = bpMark("unsure"); }
+    else if (r && r.unsure) { verdict = '<span class="bonus-verdict unsure">? </span><span class="qb-info bonus-unsure-tip" data-tip="Your answer didn&apos;t match any accepted equivalent.">i</span> '; mark = bpMark("unsure"); }
   }
   show(verdict, mark);
 }
@@ -6961,7 +6961,7 @@ function renderTossupResult() {
   const celPct = ((1 - r.celerity) * 100).toFixed(1);
   const unsure = r.unsure;
   answerDiv.innerHTML = `
-    <div class="ra-row"><span class="ra-k">Your answer</span><strong class="ra-you ${r.correct ? "ok" : "bad"}">${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">UNSURE</span><span class="qb-info" data-tip="This answer line accepts equivalents, and your answer matched none of the ones it lists.">i</span>' : ""}</div>
+    <div class="ra-row"><span class="ra-k">Your answer</span><strong class="ra-you ${r.correct ? "ok" : "bad"}">${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">UNSURE</span><span class="qb-info" data-tip="Your answer didn&apos;t match any accepted equivalent.">i</span>' : ""}</div>
     <div class="ra-row"><span class="ra-k">Answer</span><span class="actual">${answerLineHtml(state.currentQuestion?.answer, r.answer || state.currentQuestion?.answer_sanitized || "")}</span></div>
     <div class="ra-row ra-cel"><span class="ra-k">Celerity</span><span>${celPct}% remaining</span></div>
   `;
@@ -8016,7 +8016,7 @@ async function loadStats(preserveScroll = false) {
     }
 
     html += `<div class="stats-section" data-coll="stats:overview">
-      <div class="stats-section-title">OVERVIEW${selectedCat ? " — " + escapeHtml(selectedCat) : ""}</div>
+      <div class="stats-section-title">OVERVIEW${selectedCat ? " · " + escapeHtml(selectedCat) : ""}</div>
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-card-value">${view.totalQuestions}</div>
@@ -8218,7 +8218,7 @@ async function loadStats(preserveScroll = false) {
                 const outOfCat = selectedCat && !sCats.some((c) => pickedRoots.includes(c));
                 const faint = outOfPeriod || outOfCat;
                 return `
-              <tr class="session-row${faint ? " session-faint" : ""}" data-session="${escapeHtml(s.session_id)}" title="${faint ? "Outside the current filter — click to open anyway" : "View this session's stats"}">
+              <tr class="session-row${faint ? " session-faint" : ""}" data-session="${escapeHtml(s.session_id)}" title="${faint ? "Outside the current filter. Click to open anyway" : "View this session's stats"}">
                 <td>${formatSessionTitle(s.session_id)}</td>
                 <td>${s.question_count}</td>
                 <td>${s.total_points}</td>
@@ -8757,7 +8757,7 @@ function isNetworkErr(msg) {
 }
 function friendlyUpdateErr(msg) {
   return isNetworkErr(msg)
-    ? "Couldn't reach the update server. Check your internet connection and try again (some school/work networks block it)."
+    ? "Couldn't reach the update server. Check your connection and try again. Some school and work networks block it."
     : String(msg || "Unknown error");
 }
 // Download the already-confirmed update into `status`, showing progress and a
@@ -8773,7 +8773,7 @@ async function downloadAppUpdate(status, barId) {
     for (let attempt = 0; attempt < 3; attempt++) {
       r = await API.post("/api/app-update-check", {});
       if (!r || !r.error || !isNetworkErr(r.error) || attempt === 2) break;
-      status.innerHTML = progressBarHtml(barId, "Network hiccup — retrying (" + (attempt + 2) + "/3)…");
+      status.innerHTML = progressBarHtml(barId, "Connection dropped. Retrying (" + (attempt + 2) + "/3)…");
       await new Promise((res) => setTimeout(res, 1500));
     }
     if (r && r.updated) {
@@ -8801,14 +8801,14 @@ $("#btn-app-update")?.addEventListener("click", async () => {
     else if (!r.available) status.textContent = "You're on the latest version (v" + (r.haveVersion || r.version || "?") + ").";
     else {
       // Checking never installs — a separate "Download update" button does.
-      status.innerHTML = `<div style="margin-bottom:8px">Update available: <strong>v${escapeHtml(String(r.version))}</strong>${r.critical ? " (important)" : ""}</div>`;
+      status.innerHTML = `<div style="margin-bottom:8px">Version <strong>${escapeHtml(String(r.version))}</strong> is available${r.critical ? " (important)" : ""}</div>`;
       const install = document.createElement("button");
       install.className = "btn btn-sm btn-primary";
       install.textContent = "Download update";
       install.onclick = () => downloadAppUpdate(status, "app-upd");
       status.appendChild(install);
     }
-  } catch (e) { status.textContent = "Update check failed: " + friendlyUpdateErr(e.message || e); }
+  } catch (e) { status.textContent = "Update check failed. " + friendlyUpdateErr(e.message || e); }
   btn.disabled = false; btn.textContent = "Check for updates";
 });
 
@@ -8822,10 +8822,10 @@ async function syncAppUpdateUI() {
     const status = $("#app-update-status");
     if (status && !status.textContent) {
       status.textContent = info.configured
-        ? "Current version: v" + (info.version || "0") + (info.active ? " (updated)" : " (bundled)") +
+        ? "Version " + (info.version || "0") + (info.active ? " (updated)" : " (bundled)") +
           // the screens updated but the app's core (window, files, backend) didn't: an older
           // Windows install couldn't swap those files in — a fresh install finishes it
-          (info.active && !info.mainActive ? " — the app's core is still the one it was installed with; reinstall from onlinequiz.net/download to finish updating it" : "")
+          (info.active && !info.mainActive ? ". Reinstall from onlinequiz.net/download to finish this update" : "")
         : "App updates aren't set up in this build.";
     }
   } catch {}
@@ -8868,7 +8868,7 @@ async function checkForUpdatesUI() {
       status.appendChild(install);
     }
   } catch (e) {
-    status.textContent = "Update check failed: " + friendlyUpdateErr(e.message || e);
+    status.textContent = "Update check failed. " + friendlyUpdateErr(e.message || e);
   }
 
   btn.disabled = false;
@@ -9602,7 +9602,7 @@ function openBadgeDetail(key, trials, own, extra) {
   if (key === "hw") {
     title = "Halloween 2026";
     hero = hwEmblem(150);
-    body = `<p class="bd-sub">Event badge · ${escapeHtml(extra || String(HW.goal))} candies</p><p class="bd-text">Earned in the Halloween 2026 pumpkin hunt: one tossup in eight was a pumpkin, and powering ${HW.goal} of them won it. It can only be earned during the event.</p>`;
+    body = `<p class="bd-sub">Event badge · ${escapeHtml(extra || String(HW.goal))} candies</p><p class="bd-text">Collected ${HW.goal} candies in the Halloween 2026 pumpkin hunt.</p>`;
   } else {
     const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
     const best = trialBest(trials)[key] || 0, rec = (trials || {})[key + "|" + best] || {};
@@ -9611,7 +9611,7 @@ function openBadgeDetail(key, trials, own, extra) {
     const metal = best >= 10 ? "Prismatic" : best >= 7 ? "Gold" : best >= 4 ? "Silver" : "Bronze";
     const road = Array.from({ length: 10 }, (_, i) => `<span class="bd-step${i + 1 <= best ? " on" : ""}${i + 1 === best ? " cur" : ""}" title="${escapeHtml(trialName(key, i + 1))}">${trialEmblem(key, i + 1, 40)}</span>`).join("");
     body = `<p class="bd-sub">${metal} · level ${best} of 10${rec.p ? " · passed " + escapeHtml(new Date(rec.p).toLocaleDateString()) : ""}</p>` +
-      `<p class="bd-text">Ten power-marked level-${best} ${escapeHtml(cat[1])} tossups, all ten powered with no neg.${best < 10 ? " Each level opens the next; the badge grows with it." : " The top level: there is nothing above it."}</p>` +
+      `<p class="bd-text">Powered all ten level ${best} ${escapeHtml(cat[1])} tossups.</p>` +
       `<div class="bd-road" aria-label="Levels">${road}</div>`;
     if (own && best < 10) {
       const st = trialState(normTrialInfo({ trials }), key, best + 1);
@@ -9693,7 +9693,7 @@ function openTrialPicker(key) {
       const go = el.querySelector("#tp-go"), note = el.querySelector("#tp-note");
       go.disabled = !pick;
       go.innerHTML = pick ? "Continue" + ic("right", 14) : "Pick a level";
-      note.textContent = pick && lvState(pick).passed ? "You have this badge already — taking it again changes nothing, but a fail still waits an hour." : "";
+      note.textContent = pick && lvState(pick).passed ? "You already passed this level." : "";
     } catch (e) {}
   };
   el.innerHTML = `
@@ -9701,7 +9701,7 @@ function openTrialPicker(key) {
       <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="spacer"></span>
         <button type="button" class="btn btn-ghost btn-icon" id="tp-x" aria-label="Close">${ic("x")}</button></div>
       <div class="achd-body">
-        <p class="tp-lead">Ten power-marked ${escapeHtml(cat[1])} tossups at the level you pick, read one after another. <b>Power all ten</b> to earn the <b>${escapeHtml(cat[1])}</b> badge for that level. Levels open in order: pass one to try the next. A neg, a right answer after the power mark, no buzz, a skip or leaving ends the trial — and it can be taken again an hour after it started.</p>
+        <p class="tp-lead"><b>Power all ten</b> tossups to pass and unlock the next level. Any miss ends the trial, and you can retry an hour after you start.</p>
         <div class="tp-levels" role="group" aria-label="Level">${levels()}</div>
         <p class="achd-fine" id="tp-note"></p>
         <p class="tp-err" id="tp-err" role="alert"></p>
@@ -9760,10 +9760,9 @@ function syncTrialSetup() {
   const title = p.querySelector(".fp-title");
   if (title && here) title.textContent = on ? trialName(_trial.key, _trial.level) + " trial" : "Practice setup";
   let n = p.querySelector("#trial-setup-note");
-  if (!on) { n?.remove(); syncDrawerStart(); return; }
+  if (!on || !_trial.pending) { n?.remove(); syncDrawerStart(); return; }   // the note is for before Start
   if (!n) { n = document.createElement("div"); n.id = "trial-setup-note"; n.className = "tr-setup-note"; const head = p.querySelector(":scope > .fp-head"); head ? head.after(n) : p.prepend(n); }
-  n.innerHTML = `<p>Ten power-marked ${escapeHtml(_trial.name || "")} tossups at level ${ROMAN[_trial.level] || _trial.level}. Power all ten — a neg, a late answer, no buzz or a skip ends it.</p>` +
-    (_trial.pending ? `<p class="tr-setup-fine">Set your reading speed, then Start. The hour's wait counts from Start.</p>` : "") + `<p class="tp-err" id="trial-setup-err" role="alert"></p>`;
+  n.innerHTML = `<p>Set your reading speed and press Start.</p><p class="tp-err" id="trial-setup-err" role="alert"></p>`;
   syncDrawerStart();
 }
 function runTrial(t) {
@@ -9792,7 +9791,7 @@ function paintTrialBar() {
     (_trial.done ? "" : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
   const lv = bar.querySelector("#tb-leave");
   if (lv && _trial.pending) lv.onclick = () => { closeSetupDrawer(); trialEnd(false, "left"); };
-  else if (lv) lv.onclick = () => confirmDialog("Leave the trial? It counts as a fail, and it can be taken again an hour after it started.", () => trialEnd(false, "left"), { yes: "Leave" });
+  else if (lv) lv.onclick = () => confirmDialog("Leave the trial? It counts as a fail.", () => trialEnd(false, "left"), { yes: "Leave" });
 }
 function trialOnResult(result) {
   _trial.answeredId = _trial.servedId;
@@ -9828,7 +9827,7 @@ function showTrialResult(t, passed, why) {
         <span class="td-medal${passed ? " on" : ""}">${ic("award", 40)}</span>
         <h2 id="td-h">${passed ? "Badge earned" : "Trial over"}</h2>
         <p class="td-name">${escapeHtml(trialName(t.key, t.level))}</p>
-        <p class="td-why">${passed ? "You powered all ten. The badge is on your profile." : why === "left" ? "You left the trial after " + t.powered + " of 10 powers." : "Question " + q + ": " + escapeHtml(why || "not a power") + ". You powered " + t.powered + " of 10."}${passed ? "" : " You can take it again an hour after it started."}</p>
+        <p class="td-why">${passed ? "You powered all ten. The badge is on your profile." : why === "left" ? "You left after " + t.powered + " of 10 powers." : "Ended on question " + q + " (" + escapeHtml(why || "not a power") + "). You powered " + t.powered + " of 10."}${passed ? "" : " You can retry an hour after you started."}</p>
       </div>
       <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn btn-primary" id="td-trials">${ic("award", 14)}Trials</button></div>
     </div>`;
@@ -9979,7 +9978,7 @@ function hwCardHtml(ev) {
   if (!hwOn()) return "";
   const n = (ev && Array.isArray(ev.pumpkins) ? ev.pumpkins.length : 0), goal = HW.goal;
   return `<section class="hw-card"><span class="hw-card-pk">${PUMPKIN_SVG}</span>
-    <div class="hw-card-id"><b>Halloween · Pumpkin hunt</b><small>One tossup in eight is a pumpkin <span class="hw-pk-mini">${PUMPKIN_SVG}</span> — power it for a piece of candy. ${goal} candies earn the Halloween 2026 badge. Until November 1.</small>
+    <div class="hw-card-id"><b>Halloween · Pumpkin hunt</b><small>Find a pumpkin tossup <span class="hw-pk-mini">${PUMPKIN_SVG}</span> and power it for a piece of candy. Collect ${goal} for the Halloween 2026 badge. Ends November 1.</small>
       <div class="hw-card-bar"><div style="width:${Math.min(100, Math.round((n / goal) * 100))}%"></div></div><span class="hw-card-n"><b class="num">${n}</b> / ${goal} candies</span></div>
     <div class="hw-card-act"><button type="button" class="btn btn-sm" id="hw-room">Haunted House</button><button type="button" class="btn btn-sm" id="hw-board">Leaderboard</button></div></section>`;
 }
@@ -9990,7 +9989,7 @@ function wireHwCard(container) {
 // the badge for 31 candies (also on other players' profiles)
 function hwBadgeHtml(ev) {
   const n = ev && Array.isArray(ev.pumpkins) ? ev.pumpkins.length : 0;
-  return n >= HW.goal ? `<button type="button" class="tr-emb hw-emb" data-badge="hw" data-extra="${n}" title="Halloween 2026 — ${n} candies" aria-label="Halloween 2026 badge">${hwEmblem(62)}<span class="tr-emb-name">Halloween 2026</span></button>` : "";
+  return n >= HW.goal ? `<button type="button" class="tr-emb hw-emb" data-badge="hw" data-extra="${n}" title="Halloween 2026, ${n} candies" aria-label="Halloween 2026 badge">${hwEmblem(62)}<span class="tr-emb-name">Halloween 2026</span></button>` : "";
 }
 const hwEmblem = (size) => emblemSvg({ level: 8, metal: "pumpkin", hue: "#3a1a06", inner: PUMPKIN_SVG, ribbon: "2026", size });
 applyHwTheme();
@@ -9998,12 +9997,12 @@ applyHwTheme();
 // ── Achievement details (14.88): a click on a card ─────────────────────────────────────────────────────
 // ctx = { achData, records, stats, pluginAchs } — whoever's achievements the cards show (you, or a friend)
 const ACH_HOW = {
-  total: (a) => `Answer ${a.threshold.toLocaleString()} questions in all — tossups and bonuses, any mode (practice, review, multiplayer).`,
-  powers: (a) => `Power ${a.threshold.toLocaleString()} tossups: buzz before the power mark (*) and answer right.`,
-  negs: (a) => `Neg ${a.threshold.toLocaleString()} tossups: buzz before the end and answer wrong.`,
+  total: (a) => `Answer ${a.threshold.toLocaleString()} questions of any kind, in any mode.`,
+  powers: (a) => `Power ${a.threshold.toLocaleString()} tossups by answering correctly before the power mark (*).`,
+  negs: (a) => `Neg ${a.threshold.toLocaleString()} tossups by buzzing early with a wrong answer.`,
   cat: (a) => `Answer ${a.threshold.toLocaleString()} questions in any one category.`,
-  daily: (a) => `Answer ${a.threshold.toLocaleString()} questions in one day (days run on UTC).`,
-  streak: (a) => `Practice ${a.threshold.toLocaleString()} days in a row (at least one question a day, UTC).`,
+  daily: (a) => `Answer ${a.threshold.toLocaleString()} questions in one day (UTC).`,
+  streak: (a) => `Practice ${a.threshold.toLocaleString()} days in a row (UTC).`,
 };
 const achPathLabel = (p) => String(p || "").split(" > ").join(" › ");
 function wireAchievementCards(container, ctx) {
@@ -10032,16 +10031,16 @@ function openAchievementDetail(ach, ctx) {
     if (top.length) mine = `<ul class="achd-list">${top.map(([k, n]) => `<li><span>${escapeHtml(k)}</span><b class="num">${n.toLocaleString()}</b></li>`).join("")}</ul>`;
   } else if (ach.type === "daily") {
     const best = Object.values((ctx.stats && ctx.stats.questionsByDate) || {}).sort((a, b) => (b.questions || 0) - (a.questions || 0))[0];
-    if (best) mine = `<p>Your best day: <b class="num">${(best.questions || 0).toLocaleString()}</b> questions (${escapeHtml(best.date || "")}).</p>`;
+    if (best) mine = `<p>Your best day was <b class="num">${(best.questions || 0).toLocaleString()}</b> questions on ${escapeHtml(best.date || "")}.</p>`;
   } else if (ach.type === "cat_specific") {
-    how = mystery ? "<p>Keep playing — what it takes shows once it's earned.</p>" : `<p>Answer ${thr.toLocaleString()} questions in ${escapeHtml(achPathLabel(ach.path || ach.category))}.</p>`;
+    how = mystery ? "<p>Keep playing to find out.</p>" : `<p>Answer ${thr.toLocaleString()} questions in ${escapeHtml(achPathLabel(ach.path || ach.category))}.</p>`;
   } else if (ach.type === "answer_power") {
     const topics = achList(ach.topic), groups = achGroups(ach), mode = ach.count || "questions";
     const within = ach.within === "*" ? [] : achList(ach.within || apAchCategory(ach.id));
     const counted = mode === "targets" ? `${thr} different ${thr === 1 ? "one" : "ones"} of the list` : mode === "answers" ? `${thr} different answers` : `${thr} different ${thr === 1 ? "question" : "questions"}`;
-    how = `<p>Power ${counted}${topics.length && !groups.length ? " in the topic below" : ""}. A power is a right answer buzzed before the power mark (*); each question counts once.</p>` +
+    how = `<p>Power ${counted}${topics.length && !groups.length ? " in the topic below" : ""}. Each question counts once.</p>` +
       (groups.length && topics.length ? `<p>${ach.either ? "Either a question in the topic or one whose answer is on the list counts." : "The question has to be in the topic and its answer on the list."}</p>` : "") +
-      (groups.length ? `<p class="achd-fine">An answer counts when it is the question's main answer (a person's surname alone is enough)${within.length ? `, in ${within.map((w) => escapeHtml(achPathLabel(w))).join(" or ")}` : ""}.</p>` : "");
+      (groups.length ? `<p class="achd-fine">Only the main answer counts, and a surname is enough${within.length ? ` (in ${within.map((w) => escapeHtml(achPathLabel(w))).join(" or ")})` : ""}.</p>` : "");
     const recs = (ctx.records || []).filter((r) => achRecordHit(ach, r) >= 0);
     if (topics.length) what += `<div class="achd-topics">${topics.map((t) => `<span class="achd-topic">${escapeHtml(achPathLabel(t))}</span>`).join("")}</div>`;
     if (groups.length) {
@@ -10050,7 +10049,7 @@ function openAchievementDetail(ach, ctx) {
       what += chips(groups.map((g, i) => [show(g), hit.has(i)]));
     }
     const answers = [...new Set(recs.map((r) => r.a))];
-    mine = recs.length ? `<p>${recs.length.toLocaleString()} powered ${recs.length === 1 ? "question counts" : "questions count"}${answers.length ? ": " : "."}</p>` + (answers.length ? chips(answers.slice(0, 40).map((a) => [a, true])) + (answers.length > 40 ? `<p class="achd-fine">and ${answers.length - 40} more</p>` : "") : "")
+    mine = recs.length ? `<p>${recs.length.toLocaleString()} powered ${recs.length === 1 ? "question counts" : "questions count"}.</p>` + (answers.length ? chips(answers.slice(0, 40).map((a) => [a, true])) + (answers.length > 40 ? `<p class="achd-fine">and ${answers.length - 40} more</p>` : "") : "")
       : "<p>Nothing counts yet.</p>";
   } else if (!ACH_HOW[ach.type]) {
     how = `<p>${escapeHtml(desc)}</p>`;
@@ -11223,7 +11222,7 @@ async function openSet(setName) {
     packets = (res && (res.packets || (Array.isArray(res) ? res : []))) || [];
   } catch (e) { err = e.message || String(e); }
   document.getElementById("db-packet-list").innerHTML = packets.length
-    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}"><span class="lr-name">Packet ${p.packet_number}${p.packet_name && p.packet_name !== String(p.packet_number) ? " — " + escapeHtml(p.packet_name) : ""}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
+    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}"><span class="lr-name">Packet ${p.packet_number}${p.packet_name && p.packet_name !== String(p.packet_number) ? " · " + escapeHtml(p.packet_name) : ""}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
     : `<div class="db-empty" style="border:0">${err ? "Couldn't load packets: " + escapeHtml(err) : "No packets in this set."}</div>`;
   document.querySelectorAll("#db-packet-list .db-row").forEach((r) => {
     r.addEventListener("click", () => openPacket(setName, parseInt(r.dataset.pkt)));
@@ -11236,7 +11235,7 @@ async function openSet(setName) {
         { sep: true },
         { label: "Play tossups", onClick: () => playSetPacket(setName, n, false) },
         { label: "Play bonuses", onClick: () => playSetPacket(setName, n, true) },
-      ], { title: setName + " — packet " + n });
+      ], { title: setName + " · packet " + n });
     });
   });
 }
@@ -11920,7 +11919,7 @@ async function handleAccountLinks() {
   let note = "";
   try { note = sessionStorage.getItem("qb-acct-note") || ""; sessionStorage.removeItem("qb-acct-note"); } catch (e) {}
   if (q.get("verify")) {
-    const r = await API.post("/api/account/verify", { token: q.get("verify") }).catch(() => ({ error: "Couldn't reach the server — try the link again." }));
+    const r = await API.post("/api/account/verify", { token: q.get("verify") }).catch(() => ({ error: "Couldn't reach the server. Try the link again." }));
     clean("verify");
     if (r && r.ok) { try { sessionStorage.setItem("qb-acct-note", "confirmed"); } catch (e) {} location.reload(); return; }
     openAccount("signin", { error: (r && r.error) || "This link has expired or was already used.", offerResend: true });
@@ -11930,8 +11929,8 @@ async function handleAccountLinks() {
   if (q.get("google") === "error" || q.get("google") === "off") {
     const g = q.get("google"), why = q.get("why");
     clean("google", "why");
-    if (g === "off") openAccount("signin", { error: "Google sign-in isn't available yet — use your email for now." });
-    else openAccount("signin", { error: why || "Google sign-in didn't finish — try again." });
+    if (g === "off") openAccount("signin", { error: "Google sign-in isn't available yet. Use your email for now." });
+    else openAccount("signin", { error: why || "Google sign-in didn't finish. Try again." });
     return;
   }
   if (q.get("welcome")) clean("welcome");
@@ -11945,7 +11944,7 @@ async function handleAccountLinks() {
     else openAccount("applink", { code });
     return;
   }
-  if (note === "confirmed") { await refreshAccount(); openAccount("account", { note: "Your email is confirmed — you're signed in." }); }
+  if (note === "confirmed") { await refreshAccount(); openAccount("account", { note: "Your email is confirmed and you're signed in." }); }
 }
 const relTime = (t) => {
   if (!t) return "never";
@@ -11982,7 +11981,7 @@ function openAccount(mode, opts) {
   const field = (id, type, label, auto, value, extra) => `<label class="acct-field"><span>${label}</span><input id="${id}" class="mode-input" type="${type}" autocomplete="${auto}" spellcheck="false" autocapitalize="off" value="${escapeHtml(value || "")}"${extra || ""}></label>`;
   const link = (to, text) => `<button type="button" class="acct-link" data-to="${to}">${text}</button>`;
   const handleField = (v) => field("acct-handle", "text", 'Username <span class="qb-info" data-tip="Friends add you by it. 3–20 lowercase letters and numbers.">i</span>', "username", v, ' maxlength="20" inputmode="latin"');
-  const displayField = (v) => field("acct-display", "text", 'Display name <span class="qb-info" data-tip="Shown to friends and on leaderboards. It can be anything — it doesn\'t have to match your username.">i</span>', "nickname", v, ' maxlength="32"');
+  const displayField = (v) => field("acct-display", "text", 'Display name <span class="qb-info" data-tip="Shown to friends and on leaderboards. It doesn\'t have to match your username.">i</span>', "nickname", v, ' maxlength="32"');
   const googleBtn = () => Account.google ? `<button type="button" class="btn btn-md acct-google" data-to="google">${GOOGLE_G}Continue with Google</button><div class="acct-or"><span>or</span></div>` : "";
   const render = (m, o) => {
     o = o || {};
@@ -11992,11 +11991,11 @@ function openAccount(mode, opts) {
     const okLine = o.note ? `<div class="acct-ok">${escapeHtml(o.note)}</div>` : "";
     const u = Account.user || {};
     let html = "";
-    if (m === "signin") html = head("Sign in", o.reason ? escapeHtml(o.reason) : (Account.app ? "Your onlinequiz account: your stats and stars sync between this app and the website." : "")) + okLine + googleBtn() +
+    if (m === "signin") html = head("Sign in", o.reason ? escapeHtml(o.reason) : (Account.app ? "Sync your stats and stars between the app and the website." : "")) + okLine + googleBtn() +
       `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${field("acct-pass", "password", "Password", "current-password")}${err}<button type="submit" class="btn btn-primary btn-md">Sign in</button></form>` +
       `<div class="acct-links">${link("forgot", "Forgot password?")}${link("signup", "Create an account")}</div>`;
     else if (m === "syncing") html = head("Signing in", "Syncing your stats and stars…") + `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div></div>`;
-    else if (m === "browser") html = head("Finish in your browser", `Your browser opened onlinequiz.net — sign in there${o.google ? " with Google" : ""} and press <b>Connect app</b>. This window signs in by itself.`) +
+    else if (m === "browser") html = head("Finish in your browser", `Sign in on the page that opened${o.google ? " with Google" : ""} and press <b>Connect app</b>. This window signs in by itself.`) +
       `<div class="acct-code">Code <b>${escapeHtml(o.code || "")}</b></div>` + err + `<div class="acct-actions"><button type="button" class="btn" data-to="reopen">Open the page again</button><button type="button" class="btn" data-to="signin">Cancel</button></div>`;
     else if (m === "signup") html = head("Create an account", o.reason ? escapeHtml(o.reason) : "") + googleBtn() +
       `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${handleField(handle)}${displayField(display)}${field("acct-pass", "password", "Password (8+ characters)", "new-password")}${field("acct-pass2", "password", "Confirm password", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Create account</button></form>` +
@@ -12005,13 +12004,13 @@ function openAccount(mode, opts) {
     else if (m === "forgot") html = head("Reset your password") + `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${err}<button type="submit" class="btn btn-primary btn-md">Send reset link</button></form><div class="acct-links">${link("signin", "Back to sign in")}</div>`;
     else if (m === "forgot-sent") html = head("Check your email", `If there's an account for <b>${escapeHtml(email)}</b>, we sent it a link to set a new password.`) + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="signin">Back to sign in</button></div>`;
     else if (m === "reset") html = head("Set a new password") + `<form class="acct-form">${field("acct-pass", "password", "New password (8+ characters)", "new-password")}${field("acct-pass2", "password", "Confirm password", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Save password</button></form>` + (o.expired ? `<div class="acct-links">${link("forgot", "Send a new link")}</div>` : "");
-    else if (m === "profile") html = head(u.handle ? "Edit profile" : "Finish setting up", u.handle ? "" : "Choose a username — friends add you by it.") +
+    else if (m === "profile") html = head(u.handle ? "Edit profile" : "Finish setting up", u.handle ? "" : "Choose a username so friends can add you.") +
       `<form class="acct-form">${handleField(o.keepHandle != null ? o.keepHandle : (u.handle || ""))}${displayField(o.keepDisplay != null ? o.keepDisplay : (u.displayName || ""))}${err}<button type="submit" class="btn btn-primary btn-md">Save</button></form>` + (u.handle ? `<div class="acct-links">${link("account", "Back")}</div>` : "");
     else if (m === "applink") html = Account.user
       ? head("Connect the OfflineQuiz app", `Sign the app in as <b>${neonName(u.displayName || u.handle || u.email || "", u.neon)}</b>${u.handle ? " (@" + escapeHtml(u.handle) + ")" : ""}? Its stats and stars will sync with this account.`) + err +
         `<div class="acct-actions"><button type="button" class="btn" data-to="close">Not now</button><button type="button" class="btn btn-primary" data-to="approve">Connect app</button></div>`
-      : head("Connect the OfflineQuiz app", "Sign in first — then connect the app.") + googleBtn() + `<div class="acct-actions"><button type="button" class="btn" data-to="signup">Create account</button><button type="button" class="btn btn-primary" data-to="signin">Sign in</button></div>`;
-    else if (m === "applinked") html = head("The app is signed in", "You can go back to OfflineQuiz — it syncs with this account from now on.") + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
+      : head("Connect the OfflineQuiz app", "Sign in first, then connect the app.") + googleBtn() + `<div class="acct-actions"><button type="button" class="btn" data-to="signup">Create account</button><button type="button" class="btn btn-primary" data-to="signin">Sign in</button></div>`;
+    else if (m === "applinked") html = head("The app is signed in", "You can go back to OfflineQuiz. It now syncs with this account.") + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
     else if (m === "account") html = head("Account") + okLine + err +
       `<div class="acct-rows"><div class="acct-row"><span class="fr-av"${avatarStyle(u.neon)}>${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${neonName(u.displayName || u.handle || "", u.neon)}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
       `<div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}${u.google ? '<small>Signs in with Google</small>' : ""}</span></div>` +
@@ -12040,7 +12039,7 @@ function openAccount(mode, opts) {
       const r = await API.post("/api/account/app-link/poll", { tz: myTz() }).catch(() => null);
       if (mode !== "browser" || !el.isConnected) return;
       if (r && r.ok) { render("syncing", {}); _cloudOn = true; await API.post("/api/cloud/sync", {}, 600000).catch(() => {}); location.reload(); return; }
-      if ((r && r.expired) || Date.now() - started > 10 * 60e3) { render("signin", { error: "That browser sign-in expired — try again." }); return; }
+      if ((r && r.expired) || Date.now() - started > 10 * 60e3) { render("signin", { error: "That sign-in expired. Try again." }); return; }
       pollTimer = setTimeout(tick, 2000);
     };
     pollTimer = setTimeout(tick, 2000);
@@ -12051,7 +12050,7 @@ function openAccount(mode, opts) {
     if (to === "leaderboards") { close(); goTo("leaderboards"); return; }
     if (to === "google") {
       if (Account.app) {   // the app: Google signs in in the person's own browser
-        const r = await API.post("/api/account/app-link/start", { google: true }).catch(() => ({ error: "Couldn't reach onlinequiz.net — check your internet connection." }));
+        const r = await API.post("/api/account/app-link/start", { google: true }).catch(() => ({ error: "Couldn't reach onlinequiz.net. Check your internet connection." }));
         if (!r || !r.ok) { render("signin", { error: (r && r.error) || "Couldn't start the sign-in." }); return; }
         render("browser", { code: r.code, google: true, url: r.url });
         el._linkUrl = r.url;
@@ -12063,7 +12062,7 @@ function openAccount(mode, opts) {
     }
     if (to === "reopen") { if (el._linkUrl) API.post("/api/cloud/open", { url: el._linkUrl }).catch(() => {}); return; }
     if (to === "approve") {
-      const r = await API.post("/api/account/app-link/approve", { code: opts.code }).catch(() => ({ error: "Couldn't reach the server — try again." }));
+      const r = await API.post("/api/account/app-link/approve", { code: opts.code }).catch(() => ({ error: "Couldn't reach the server. Try again." }));
       if (r && r.ok) { render("applinked", {}); history.replaceState(null, "", location.pathname); return; }
       render("applink", { error: (r && r.error) || "Couldn't connect the app." });
       return;
@@ -12087,7 +12086,7 @@ function openAccount(mode, opts) {
     email = v("acct-email").trim() || email;
     handle = v("acct-handle").trim().toLowerCase() || handle;
     display = v("acct-display").trim() || display;
-    const post = (path, body) => API.post(path, body).catch(() => ({ error: "Couldn't reach the server — try again." }));
+    const post = (path, body) => API.post(path, body).catch(() => ({ error: "Couldn't reach the server. Try again." }));
     if ((mode === "signup" || mode === "reset") && v("acct-pass") !== v("acct-pass2")) {
       render(mode, { error: "The two passwords don't match.", reason: opts.reason, expired: false });
       return;
@@ -12249,7 +12248,7 @@ async function openUserMenu(x, y, u) {
   const extra = userMenuExtras(u);
   if (!handle) {
     window.QB.contextMenu(x, y, [
-      { label: "Not signed in — no profile", onClick: () => {}, hint: "" },
+      { label: "Not signed in", onClick: () => {}, hint: "" },
       { label: "Copy name", onClick: () => copyToClipboard(name) },
       ...extra,
     ], { title });
@@ -12321,7 +12320,7 @@ async function openUserProfile(handle, shownName) {
     : '<button type="button" class="btn btn-sm btn-primary" data-up="add">Add friend</button>';
   const st = d.stats || {}, num = (v) => Number(v || 0).toLocaleString();
   let achHtml = "", achNote = "";
-  if (d.private) achNote = `<p class="fr-empty">${ic("lock", 14)} @${escapeHtml(d.handle)} keeps their practice private — it shows to friends and on leaderboards you share.</p>`;
+  if (d.private) achNote = `<p class="fr-empty">${ic("lock", 14)} @${escapeHtml(d.handle)} keeps their practice private.</p>`;
   else {
     const p = d.powers || {};
     const achData = computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p));
@@ -12420,7 +12419,7 @@ async function cloudSyncNow() {
         if (document.querySelector("#player-screen.active")) loadPlayer();
       }
     } else if (r) {
-      Account.syncError = r.offline ? "Offline — it syncs when you're back online." : (r.error || "The sync didn't finish.");
+      Account.syncError = r.offline ? "Offline. It syncs when you're back online." : (r.error || "The sync didn't finish.");
       if (r.signedOut) { Account.user = null; _cloudOn = false; renderAccountMenu(); }
     }
   } catch (e) {}
@@ -12460,18 +12459,18 @@ if (!IS_WEB) {
 // pressed; then it never comes back on this device (localStorage "qb-tips").
 const TOUCH = matchMedia("(hover: none) and (pointer: coarse)").matches;
 const TIPS = {
-  "search-tags": "Narrow a search with tags: type \\ in the search box (or press the tag button) and pick an era, a place, a kind of answer… Click a tag to switch it between required and skipped.",
-  "freq": "Click any answer to see every question that answers it. Categories and Tossups / Bonuses / Both change the list.",
-  "sets": "Open a set to read its packets in order — or play a whole set from Setup → Mode.",
-  "setup": "Your setup is remembered. Tags narrow the questions further (an era, a place…), and Categories can be weighted.",
-  "practice-keys": TOUCH ? "Use the buttons along the bottom to buzz, skip and pause." : "Space buzzes, S skips, P pauses and N moves on — or click the buttons under the question.",
-  "stats": "Click a session to see every question in it. Categories narrows all of these numbers.",
-  "mp-lobby": IS_WEB ? "Type a room code to join, or leave it empty for a new room. In a room, the copy button copies its link — friends open it to join." : "Type a room code to join, or leave it empty for a new room — then share the code with friends.",
-  "store": "Get adds a plugin and turns it on; switch it off or on any time, here or under Manage.",
-  "friends": "Share your username — friends add you by it. The board shows everyone's last 7 days.",
-  "leaderboards": "Make your own leaderboard with + New leaderboard and invite friends to race each week.",
-  "streaks": "Each square is a day — the bluer it is, the more you practiced. Tap one to see that day.",
-  "cat-presets": "Save the categories you picked as a preset (the bookmark row at the bottom) to switch back in one click.",
+  "search-tags": "Type \\ in the search box to add a tag, like an era or a place. Click a tag to require or skip it.",
+  "freq": "Click an answer to see every question with that answer.",
+  "sets": "Open a set to read its packets in order, or play the whole set from Setup.",
+  "setup": "Your setup is saved. Tags narrow the questions further, and categories can be weighted.",
+  "practice-keys": TOUCH ? "Use the buttons along the bottom to buzz, skip and pause." : "Space buzzes, S skips, P pauses and N goes to the next question.",
+  "stats": "Click a session to see its questions.",
+  "mp-lobby": IS_WEB ? "Enter a room code to join, or leave it blank to make a new room. Share the room link so friends can join." : "Enter a room code to join, or leave it blank to make a new room. Then share the code with friends.",
+  "store": "Get adds a plugin and turns it on. You can switch it off any time.",
+  "friends": "Friends add you by your username. The board shows the last 7 days.",
+  "leaderboards": "Make a leaderboard with + New leaderboard and race your friends each week.",
+  "streaks": "Each square is a day, and brighter means more practice. Tap one to see that day.",
+  "cat-presets": "Save your picks as a preset to switch back in one click.",
 };
 const _TIPS_LS = "qb-tips";
 function _tipsMap() { try { return JSON.parse(localStorage.getItem(_TIPS_LS) || "{}") || {}; } catch (e) { return {}; } }
@@ -12694,13 +12693,13 @@ window.QB?.on?.("owned:changed", () => repaintMyNeon());
 const neonName = (text, neon) => window.QB && window.QB.neonHtml ? window.QB.neonHtml(escapeHtml(text), neon) : escapeHtml(text);
 const STORE_PLUGINS = [
   { sku: "kwfreq", id: "keyword-freq", name: "Keyword Frequency", color: "#58a6ff", icon: '<path d="M4 4v16"/><path d="M8 7h12M8 12h8M8 17h4"/>',
-    text: "The words that come up most in an answer’s questions, and the answers that come up most for a word." },
+    text: "The words that come up most for an answer, and the answers that come up most for a word." },
   { sku: "canon", id: "canon-tracker", name: "Canon Tracker", color: "#56d364", icon: '<path d="M21 12a9 9 0 1 1-9-9v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
-    text: "How much of each category’s most-asked answers you’ve converted — and a drill for the ones you haven’t." },
+    text: "See which common answers you’ve converted in each category, and drill the rest." },
   { sku: "buzz", id: "buzz-words", name: "Buzzwords", color: "#e3b341", icon: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
-    text: "The giveaway words: clues that almost always mean one answer, found across the whole question database." },
+    text: "Giveaway clues that almost always point to one answer." },
   { sku: "facts", id: "fact-sheet", name: "Fact Sheet", color: "#f778ba", icon: '<path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
-    text: "A study sheet for any answer, built from the clues its questions keep using." },
+    text: "A study sheet of the clues that keep coming up for an answer." },
 ];
 const STORE_GRANTS = { kwfreq: ["plugin:keyword-freq"], canon: ["plugin:canon-tracker"], buzz: ["plugin:buzz-words"], facts: ["plugin:fact-sheet"],
   starter: ["plugin:keyword-freq", "plugin:canon-tracker", "plugin:buzz-words", "plugin:fact-sheet", "neon"] };
@@ -12796,7 +12795,7 @@ function renderStore() {
   c.innerHTML = `<div class="st-page">
     <header class="st-hero">
       <h1 class="st-title">Study tools, a name that glows, and a room of your own</h1>
-      <p class="st-lede">Everything here is a 1 time charge, kept with your onlinequiz account — in the app and on onlinequiz.net.</p>
+      <p class="st-lede">Pay once and keep it on your account, in the app and on the website.</p>
       <p class="st-acct">${signedIn ? `${ic("user", 14)} Buying as <b>${escapeHtml(Account.user.handle ? "@" + Account.user.handle : Account.user.email || "")}</b>`
         : `${ic("user", 14)} <button type="button" class="acct-link" data-acct="signin">Sign in</button> or <button type="button" class="acct-link" data-acct="signup">create an account</button> to buy`}</p>
     </header>
@@ -12805,7 +12804,7 @@ function renderStore() {
       <div class="st-bundles">
         <article class="st-bundle" data-sku="starter">
           <div class="st-b-head"><b class="st-b-name">Quizbowler Starter Bundle</b>${sum4 > cents("starter") ? `<span class="st-save">Save ${usd(sum4 - cents("starter"))}</span>` : ""}</div>
-          <div class="st-price"><b>${price("starter")}</b>${sum4 > cents("starter") ? `<s>${usd(sum4)}</s>` : ""}<small>1 time charge</small></div>
+          <div class="st-price"><b>${price("starter")}</b>${sum4 > cents("starter") ? `<s>${usd(sum4)}</s>` : ""}<small>one time</small></div>
           <p class="st-b-sub">All four study plugins, and a neon name everyone sees.</p>
           <ul class="st-incl">${STORE_PLUGINS.map(incl).join("")}${neonLi}</ul>
           ${buy("starter", "Buy the Starter Bundle", "btn-lg st-buy")}
@@ -12813,13 +12812,13 @@ function renderStore() {
         <article class="st-bundle st-best" data-sku="captain">
           <span class="st-ribbon">Best value</span>
           <div class="st-b-head"><b class="st-b-name">Quizbowler Team Captain Bundle</b>${sum4 + cents("room") > cents("captain") ? `<span class="st-save">Save ${usd(sum4 + cents("room") - cents("captain"))}</span>` : ""}</div>
-          <div class="st-price"><b>${price("captain")}</b>${sum4 + cents("room") > cents("captain") ? `<s>${usd(sum4 + cents("room"))}</s>` : ""}<small>1 time charge</small></div>
+          <div class="st-price"><b>${price("captain")}</b>${sum4 + cents("room") > cents("captain") ? `<s>${usd(sum4 + cents("room"))}</s>` : ""}<small>one time</small></div>
           <p class="st-b-sub">Everything in the Starter Bundle, plus a multiplayer room for your team.</p>
           <ul class="st-incl">
             <li><span class="st-ico st-ico-all">${ic("check", 16)}</span><span>Everything in the Starter Bundle<small class="st-li-sub">4 study plugins · neon name</small></span>${ownsAll("starter") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>
             <li><span class="st-ico st-ico-room">${ic("home", 16)}</span><span>Your own room, with the name you choose</span></li>
             <li><span class="st-ico st-ico-room">${ic("lock", 16)}</span><span>A password, members and admins you pick</span></li>
-            <li><span class="st-ico st-ico-room">${ic("review", 16)}</span><span>Never resets: scores, settings and chat stay</span></li>
+            <li><span class="st-ico st-ico-room">${ic("review", 16)}</span><span>Scores, settings and chat never reset</span></li>
           </ul>
           ${ownsAll("starter") ? buy("room", "Buy just the room · " + price("room"), "btn-lg st-buy") : buy("captain", "Buy the Team Captain Bundle", "btn-lg st-buy")}
         </article>
@@ -12840,7 +12839,7 @@ function renderStore() {
       <article class="st-room" data-sku="room">
         <span class="st-ico st-ico-room st-ico-lg">${ic("home", 26)}</span>
         <div class="st-room-main"><b>Your Own Room</b>
-          <p>A private room with the name you choose, at onlinequiz.net/room/<i>name</i>. It never resets: scores, settings and chat stay. Lock it to members, give it a password, pick admins.</p></div>
+          <p>A private room at onlinequiz.net/room/<i>name</i>. Scores, settings and chat never reset. Add a password, members and admins.</p></div>
         <div class="st-room-buy"><span class="st-card-price">${price("room")}</span>${buy("room", "Buy a room")}</div>
       </article>
     </section>
@@ -12890,14 +12889,14 @@ function paintProfileNeon() {
   paintNeon(n);
 }
 async function storeBuy(sku, btn) {
-  if (!Account.user) { openAccount("signin", { reason: "Sign in to buy — what you buy is kept with your account." }); return; }
+  if (!Account.user) { openAccount("signin", { reason: "Sign in to buy. Purchases stay with your account." }); return; }
   // a room (and the Team Captain Bundle's) needs its name first: multiplayer's Buy window
   if (sku === "room" || sku === "captain") { window.QB?.shopBuyRoom?.("", sku); return; }
   const label = btn.textContent;
   btn.disabled = true; btn.textContent = "Opening payment…";
   let r = null;
   try { r = await API.post("/api/shop/checkout", { sku }); } catch (e) {}
-  if (!r || r.error || !r.url) { btn.disabled = false; btn.textContent = label; failBubble(btn, (r && r.error) || "Couldn't start the payment — try again."); return; }
+  if (!r || r.error || !r.url) { btn.disabled = false; btn.textContent = label; failBubble(btn, (r && r.error) || "Couldn't start the payment. Try again."); return; }
   // the website goes to the payment page (and comes back to /shop/done); the app opens it in
   // the browser and waits for the payment to land
   if (IS_WEB) { location.href = r.url; return; }
@@ -12956,7 +12955,7 @@ async function renderLeaderboards(note) {
   if (_cloudOn) await cloudSyncNow();   // the app: your own numbers include what you just did
   let d, board = null;
   try { d = await API.get(url); } catch (e) { d = null; }
-  if (!d || d.error) { if (!shown) c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't reach onlinequiz.net — check your internet connection.")}</div>`; return; }
+  if (!d || d.error) { if (!shown) c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't reach onlinequiz.net. Check your internet connection.")}</div>`; return; }
   _lbCache.set(url, d);
   if (_lb.tab !== "global" && !(d.boards || []).some((b) => b.id === _lb.tab)) _lb.tab = "global";
   if (_lb.tab !== "global") { try { board = await API.get(_lbBoardUrl(_lb.tab, _lb.period)); } catch (e) { board = null; } if (!board || board.error) { _lb.tab = "global"; board = null; } else _lbCache.set(_lbBoardUrl(_lb.tab, _lb.period), board); }
@@ -12981,7 +12980,7 @@ async function paintLeaderboards(c, d, board, note) {
   let body;
   if (!board) {
     const rows = d.global || [], me = d.me && !rows.some((r) => r.you) ? d.me : null;
-    body = (rows.length ? `<div class="fr-list lb-board">${rows.map((r) => row(r, false)).join("")}${me ? '<div class="lb-gap">…</div>' + row(me, false) : ""}</div>` : '<div class="db-empty">No one is on the leaderboard yet — practice to be the first.</div>') +
+    body = (rows.length ? `<div class="fr-list lb-board">${rows.map((r) => row(r, false)).join("")}${me ? '<div class="lb-gap">…</div>' + row(me, false) : ""}</div>` : '<div class="db-empty">No one is on the leaderboard yet.</div>') +
       (d.signedIn ? "" : `<p class="fr-empty">${ic("user", 14)} <button type="button" class="acct-link" data-acct="signin">Sign in</button> to appear here and to make leaderboards with your friends.</p>`);
   } else {
     const b = board.board;
@@ -12994,7 +12993,7 @@ async function paintLeaderboards(c, d, board, note) {
       `<div class="fr-list lb-board">${board.rows.map((r) => row(r, b.mine)).join("")}</div>` +
       `<section class="fr-card lb-invite"><h2 class="eyebrow">Invite friends</h2>` +
         (canInvite.length ? `<div class="lb-invite-row"><select id="lb-invite-who" class="mode-input">${canInvite.map((f) => `<option value="${escapeHtml(f.handle)}">${escapeHtml(f.displayName || f.handle)} (@${escapeHtml(f.handle)})</option>`).join("")}</select><button type="button" class="btn btn-primary" data-lb-invite>Invite</button></div>`
-          : `<p class="fr-empty" style="margin:0">${(_lb.friends || []).length ? "All your friends are on it or invited." : 'Add friends first — <button type="button" class="acct-link" data-go="friends">Friends</button>.'}</p>`) +
+          : `<p class="fr-empty" style="margin:0">${(_lb.friends || []).length ? "All your friends are on it or invited." : 'Add friends first in <button type="button" class="acct-link" data-go="friends">Friends</button>.'}</p>`) +
         ((board.invited || []).length ? `<p class="fr-empty">Invited: ${board.invited.map((x) => "@" + escapeHtml(x.handle)).join(", ")}</p>` : "") +
       `</section>`;
   }
@@ -13024,7 +13023,7 @@ async function paintLeaderboards(c, d, board, note) {
       .then(() => _lb.gone.delete(id))
       .catch((e) => { _lb.gone.delete(id); _lb.tab = id; _lbCache.clear(); renderLeaderboards(" ").then(() => msg(failText, true)); });
   };
-  c.querySelector("[data-lb-new]")?.addEventListener("click", () => promptDialog("Name your leaderboard", "", async (name) => { const r = await act("/api/leaderboards/create", { name }, "Made it — now invite your friends."); if (r && r.id) { _lb.tab = r.id; renderLeaderboards("Made it — now invite your friends."); } }, { placeholder: "e.g. Varsity practice", yes: "Create" }));
+  c.querySelector("[data-lb-new]")?.addEventListener("click", () => promptDialog("Name your leaderboard", "", async (name) => { const r = await act("/api/leaderboards/create", { name }, "Leaderboard made. Invite your friends."); if (r && r.id) { _lb.tab = r.id; renderLeaderboards("Leaderboard made. Invite your friends."); } }, { placeholder: "e.g. Varsity practice", yes: "Create" }));
   c.querySelector("[data-lb-rename]")?.addEventListener("click", () => promptDialog("Rename the leaderboard", board.board.name, (name) => {
     const was = board.board.name, t = c.querySelector(".lb-title b"), tab = c.querySelector(`[data-lb-tab="${CSS.escape(_lb.tab)}"]`);
     if (t) t.textContent = name; if (tab) tab.textContent = name;   // shown at once
@@ -13032,7 +13031,7 @@ async function paintLeaderboards(c, d, board, note) {
   }, { yes: "Save" }));
   c.querySelector("[data-lb-delete]")?.addEventListener("click", () => confirmDialog("Delete " + board.board.name + " for everyone on it?", () => dropBoard("/api/leaderboards/delete", "Couldn't delete " + board.board.name + ". Try again."), { yes: "Delete", danger: true }));
   c.querySelector("[data-lb-leave]")?.addEventListener("click", () => confirmDialog("Leave " + board.board.name + "?", () => dropBoard("/api/leaderboards/leave", "Couldn't leave " + board.board.name + ". Try again."), { yes: "Leave", danger: true }));
-  c.querySelector("[data-lb-invite]")?.addEventListener("click", () => { const h = document.getElementById("lb-invite-who")?.value; if (h) { msg("Inviting @" + h + "…"); act("/api/leaderboards/invite", { id: _lb.tab, handle: h }, "Invited @" + h + " — they'll see it under Leaderboards."); } });
+  c.querySelector("[data-lb-invite]")?.addEventListener("click", () => { const h = document.getElementById("lb-invite-who")?.value; if (h) { msg("Inviting @" + h + "…"); act("/api/leaderboards/invite", { id: _lb.tab, handle: h }, "Invited @" + h + "."); } });
   c.querySelectorAll("[data-lb-remove]").forEach((b) => b.onclick = () => confirmDialog("Remove @" + b.dataset.lbRemove + " from this leaderboard?", () => removeOptimistic(b.closest(".lb-row"), () => API.post("/api/leaderboards/remove", { id: _lb.tab, handle: b.dataset.lbRemove }), { failText: "Couldn't remove @" + b.dataset.lbRemove + ". Try again." }).then((ok) => { if (ok) { _lbCache.clear(); renderLeaderboards(" "); } }), { yes: "Remove", danger: true }));
 }
 
@@ -13101,7 +13100,7 @@ function paintAdmUser() {
   const given = new Set((d.orders || []).filter((o) => o.note === "given by the admin").map((o) => o.id));
   const src = (g) => !g ? "" : g.order === "admin" || given.has(g.order) ? "given by you" : g.order ? "bought" : "";
   const grantRows = d.allGrants.map((w) => { const g = owned.get(w), on = !!g || u.admin;
-    return `<label class="adm-grant"><span><b>${escapeHtml(ADM_GRANT_NAMES[w] || w)}</b><small>${u.admin ? "admin account: has everything" : on ? src(g) : "doesn't have it"}</small></span>` +
+    return `<label class="adm-grant"><span><b>${escapeHtml(ADM_GRANT_NAMES[w] || w)}</b><small>${u.admin ? "admin account, has everything" : on ? src(g) : "doesn't have it"}</small></span>` +
       `<span class="ext-switch"><input type="checkbox" data-adm-grant="${escapeHtml(w)}"${on ? " checked" : ""}${u.admin ? " disabled" : ""} aria-label="${escapeHtml(ADM_GRANT_NAMES[w] || w)}"><span class="ext-slider"></span></span></label>`; }).join("");
   const skus = Object.entries(d.catalog).map(([k, c]) => `<option value="${k}" data-room="${c.room ? 1 : ""}">${escapeHtml(c.name)} ($${(c.price / 100).toFixed(2)})</option>`).join("");
   const rooms = (d.rooms || []).map((r) => `<div class="adm-room"><span><b class="num">${escapeHtml(String(r.name).toUpperCase())}</b><small>${escapeHtml(r.role)} · ${escapeHtml(r.access === "members" ? "Locked" : r.access === "password" ? "Password" : "Open")} · ${r.players || 0} players</small></span>` +
@@ -13155,7 +13154,7 @@ function paintAdmUser() {
     if (!r || !r.ok) { msg.textContent = (r && r.error) || "Couldn't give that."; return; }
     msg.textContent = "Given"; admOpen(id, true);
   };
-  el.querySelectorAll("[data-adm-drop]").forEach((b) => b.onclick = () => confirmDialog("Remove the room " + b.dataset.admDrop.toUpperCase() + "? Everyone in it is shown out, and its members and settings are gone.", async () => {
+  el.querySelectorAll("[data-adm-drop]").forEach((b) => b.onclick = () => confirmDialog("Remove the room " + b.dataset.admDrop.toUpperCase() + "? Everyone is sent out, and its members and settings are deleted.", async () => {
     let r = null; try { r = await API.post("/api/admin/room", { action: "remove", name: b.dataset.admDrop }); } catch (e) {}
     if (!r || !r.ok) { failBubble(b, (r && r.error) || "Couldn't remove it."); return; }
     admOpen(id, true);
@@ -13219,7 +13218,7 @@ async function renderFriends(note) {
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Friends need an onlinequiz account. Accounts aren't open yet.</p></div>`; return; }
   if (!Account.user) { c.innerHTML = accountPanelHtml("Sign in to add friends and see how they're practicing."); return; }
   if (!Account.user.handle) {
-    c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Choose a username first — friends add you by it.</p><div class="acct-panel-btns"><button type="button" class="btn btn-primary" id="fr-choose">Choose a username</button></div></div>`;
+    c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Choose a username first so friends can add you.</p><div class="acct-panel-btns"><button type="button" class="btn btn-primary" id="fr-choose">Choose a username</button></div></div>`;
     document.getElementById("fr-choose").onclick = () => openAccount("handle");
     return;
   }
@@ -13252,7 +13251,7 @@ async function renderFriends(note) {
       `<div class="fr-msg" id="fr-msg" role="status">${note ? escapeHtml(note) : ""}</div></section>` +
     (reqs ? `<section class="fr-sec"><h2 class="eyebrow">Requests</h2><div class="fr-list">${reqs}</div></section>` : "") +
     `<section class="fr-sec"><h2 class="eyebrow">This week</h2><div class="fr-list fr-board">${board}</div>` +
-      (d.friends && d.friends.length ? "" : '<p class="fr-empty">No friends yet — add one by their username above.</p>') + `</section>` +
+      (d.friends && d.friends.length ? "" : '<p class="fr-empty">No friends yet.</p>') + `</section>` +
     (sent ? `<section class="fr-sec"><h2 class="eyebrow">Sent</h2><div class="fr-list">${sent}</div></section>` : "") +
   `</div>`;
   tipInto(c.querySelector(".fr-page"), "friends");
@@ -13303,7 +13302,7 @@ function dlLabel(b) {
 function dlSteps(os, info) {
   if (os === "mac") return [
     "Open the downloaded <b>.dmg</b> and drag <b>OfflineQuiz</b> into <b>Applications</b>.",
-    "Open OfflineQuiz. The first time, macOS stops it because it isn't from the App Store.",
+    "Open OfflineQuiz. macOS blocks it the first time because it isn't from the App Store.",
     "Open <b>System Settings → Privacy &amp; Security</b>, scroll down and click <b>Open Anyway</b>.",
   ];
   if (os === "windows") return [
@@ -13311,8 +13310,8 @@ function dlSteps(os, info) {
     "If Windows shows <b>Windows protected your PC</b>, click <b>More info → Run anyway</b>.",
   ];
   if (os === "linux") return [
-    "<b>AppImage</b>: make it executable (<b>chmod +x</b>) and open it.",
-    "<b>.deb</b> (Ubuntu, Debian, ChromeOS Linux): open it with Software Install, or <b>sudo apt install ./</b>file.",
+    "Make the <b>AppImage</b> executable with <b>chmod +x</b> and open it.",
+    "Open the <b>.deb</b> with Software Install, or run <b>sudo apt install ./</b>file.",
   ];
   return [];
 }
@@ -13390,7 +13389,7 @@ async function maybeSwitchDb(force) {
   try {
     const r = await API.post("/api/db-update-commit", {});
     if (r && r.ok) {
-      setProgress("db-upd", 100, `Updated — ${(r.result?.tossups || 0).toLocaleString()} tossups, ${(r.result?.bonuses || 0).toLocaleString()} bonuses. Reloading…`);
+      setProgress("db-upd", 100, `Updated to ${(r.result?.tossups || 0).toLocaleString()} tossups and ${(r.result?.bonuses || 0).toLocaleString()} bonuses. Reloading…`);
       // category tree, sets, counts and every cache come from the database
       setTimeout(() => location.reload(), force ? 1200 : 0);
       return;
@@ -13537,8 +13536,8 @@ function showUpdateDialog(info, opts) {
   el.id = "update-dialog";
   el.className = "qb-overlay confirm-overlay";
   const head = opts.installed
-    ? `Update v${escapeHtml(String(info.version))} downloaded — restart to apply.`
-    : `Update available: v${escapeHtml(String(info.version))}${info.critical ? " (important)" : ""}`;
+    ? `Version ${escapeHtml(String(info.version))} is ready. Restart to apply it.`
+    : `Version ${escapeHtml(String(info.version))} is available${info.critical ? " (important)" : ""}`;
   el.innerHTML = `<div class="confirm-box"><div class="confirm-msg">${head}${info.notes ? `<div class="text-muted" style="font-size:12px;margin-top:6px">${escapeHtml(info.notes)}</div>` : ""}</div>
     <div id="update-dialog-status"></div>
     <div class="confirm-actions" id="update-dialog-actions"></div></div>`;

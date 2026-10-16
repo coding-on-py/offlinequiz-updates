@@ -18,7 +18,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // the account (POST /api/sync, see userData.js). QB_CLOUD_URL points tests at a
 // local website server.
 const CLOUD_URL = String(process.env.QB_CLOUD_URL || "https://www.onlinequiz.net").replace(/\/+$/, "");
-const CLOUD_OFFLINE = "Couldn't reach onlinequiz.net — check your internet connection.";
+const CLOUD_OFFLINE = "Couldn't reach onlinequiz.net. Check your internet connection.";
 
 const DEFAULT_DB_PATH = join(__dirname, "..", "..", "data", "questions.db");
 // Frequency lists keep at most this many merged answers (~90 pages of 50).
@@ -1239,7 +1239,7 @@ export class App {
     if (r.status === 401 && token) {
       // the sign-in ended (signed out elsewhere, password reset, expired)
       const c = this._cloud(); if (c && c.token === token) this._setCloud(null);
-      return { error: "You were signed out — sign in again.", signedOut: true };
+      return { error: "You were signed out. Sign in again.", signedOut: true };
     }
     if (!data) return { error: CLOUD_OFFLINE, offline: true };
     return data;
@@ -1263,7 +1263,7 @@ export class App {
     }
     if (key === "POST /api/account/login") {
       const r = await this._cloudFetch("POST", "/api/account/login", { email: body.email, password: body.password, client: "app" });
-      if (!r.ok || !r.token) return r.ok ? { error: "The server didn't sign this app in — try again." } : r;
+      if (!r.ok || !r.token) return r.ok ? { error: "The server didn't sign this app in. Try again." } : r;
       // another account on this profile before: start its sync from scratch
       const same = c && c.user && r.user && c.user.email === r.user.email;
       this._setCloud({ token: r.token, user: r.user, pulled: same ? c.pulled || 0 : 0, pushed: same ? c.pushed || 0 : 0, lastSync: same ? c.lastSync || null : null });
@@ -1289,7 +1289,7 @@ export class App {
     }
     if (key === "POST /api/account/app-link/poll") {
       const l = this._appLink;
-      if (!l || Date.now() - l.at > 10 * 60e3) return { error: "This sign-in expired — try again.", expired: true };
+      if (!l || Date.now() - l.at > 10 * 60e3) return { error: "This sign-in expired. Try again.", expired: true };
       const r = await this._cloudFetch("POST", "/api/account/app-link/poll", { code: l.code, poll: l.poll });
       if (!r.ok || !r.token) return r.error ? r : { pending: true };
       this._appLink = null;
