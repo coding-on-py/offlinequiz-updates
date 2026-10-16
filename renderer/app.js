@@ -4265,6 +4265,7 @@ function endSession() {
 
 async function nextQuestion() {
   if (!state.sessionActive || state._awaitingNext) return;
+  if (trialOver()) return;   // a trial that ended (or is about to show its result) reads nothing more
   // Random practice serves from the preload queue. If a run of Nexts ever outpaces it, the
   // screen stays exactly as it is — no blank, no wait text — until one is ready, and more
   // Nexts are ignored meanwhile.
@@ -9905,8 +9906,10 @@ function trialMark(power, why) {
   t.res.push(power ? "p" : "x");
   if (power) t.powered++;
   paintTrialBar();
-  if (!power || t.res.length >= TRIAL_LEN) setTimeout(() => trialEnd(power ? "" : why || "not a power"), 700);
+  if (!power || t.res.length >= TRIAL_LEN) { t.ending = true; setTimeout(() => trialEnd(power ? "" : why || "not a power"), 700); }
 }
+// the trial is over: its result shows, or will in a moment (the last verdict is in)
+function trialOver() { try { return !!(_trial && !_trial.pending && (_trial.done || _trial.ending)); } catch (e) { return false; } }
 function trialRunning() { try { return !!(_trial && !_trial.done && !_trial.pending); } catch (e) { return false; } }   // (safe before _trial exists)
 const skipsOk = () => !!state.settings.allowSkips && !trialRunning();   // no skipping in a trial
 const trialComplete = () => !!(_trial && !_trial.done && !_trial.pending && (_trial.res || []).length >= TRIAL_LEN);
@@ -9961,7 +9964,14 @@ function showTrialResult(t, passed, why) {
     if (state.sessionActive) endSession();
     if (toTrials) goTo("player");
   };
-  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); } };
+  // the result owns the keyboard: Esc closes, Enter is its main button, nothing reaches practice (no N, Space, S …)
+  const onKey = (e) => {
+    if (e.key === "Tab") return;
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    else if (e.key === "Enter") { e.preventDefault(); (el.querySelector("#td-next") || el.querySelector("#td-again") || el.querySelector("#td-trials"))?.click(); }
+    else if (!e.metaKey && !e.ctrlKey) e.preventDefault();
+  };
   document.addEventListener("keydown", onKey, true);
   document.body.appendChild(el);
   el.querySelector("#td-close").onclick = () => finish(false);

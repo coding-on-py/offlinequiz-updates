@@ -1,5 +1,5 @@
 {
-  "version": "15.2",
+  "version": "15.3",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,13 +55,13 @@
     }
   ],
   "main": true,
-  "notes": "minor fixes",
+  "notes": "bug fixes",
   "files": {
     "renderer/index.html": "a5d27573d6bdbb571d8ede347308b92779a594dccd9e08669e70734ba489ec7a",
     "renderer/style.css": "a0bbcdd53ebd8b346c2e648c377d2e542eeaf3197022b2d1970f6afbe27b772b",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "9bc0d5de17e99ee148aed07a04840c39bef2e21d6c77bd7eb64d1e64af4e9371",
-    "renderer/app.js": "accfe1f10586f4bc601f54a3d4542c3618ee412829be83f65a9a9129fd68b2e6",
+    "renderer/app.js": "3c0a2cb10ab1bcb6d544d95081654eb81e23b26e9b31292b1f223fd3e6eef88e",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
     "plugins/canon-tracker.zip": "61700802d7421b309f884be764a6733dade6942dfa209ef93b8efa74985cd7a0",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/packet-builder.zip": "c9f68e95cb536ed51d1c5bb5e1a30fe603a94320737a78b9bd991b38789a4bc3"
   },
-  "signature": "PNdXA71udhgosv2d5PFMk8iarTrUoM/E666C67Ujz/em7z38cGtFilh8Ee3IlnedGHdQntwU4l5Mwqqvecp8DQ=="
+  "signature": "hBW/BjZvEJ4zNLpi8qwAf4ujurPBtDJjSO1Kr8gOrZUfy2PG7/4spI1+/WlQX7v3UgzmT24IZhhfcaSxAf/7CQ=="
 }
