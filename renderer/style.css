@@ -5903,3 +5903,14 @@ html.hw :is(.shop-check.ok, .shop-check.ok b, .acct-ok) { color: #ff9d40 !import
   .mp-room .question-area:has(> .mp-history:not([style*="none"])) { min-height: calc(100vh - var(--topbar-h) - 60px - 20px); min-height: calc(100dvh - var(--topbar-h) - 60px - 20px); }
   .mp-room .question-area > .mp-history { margin-bottom: 24px; }
 }
+/* 14.92: a trial's levels open in the page, under the Trials grid (no pop-up) */
+.tr-pick { margin-top: 14px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--hue) 55%, var(--line)); border-radius: var(--r-lg); background: color-mix(in srgb, var(--hue) 6%, var(--bg)); display: flex; flex-direction: column; gap: 12px; animation: tr-pick-in 0.18s var(--ease-out); }
+.tr-pick-head { display: flex; align-items: center; gap: 10px; }
+.tr-pick-head h3 { margin: 0; color: var(--strong); font-size: 15px; }
+.tr-pick .tp-lead { margin: 0; }
+.tr-pick-foot { display: flex; justify-content: flex-end; }
+.tr-pick .ad-fine:empty { display: none; }
+.tr-pick-float { position: fixed; z-index: 80; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; box-shadow: var(--shadow); }
+.tr-card.on { border-color: var(--hue); background: color-mix(in srgb, var(--hue) 10%, var(--bg)); }
+@keyframes tr-pick-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .tr-pick { animation: none; } }

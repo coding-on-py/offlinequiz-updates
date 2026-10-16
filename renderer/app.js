@@ -9543,51 +9543,69 @@ function trialsSectionHtml(info) {
         `<span class="tr-lv">${lv ? escapeHtml(name + " " + ROMAN[lv]) : "No badge yet"}</span><span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
     }).join("")}</div></section>`;
 }
+// the trials' state, whatever came back (an older app, an error, a malformed synced value): always { trials: {…} }
+function normTrialInfo(d) {
+  const raw = d && typeof d === "object" && d.trials && typeof d.trials === "object" && !Array.isArray(d.trials) ? d.trials : {};
+  const trials = {};
+  for (const [k, v] of Object.entries(raw)) if (/^[a-z]+\|\d{1,2}$/.test(k) && v && typeof v === "object") trials[k] = { s: Number(v.s) || 0, p: Number(v.p) || 0, l: Number(v.l) || 0 };
+  return { ...(d && typeof d === "object" ? d : {}), trials };
+}
 async function loadTrialInfo() {
-  try { const d = await API.get("/api/trials"); _trialInfo = d || { trials: {} }; if (d && d.now) _trialSkew = d.now - Date.now(); } catch (e) { _trialInfo = _trialInfo || { trials: {} }; }
+  try { const d = await API.get("/api/trials"); _trialInfo = normTrialInfo(d); if (d && Number(d.now)) _trialSkew = Number(d.now) - Date.now(); } catch (e) { _trialInfo = normTrialInfo(_trialInfo); }
   return _trialInfo;
 }
 function wireTrials(container) {
   container.querySelectorAll(".tr-card[data-trial]").forEach((b) => { b.onclick = () => openTrialPicker(b.dataset.trial); });
 }
+// A category's levels open right under the Trials grid (14.92: in the page — a pop-up's layout hid them on some
+// setups). Ids stay #trial-pick / .tp-lv / #tp-go / #tp-x.
 function openTrialPicker(key) {
   const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
   document.getElementById("trial-pick")?.remove();
-  const info = _trialInfo || { trials: {} };
+  const info = normTrialInfo(_trialInfo);
+  const host = document.querySelector(".screen.active .pf-trials") || document.querySelector(".pf-trials");
   let pick = 0;
-  const el = document.createElement("div");
-  el.id = "trial-pick";
-  el.className = "qb-overlay review-ovl ach-ovl";
-  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "tp-h");
+  const lvState = (lv) => { try { return trialState(info, key, lv); } catch (e) { return { passed: false, wait: 0 }; } };
   const levels = () => Array.from({ length: 10 }, (_, i) => {
-    const lv = i + 1, st = trialState(info, key, lv);
+    const lv = i + 1, st = lvState(lv);
     return `<button type="button" class="tp-lv${st.passed ? " passed" : ""}${st.wait ? " wait" : ""}${pick === lv ? " sel" : ""}" data-lv="${lv}" aria-pressed="${pick === lv}"${st.wait ? " disabled" : ""}>` +
       `<b>${ROMAN[lv]}</b><small>${st.passed ? ic("check", 12) + "Passed" : st.wait ? ic("clock", 12) + fmtWait(st.wait) : "Level " + lv}</small></button>`;
   }).join("");
-  const paint = () => {
-    el.querySelector(".tp-levels").innerHTML = levels();
-    const go = el.querySelector("#tp-go"), note = el.querySelector("#tp-note");
-    go.disabled = !pick;
-    go.innerHTML = ic("play", 14) + (pick ? "Start " + escapeHtml(trialName(key, pick)) : "Pick a level");
-    note.textContent = pick && trialState(info, key, pick).passed ? "You have this badge already — taking it again changes nothing, but a fail still waits an hour." : "";
-  };
+  const el = document.createElement("section");
+  el.id = "trial-pick";
+  el.className = "tr-pick";
+  el.style.setProperty("--hue", trialHue(key));
+  el.setAttribute("aria-labelledby", "tp-h");
   el.innerHTML = `
-    <div class="settings-modal tp-modal" tabindex="-1" style="--hue:${trialHue(key)}">
-      <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="spacer"></span>
-        <button type="button" class="btn btn-ghost btn-icon" id="tp-x" aria-label="Close">${ic("x")}</button></div>
-      <div class="ad-body">
-        <p class="tp-lead">Ten power-marked ${escapeHtml(cat[1])} tossups at the level you pick, read one after another. <b>Power all ten</b> to earn the <b>${escapeHtml(cat[1])}</b> badge for that level. A neg, a right answer after the power mark, no buzz, a skip or leaving ends the trial — and it can be taken again an hour after it started.</p>
-        <div class="tp-levels" role="group" aria-label="Level"></div>
-        <p class="ad-fine" id="tp-note"></p>
-        <p class="tp-err" id="tp-err" role="alert"></p>
-      </div>
-      <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn btn-primary" id="tp-go" disabled></button></div>
-    </div>`;
-  const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); };
-  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+    <div class="tr-pick-head"><h3 id="tp-h">${escapeHtml(cat[1])} trial</h3><span class="spacer"></span>
+      <button type="button" class="btn btn-ghost btn-icon btn-sm" id="tp-x" aria-label="Close">${ic("x")}</button></div>
+    <p class="tp-lead">Ten power-marked ${escapeHtml(cat[1])} tossups at the level you pick. <b>Power all ten</b> for the badge; a neg, a late buzz, no buzz, a skip or leaving ends it, and it can be taken again an hour after it started.</p>
+    <div class="tp-levels" role="group" aria-label="Level">${levels()}</div>
+    <p class="ad-fine" id="tp-note"></p>
+    <p class="tp-err" id="tp-err" role="alert"></p>
+    <div class="tr-pick-foot"><button type="button" class="btn btn-primary" id="tp-go" disabled>${ic("play", 14)}Pick a level</button></div>`;
+  const paint = () => {
+    try {
+      el.querySelector(".tp-levels").innerHTML = levels();
+      const go = el.querySelector("#tp-go"), note = el.querySelector("#tp-note");
+      go.disabled = !pick;
+      go.innerHTML = ic("play", 14) + (pick ? "Start " + escapeHtml(trialName(key, pick)) : "Pick a level");
+      note.textContent = pick && lvState(pick).passed ? "You have this badge already — taking it again changes nothing, but a fail still waits an hour." : "";
+    } catch (e) {}
+  };
+  const cards = () => document.querySelectorAll(".tr-card[data-trial]");
+  const close = () => { document.removeEventListener("keydown", onKey, true); cards().forEach((c) => { c.classList.remove("on"); c.setAttribute("aria-expanded", "false"); }); el.remove(); };
+  const onKey = (e) => { if (e.key === "Escape" && document.getElementById("trial-pick") === el) { e.preventDefault(); e.stopPropagation(); close(); } };
   document.addEventListener("keydown", onKey, true);
-  el.addEventListener("click", (ev) => { if (ev.target === el) close(); const b = ev.target.closest?.(".tp-lv[data-lv]"); if (b && !b.disabled) { pick = parseInt(b.dataset.lv, 10); paint(); } });
-  document.body.appendChild(el);
+  el.addEventListener("click", (ev) => { const b = ev.target.closest?.(".tp-lv[data-lv]"); if (b && !b.disabled) { pick = parseInt(b.dataset.lv, 10); paint(); } });
+  if (host) {
+    const grid = host.querySelector(".tr-grid");
+    if (grid) grid.after(el); else host.appendChild(el);
+  } else {   // no profile page (another caller): a plain box on top
+    el.classList.add("tr-pick-float");
+    document.body.appendChild(el);
+  }
+  cards().forEach((c) => { const on = c.dataset.trial === key; c.classList.toggle("on", on); c.setAttribute("aria-expanded", String(on)); });
   el.querySelector("#tp-x").onclick = close;
   el.querySelector("#tp-go").onclick = async () => {
     if (!pick) return;
@@ -9603,7 +9621,7 @@ function openTrialPicker(key) {
     runTrial({ key, name: cat[1], level: pick, ids: r.ids });
   };
   paint();
-  try { el.querySelector(".tp-modal").focus({ preventScroll: true }); } catch (e) {}
+  try { el.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (e) { try { el.scrollIntoView(); } catch (e2) {} }
 }
 function runTrial(t) {
   _trial = { ...t, n: 0, powered: 0, servedId: null, answeredId: null, done: false };
@@ -9644,7 +9662,7 @@ async function trialEnd(passed, why, quiet) {
   const t = _trial; t.done = true;
   let r = null;
   try { r = await API.post("/api/trials", { action: passed ? "pass" : "fail", category: t.key, level: t.level }); } catch (e) {}
-  if (passed && r && r.trials && _trialInfo) _trialInfo.trials = r.trials;
+  if (passed && r && r.trials && _trialInfo) _trialInfo = normTrialInfo({ ..._trialInfo, trials: r.trials });
   else if (_trialInfo && _trialInfo.trials) { const k = t.key + "|" + t.level; _trialInfo.trials[k] = _trialInfo.trials[k] || {}; if (passed) { _trialInfo.trials[k].l = Date.now() + _trialSkew; _trialInfo.trials[k].p = _trialInfo.trials[k].p || _trialInfo.trials[k].l; } }
   if (passed && r && !r.ok) passed = false;
   if (quiet) { _trial = null; paintTrialBar(); return; }
