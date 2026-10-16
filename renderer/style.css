@@ -5774,28 +5774,28 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .trial-bar #tb-leave { margin-left: auto; }
 
 .ach-modal, .tp-modal { width: min(560px, calc(94vw / var(--ui-zoom, 1))); max-height: min(86vh, 760px); display: flex; flex-direction: column; }
-.ad-body { padding: 4px 20px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
-.ad-top { display: flex; align-items: flex-start; gap: 14px; }
-.ad-icon .achievement-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; background: var(--surface-2); color: var(--muted); font-size: 24px; }
-.ad-top.earned .ad-icon .achievement-icon { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
-.ad-icon .achievement-icon-graphic svg { width: 26px; height: 26px; }
-.ad-id { flex: 1; min-width: 0; }
-.ad-name { color: var(--strong); font-size: 17px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
-.ad-desc { margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.45; }
-.ad-state { flex: none; padding: 3px 10px; border-radius: 99px; background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 600; }
-.ad-state.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
-.ad-bar { margin-top: -4px; }
-.ad-sec h3 { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
-.ad-sec p { margin: 0 0 6px; color: var(--text); font-size: 13px; line-height: 1.5; }
-.ad-fine { color: var(--muted) !important; font-size: 12px !important; }
-.ad-topics { display: flex; flex-wrap: wrap; gap: 6px; }
-.ad-topic { padding: 4px 10px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--strong); font-size: 12.5px; }
-.ad-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.ad-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
-.ad-chip.on { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--strong); }
-.ad-chip.on svg { color: var(--accent); }
-.ad-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ad-list li { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text); }
+.achd-body { padding: 4px 20px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.achd-top { display: flex; align-items: flex-start; gap: 14px; }
+.achd-icon .achievement-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; background: var(--surface-2); color: var(--muted); font-size: 24px; }
+.achd-top.earned .achd-icon .achievement-icon { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.achd-icon .achievement-icon-graphic svg { width: 26px; height: 26px; }
+.achd-id { flex: 1; min-width: 0; }
+.achd-name { color: var(--strong); font-size: 17px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.achd-desc { margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.achd-state { flex: none; padding: 3px 10px; border-radius: 99px; background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 600; }
+.achd-state.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.achd-bar { margin-top: -4px; }
+.achd-sec h3 { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.achd-sec p { margin: 0 0 6px; color: var(--text); font-size: 13px; line-height: 1.5; }
+.achd-fine { color: var(--muted) !important; font-size: 12px !important; }
+.achd-topics { display: flex; flex-wrap: wrap; gap: 6px; }
+.achd-topic { padding: 4px 10px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--strong); font-size: 12.5px; }
+.achd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.achd-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.achd-chip.on { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--strong); }
+.achd-chip.on svg { color: var(--accent); }
+.achd-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.achd-list li { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text); }
 
 .tp-lead { margin: 0; color: var(--text); font-size: 13px; line-height: 1.55; }
 .tp-levels { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
@@ -5821,7 +5821,7 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 /* 14.89: these two windows stack as plain blocks and scroll as a whole when too tall — a flex column whose middle
    is a shrinking scroll box collapsed the middle to nothing in some engines (the level picker showed no levels) */
 .ach-modal, .tp-modal { display: block; overflow-x: hidden; overflow-y: auto; }
-.ach-modal > .ad-body, .tp-modal > .ad-body { overflow: visible; }
+.ach-modal > .achd-body, .tp-modal > .achd-body { overflow: visible; }
 .ach-modal > .modal-head, .tp-modal > .modal-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 
 /* ── Halloween 2026 (14.90): html.hw — app.js applyHwTheme (index.html sets it before the first paint); until Nov 1 ── */
@@ -5903,14 +5903,6 @@ html.hw :is(.shop-check.ok, .shop-check.ok b, .acct-ok) { color: #ff9d40 !import
   .mp-room .question-area:has(> .mp-history:not([style*="none"])) { min-height: calc(100vh - var(--topbar-h) - 60px - 20px); min-height: calc(100dvh - var(--topbar-h) - 60px - 20px); }
   .mp-room .question-area > .mp-history { margin-bottom: 24px; }
 }
-/* 14.92: a trial's levels open in the page, under the Trials grid (no pop-up) */
-.tr-pick { margin-top: 14px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--hue) 55%, var(--line)); border-radius: var(--r-lg); background: color-mix(in srgb, var(--hue) 6%, var(--bg)); display: flex; flex-direction: column; gap: 12px; animation: tr-pick-in 0.18s var(--ease-out); }
-.tr-pick-head { display: flex; align-items: center; gap: 10px; }
-.tr-pick-head h3 { margin: 0; color: var(--strong); font-size: 15px; }
-.tr-pick .tp-lead { margin: 0; }
-.tr-pick-foot { display: flex; justify-content: flex-end; }
-.tr-pick .ad-fine:empty { display: none; }
-.tr-pick-float { position: fixed; z-index: 80; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; box-shadow: var(--shadow); }
-.tr-card.on { border-color: var(--hue); background: color-mix(in srgb, var(--hue) 10%, var(--bg)); }
-@keyframes tr-pick-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .tr-pick { animation: none; } }
+
+/* 14.93: the achievement / trial windows' parts are .achd-* — ad blockers hide .ad-body, .ad-top, .ad-icon and .ad-bar
+   (EasyList), which left those windows blank for players with one */

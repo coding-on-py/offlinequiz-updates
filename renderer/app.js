@@ -9557,33 +9557,22 @@ async function loadTrialInfo() {
 function wireTrials(container) {
   container.querySelectorAll(".tr-card[data-trial]").forEach((b) => { b.onclick = () => openTrialPicker(b.dataset.trial); });
 }
-// A category's levels open right under the Trials grid (14.92: in the page — a pop-up's layout hid them on some
-// setups). Ids stay #trial-pick / .tp-lv / #tp-go / #tp-x.
+// A category's levels: a window over the profile (the 14.92 inline panel is gone again, 14.93).
 function openTrialPicker(key) {
   const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
   document.getElementById("trial-pick")?.remove();
   const info = normTrialInfo(_trialInfo);
-  const host = document.querySelector(".screen.active .pf-trials") || document.querySelector(".pf-trials");
   let pick = 0;
   const lvState = (lv) => { try { return trialState(info, key, lv); } catch (e) { return { passed: false, wait: 0 }; } };
+  const el = document.createElement("div");
+  el.id = "trial-pick";
+  el.className = "qb-overlay review-ovl ach-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "tp-h");
   const levels = () => Array.from({ length: 10 }, (_, i) => {
     const lv = i + 1, st = lvState(lv);
     return `<button type="button" class="tp-lv${st.passed ? " passed" : ""}${st.wait ? " wait" : ""}${pick === lv ? " sel" : ""}" data-lv="${lv}" aria-pressed="${pick === lv}"${st.wait ? " disabled" : ""}>` +
       `<b>${ROMAN[lv]}</b><small>${st.passed ? ic("check", 12) + "Passed" : st.wait ? ic("clock", 12) + fmtWait(st.wait) : "Level " + lv}</small></button>`;
   }).join("");
-  const el = document.createElement("section");
-  el.id = "trial-pick";
-  el.className = "tr-pick";
-  el.style.setProperty("--hue", trialHue(key));
-  el.setAttribute("aria-labelledby", "tp-h");
-  el.innerHTML = `
-    <div class="tr-pick-head"><h3 id="tp-h">${escapeHtml(cat[1])} trial</h3><span class="spacer"></span>
-      <button type="button" class="btn btn-ghost btn-icon btn-sm" id="tp-x" aria-label="Close">${ic("x")}</button></div>
-    <p class="tp-lead">Ten power-marked ${escapeHtml(cat[1])} tossups at the level you pick. <b>Power all ten</b> for the badge; a neg, a late buzz, no buzz, a skip or leaving ends it, and it can be taken again an hour after it started.</p>
-    <div class="tp-levels" role="group" aria-label="Level">${levels()}</div>
-    <p class="ad-fine" id="tp-note"></p>
-    <p class="tp-err" id="tp-err" role="alert"></p>
-    <div class="tr-pick-foot"><button type="button" class="btn btn-primary" id="tp-go" disabled>${ic("play", 14)}Pick a level</button></div>`;
   const paint = () => {
     try {
       el.querySelector(".tp-levels").innerHTML = levels();
@@ -9593,19 +9582,23 @@ function openTrialPicker(key) {
       note.textContent = pick && lvState(pick).passed ? "You have this badge already — taking it again changes nothing, but a fail still waits an hour." : "";
     } catch (e) {}
   };
-  const cards = () => document.querySelectorAll(".tr-card[data-trial]");
-  const close = () => { document.removeEventListener("keydown", onKey, true); cards().forEach((c) => { c.classList.remove("on"); c.setAttribute("aria-expanded", "false"); }); el.remove(); };
-  const onKey = (e) => { if (e.key === "Escape" && document.getElementById("trial-pick") === el) { e.preventDefault(); e.stopPropagation(); close(); } };
+  el.innerHTML = `
+    <div class="settings-modal tp-modal" tabindex="-1" style="--hue:${trialHue(key)}">
+      <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-icon" id="tp-x" aria-label="Close">${ic("x")}</button></div>
+      <div class="achd-body">
+        <p class="tp-lead">Ten power-marked ${escapeHtml(cat[1])} tossups at the level you pick, read one after another. <b>Power all ten</b> to earn the <b>${escapeHtml(cat[1])}</b> badge for that level. A neg, a right answer after the power mark, no buzz, a skip or leaving ends the trial — and it can be taken again an hour after it started.</p>
+        <div class="tp-levels" role="group" aria-label="Level">${levels()}</div>
+        <p class="achd-fine" id="tp-note"></p>
+        <p class="tp-err" id="tp-err" role="alert"></p>
+      </div>
+      <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn btn-primary" id="tp-go" disabled></button></div>
+    </div>`;
+  const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
   document.addEventListener("keydown", onKey, true);
-  el.addEventListener("click", (ev) => { const b = ev.target.closest?.(".tp-lv[data-lv]"); if (b && !b.disabled) { pick = parseInt(b.dataset.lv, 10); paint(); } });
-  if (host) {
-    const grid = host.querySelector(".tr-grid");
-    if (grid) grid.after(el); else host.appendChild(el);
-  } else {   // no profile page (another caller): a plain box on top
-    el.classList.add("tr-pick-float");
-    document.body.appendChild(el);
-  }
-  cards().forEach((c) => { const on = c.dataset.trial === key; c.classList.toggle("on", on); c.setAttribute("aria-expanded", String(on)); });
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); const b = ev.target.closest?.(".tp-lv[data-lv]"); if (b && !b.disabled) { pick = parseInt(b.dataset.lv, 10); paint(); } });
+  document.body.appendChild(el);
   el.querySelector("#tp-x").onclick = close;
   el.querySelector("#tp-go").onclick = async () => {
     if (!pick) return;
@@ -9621,7 +9614,7 @@ function openTrialPicker(key) {
     runTrial({ key, name: cat[1], level: pick, ids: r.ids });
   };
   paint();
-  try { el.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (e) { try { el.scrollIntoView(); } catch (e2) {} }
+  try { el.querySelector(".tp-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 function runTrial(t) {
   _trial = { ...t, n: 0, powered: 0, servedId: null, answeredId: null, done: false };
@@ -9678,7 +9671,7 @@ function showTrialResult(t, passed, why) {
   const q = Math.min(TRIAL_LEN, t.powered + 1);
   el.innerHTML = `
     <div class="settings-modal tp-modal td-modal" tabindex="-1" style="--hue:${trialHue(t.key)}">
-      <div class="ad-body td-body">
+      <div class="achd-body td-body">
         <span class="td-medal${passed ? " on" : ""}">${ic("award", 40)}</span>
         <h2 id="td-h">${passed ? "Badge earned" : "Trial over"}</h2>
         <p class="td-name">${escapeHtml(trialName(t.key, t.level))}</p>
@@ -9876,13 +9869,13 @@ function openAchievementDetail(ach, ctx) {
   const earned = !!data.earned, thr = ach.threshold || 1, prog = Math.min(data.progress || 0, thr);
   const mystery = ach.type === "cat_specific" && !earned;
   const name = mystery ? "??? Mystery ???" : ach.name, desc = mystery ? "A secret achievement." : (ach.desc || "");
-  const sec = (title, body) => body ? `<section class="ad-sec"><h3>${title}</h3>${body}</section>` : "";
-  const chips = (items) => `<div class="ad-chips">${items.map(([t, on]) => `<span class="ad-chip${on ? " on" : ""}">${on ? ic("check", 12) : ""}${escapeHtml(t)}</span>`).join("")}</div>`;
+  const sec = (title, body) => body ? `<section class="achd-sec"><h3>${title}</h3>${body}</section>` : "";
+  const chips = (items) => `<div class="achd-chips">${items.map(([t, on]) => `<span class="achd-chip${on ? " on" : ""}">${on ? ic("check", 12) : ""}${escapeHtml(t)}</span>`).join("")}</div>`;
   let how = "", what = "", mine = "";
   if (ACH_HOW[ach.type]) how = `<p>${escapeHtml(ACH_HOW[ach.type](ach))}</p>`;
   if (ach.type === "cat") {
     const top = Object.entries((ctx.stats && ctx.stats.byCategory) || {}).map(([k, v]) => [k, (v && v.totalQuestions) || 0]).sort((a, b) => b[1] - a[1]).slice(0, 5);
-    if (top.length) mine = `<ul class="ad-list">${top.map(([k, n]) => `<li><span>${escapeHtml(k)}</span><b class="num">${n.toLocaleString()}</b></li>`).join("")}</ul>`;
+    if (top.length) mine = `<ul class="achd-list">${top.map(([k, n]) => `<li><span>${escapeHtml(k)}</span><b class="num">${n.toLocaleString()}</b></li>`).join("")}</ul>`;
   } else if (ach.type === "daily") {
     const best = Object.values((ctx.stats && ctx.stats.questionsByDate) || {}).sort((a, b) => (b.questions || 0) - (a.questions || 0))[0];
     if (best) mine = `<p>Your best day: <b class="num">${(best.questions || 0).toLocaleString()}</b> questions (${escapeHtml(best.date || "")}).</p>`;
@@ -9894,16 +9887,16 @@ function openAchievementDetail(ach, ctx) {
     const counted = mode === "targets" ? `${thr} different ${thr === 1 ? "one" : "ones"} of the list` : mode === "answers" ? `${thr} different answers` : `${thr} different ${thr === 1 ? "question" : "questions"}`;
     how = `<p>Power ${counted}${topics.length && !groups.length ? " in the topic below" : ""}. A power is a right answer buzzed before the power mark (*); each question counts once.</p>` +
       (groups.length && topics.length ? `<p>${ach.either ? "Either a question in the topic or one whose answer is on the list counts." : "The question has to be in the topic and its answer on the list."}</p>` : "") +
-      (groups.length ? `<p class="ad-fine">An answer counts when it is the question's main answer (a person's surname alone is enough)${within.length ? `, in ${within.map((w) => escapeHtml(achPathLabel(w))).join(" or ")}` : ""}.</p>` : "");
+      (groups.length ? `<p class="achd-fine">An answer counts when it is the question's main answer (a person's surname alone is enough)${within.length ? `, in ${within.map((w) => escapeHtml(achPathLabel(w))).join(" or ")}` : ""}.</p>` : "");
     const recs = (ctx.records || []).filter((r) => achRecordHit(ach, r) >= 0);
-    if (topics.length) what += `<div class="ad-topics">${topics.map((t) => `<span class="ad-topic">${escapeHtml(achPathLabel(t))}</span>`).join("")}</div>`;
+    if (topics.length) what += `<div class="achd-topics">${topics.map((t) => `<span class="achd-topic">${escapeHtml(achPathLabel(t))}</span>`).join("")}</div>`;
     if (groups.length) {
       const hit = new Set(recs.map((r) => achRecordHit(ach, r)));
       const show = (g) => { const lead = achList(ach.answers[groups.indexOf(g)])[0]; return String(lead || g[0].t).replace(/^@/, ""); };
       what += chips(groups.map((g, i) => [show(g), hit.has(i)]));
     }
     const answers = [...new Set(recs.map((r) => r.a))];
-    mine = recs.length ? `<p>${recs.length.toLocaleString()} powered ${recs.length === 1 ? "question counts" : "questions count"}${answers.length ? ": " : "."}</p>` + (answers.length ? chips(answers.slice(0, 40).map((a) => [a, true])) + (answers.length > 40 ? `<p class="ad-fine">and ${answers.length - 40} more</p>` : "") : "")
+    mine = recs.length ? `<p>${recs.length.toLocaleString()} powered ${recs.length === 1 ? "question counts" : "questions count"}${answers.length ? ": " : "."}</p>` + (answers.length ? chips(answers.slice(0, 40).map((a) => [a, true])) + (answers.length > 40 ? `<p class="achd-fine">and ${answers.length - 40} more</p>` : "") : "")
       : "<p>Nothing counts yet.</p>";
   } else if (!ACH_HOW[ach.type]) {
     how = `<p>${escapeHtml(desc)}</p>`;
@@ -9911,18 +9904,18 @@ function openAchievementDetail(ach, ctx) {
   const el = document.createElement("div");
   el.id = "ach-detail";
   el.className = "qb-overlay review-ovl ach-ovl";
-  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "ad-h");
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "achd-h");
   el.innerHTML = `
     <div class="settings-modal ach-modal" tabindex="-1">
-      <div class="modal-head"><h2 id="ad-h">Achievement</h2><span class="spacer"></span>
-        <button type="button" class="btn btn-ghost btn-icon" id="ad-x" aria-label="Close">${ic("x")}</button></div>
-      <div class="ad-body">
-        <div class="ad-top${earned ? " earned" : ""}">
-          <div class="ad-icon">${achievementIconHTML(ach)}</div>
-          <div class="ad-id"><div class="ad-name">${escapeHtml(name)}</div><div class="ad-desc">${escapeHtml(desc)}</div></div>
-          <span class="ad-state${earned ? " on" : ""}">${earned ? "Earned" : `<span class="num">${prog.toLocaleString()} / ${thr.toLocaleString()}</span>`}</span>
+      <div class="modal-head"><h2 id="achd-h">Achievement</h2><span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-icon" id="achd-x" aria-label="Close">${ic("x")}</button></div>
+      <div class="achd-body">
+        <div class="achd-top${earned ? " earned" : ""}">
+          <div class="achd-icon">${achievementIconHTML(ach)}</div>
+          <div class="achd-id"><div class="achd-name">${escapeHtml(name)}</div><div class="achd-desc">${escapeHtml(desc)}</div></div>
+          <span class="achd-state${earned ? " on" : ""}">${earned ? "Earned" : `<span class="num">${prog.toLocaleString()} / ${thr.toLocaleString()}</span>`}</span>
         </div>
-        ${earned ? "" : `<div class="achievement-bar ad-bar"><div class="achievement-bar-fill" style="width:${Math.min(100, Math.round((prog / thr) * 100))}%"></div></div>`}
+        ${earned ? "" : `<div class="achievement-bar achd-bar"><div class="achievement-bar-fill" style="width:${Math.min(100, Math.round((prog / thr) * 100))}%"></div></div>`}
         ${sec("How to get it", how)}
         ${sec(ach.type === "answer_power" ? (achGroups(ach).length ? "What counts" : "Topic") : "", what)}
         ${sec(ach.type === "cat" ? "Your top categories" : "Your progress", mine)}
@@ -9933,7 +9926,7 @@ function openAchievementDetail(ach, ctx) {
   document.addEventListener("keydown", onKey, true);
   el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
   document.body.appendChild(el);
-  el.querySelector("#ad-x").onclick = close;
+  el.querySelector("#achd-x").onclick = close;
   try { el.querySelector(".ach-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 
