@@ -9762,7 +9762,14 @@ async function beginTrial() {
   if (_trial !== t) return;   // left meanwhile
   if (!r || !r.ok) {
     const e2 = document.getElementById("trial-setup-err");
-    if (e2) e2.textContent = r && r.cooldownUntil ? "This trial can be taken again in " + fmtWait(r.cooldownUntil - (Date.now() + _trialSkew)) + "." : (r && r.error) || "Couldn't start the trial.";
+    // the app's backend can lag the screens until a full restart (a database switch reloads only the page):
+    // one from before 14.99 can't find Science, Math, Pop Culture or Sports on the new database
+    let stale = false;
+    if (window.qbreader && !(r && r.cooldownUntil)) { try { const d = await API.get("/api/trials"); stale = !(d && d.api >= 2); } catch (e) {} }
+    if (e2 && stale && window.qbreader.relaunchApp) {
+      e2.innerHTML = 'Restart OfflineQuiz to finish the update. <button type="button" class="btn btn-sm" id="trial-restart">Restart</button>';
+      e2.querySelector("#trial-restart").onclick = () => window.qbreader.relaunchApp();
+    } else if (e2) e2.textContent = r && r.cooldownUntil ? "This trial can be taken again in " + fmtWait(r.cooldownUntil - (Date.now() + _trialSkew)) + "." : (r && r.error) || "Couldn't start the trial.";
     openSetupDrawer(); return;
   }
   closeSetupDrawer();

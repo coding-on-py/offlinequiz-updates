@@ -1,7 +1,7 @@
 {
-  "version": "14.98",
+  "version": "14.99",
   "files": {
-    "index.js": "624dc60e88aaa5a9420bde768e285cc07e30415030d5965772cf736de2c849d7",
+    "index.js": "53beacc415ef0bfad4f12f29b43900584d8f0726495338aa30b29b69d3bf7089",
     "database.js": "038c32a7c436a84d0e57d433b7538d8b55d6426193fea76df9519d01a3e01ef1",
     "userData.js": "aadfaf4e616a8055cb22d1f0f322d6b6bec9a2af582657929b2ddf9f9fa513ad",
     "answerChecker.js": "fe018e43caaa75fdec523f3d8acd032211fbe60a2214a97ef86d71f9068223b5",
@@ -11,5 +11,5 @@
     "preload.js": "cd4ee45817e07b6c7c9eb3564c4a99987c5d9276357e907a6f3afc7378c56c66",
     "runtime.js": "b5ac193e23162640119cd968e82621790256652f655fe1e16bf68c837b1d5fd5"
   },
-  "signature": "FzptrSeK6toQSGsroeQn7xwv0DlAs6zaUC7GfYyJadrNu3n9Bf5yyiBS2AmTuSFs5qD2nQ9P9vgXJlY8Au15Dg=="
+  "signature": "7ALcg1cI7U8fFVgGVPbpsG/RT+T1PnawCokY1SEIm4+5kzJaAIZvYcI+PdJ027dAuj1TMxNm3y72ps7P9JqLCA=="
 }

@@ -39,14 +39,16 @@ const DEFAULT_USER_DB_PATH = join(
 // ("Brontë" -> "bronte", "García" -> "garcia"), and the map covers the letters
 // NFD does not decompose. Before this, diacritics became SPACES ("bront",
 // "garc a m rquez"), so ASCII-spelled answers never matched their targets.
-// Trials: [key, name, category-tree path] — Science / Math and Pop Culture / Sports are trials of their own
+// Trials: [key, name, category-tree path, node id]. The node id comes first when looking a trial's category up:
+// ids never change, so it finds the right node on any database (Science was "Science and Math > Science" before
+// the 14.97 split, the same id).
 const TRIAL_CATS = [
-  ["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science"],
-  ["math", "Math", "Math"], ["fa", "Fine Arts", "Fine Arts"], ["myth", "Mythology", "Mythology"],
-  ["phil", "Philosophy", "Philosophy"], ["rel", "Theology", "Theology"], ["geo", "Geography", "Geography"],
-  ["ss", "Social Science", "Social Science"], ["ce", "Current Events", "Current Events"],
-  ["pop", "Pop Culture", "Pop Culture"], ["sports", "Sports", "Sports"],
-  ["misc", "Miscellaneous", "Miscellaneous"],
+  ["lit", "Literature", "Literature", "nc17e5c9d25"], ["hist", "History", "History", "n90ccd64974"], ["sci", "Science", "Science", "nc7da6ff213"],
+  ["math", "Math", "Math", "nf9d9ab0a2a"], ["fa", "Fine Arts", "Fine Arts", "nc23224370b"], ["myth", "Mythology", "Mythology", "n70bce4745b"],
+  ["phil", "Philosophy", "Philosophy", "n496e9438ab"], ["rel", "Theology", "Theology", "n7a65b42ae1"], ["geo", "Geography", "Geography", "n77fc6221d7"],
+  ["ss", "Social Science", "Social Science", "n8c06b64cad"], ["ce", "Current Events", "Current Events", "n27f6107e6c"],
+  ["pop", "Pop Culture", "Pop Culture", "n9b8235c01e"], ["sports", "Sports", "Sports", "nc647c3608a"],
+  ["misc", "Miscellaneous", "Miscellaneous", "n5f2cbd1070"],
 ];
 const TRIAL_COOLDOWN_MS = 3600e3, TRIAL_LEN = 10;
 
@@ -1076,7 +1078,7 @@ export class App {
     return { pid, t: t && typeof t === "object" && !Array.isArray(t) ? t : {} };
   }
   getTrials() {
-    return { trials: this._trialsOf().t, cats: TRIAL_CATS.map(([key, name, path]) => ({ key, name, path })), cooldownMs: TRIAL_COOLDOWN_MS, length: TRIAL_LEN, now: Date.now() };
+    return { trials: this._trialsOf().t, cats: TRIAL_CATS.map(([key, name, path]) => ({ key, name, path })), cooldownMs: TRIAL_COOLDOWN_MS, length: TRIAL_LEN, now: Date.now(), api: 2 };   // api 2: finds categories by node id (14.99)
   }
   trialAction(action, category, level) {
     const cat = TRIAL_CATS.find((c) => c[0] === category); level = parseInt(level, 10);
@@ -1089,7 +1091,7 @@ export class App {
       if (level > best + 1) return { ok: false, locked: true, error: "Pass " + cat[1] + " " + ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][best + 1] + " first." };
       if (t.s && now - t.s < TRIAL_COOLDOWN_MS && !(t.l >= t.s)) return { ok: false, cooldownUntil: t.s + TRIAL_COOLDOWN_MS };
       const tree = this.questionDb._loadTree().nodes || [];
-      const node = tree.find((n) => n.path === cat[2]) || tree.find((n) => n.depth === 2 && n.name === cat[2]);   // a database from before the 14.97 split
+      const node = this.questionDb.getCategoryNode(cat[3]) || tree.find((n) => n.path === cat[2]) || tree.find((n) => n.name === cat[2] && /^(Science and Math|Pop Culture Sports) > /.test(n.path));
       if (!node) return { ok: false, error: "This category isn't in the question database." };
       const r = this.questionDb.queryTossups({ categoryIds: [node.id], difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN });
       const ids = ((r && r.rows) || []).map((q) => q.id).filter(Boolean);
