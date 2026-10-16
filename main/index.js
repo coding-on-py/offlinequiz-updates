@@ -1084,6 +1084,9 @@ export class App {
     const { pid, t: all } = this._trialsOf(), key = cat[0] + "|" + level, t = all[key] || {}, now = Date.now();
     const save = () => { all[key] = t; this.userData.setConfig("trials:" + pid, JSON.stringify(all)); };
     if (action === "start") {
+      // progressive (14.95): a level opens once the one below is passed — or any above it (a badge from before keeps its level)
+      const best = Object.entries(all).reduce((b, [k, v]) => { const [c, l] = k.split("|"); return c === cat[0] && v && v.p && +l > b ? +l : b; }, 0);
+      if (level > best + 1) return { ok: false, locked: true, error: "Pass " + cat[1] + " " + ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][best + 1] + " first." };
       if (t.s && now - t.s < TRIAL_COOLDOWN_MS && !(t.l >= t.s)) return { ok: false, cooldownUntil: t.s + TRIAL_COOLDOWN_MS };
       const node = (this.questionDb._loadTree().nodes || []).find((n) => n.path === cat[2]);
       if (!node) return { ok: false, error: "This category isn't in the question database." };

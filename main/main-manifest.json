@@ -1,7 +1,7 @@
 {
-  "version": "14.94",
+  "version": "14.95",
   "files": {
-    "index.js": "c26a1a76c7186ef2a086355a91e5871f21d48ee6119f048360da044453dbe8ba",
+    "index.js": "d9120a8b9263e61e20e7fdff433dbb9f22eac0f458952aa6d7030ff0b884c326",
     "database.js": "772fa1115eb80ae74bf718d287fc4ba8048e499b91ec689b9c5b7d69e87f7cef",
     "userData.js": "aadfaf4e616a8055cb22d1f0f322d6b6bec9a2af582657929b2ddf9f9fa513ad",
     "answerChecker.js": "fe018e43caaa75fdec523f3d8acd032211fbe60a2214a97ef86d71f9068223b5",
@@ -11,5 +11,5 @@
     "preload.js": "cd4ee45817e07b6c7c9eb3564c4a99987c5d9276357e907a6f3afc7378c56c66",
     "runtime.js": "b5ac193e23162640119cd968e82621790256652f655fe1e16bf68c837b1d5fd5"
   },
-  "signature": "zEXYIOVqcLL3pvP31B6NS2uR81FyjV/Tje3s9zoQlk6yIyRQUmb4KFG78qSDb+uwiOwtHIBgaAOxNf6eF5CNAg=="
+  "signature": "3OoxC4Zbq1KeyWjAsCuoXpx2mJqA/4SthSZqusisKE2amZI//h6KxZWKWWk56mb/XQ7cYDqwqm+mhbEzv65hCw=="
 }

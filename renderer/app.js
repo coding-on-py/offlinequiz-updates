@@ -1182,7 +1182,7 @@ function openSetupDrawer() {
   const p = setupDrawerEl(); if (!p) return;
   closeSettings();
   p.classList.add("open");
-  tipInto(p, "setup", null, p.querySelector(".fp-head")?.nextElementSibling);
+  if (!p.classList.contains("trial-setup")) tipInto(p, "setup", null, p.querySelector(".fp-head")?.nextElementSibling);   // a trial's Setup has none of what the tip names
   updateYearLabel();
   document.getElementById("btn-open-setup")?.setAttribute("aria-expanded", "true");
   syncDrawerStart();
@@ -1195,7 +1195,7 @@ function closeSetupDrawer() {
 }
 function syncDrawerStart() {
   const b = document.getElementById("btn-drawer-start");
-  if (b) b.textContent = state.sessionActive ? "Done" : "Start";
+  if (b) b.textContent = state.sessionActive ? "Done" : trialPending() ? "Start trial" : "Start";
   const e = document.getElementById("btn-end-session");   // End only while there's a session to end
   if (e) e.hidden = !state.sessionActive;
 }
@@ -1204,6 +1204,7 @@ document.getElementById("btn-close-setup")?.addEventListener("click", closeSetup
 document.getElementById("btn-drawer-start")?.addEventListener("click", () => {
   const wasActive = state.sessionActive;
   const onPractice = !!setupDrawerEl();   // borrowed by a multiplayer room: just close
+  if (!wasActive && onPractice && trialPending()) { beginTrial(); return; }   // stays open if it can't start
   closeSetupDrawer();
   if (!wasActive && onPractice) startSession();
 });
@@ -1642,6 +1643,7 @@ function showScreen(name, opts) {
   // Settings is a modal over whatever is showing, not a screen of its own.
   if (name === "settings") { openSettings(); return; }
   if (_dbLocked) return;   // locked on Settings → Updates until the new database is open
+  if (name !== "practice-tossups" && trialPending()) { _trial = null; try { paintTrialBar(); } catch (e) {} }
   // A settings modal left open would float its click-eating backdrop over the
   // next screen (the "Back did nothing / buttons stopped working" bug).
   try { closeSettingsOverlays(); } catch (e) {}
@@ -4173,6 +4175,7 @@ function applyModeVisibility(mode) {
 
 
 function startSession() {
+  if (trialPending()) { beginTrial(); return; }
   setTimeout(() => tipInto(document.getElementById("question-area"), "practice-keys", null, document.getElementById("question-content")), 0);
   if (state.customType && !state.reviewIds && !state.bonusIds) endCustom();   // defensive
   state.sessionActive = true;
@@ -9098,13 +9101,13 @@ async function loadPlayer() {
     const tile = (n, l, cls) => `<div class="pf-tile"><b class="num${cls ? " " + cls : ""}">${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
     container.innerHTML = `
       <div class="pf-page">
-        ${trialBadgesHtml(trialInfo && trialInfo.trials, hwBadgeHtml(apData.event))}
         ${hwCardHtml(apData.event)}
         <section class="pf-card">
           <span class="pf-avatar" aria-hidden="true"${avatarStyle(myNeon())}>${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
           <div class="pf-id">
             <div class="pf-name-row"><input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false"></div>
             <small class="pf-sub">${handle ? escapeHtml(handle) : Account.user ? "Signed in" : IS_WEB ? "Not signed in" : "On this computer"}</small>
+            ${trialBadgesHtml(trialInfo && trialInfo.trials, hwBadgeHtml(apData.event))}
           </div>
         </section>
         <div class="pf-tiles">${tile(totalQ, "questions")}${tile(powers, "powers", "pf-pwr")}${tile(negs, "negs", "pf-neg")}${tile(sessions.length, "sessions")}</div>
@@ -9119,6 +9122,7 @@ async function loadPlayer() {
     initCollapsibles(container);
     container._achWired = false;
     wireTrials(container);
+    wireBadges(container, (trialInfo && trialInfo.trials) || {}, true);
     wireHwCard(container);
     wireAchievementCards(container, { achData, records: achRecordsFrom(apData), stats, pluginAchs });
     window.QB?.neonField?.($("#player-username-input"), myNeon());   // a bought neon name glows here too
@@ -9517,20 +9521,128 @@ function trialBest(trials) {
   }
   return best;
 }
+// ── Badges (14.95): emblems that grow with the level — bronze I–III, silver IV–VI, gold VII–IX, prismatic X; within
+// a metal the first is a plain shield, the second grows wings, the third bigger wings and a crown. The category's
+// icon is inside, the numeral on a ribbon. A click opens the badge's details (openBadgeDetail).
+const TRIAL_GLYPH = {
+  lit: '<path d="M12 6C10 4.2 7 3.5 4 3.5v14c3 0 6 .7 8 2.5 2-1.8 5-2.5 8-2.5v-14c-3 0-6 .7-8 2.5zM12 6v14"/>',
+  hist: '<path d="M3 9.5 12 4l9 5.5M5 10v8M9.7 10v8M14.3 10v8M19 10v8M3 20.5h18"/>',
+  sci: '<circle cx="12" cy="12" r="1.4"/><ellipse cx="12" cy="12" rx="9.5" ry="3.7"/><ellipse cx="12" cy="12" rx="9.5" ry="3.7" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="9.5" ry="3.7" transform="rotate(120 12 12)"/>',
+  math: '<path d="M4 7h16M8.5 7v12M15.5 7v9.5c0 1.6.9 2.5 2.5 2.5"/>',
+  fa: '<path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 2-2 0-1.6-1.4-2-1.4-3.2 0-1.1.9-1.8 2-1.8H18a3 3 0 0 0 3-3c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1.1"/><circle cx="10" cy="7" r="1.1"/><circle cx="14.5" cy="7" r="1.1"/>',
+  myth: '<path d="M13 2 5 13h6l-1 9 8-11h-6z"/>',
+  phil: '<circle cx="12" cy="12" r="9"/><path d="M12 3a4.5 4.5 0 0 1 0 9 4.5 4.5 0 0 0 0 9"/><circle cx="12" cy="7.5" r=".9"/><circle cx="12" cy="16.5" r=".9"/>',
+  rel: '<path d="M9 11h6v10H9z"/><path d="M12 3c1.5 2 2 3 2 4.2a2 2 0 0 1-4 0C10 6 10.5 5 12 3z"/>',
+  geo: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
+  ss: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c.8-3.6 3.2-5.5 6-5.5s5.2 1.9 6 5.5"/><circle cx="16.5" cy="9" r="2.6"/><path d="M15.5 14.6c2.6-.2 4.6 1.5 5.3 4.6"/>',
+  ce: '<path d="M4 5h13v14H6a2 2 0 0 1-2-2z"/><path d="M17 9h3v8a2 2 0 0 1-2 2"/><path d="M7 9h7M7 12h7M7 15h4"/>',
+  pop: '<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  sports: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18M5.6 5.6c3.2 3.2 3.2 9.6 0 12.8M18.4 5.6c-3.2 3.2-3.2 9.6 0 12.8"/>',
+  misc: '<path d="M9 3h6v3a2 2 0 0 0 4 0V3h2v8h-3a2 2 0 0 0 0 4h3v6h-8v-3a2 2 0 0 0-4 0v3H3v-6h3a2 2 0 0 0 0-4H3V3z"/>',
+};
+const EMB_METAL = {   // light, mid, dark
+  bronze: ["#f6c896", "#c27a3c", "#6e3912"], silver: ["#ffffff", "#bcc6d2", "#5f6b79"], gold: ["#fff4b0", "#f0b42c", "#8f5404"],
+  legend: ["#fff6c9", "#e6a8ff", "#4a1d8c"], pumpkin: ["#ffd9a8", "#ff7a1a", "#6e2600"],
+};
+let _embN = 0;
+const EMB_WING = "M31 40C21 38 12 42 8 50c6-1 11 0 14 2-7 2-11 7-12 13 6-3 11-3 15-2-4 4-5 9-4 14 4-5 8-8 11-10z";
+function emblemSvg(o) {
+  // o: { level, hue, glyph (24-box markup), inner (an <svg> to place instead), ribbon, metal, size }
+  const lv = o.level || 1, step = lv >= 10 ? 3 : (lv - 1) % 3;
+  const metal = o.metal || (lv >= 10 ? "legend" : lv >= 7 ? "gold" : lv >= 4 ? "silver" : "bronze");
+  const [hi, mid, dk] = EMB_METAL[metal], id = "emb" + (++_embN), hue = o.hue || "#8b949e";
+  const shield = "M60 16 92 29v33c0 20-14 34-32 42-18-8-32-22-32-42V29z", inner = "M60 23 86 33.5V62c0 16.5-11.5 28-26 34.6C45.5 90 34 78.5 34 62V33.5z";
+  const wing = (k) => `<path d="${EMB_WING}" fill="url(#${id}m)" stroke="${dk}" stroke-width="1.3" stroke-linejoin="round"${k > 1 ? ` transform="translate(31 52) scale(${k === 3 ? 1.42 : 1.28}) translate(-31 -52)"` : ""}/>`;
+  const wings = step ? `<g>${step === 3 ? `<g opacity=".55" transform="translate(-3 -9)">${wing(2)}</g>` : ""}${wing(step)}</g><g transform="matrix(-1 0 0 1 120 0)">${step === 3 ? `<g opacity=".55" transform="translate(-3 -9)">${wing(2)}</g>` : ""}${wing(step)}</g>` : "";
+  const crown = step >= 2 ? `<path d="M45 21 43 8l9 5.5L60 3l8 10.5L77 8l-2 13z" fill="url(#${id}m)" stroke="${dk}" stroke-width="1.3" stroke-linejoin="round"/>` +
+    (step === 3 ? `<circle cx="60" cy="13.5" r="3.4" fill="#ff4f8b" stroke="#fff" stroke-width="1"/>` : `<circle cx="60" cy="14" r="2" fill="${hi}"/>`) : "";
+  const legend = metal === "legend";
+  const icon = o.inner ? o.inner.replace("<svg ", '<svg x="42" y="40" width="36" height="36" ')
+    : `<g transform="translate(43 42) scale(1.42)" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${o.glyph || TRIAL_GLYPH.misc}</g>`;
+  return `<svg class="emb emb-${metal} emb-s${step}" viewBox="0 0 120 120" width="${o.size || 56}" height="${o.size || 56}" aria-hidden="true"><defs>` +
+    (legend ? `<linearGradient id="${id}m" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff2a6"/><stop offset=".35" stop-color="#ff9ad5"/><stop offset=".7" stop-color="#8fb8ff"/><stop offset="1" stop-color="#7cf0c8"/></linearGradient>`
+      : `<linearGradient id="${id}m" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${hi}"/><stop offset=".55" stop-color="${mid}"/><stop offset="1" stop-color="${dk}"/></linearGradient>`) +
+    `<linearGradient id="${id}h" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${hue}"/><stop offset="1" stop-color="${hue}" stop-opacity=".55"/></linearGradient>` +
+    `<linearGradient id="${id}r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${legend ? "#7b3fd0" : mid}"/><stop offset="1" stop-color="${legend ? "#3a1470" : dk}"/></linearGradient>` +
+    `<clipPath id="${id}c"><path d="${shield}"/></clipPath></defs>` +
+    wings +
+    `<path d="${shield}" fill="url(#${id}m)" stroke="${dk}" stroke-width="1.6" stroke-linejoin="round"/>` +
+    `<path d="${inner}" fill="#14111c"/><path d="${inner}" fill="url(#${id}h)"/>` +
+    `<path d="M34 33.5 60 23l26 10.5V48c-14-5-38-5-52 0z" fill="#fff" opacity=".14"/>` +
+    icon +
+    (metal !== "bronze" && metal !== "pumpkin" ? `<circle cx="37.5" cy="33" r="2.3" fill="${hi}" stroke="${dk}" stroke-width=".9"/><circle cx="82.5" cy="33" r="2.3" fill="${hi}" stroke="${dk}" stroke-width=".9"/>` : "") +
+    (legend ? `<g class="emb-spark" fill="#fff"><path d="M14 22l1.6 4 4 1.6-4 1.6-1.6 4-1.6-4-4-1.6 4-1.6z"/><path d="M104 30l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2z"/><path d="M101 80l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z"/></g>` : "") +
+    (legend || metal === "gold" ? `<g clip-path="url(#${id}c)"><path class="emb-sheen" d="M20 120 50 0h10L30 120z" fill="#fff" opacity=".28"/></g>` : "") +
+    crown +
+    `<path d="M24 89h72l6 9.5-6 9.5H24l-6-9.5z" fill="url(#${id}r)" stroke="${dk}" stroke-width="1.3" stroke-linejoin="round"/>` +
+    `<text x="60" y="103.2" text-anchor="middle" font-size="${String(o.ribbon || "").length > 3 ? 11.5 : 13}" font-weight="800" letter-spacing=".6" fill="#fff" stroke="${dk}" stroke-width="2.4" paint-order="stroke">${escapeHtml(o.ribbon || "")}</text>` +
+    `</svg>`;
+}
+const trialEmblem = (key, level, size) => emblemSvg({ level, hue: trialHue(key), glyph: TRIAL_GLYPH[key], ribbon: ROMAN[level] || String(level), size });
 function trialBadgesHtml(trials, extra) {
   const best = trialBest(trials);
-  const keys = TRIAL_CATS.map((c) => c[0]).filter((k) => best[k]);
+  const keys = TRIAL_CATS.map((c) => c[0]).filter((k) => best[k]).sort((a, b) => best[b] - best[a]);
   if (!keys.length && !extra) return "";
   return `<div class="tr-badges" aria-label="Badges">${extra || ""}${keys.map((k) => {
-    const lv = best[k], when = trials[k + "|" + lv] && trials[k + "|" + lv].p;
-    return `<span class="tr-badge tier${Math.ceil(lv / 3) > 3 ? 4 : Math.ceil(lv / 3)}" style="--hue:${trialHue(k)}" title="${escapeHtml(trialName(k, lv) + (when ? " — passed " + new Date(when).toLocaleDateString() : ""))}">${ic("award", 15)}<b>${escapeHtml(trialName(k, lv))}</b></span>`;
+    const lv = best[k];
+    return `<button type="button" class="tr-emb lv${lv}" data-badge="${k}" data-lv="${lv}" title="${escapeHtml(trialName(k, lv))}" aria-label="${escapeHtml(trialName(k, lv))} badge">${trialEmblem(k, lv, 62)}<span class="tr-emb-name">${escapeHtml(trialName(k, lv))}</span></button>`;
   }).join("")}</div>`;
+}
+// a badge's details: the emblem big, when it was won, the road through the ten, and (your own) the next level
+function wireBadges(container, trials, own) {
+  container.querySelectorAll(".tr-emb[data-badge]").forEach((b) => { b.onclick = () => openBadgeDetail(b.dataset.badge, trials, own, b.dataset.extra); });
+}
+function openBadgeDetail(key, trials, own, extra) {
+  document.getElementById("badge-detail")?.remove();
+  const el = document.createElement("div");
+  el.id = "badge-detail";
+  el.className = "qb-overlay review-ovl ach-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "bd-h");
+  let title, hero, body, next = "";
+  if (key === "hw") {
+    title = "Halloween 2026";
+    hero = hwEmblem(150);
+    body = `<p class="bd-sub">Event badge · ${escapeHtml(extra || String(HW.goal))} candies</p><p class="bd-text">Earned in the Halloween 2026 pumpkin hunt: one tossup in eight was a pumpkin, and powering ${HW.goal} of them won it. It can only be earned during the event.</p>`;
+  } else {
+    const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
+    const best = trialBest(trials)[key] || 0, rec = (trials || {})[key + "|" + best] || {};
+    title = trialName(key, best);
+    hero = trialEmblem(key, best, 150);
+    const metal = best >= 10 ? "Prismatic" : best >= 7 ? "Gold" : best >= 4 ? "Silver" : "Bronze";
+    const road = Array.from({ length: 10 }, (_, i) => `<span class="bd-step${i + 1 <= best ? " on" : ""}${i + 1 === best ? " cur" : ""}" title="${escapeHtml(trialName(key, i + 1))}">${trialEmblem(key, i + 1, 40)}</span>`).join("");
+    body = `<p class="bd-sub">${metal} · level ${best} of 10${rec.p ? " · passed " + escapeHtml(new Date(rec.p).toLocaleDateString()) : ""}</p>` +
+      `<p class="bd-text">Ten power-marked level-${best} ${escapeHtml(cat[1])} tossups, all ten powered with no neg.${best < 10 ? " Each level opens the next; the badge grows with it." : " The top level: there is nothing above it."}</p>` +
+      `<div class="bd-road" aria-label="Levels">${road}</div>`;
+    if (own && best < 10) {
+      const st = trialState(normTrialInfo({ trials }), key, best + 1);
+      next = `<button type="button" class="btn btn-primary" id="bd-next"${st.wait ? " disabled" : ""}>${ic("play", 14)}${st.wait ? escapeHtml(trialName(key, best + 1)) + " in " + fmtWait(st.wait) : "Try " + escapeHtml(trialName(key, best + 1))}</button>`;
+    }
+  }
+  el.innerHTML = `
+    <div class="settings-modal tp-modal bd-modal" tabindex="-1">
+      <div class="modal-head"><h2 id="bd-h">${escapeHtml(title)}</h2><span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-icon" id="bd-x" aria-label="Close">${ic("x")}</button></div>
+      <div class="achd-body bd-body"><div class="bd-hero">${hero}</div>${body}</div>
+      <div class="modal-foot"><button type="button" class="btn" id="bd-close">Close</button><span class="spacer"></span>${next}</div>
+    </div>`;
+  const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
+  document.body.appendChild(el);
+  el.querySelector("#bd-x").onclick = close;
+  el.querySelector("#bd-close").onclick = close;
+  const nx = el.querySelector("#bd-next");
+  if (nx) nx.onclick = () => { const cat = TRIAL_CATS.find((c) => c[0] === key), best = trialBest(trials)[key] || 0; close(); prepTrial({ key, name: cat[1], level: best + 1 }); };
+  try { el.querySelector(".bd-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 function trialState(info, key, level) {
   const t = (info && info.trials && info.trials[key + "|" + level]) || {};
   const now = Date.now() + _trialSkew;
   const wait = t.s && now - t.s < TRIAL_COOLDOWN && !(t.l >= t.s) ? t.s + TRIAL_COOLDOWN - now : 0;
-  return { passed: !!t.p, wait };
+  // progressive (14.95): I first, then each level once the one below is passed; a badge won before keeps its level
+  const best = trialBest(info && info.trials)[key] || 0;
+  return { passed: !!t.p || level <= best, wait, locked: level > best + 1 };
 }
 const fmtWait = (ms) => { const m = Math.ceil(ms / 60000); return m >= 60 ? "1 h" : m + " min"; };
 function trialsSectionHtml(info) {
@@ -9538,8 +9650,8 @@ function trialsSectionHtml(info) {
   return `<section class="pf-trials"><div class="pf-ach-head"><h2 class="eyebrow">Trials</h2><span class="pf-ach-n">Power ten in a row for a badge</span></div>
     <div class="tr-grid">${TRIAL_CATS.map(([key, name]) => {
       const lv = best[key] || 0;
-      const pips = Array.from({ length: 10 }, (_, i) => { const st = trialState(info, key, i + 1); return `<i class="${st.passed ? "on" : st.wait ? "wait" : ""}"></i>`; }).join("");
-      return `<button type="button" class="tr-card" data-trial="${key}" style="--hue:${trialHue(key)}"><span class="tr-name">${escapeHtml(name)}</span>` +
+      const pips = Array.from({ length: 10 }, (_, i) => { const st = trialState(info, key, i + 1); return `<i class="${st.passed ? "on" : st.wait ? "wait" : st.locked ? "lock" : ""}"></i>`; }).join("");
+      return `<button type="button" class="tr-card${lv ? "" : " none"}" data-trial="${key}" style="--hue:${trialHue(key)}"><span class="tr-card-emb" aria-hidden="true">${trialEmblem(key, lv || 1, 40)}</span><span class="tr-name">${escapeHtml(name)}</span>` +
         `<span class="tr-lv">${lv ? escapeHtml(name + " " + ROMAN[lv]) : "No badge yet"}</span><span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
     }).join("")}</div></section>`;
 }
@@ -9562,23 +9674,25 @@ function openTrialPicker(key) {
   const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
   document.getElementById("trial-pick")?.remove();
   const info = normTrialInfo(_trialInfo);
-  let pick = 0;
-  const lvState = (lv) => { try { return trialState(info, key, lv); } catch (e) { return { passed: false, wait: 0 }; } };
+  const lvState = (lv) => { try { return trialState(info, key, lv); } catch (e) { return { passed: false, wait: 0, locked: lv > 1 }; } };
+  const best = trialBest(info.trials)[key] || 0;
+  let pick = best < 10 && !lvState(best + 1).wait ? best + 1 : 0;
   const el = document.createElement("div");
   el.id = "trial-pick";
   el.className = "qb-overlay review-ovl ach-ovl";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "tp-h");
   const levels = () => Array.from({ length: 10 }, (_, i) => {
     const lv = i + 1, st = lvState(lv);
-    return `<button type="button" class="tp-lv${st.passed ? " passed" : ""}${st.wait ? " wait" : ""}${pick === lv ? " sel" : ""}" data-lv="${lv}" aria-pressed="${pick === lv}"${st.wait ? " disabled" : ""}>` +
-      `<b>${ROMAN[lv]}</b><small>${st.passed ? ic("check", 12) + "Passed" : st.wait ? ic("clock", 12) + fmtWait(st.wait) : "Level " + lv}</small></button>`;
+    const off = st.wait || st.locked;
+    return `<button type="button" class="tp-lv${st.passed ? " passed" : ""}${st.wait ? " wait" : ""}${st.locked ? " locked" : ""}${pick === lv ? " sel" : ""}" data-lv="${lv}" aria-pressed="${pick === lv}"${off ? " disabled" : ""}${st.locked ? ` title="Pass ${escapeHtml(trialName(key, lv - 1))} first"` : ""}>` +
+      `<b>${ROMAN[lv]}</b><small>${st.passed ? ic("check", 12) + "Passed" : st.wait ? ic("clock", 12) + fmtWait(st.wait) : st.locked ? ic("lock", 12) + "Locked" : "Level " + lv}</small></button>`;
   }).join("");
   const paint = () => {
     try {
       el.querySelector(".tp-levels").innerHTML = levels();
       const go = el.querySelector("#tp-go"), note = el.querySelector("#tp-note");
       go.disabled = !pick;
-      go.innerHTML = ic("play", 14) + (pick ? "Start " + escapeHtml(trialName(key, pick)) : "Pick a level");
+      go.innerHTML = pick ? "Continue" + ic("right", 14) : "Pick a level";
       note.textContent = pick && lvState(pick).passed ? "You have this badge already — taking it again changes nothing, but a fail still waits an hour." : "";
     } catch (e) {}
   };
@@ -9587,7 +9701,7 @@ function openTrialPicker(key) {
       <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="spacer"></span>
         <button type="button" class="btn btn-ghost btn-icon" id="tp-x" aria-label="Close">${ic("x")}</button></div>
       <div class="achd-body">
-        <p class="tp-lead">Ten power-marked ${escapeHtml(cat[1])} tossups at the level you pick, read one after another. <b>Power all ten</b> to earn the <b>${escapeHtml(cat[1])}</b> badge for that level. A neg, a right answer after the power mark, no buzz, a skip or leaving ends the trial — and it can be taken again an hour after it started.</p>
+        <p class="tp-lead">Ten power-marked ${escapeHtml(cat[1])} tossups at the level you pick, read one after another. <b>Power all ten</b> to earn the <b>${escapeHtml(cat[1])}</b> badge for that level. Levels open in order: pass one to try the next. A neg, a right answer after the power mark, no buzz, a skip or leaving ends the trial — and it can be taken again an hour after it started.</p>
         <div class="tp-levels" role="group" aria-label="Level">${levels()}</div>
         <p class="achd-fine" id="tp-note"></p>
         <p class="tp-err" id="tp-err" role="alert"></p>
@@ -9600,21 +9714,57 @@ function openTrialPicker(key) {
   el.addEventListener("click", (ev) => { if (ev.target === el) close(); const b = ev.target.closest?.(".tp-lv[data-lv]"); if (b && !b.disabled) { pick = parseInt(b.dataset.lv, 10); paint(); } });
   document.body.appendChild(el);
   el.querySelector("#tp-x").onclick = close;
-  el.querySelector("#tp-go").onclick = async () => {
+  // Continue: the practice page, its Setup open with only reading speed and Start — nothing is read (nor the
+  // hour's wait begun) until Start (14.95)
+  el.querySelector("#tp-go").onclick = () => {
     if (!pick) return;
-    const go = el.querySelector("#tp-go"), err = el.querySelector("#tp-err");
-    go.disabled = true; err.textContent = "";
-    let r = null;
-    try { r = await API.post("/api/trials", { action: "start", category: key, level: pick }); } catch (e) { r = { ok: false, error: (e && e.message) || "Couldn't start the trial." }; }
-    if (!r || !r.ok) {
-      err.textContent = r && r.cooldownUntil ? "This trial can be taken again in " + fmtWait(r.cooldownUntil - (Date.now() + _trialSkew)) + "." : (r && r.error) || "Couldn't start the trial.";
-      go.disabled = false; return;
-    }
     close();
-    runTrial({ key, name: cat[1], level: pick, ids: r.ids });
+    prepTrial({ key, name: cat[1], level: pick });
   };
   paint();
   try { el.querySelector(".tp-modal").focus({ preventScroll: true }); } catch (e) {}
+}
+function trialPending() { try { return !!(_trial && _trial.pending && !_trial.done); } catch (e) { return false; } }   // safe before _trial exists (showScreen at boot)
+function prepTrial(t) {
+  if (_trial && _trial.pending) _trial = null;
+  if (state.sessionActive) endSession();
+  _trial = { ...t, ids: null, pending: true, n: 0, powered: 0, servedId: null, answeredId: null, done: false };
+  state.bonusIds = null; state.reviewIds = null; state.currentQuestion = null;
+  showScreen("practice-tossups");
+  setMode("tossups");
+  paintTrialBar();
+  openSetupDrawer();
+}
+async function beginTrial() {
+  const t = _trial; if (!t || !t.pending || t.starting) return;
+  t.starting = true;
+  const b = document.getElementById("btn-drawer-start"), err = document.getElementById("trial-setup-err");
+  if (b) b.disabled = true; if (err) err.textContent = "";
+  let r = null;
+  try { r = await API.post("/api/trials", { action: "start", category: t.key, level: t.level }); } catch (e) { r = { ok: false, error: (e && e.message) || "Couldn't start the trial." }; }
+  t.starting = false; if (b) b.disabled = false;
+  if (_trial !== t) return;   // left meanwhile
+  if (!r || !r.ok) {
+    const e2 = document.getElementById("trial-setup-err");
+    if (e2) e2.textContent = r && r.cooldownUntil ? "This trial can be taken again in " + fmtWait(r.cooldownUntil - (Date.now() + _trialSkew)) + "." : (r && r.error) || "Couldn't start the trial.";
+    openSetupDrawer(); return;
+  }
+  closeSetupDrawer();
+  runTrial({ key: t.key, name: t.name, level: t.level, ids: r.ids });
+}
+// a trial's Setup is only its reading speed (the questions, timers and rules are the trial's), with its Start
+function syncTrialSetup() {
+  const p = document.getElementById("filters-panel"); if (!p) return;
+  const on = !!(_trial && !_trial.done), here = !!p.closest("#practice-screen");
+  p.classList.toggle("trial-setup", on);
+  const title = p.querySelector(".fp-title");
+  if (title && here) title.textContent = on ? trialName(_trial.key, _trial.level) + " trial" : "Practice setup";
+  let n = p.querySelector("#trial-setup-note");
+  if (!on) { n?.remove(); syncDrawerStart(); return; }
+  if (!n) { n = document.createElement("div"); n.id = "trial-setup-note"; n.className = "tr-setup-note"; const head = p.querySelector(":scope > .fp-head"); head ? head.after(n) : p.prepend(n); }
+  n.innerHTML = `<p>Ten power-marked ${escapeHtml(_trial.name || "")} tossups at level ${ROMAN[_trial.level] || _trial.level}. Power all ten — a neg, a late answer, no buzz or a skip ends it.</p>` +
+    (_trial.pending ? `<p class="tr-setup-fine">Set your reading speed, then Start. The hour's wait counts from Start.</p>` : "") + `<p class="tp-err" id="trial-setup-err" role="alert"></p>`;
+  syncDrawerStart();
 }
 function runTrial(t) {
   _trial = { ...t, n: 0, powered: 0, servedId: null, answeredId: null, done: false };
@@ -9630,6 +9780,7 @@ function runTrial(t) {
   paintTrialBar();
 }
 function paintTrialBar() {
+  syncTrialSetup();
   let bar = document.getElementById("trial-bar");
   if (!_trial) { bar?.remove(); return; }
   const area = document.getElementById("question-area"); if (!area) return;
@@ -9640,7 +9791,8 @@ function paintTrialBar() {
     `<span class="tb-pips" aria-label="${_trial.powered} of ${TRIAL_LEN} powered">${pips}</span><span class="tb-n num">${_trial.powered}/${TRIAL_LEN}</span>` +
     (_trial.done ? "" : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
   const lv = bar.querySelector("#tb-leave");
-  if (lv) lv.onclick = () => confirmDialog("Leave the trial? It counts as a fail, and it can be taken again an hour after it started.", () => trialEnd(false, "left"), { yes: "Leave" });
+  if (lv && _trial.pending) lv.onclick = () => { closeSetupDrawer(); trialEnd(false, "left"); };
+  else if (lv) lv.onclick = () => confirmDialog("Leave the trial? It counts as a fail, and it can be taken again an hour after it started.", () => trialEnd(false, "left"), { yes: "Leave" });
 }
 function trialOnResult(result) {
   _trial.answeredId = _trial.servedId;
@@ -9652,6 +9804,7 @@ function trialOnResult(result) {
 }
 async function trialEnd(passed, why, quiet) {
   if (!_trial || _trial.done) return;
+  if (_trial.pending) { _trial = null; paintTrialBar(); return; }   // never started: nothing to record
   const t = _trial; t.done = true;
   let r = null;
   try { r = await API.post("/api/trials", { action: passed ? "pass" : "fail", category: t.key, level: t.level }); } catch (e) {}
@@ -9837,8 +9990,9 @@ function wireHwCard(container) {
 // the badge for 31 candies (also on other players' profiles)
 function hwBadgeHtml(ev) {
   const n = ev && Array.isArray(ev.pumpkins) ? ev.pumpkins.length : 0;
-  return n >= HW.goal ? `<span class="tr-badge tier4 hw-badge" style="--hue:#ff7a1a" title="${n} candies in the Halloween 2026 pumpkin hunt">${PUMPKIN_SVG}<b>Halloween 2026</b></span>` : "";
+  return n >= HW.goal ? `<button type="button" class="tr-emb hw-emb" data-badge="hw" data-extra="${n}" title="Halloween 2026 — ${n} candies" aria-label="Halloween 2026 badge">${hwEmblem(62)}<span class="tr-emb-name">Halloween 2026</span></button>` : "";
 }
+const hwEmblem = (size) => emblemSvg({ level: 8, metal: "pumpkin", hue: "#3a1a06", inner: PUMPKIN_SVG, ribbon: "2026", size });
 applyHwTheme();
 
 // ── Achievement details (14.88): a click on a card ─────────────────────────────────────────────────────
@@ -12175,7 +12329,10 @@ async function openUserProfile(handle, shownName) {
     achNote = `<div class="up-stats"><span><b class="num">${num(st.totalQuestions)}</b><small>questions</small></span><span><b class="num">${num(st.tossupPowers)}</b><small>powers</small></span><span><b class="num">${st.totalQuestions ? Math.round((st.tossupAccuracy || 0) * 100) + "%" : "—"}</b><small>tossup accuracy</small></span><span><b class="num">${got}</b><small>achievements</small></span></div>`;
     achHtml = `<div class="stats-section"><div class="stats-section-title">ACHIEVEMENTS</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
   }
-  body.innerHTML = `<div class="up-actions">${friendBtn}</div>${trialBadgesHtml(d.trials, hwBadgeHtml(d.powers && d.powers.event))}${achNote}${achHtml}`;
+  body.innerHTML = `<div class="up-actions">${friendBtn}</div>${achNote}${achHtml}`;
+  el.querySelector(".up-who .tr-badges")?.remove();
+  el.querySelector(".up-who").insertAdjacentHTML("beforeend", trialBadgesHtml(normTrialInfo({ trials: d.trials }).trials, hwBadgeHtml(d.powers && d.powers.event)));
+  wireBadges(el.querySelector(".up-who"), normTrialInfo({ trials: d.trials }).trials, false);
   try { initCollapsibles(body); } catch (e) {}
   if (!d.private) { const p = d.powers || {}; body._achWired = false; wireAchievementCards(body, { achData: computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p)), records: achRecordsFrom(p), stats: st }); }
   body.querySelectorAll("[data-up]").forEach((b) => b.onclick = async () => {

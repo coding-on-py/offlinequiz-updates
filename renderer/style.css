@@ -5923,3 +5923,50 @@ html.hw :is(.shop-check.ok, .shop-check.ok b, .acct-ok) { color: #ff9d40 !import
 
 /* 14.93: the achievement / trial windows' parts are .achd-* — ad blockers hide .ad-body, .ad-top, .ad-icon and .ad-bar
    (EasyList), which left those windows blank for players with one */
+
+/* 14.95: a trial's Setup — only Reading speed (its questions, timers and rules are the trial's), a note, its Start */
+#trial-setup-note { display: none; }
+#practice-screen #filters-panel.trial-setup #trial-setup-note { display: block; padding: 4px 20px 14px; border-bottom: 1px solid var(--line); }
+#trial-setup-note p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; color: var(--text); }
+#trial-setup-note p:last-child { margin-bottom: 0; }
+#trial-setup-note .tr-setup-fine { color: var(--muted); font-size: 12.5px; }
+#practice-screen #filters-panel.trial-setup > .filter-section:not(#sec-timing),
+#practice-screen #filters-panel.trial-setup #sec-timing > .slider-group:not(:has(#panel-speed-slider)) { display: none !important; }
+#practice-screen #filters-panel.trial-setup #sec-timing > .filter-label { visibility: hidden; height: 0; margin: 0; }
+#practice-screen #filters-panel.trial-setup #fp-count { visibility: hidden; }
+
+/* 14.95: badges are emblems (app.js emblemSvg) under the player's name; a click opens the badge's details */
+.pf-id .tr-badges, .up-who .tr-badges { margin-top: 8px; }
+.tr-badges { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 6px; }
+.tr-emb { position: relative; display: inline-flex; padding: 2px; border: 0; border-radius: 12px; background: none; cursor: pointer; transition: transform 0.16s var(--ease-out); }
+.tr-emb:hover { transform: translateY(-2px) scale(1.07); }
+.tr-emb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tr-emb-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.emb { display: block; overflow: visible; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35)); }
+.emb-gold { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35)) drop-shadow(0 0 6px rgba(255, 190, 60, 0.35)); }
+.emb-legend { filter: drop-shadow(0 0 7px rgba(205, 140, 255, 0.6)) drop-shadow(0 0 3px rgba(120, 220, 255, 0.5)); animation: emb-glow 2.8s ease-in-out infinite alternate; }
+@keyframes emb-glow { to { filter: drop-shadow(0 0 12px rgba(255, 150, 220, 0.75)) drop-shadow(0 0 4px rgba(140, 230, 255, 0.6)); } }
+.emb-sheen { animation: emb-sheen 3.8s ease-in-out infinite; }
+@keyframes emb-sheen { 0%, 55% { transform: translateX(-70px); } 100% { transform: translateX(110px); } }
+/* the Trials grid: each card wears its badge (greyed until the first pass); pips show locked levels */
+.tr-card { position: relative; padding-right: 58px; }
+.tr-card-emb { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); }
+.tr-card.none .tr-card-emb { filter: grayscale(1); opacity: 0.3; }
+.tr-pips i.lock { opacity: 0.45; }
+.tp-lv.locked b { color: var(--muted); }
+/* a badge's details */
+.bd-body { text-align: center; }
+.bd-hero { display: flex; justify-content: center; padding: 4px 0 2px; }
+.bd-hero .emb { animation: bd-pop 0.5s var(--ease-out); }
+.bd-hero .emb-legend { animation: bd-pop 0.5s var(--ease-out), emb-glow 2.8s ease-in-out 0.5s infinite alternate; }
+@keyframes bd-pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }
+.bd-sub { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+.bd-text { margin: 0 auto 14px; max-width: 430px; color: var(--text); font-size: 13.5px; line-height: 1.6; }
+.bd-road { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 4px; padding: 10px 8px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.bd-step { display: inline-flex; filter: grayscale(1) brightness(0.75); opacity: 0.35; transition: transform 0.15s; }
+.bd-step.on { filter: none; opacity: 1; }
+.bd-step.cur { transform: scale(1.14); }
+@media (prefers-reduced-motion: reduce) { .emb-legend, .emb-sheen, .bd-hero .emb, .bd-hero .emb-legend { animation: none; } .tr-emb { transition: none; } }
+.emb-spark { animation: emb-twinkle 1.9s ease-in-out infinite alternate; }
+@keyframes emb-twinkle { from { opacity: 0.25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .emb-spark { animation: none; } }
