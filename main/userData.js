@@ -39,6 +39,13 @@ export function mergeTrials(a, b) {
     if (Number(v.s) > (o.s || 0)) o.s = Number(v.s);
     if (Number(v.p) > 0 && (!o.p || Number(v.p) < o.p)) o.p = Number(v.p);
     if (Number(v.l) > (o.l || 0)) o.l = Number(v.l);
+    if (Number(v.e) > (o.e || 0)) o.e = Number(v.e);   // 15.0: the last attempt's end (the cooldown counts from it)
+    // 15.0: XP by attempt (its start → its XP): the union, so no attempt is lost or counted twice
+    if (v.a && typeof v.a === "object" && !Array.isArray(v.a)) for (const [ts, x] of Object.entries(v.a)) {
+      if (!/^\d{10,14}$/.test(ts) || !(Number(x) >= 0)) continue;
+      o.a = o.a || {};
+      o.a[ts] = Math.max(o.a[ts] || 0, Math.min(Number(x), 2500));
+    }
   }
   return out;
 }

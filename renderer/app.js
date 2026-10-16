@@ -4248,7 +4248,7 @@ function suspendSession() {
 }
 
 function endSession() {
-  if (_trial && !_trial.done) trialEnd(false, "left", true);
+  if (_trial && !_trial.done) trialEnd("left", true);
   endCustom();
   state.sessionActive = false;
   state.reviewIds = null;
@@ -4298,7 +4298,8 @@ async function nextQuestion() {
   placeholder.classList.add("hidden");
   placeholder.innerHTML = "";
 
-  if (_trial && !_trial.done && _trial.servedId && _trial.answeredId !== _trial.servedId) { trialEnd(false, "skipped"); return; }
+  if (_trial && !_trial.done && _trial.servedId && _trial.answeredId !== _trial.servedId) trialMark(false);   // a skip: a miss
+  if (trialComplete()) { trialEnd(); return; }
   if (state.reviewIds && state.mode === "tossups") {
     if (!state.reviewIds.length) {
       state.reviewIds = null;
@@ -5514,7 +5515,7 @@ function revealText(text) {
 }
 
 function markDeadQuestion(text) {
-  if (_trial && !_trial.done && state.currentQuestion && state.currentQuestion.id === _trial.servedId) setTimeout(() => trialEnd(false, "nobody buzzed"), 900);
+  if (_trial && !_trial.done && state.currentQuestion && state.currentQuestion.id === _trial.servedId) trialMark(false);   // nobody buzzed: a miss
   if (state.isBuzzed || !state.sessionActive) return;
   if (ttsHold) return;
   state.isBuzzed = true;
@@ -9514,16 +9515,49 @@ function renderAchievementCard(ach, data) {
 }
 
 // ── Trials (14.88) ────────────────────────────────────────────────────────────────────────────────────────
-// Ten power-marked tossups of one category at one level (1–10), read like practice; power all ten — any
-// other verdict, a dead tossup, a skip or leaving ends it. Passing gives a badge ("Mythology I"), shown at the
-// top of the profile; a failed (or left) trial can be taken again an hour after it started. State and the
-// question pick are the backend's (/api/trials; src/main/index.js TRIAL_CATS), synced with the account.
+// Ten power-marked tossups of one category at one level (1–10), read like practice. Since 15.0 every attempt reads
+// all ten and earns XP for its powers (trialXp: 10 × the level a power, ×1.25 for 5, ×1.5 for 6–9, ×2.5 for all
+// ten); powering all ten passes the level (the badge, "Mythology I") and opens the next. A level can be tried
+// again after its cooldown (trialCooldownMs: none for I, 5 min for II–III, 10 min for IV–X), counted from the last
+// attempt. State and the question pick are the backend's (/api/trials; src/main/index.js), synced with the account.
 const TRIAL_CATS = [["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science"], ["math", "Math", "Math"],
   ["fa", "Fine Arts", "Fine Arts"], ["myth", "Mythology", "Mythology"], ["phil", "Philosophy", "Philosophy"], ["rel", "Theology", "Theology"],
   ["geo", "Geography", "Geography"], ["ss", "Social Science", "Social Science"], ["ce", "Current Events", "Current Events"],
   ["pop", "Pop Culture", "Pop Culture"], ["sports", "Sports", "Sports"], ["misc", "Miscellaneous", "Miscellaneous"]];
 const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
-const TRIAL_LEN = 10, TRIAL_COOLDOWN = 3600e3;
+const TRIAL_LEN = 10;
+const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
+const trialXp = (level, powers) => { const p = Math.max(0, Math.min(TRIAL_LEN, powers | 0)); return Math.round(p * 10 * level * (p >= 10 ? 2.5 : p >= 6 ? 1.5 : p >= 5 ? 1.25 : 1)); };
+// XP earned: every attempt's (synced as { "<start>": xp } per level), in one category or all
+function trialXpOf(trials, key) {
+  let n = 0;
+  for (const [k, v] of Object.entries(trials || {})) if ((!key || k.split("|")[0] === key) && v && v.a) for (const x of Object.values(v.a)) n += Number(x) || 0;
+  return n;
+}
+const fmtXp = (n) => Number(n || 0).toLocaleString() + " XP";
+// a cooldown counts down live wherever it shows (cards, the picker, Setup, a result, a badge's details). When it
+// ends it fires "wait-ended" (the picker repaints) and goes; with `done`, that text replaces its parent's (a
+// button there is enabled again)
+let _waitTick = 0;
+function waitHtml(ms, done) {
+  setTimeout(startWaitTicker, 0);
+  return `<span class="tr-wait" data-until="${Date.now() + ms}"${done != null ? ` data-done="${escapeHtml(done)}"` : ""}>${ic("clock", 12)}<span class="tw-t">${fmtWait(ms)}</span></span>`;
+}
+function startWaitTicker() {
+  if (_waitTick) return;
+  _waitTick = setInterval(() => {
+    const now = Date.now();
+    document.querySelectorAll(".tr-wait[data-until]").forEach((el) => {
+      const left = Number(el.dataset.until) - now;
+      if (left > 0) { const t = el.querySelector(".tw-t"); if (t) t.textContent = fmtWait(left); return; }
+      el.dispatchEvent(new CustomEvent("wait-ended", { bubbles: true }));
+      const host = el.parentElement;
+      if (el.dataset.done != null && host) { host.textContent = el.dataset.done; if (host.tagName === "BUTTON") host.disabled = false; }
+      else el.remove();
+    });
+    if (!document.querySelector(".tr-wait[data-until]")) { clearInterval(_waitTick); _waitTick = 0; }
+  }, 1000);
+}
 let _trial = null;   // the trial being played: { key, name, level, ids, n, powered, servedId, answeredId, done }
 let _trialInfo = null, _trialSkew = 0;
 const trialName = (key, level) => { const c = TRIAL_CATS.find((x) => x[0] === key); return (c ? c[1] : key) + " " + (ROMAN[level] || level); };
@@ -9597,9 +9631,9 @@ function emblemSvg(o) {
 const trialEmblem = (key, level, size) => emblemSvg({ level, hue: trialHue(key), glyph: TRIAL_GLYPH[key], ribbon: ROMAN[level] || String(level), size });
 function trialBadgesHtml(trials, extra) {
   const best = trialBest(trials);
-  const keys = TRIAL_CATS.map((c) => c[0]).filter((k) => best[k]).sort((a, b) => best[b] - best[a]);
-  if (!keys.length && !extra) return "";
-  return `<div class="tr-badges" aria-label="Badges">${extra || ""}${keys.map((k) => {
+  const keys = TRIAL_CATS.map((c) => c[0]).filter((k) => best[k]).sort((a, b) => best[b] - best[a]), xp = trialXpOf(trials);
+  if (!keys.length && !extra && !xp) return "";
+  return `<div class="tr-badges" aria-label="Badges">${xp ? `<span class="tr-xp-pill num" title="Trial XP">${fmtXp(xp)}</span>` : ""}${extra || ""}${keys.map((k) => {
     const lv = best[k];
     return `<button type="button" class="tr-emb lv${lv}" data-badge="${k}" data-lv="${lv}" title="${escapeHtml(trialName(k, lv))}" aria-label="${escapeHtml(trialName(k, lv))} badge">${trialEmblem(k, lv, 62)}<span class="tr-emb-name">${escapeHtml(trialName(k, lv))}</span></button>`;
   }).join("")}</div>`;
@@ -9626,12 +9660,12 @@ function openBadgeDetail(key, trials, own, extra) {
     hero = trialEmblem(key, best, 150);
     const metal = best >= 10 ? "Prismatic" : best >= 7 ? "Gold" : best >= 4 ? "Silver" : "Bronze";
     const road = Array.from({ length: 10 }, (_, i) => `<span class="bd-step${i + 1 <= best ? " on" : ""}${i + 1 === best ? " cur" : ""}" title="${escapeHtml(trialName(key, i + 1))}">${trialEmblem(key, i + 1, 40)}</span>`).join("");
-    body = `<p class="bd-sub">${metal} · level ${best} of 10${rec.p ? " · passed " + escapeHtml(new Date(rec.p).toLocaleDateString()) : ""}</p>` +
+    body = `<p class="bd-sub">${metal} · level ${best} of 10${rec.p ? " · passed " + escapeHtml(new Date(rec.p).toLocaleDateString()) : ""} · ${fmtXp(trialXpOf(trials, key))}</p>` +
       `<p class="bd-text">Powered all ten level ${best} ${escapeHtml(cat[1])} tossups.</p>` +
       `<div class="bd-road" aria-label="Levels">${road}</div>`;
     if (own && best < 10) {
       const st = trialState(normTrialInfo({ trials }), key, best + 1);
-      next = `<button type="button" class="btn btn-primary" id="bd-next"${st.wait ? " disabled" : ""}>${ic("play", 14)}${st.wait ? escapeHtml(trialName(key, best + 1)) + " in " + fmtWait(st.wait) : "Try " + escapeHtml(trialName(key, best + 1))}</button>`;
+      next = `<button type="button" class="btn btn-primary" id="bd-next"${st.wait ? " disabled" : ""}>${ic("play", 14)}${st.wait ? escapeHtml(trialName(key, best + 1)) + " in " + waitHtml(st.wait, "Try " + trialName(key, best + 1)) : "Try " + escapeHtml(trialName(key, best + 1))}</button>`;
     }
   }
   el.innerHTML = `
@@ -9655,27 +9689,34 @@ function openBadgeDetail(key, trials, own, extra) {
 function trialState(info, key, level) {
   const t = (info && info.trials && info.trials[key + "|" + level]) || {};
   const now = Date.now() + _trialSkew;
-  const wait = t.s && now - t.s < TRIAL_COOLDOWN && !(t.l >= t.s) ? t.s + TRIAL_COOLDOWN - now : 0;
+  const since = Math.max(Number(t.s) || 0, Number(t.e) || 0), cd = trialCooldownMs(level);
+  const wait = cd && since && now - since < cd ? since + cd - now : 0;
   // progressive (14.95): I first, then each level once the one below is passed; a badge won before keeps its level
   const best = trialBest(info && info.trials)[key] || 0;
   return { passed: !!t.p || level <= best, wait, locked: level > best + 1 };
 }
-const fmtWait = (ms) => { const m = Math.ceil(ms / 60000); return m >= 60 ? "1 h" : m + " min"; };
+const fmtWait = (ms) => { const s = Math.max(1, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 function trialsSectionHtml(info) {
   const best = trialBest(info && info.trials);
-  return `<section class="pf-trials"><div class="pf-ach-head"><h2 class="eyebrow">Trials</h2><span class="pf-ach-n">Power ten in a row for a badge</span></div>
+  return `<section class="pf-trials"><div class="pf-ach-head"><h2 class="eyebrow">Trials</h2><span class="pf-ach-n tr-total"><b class="num">${trialXpOf(info && info.trials).toLocaleString()}</b> XP</span></div>
     <div class="tr-grid">${TRIAL_CATS.map(([key, name]) => {
       const lv = best[key] || 0;
       const pips = Array.from({ length: 10 }, (_, i) => { const st = trialState(info, key, i + 1); return `<i class="${st.passed ? "on" : st.wait ? "wait" : st.locked ? "lock" : ""}"></i>`; }).join("");
       return `<button type="button" class="tr-card${lv ? "" : " none"}" data-trial="${key}" style="--hue:${trialHue(key)}"><span class="tr-card-emb" aria-hidden="true">${trialEmblem(key, lv || 1, 40)}</span><span class="tr-name">${escapeHtml(name)}</span>` +
-        `<span class="tr-lv">${lv ? escapeHtml(name + " " + ROMAN[lv]) : "No badge yet"}</span><span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
+        `<span class="tr-lv">${lv ? escapeHtml(name + " " + ROMAN[lv]) : "No badge yet"}</span>` +
+        `<span class="tr-meta"><span class="tr-xp num">${fmtXp(trialXpOf(info && info.trials, key))}</span>${(() => { const nx = trialState(info, key, Math.min(10, lv + 1)); return nx.wait && !nx.locked ? waitHtml(nx.wait) : ""; })()}</span>` +
+        `<span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
     }).join("")}</div></section>`;
 }
 // the trials' state, whatever came back (an older app, an error, a malformed synced value): always { trials: {…} }
 function normTrialInfo(d) {
   const raw = d && typeof d === "object" && d.trials && typeof d.trials === "object" && !Array.isArray(d.trials) ? d.trials : {};
   const trials = {};
-  for (const [k, v] of Object.entries(raw)) if (/^[a-z]+\|\d{1,2}$/.test(k) && v && typeof v === "object") trials[k] = { s: Number(v.s) || 0, p: Number(v.p) || 0, l: Number(v.l) || 0 };
+  for (const [k, v] of Object.entries(raw)) if (/^[a-z]+\|\d{1,2}$/.test(k) && v && typeof v === "object") {
+    const a = {};
+    if (v.a && typeof v.a === "object" && !Array.isArray(v.a)) for (const [ts, x] of Object.entries(v.a)) if (/^\d{10,14}$/.test(ts) && Number(x) >= 0) a[ts] = Math.min(Number(x), 2500);
+    trials[k] = { s: Number(v.s) || 0, p: Number(v.p) || 0, l: Number(v.l) || 0, e: Number(v.e) || 0, a };
+  }
   return { ...(d && typeof d === "object" ? d : {}), trials };
 }
 async function loadTrialInfo() {
@@ -9701,7 +9742,7 @@ function openTrialPicker(key) {
     const lv = i + 1, st = lvState(lv);
     const off = st.wait || st.locked;
     return `<button type="button" class="tp-lv${st.passed ? " passed" : ""}${st.wait ? " wait" : ""}${st.locked ? " locked" : ""}${pick === lv ? " sel" : ""}" data-lv="${lv}" aria-pressed="${pick === lv}"${off ? " disabled" : ""}${st.locked ? ` title="Pass ${escapeHtml(trialName(key, lv - 1))} first"` : ""}>` +
-      `<b>${ROMAN[lv]}</b><small>${st.passed ? ic("check", 12) + "Passed" : st.wait ? ic("clock", 12) + fmtWait(st.wait) : st.locked ? ic("lock", 12) + "Locked" : "Level " + lv}</small></button>`;
+      `<b>${ROMAN[lv]}</b><small>${st.wait ? waitHtml(st.wait) : st.passed ? ic("check", 12) + "Passed" : st.locked ? ic("lock", 12) + "Locked" : "Level " + lv}</small></button>`;
   }).join("");
   const paint = () => {
     try {
@@ -9709,15 +9750,15 @@ function openTrialPicker(key) {
       const go = el.querySelector("#tp-go"), note = el.querySelector("#tp-note");
       go.disabled = !pick;
       go.innerHTML = pick ? "Continue" + ic("right", 14) : "Pick a level";
-      note.textContent = pick && lvState(pick).passed ? "You already passed this level." : "";
+      note.textContent = pick ? `${10 * pick} XP a power, ${fmtXp(trialXp(pick, TRIAL_LEN))} for all ten.` + (lvState(pick).passed ? " You passed this level already." : "") : "";
     } catch (e) {}
   };
   el.innerHTML = `
     <div class="settings-modal tp-modal" tabindex="-1" style="--hue:${trialHue(key)}">
-      <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="spacer"></span>
+      <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="tp-xp num">${fmtXp(trialXpOf(info.trials, key))}</span><span class="spacer"></span>
         <button type="button" class="btn btn-ghost btn-icon" id="tp-x" aria-label="Close">${ic("x")}</button></div>
       <div class="achd-body">
-        <p class="tp-lead"><b>Power all ten</b> tossups to pass and unlock the next level. Any miss ends the trial, and you can retry an hour after you start.</p>
+        <p class="tp-lead">Every power earns XP, and higher levels earn more. <b>Power all ten</b> to pass and unlock the next level.</p>
         <div class="tp-levels" role="group" aria-label="Level">${levels()}</div>
         <p class="achd-fine" id="tp-note"></p>
         <p class="tp-err" id="tp-err" role="alert"></p>
@@ -9728,6 +9769,7 @@ function openTrialPicker(key) {
   const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
   document.addEventListener("keydown", onKey, true);
   el.addEventListener("click", (ev) => { if (ev.target === el) close(); const b = ev.target.closest?.(".tp-lv[data-lv]"); if (b && !b.disabled) { pick = parseInt(b.dataset.lv, 10); paint(); } });
+  el.addEventListener("wait-ended", () => setTimeout(() => { if (!pick && best < 10 && !lvState(best + 1).wait) pick = best + 1; paint(); }, 0));
   document.body.appendChild(el);
   el.querySelector("#tp-x").onclick = close;
   // Continue: the practice page, its Setup open with only reading speed and Start — nothing is read (nor the
@@ -9744,7 +9786,7 @@ function trialPending() { try { return !!(_trial && _trial.pending && !_trial.do
 function prepTrial(t) {
   if (_trial && _trial.pending) _trial = null;
   if (state.sessionActive) endSession();
-  _trial = { ...t, ids: null, pending: true, n: 0, powered: 0, servedId: null, answeredId: null, done: false };
+  _trial = { ...t, ids: null, pending: true, n: 0, powered: 0, res: [], servedId: null, answeredId: null, done: false };
   state.bonusIds = null; state.reviewIds = null; state.currentQuestion = null;
   showScreen("practice-tossups");
   setMode("tossups");
@@ -9769,9 +9811,11 @@ async function beginTrial() {
     if (e2 && stale && window.qbreader.relaunchApp) {
       e2.innerHTML = 'Restart OfflineQuiz to finish the update. <button type="button" class="btn btn-sm" id="trial-restart">Restart</button>';
       e2.querySelector("#trial-restart").onclick = () => window.qbreader.relaunchApp();
-    } else if (e2) e2.textContent = r && r.cooldownUntil ? "This trial can be taken again in " + fmtWait(r.cooldownUntil - (Date.now() + _trialSkew)) + "." : (r && r.error) || "Couldn't start the trial.";
+    } else if (e2 && r && r.cooldownUntil) { e2.innerHTML = "Ready in " + waitHtml(r.cooldownUntil - (Date.now() + _trialSkew), "Ready. Press Start."); loadTrialInfo(); }
+    else if (e2) e2.textContent = (r && r.error) || "Couldn't start the trial.";
     openSetupDrawer(); return;
   }
+  { const k = t.key + "|" + t.level; _trialInfo = normTrialInfo(_trialInfo); _trialInfo.trials[k] = { ...(_trialInfo.trials[k] || { a: {} }), s: Number(r.startedAt) || Date.now() + _trialSkew }; }
   closeSetupDrawer();
   runTrial({ key: t.key, name: t.name, level: t.level, ids: r.ids });
 }
@@ -9789,7 +9833,7 @@ function syncTrialSetup() {
   syncDrawerStart();
 }
 function runTrial(t) {
-  _trial = { ...t, n: 0, powered: 0, servedId: null, answeredId: null, done: false };
+  _trial = { ...t, n: 0, powered: 0, res: [], servedId: null, answeredId: null, done: false };
   if (state.sessionActive) { const tr = _trial; _trial = null; endSession(); _trial = tr; }
   state.bonusIds = null;
   state.customType = "tossups";
@@ -9808,31 +9852,44 @@ function paintTrialBar() {
   const area = document.getElementById("question-area"); if (!area) return;
   if (!bar) { bar = document.createElement("div"); bar.id = "trial-bar"; bar.className = "trial-bar"; area.insertBefore(bar, area.firstChild); }
   bar.style.setProperty("--hue", trialHue(_trial.key));
-  const pips = Array.from({ length: TRIAL_LEN }, (_, i) => `<i class="${i < _trial.powered ? "on" : i === _trial.powered && !_trial.done && _trial.n > i ? "now" : ""}"></i>`).join("");
+  const res = _trial.res || [];
+  const pips = Array.from({ length: TRIAL_LEN }, (_, i) => `<i class="${i < res.length ? (res[i] === "p" ? "on" : "miss") : i === res.length && !_trial.done && _trial.n > i ? "now" : ""}"></i>`).join("");
   bar.innerHTML = `<span class="tb-k">${ic("award", 14)}Trial</span><b class="tb-name">${escapeHtml(trialName(_trial.key, _trial.level))}</b>` +
     `<span class="tb-pips" aria-label="${_trial.powered} of ${TRIAL_LEN} powered">${pips}</span><span class="tb-n num">${_trial.powered}/${TRIAL_LEN}</span>` +
+    `<span class="tb-xp num">+${fmtXp(trialXp(_trial.level, _trial.powered))}</span>` +
     (_trial.done ? "" : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
   const lv = bar.querySelector("#tb-leave");
-  if (lv && _trial.pending) lv.onclick = () => { closeSetupDrawer(); trialEnd(false, "left"); };
-  else if (lv) lv.onclick = () => confirmDialog("Leave the trial? It counts as a fail.", () => trialEnd(false, "left"), { yes: "Leave" });
+  if (lv && _trial.pending) lv.onclick = () => { closeSetupDrawer(); trialEnd("left"); };
+  else if (lv) lv.onclick = () => confirmDialog("Leave the trial? You keep the XP you've earned.", () => trialEnd("left"), { yes: "Leave" });
 }
-function trialOnResult(result) {
-  _trial.answeredId = _trial.servedId;
-  if (result && result.isPower) {
-    _trial.powered++;
-    paintTrialBar();
-    if (_trial.powered >= TRIAL_LEN) setTimeout(() => trialEnd(true), 700);
-  } else setTimeout(() => trialEnd(false, result && result.correct ? "answered after the power mark" : result && result.points < 0 ? "a neg" : "not a power"), 700);
+function trialOnResult(result) { trialMark(!!(result && result.isPower)); }
+// one question done: a power or a miss (any other verdict, no buzz, a skip). After the tenth the trial ends.
+function trialMark(power) {
+  const t = _trial;
+  if (!t || t.done || t.pending || !t.servedId || t.answeredId === t.servedId) return;
+  t.answeredId = t.servedId;
+  t.res.push(power ? "p" : "x");
+  if (power) t.powered++;
+  paintTrialBar();
+  if (t.res.length >= TRIAL_LEN) setTimeout(() => trialEnd(), 700);
 }
-async function trialEnd(passed, why, quiet) {
+const trialComplete = () => !!(_trial && !_trial.done && !_trial.pending && (_trial.res || []).length >= TRIAL_LEN);
+async function trialEnd(why, quiet) {
   if (!_trial || _trial.done) return;
   if (_trial.pending) { _trial = null; paintTrialBar(); return; }   // never started: nothing to record
   const t = _trial; t.done = true;
+  const powers = t.powered;
   let r = null;
-  try { r = await API.post("/api/trials", { action: passed ? "pass" : "fail", category: t.key, level: t.level }); } catch (e) {}
-  if (passed && r && r.trials && _trialInfo) _trialInfo = normTrialInfo({ ..._trialInfo, trials: r.trials });
-  else if (_trialInfo && _trialInfo.trials) { const k = t.key + "|" + t.level; _trialInfo.trials[k] = _trialInfo.trials[k] || {}; if (passed) { _trialInfo.trials[k].l = Date.now() + _trialSkew; _trialInfo.trials[k].p = _trialInfo.trials[k].p || _trialInfo.trials[k].l; } }
-  if (passed && r && !r.ok) passed = false;
+  try { r = await API.post("/api/trials", { action: "finish", category: t.key, level: t.level, powers }); } catch (e) {}
+  if (!r || !r.ok && !r.cooldownUntil) {   // a backend from before 15.0 knows only pass / fail
+    try { r = await API.post("/api/trials", { action: powers >= TRIAL_LEN ? "pass" : "fail", category: t.key, level: t.level }); } catch (e) {}
+  }
+  const passed = r && r.passed != null ? !!r.passed : powers >= TRIAL_LEN && !!(r && r.ok);
+  t.xp = r && r.xp != null ? Number(r.xp) : trialXp(t.level, powers);
+  if (r && r.trials) _trialInfo = normTrialInfo({ ..._trialInfo, trials: r.trials });
+  else { const k = t.key + "|" + t.level, now = Date.now() + _trialSkew; _trialInfo = normTrialInfo(_trialInfo); const o = _trialInfo.trials[k] = _trialInfo.trials[k] || { a: {} }; o.e = now; if (passed) { o.l = now; o.p = o.p || now; } }
+  const cd = trialCooldownMs(t.level);
+  t.waitMs = r && r.cooldownUntil ? Math.max(0, r.cooldownUntil - (Date.now() + _trialSkew)) : cd;
   if (quiet) { _trial = null; paintTrialBar(); return; }
   paintTrialBar();
   showTrialResult(t, passed, why);
@@ -9843,16 +9900,19 @@ function showTrialResult(t, passed, why) {
   el.id = "trial-done";
   el.className = "qb-overlay review-ovl ach-ovl";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "td-h");
-  const q = Math.min(TRIAL_LEN, t.powered + 1);
+  const mult = t.powered >= 10 ? "×2.5 for all ten" : t.powered >= 6 ? "×1.5 for 6+ powers" : t.powered >= 5 ? "×1.25 for 5 powers" : "";
+  const next = passed && t.level < 10 ? t.level + 1 : 0, again = !next && !t.waitMs;
   el.innerHTML = `
     <div class="settings-modal tp-modal td-modal" tabindex="-1" style="--hue:${trialHue(t.key)}">
       <div class="achd-body td-body">
         <span class="td-medal${passed ? " on" : ""}">${ic("award", 40)}</span>
-        <h2 id="td-h">${passed ? "Badge earned" : "Trial over"}</h2>
+        <h2 id="td-h">${passed ? "Badge earned" : why === "left" ? "Trial left" : "Trial complete"}</h2>
         <p class="td-name">${escapeHtml(trialName(t.key, t.level))}</p>
-        <p class="td-why">${passed ? "You powered all ten. The badge is on your profile." : why === "left" ? "You left after " + t.powered + " of 10 powers." : "Ended on question " + q + " (" + escapeHtml(why || "not a power") + "). You powered " + t.powered + " of 10."}${passed ? "" : " You can retry an hour after you started."}</p>
+        <p class="td-xp num">+${fmtXp(t.xp)}</p>
+        <p class="td-why">You powered ${t.powered} of 10${mult ? ", " + mult : ""}.${passed ? (next ? " " + escapeHtml(trialName(t.key, next)) + " is open." : " That's the top level.") : ""}</p>
+        ${t.waitMs ? `<p class="td-wait">Try ${escapeHtml(trialName(t.key, t.level))} again in ${waitHtml(t.waitMs, "Ready to try " + trialName(t.key, t.level) + " again.")}</p>` : ""}
       </div>
-      <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn btn-primary" id="td-trials">${ic("award", 14)}Trials</button></div>
+      <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn${next || again ? "" : " btn-primary"}" id="td-trials">${ic("award", 14)}Trials</button>${next ? `<button type="button" class="btn btn-primary" id="td-next">${ic("play", 14)}Try ${escapeHtml(trialName(t.key, next))}</button>` : again ? `<button type="button" class="btn btn-primary" id="td-again">${ic("review", 14)}Again</button>` : ""}</div>
     </div>`;
   const finish = (toTrials) => {
     document.removeEventListener("keydown", onKey, true);
@@ -9866,6 +9926,9 @@ function showTrialResult(t, passed, why) {
   document.body.appendChild(el);
   el.querySelector("#td-close").onclick = () => finish(false);
   el.querySelector("#td-trials").onclick = () => finish(true);
+  const nx = el.querySelector("#td-next"), ag = el.querySelector("#td-again"), cat = TRIAL_CATS.find((c) => c[0] === t.key);
+  if (nx) nx.onclick = () => { finish(false); prepTrial({ key: t.key, name: cat[1], level: t.level + 1 }); };
+  if (ag) ag.onclick = () => { finish(false); prepTrial({ key: t.key, name: cat[1], level: t.level }); };
   if (passed) { try { Sound.achievement(); } catch (e) {} }
   try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
 }
