@@ -520,8 +520,9 @@ function ic(name, size, extra) {
   return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || "") + ">" + (ICON[name] || "") + "</svg>";
 }
 
-// Twelve root categories each keep one hue everywhere (badges, tiles, dots).
-const ROOT_COLOR = { "Literature": "#bc8cff", "Science and Math": "#58a6ff", "Fine Arts": "#f778ba", "History": "#e3b341", "Geography": "#56d364", "Mythology": "#ffa657", "Pop Culture Sports": "#ff7b72", "Social Science": "#3dd6a3", "Philosophy": "#39c5cf", "Theology": "#8e9bff", "Current Events": "#c9d16b", "Miscellaneous": "#8b949e" };
+// Each root category keeps one hue everywhere (badges, tiles, dots). Since 14.97 Science, Math, Pop Culture
+// and Sports are roots of their own; the two old combined names stay for an older database.
+const ROOT_COLOR = { "Literature": "#bc8cff", "Science": "#58a6ff", "Math": "#a5e05b", "Pop Culture": "#ff7b72", "Sports": "#ff6f91", "Science and Math": "#58a6ff", "Fine Arts": "#f778ba", "History": "#e3b341", "Geography": "#56d364", "Mythology": "#ffa657", "Pop Culture Sports": "#ff7b72", "Social Science": "#3dd6a3", "Philosophy": "#39c5cf", "Theology": "#8e9bff", "Current Events": "#c9d16b", "Miscellaneous": "#8b949e" };
 function rootColorOf(path) { return ROOT_COLOR[String(path || "").split(" > ")[0]] || "#8b949e"; }
 // Tag families: short label + hue. "subject" = a category-tree node.
 const TAG_FAM = {
@@ -2587,12 +2588,13 @@ function applyCatState(st, opts = {}) {
   };
   _catRoots().forEach(visit);
 }
+const CAT_SPLIT = { n5c3932cefa: ["nc7da6ff213", "nf9d9ab0a2a"], n2bf00654e4: ["n9b8235c01e", "nc647c3608a"] };   // src/main/database.js SPLIT_ROOTS
 // Old (QBReader) category labels -> new tree paths. Used once to carry saved
 // selections and old multiplayer snapshots over; unmapped names are dropped.
 const OLD_CAT_MAP = {
-  "Literature": ["Literature"], "History": ["History"], "Science": ["Science and Math"], "Fine Arts": ["Fine Arts"],
+  "Literature": ["Literature"], "History": ["History"], "Science": ["Science", "Math"], "Fine Arts": ["Fine Arts"],
   "Mythology": ["Mythology"], "Religion": ["Theology"], "Philosophy": ["Philosophy"], "Social Science": ["Social Science"],
-  "Geography": ["Geography"], "Current Events": ["Current Events"], "Pop Culture": ["Pop Culture Sports"], "Trash": ["Pop Culture Sports"],
+  "Geography": ["Geography"], "Current Events": ["Current Events"], "Pop Culture": ["Pop Culture"], "Trash": ["Pop Culture", "Sports"],
   "Other Academic": ["Miscellaneous"],
   "Literature|American Literature": ["Literature > English Literature > American Literature"],
   "Literature|British Literature": ["Literature > English Literature > British Literature"],
@@ -2603,22 +2605,22 @@ const OLD_CAT_MAP = {
   "History|American History": ["History > American History"], "History|Ancient History": ["History > Ancient History"],
   "History|European History": ["History > European History"], "History|World History": ["History > World History"],
   "History|Other History": ["History > Cross History"],
-  "Science|Biology": ["Science and Math > Science > Biology"], "Science|Chemistry": ["Science and Math > Science > Chemistry"],
-  "Science|Physics": ["Science and Math > Science > Physics"],
-  "Science|Other Science": ["Science and Math > Math", "Science and Math > Science > Astronomy", "Science and Math > Science > Computer Science", "Science and Math > Science > Earth Science", "Science and Math > Science > Other Science", "Science and Math > Science > Any Science"],
-  "Science|Math": ["Science and Math > Math"], "Science|Astronomy": ["Science and Math > Science > Astronomy"],
-  "Science|Computer Science": ["Science and Math > Science > Computer Science"], "Science|Earth Science": ["Science and Math > Science > Earth Science"],
-  "Science|Engineering": ["Science and Math > Science > Other Science > Engineering"], "Science|Misc Science": ["Science and Math > Science > Other Science"],
+  "Science|Biology": ["Science > Biology"], "Science|Chemistry": ["Science > Chemistry"],
+  "Science|Physics": ["Science > Physics"],
+  "Science|Other Science": ["Math", "Science > Astronomy", "Science > Computer Science", "Science > Earth Science", "Science > Other Science", "Science > Any Science"],
+  "Science|Math": ["Math"], "Science|Astronomy": ["Science > Astronomy"],
+  "Science|Computer Science": ["Science > Computer Science"], "Science|Earth Science": ["Science > Earth Science"],
+  "Science|Engineering": ["Science > Other Science > Engineering"], "Science|Misc Science": ["Science > Other Science"],
   "Fine Arts|Visual Fine Arts": ["Fine Arts > Visual"], "Fine Arts|Auditory Fine Arts": ["Fine Arts > Music"],
   "Fine Arts|Other Fine Arts": ["Fine Arts > Performance", "Fine Arts > Any Fine Arts"],
   "Fine Arts|Architecture": ["Fine Arts > Visual > Architecture"], "Fine Arts|Dance": ["Fine Arts > Performance > Dance"],
   "Fine Arts|Opera": ["Fine Arts > Performance > Opera"], "Fine Arts|Jazz": ["Fine Arts > Music > Jazz"],
   "Fine Arts|Musicals": ["Fine Arts > Performance > Theater"], "Fine Arts|Photography": ["Fine Arts > Visual > Other > Photography"],
   "Fine Arts|Film": ["Fine Arts > Any Fine Arts"], "Fine Arts|Misc Arts": ["Fine Arts > Any Fine Arts"],
-  "Pop Culture|Movies": ["Pop Culture Sports > Pop Culture > Film"], "Pop Culture|Music": ["Pop Culture Sports > Pop Culture > Music"],
-  "Pop Culture|Sports": ["Pop Culture Sports > Sports"], "Pop Culture|Television": ["Pop Culture Sports > Pop Culture > TV"],
-  "Pop Culture|Video Games": ["Pop Culture Sports > Pop Culture > Video Games"],
-  "Pop Culture|Other Pop Culture": ["Pop Culture Sports > Pop Culture > Other", "Pop Culture Sports > Pop Culture > Any"],
+  "Pop Culture|Movies": ["Pop Culture > Film"], "Pop Culture|Music": ["Pop Culture > Music"],
+  "Pop Culture|Sports": ["Sports"], "Pop Culture|Television": ["Pop Culture > TV"],
+  "Pop Culture|Video Games": ["Pop Culture > Video Games"],
+  "Pop Culture|Other Pop Culture": ["Pop Culture > Other", "Pop Culture > Any"],
   "Social Science|Anthropology": ["Social Science > Anthropology Sociology"], "Social Science|Sociology": ["Social Science > Anthropology Sociology"],
   "Social Science|Economics": ["Social Science > Economics"], "Social Science|Psychology": ["Social Science > Psychology"],
   "Social Science|Linguistics": ["Social Science > Any Social Science > Linguistics"],
@@ -2697,9 +2699,18 @@ function catStateForTree(st) {
     const l = legacyFromV1State(st);
     return catStateFromLegacy(l.cats, l.weights);
   }
+  // 14.97: "Science and Math" / "Pop Culture Sports" split in two (the halves kept their ids). A whole old
+  // root ticks both halves; a weight on it goes to both.
+  const ids = new Set(st.ids || []), auto = new Set(st.auto || []), weights = { ...(st.weights || {}) };
+  if (_catIndex) for (const [old, halves] of Object.entries(CAT_SPLIT)) {
+    if (_catIndex.byId.has(old)) continue;
+    const tick = (n) => { ids.add(n.id); (n.children || []).forEach(tick); };
+    if (ids.has(old) && !auto.has(old)) halves.forEach((h) => { const n = _catIndex.byId.get(h); if (n) tick(n); });
+    if (weights[old] != null) halves.forEach((h) => { if (weights[h] == null) weights[h] = weights[old]; });
+  }
   // drop ids the current tree no longer has (a tree version change)
   const ok = (id) => !_catIndex || _catIndex.byId.has(id);
-  return { v: 1, ids: (st.ids || []).filter(ok), auto: (st.auto || []).filter(ok), weights: st.weights || {} };
+  return { v: 1, ids: [...ids].filter(ok), auto: [...auto].filter(ok), weights };
 }
 // The saved per-mode blob -> tree state (migrating a pre-tree save once).
 function savedCatState(saved) {
@@ -3325,7 +3336,7 @@ function closeCategoryOverlay() {
 //    change events, so every edit here dispatches one);
 //  • search: an in-memory set of whole-subtree units.
 const CAT_PRESET_LS = "qb-cat-presets";
-const ACF_DISTRIBUTION = { "Literature": 40, "History": 40, "Science and Math": 40, "Fine Arts": 30, "Mythology": 10, "Theology": 10, "Philosophy": 10, "Social Science": 10, "Geography": 5, "Current Events": 3, "Miscellaneous": 2 };
+const ACF_DISTRIBUTION = { "Literature": 40, "History": 40, "Science": 35, "Math": 5, "Fine Arts": 30, "Mythology": 10, "Theology": 10, "Philosophy": 10, "Social Science": 10, "Geography": 5, "Current Events": 3, "Miscellaneous": 2 };
 // Presets live in the profile's data (plugin-data "core / cat-presets"), so they
 // sync with an account between the app and the website; localStorage keeps a
 // copy (and is where older versions kept them — moved over on first load).
@@ -9290,6 +9301,8 @@ function achAnsHit(ans, target, person) {
   return aw.length > 0 && aw.length < tw.length && aw.every((w) => tw.includes(w)) && tw.filter((w) => !aw.includes(w)).every((w) => ACH_GENERIC.has(w));
 }
 const achList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+// an answer power's category: its own `cat` (14.97: a few moved to Math / Sports, ids kept) or its id's prefix
+const achCatOf = (a) => a.cat || apAchCategory(a.id);
 const achPathIn = (path, topics) => topics.some((t) => path === t || path.startsWith(t + " > "));
 function achGroups(ach) {
   if (!ach._groups) ach._groups = achList(ach.answers).map((g) => achList(g).map((x) => ({ t: apNorm(x), person: String(x)[0] === "@" })).filter((x) => x.t)).filter((g) => g.length);
@@ -9300,7 +9313,7 @@ function achRecordHit(ach, rec) {
   const topics = achList(ach.topic), groups = achGroups(ach);
   const inTopic = topics.length > 0 && achPathIn(rec.p, topics);
   if (!groups.length) return inTopic ? 0 : -1;
-  const within = ach.within === "*" ? [] : achList(ach.within || apAchCategory(ach.id));
+  const within = ach.within === "*" ? [] : achList(ach.within || achCatOf(ach));
   const g = within.length && !achPathIn(rec.p, within) ? -1 : groups.findIndex((gr) => gr.some((x) => achAnsHit(rec.a, x.t, x.person)));
   if (!topics.length) return g;
   if (ach.either) return g >= 0 ? g : inTopic ? 0 : -1;
@@ -9345,8 +9358,9 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
       progress = Math.max(...Object.values(cats).map(c => c.totalQuestions || 0), 0);
     } else if (ach.type === "cat_specific") {
       // ach.path = a category-tree node (any depth), counted over its subtree.
-      const catData = ach.path ? (stats.byPath || {})[ach.path] : (stats.byCategory || {})[ach.category];
-      progress = catData ? catData.totalQuestions || 0 : 0;
+      // since 14.97 a list of nodes, summed ("Science and Math" is Science + Math)
+      if (ach.path) progress = achList(ach.path).reduce((s, p) => s + (((stats.byPath || {})[p] || {}).totalQuestions || 0), 0);
+      else { const catData = (stats.byCategory || {})[ach.category]; progress = catData ? catData.totalQuestions || 0 : 0; }
     } else if (ach.type === "daily") {
       const days = stats.questionsByDate || {};
       progress = Math.max(...Object.values(days).map(d => d.questions || 0), 0);
@@ -9471,9 +9485,11 @@ const AP_CATEGORY_PREFIXES = [
   ["ap-lit-", "Literature"],
   ["ap-hist-", "History"],
   ["ap-geo-", "Geography"],
-  ["ap-sci-", "Science and Math"],
+  ["ap-sci-", "Science"],
+  ["ap-math-", "Math"],
   ["ap-myth-", "Mythology"],
-  ["ap-pop-", "Pop Culture Sports"],
+  ["ap-pop-", "Pop Culture"],
+  ["ap-sport-", "Sports"],
   ["ap-fa-", "Fine Arts"],
   ["ap-phil-", "Philosophy"],
 ];
@@ -9502,10 +9518,10 @@ function renderAchievementCard(ach, data) {
 // other verdict, a dead tossup, a skip or leaving ends it. Passing gives a badge ("Mythology I"), shown at the
 // top of the profile; a failed (or left) trial can be taken again an hour after it started. State and the
 // question pick are the backend's (/api/trials; src/main/index.js TRIAL_CATS), synced with the account.
-const TRIAL_CATS = [["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science and Math"], ["math", "Math", "Science and Math"],
+const TRIAL_CATS = [["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science"], ["math", "Math", "Math"],
   ["fa", "Fine Arts", "Fine Arts"], ["myth", "Mythology", "Mythology"], ["phil", "Philosophy", "Philosophy"], ["rel", "Theology", "Theology"],
   ["geo", "Geography", "Geography"], ["ss", "Social Science", "Social Science"], ["ce", "Current Events", "Current Events"],
-  ["pop", "Pop Culture", "Pop Culture Sports"], ["sports", "Sports", "Pop Culture Sports"], ["misc", "Miscellaneous", "Miscellaneous"]];
+  ["pop", "Pop Culture", "Pop Culture"], ["sports", "Sports", "Sports"], ["misc", "Miscellaneous", "Miscellaneous"]];
 const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
 const TRIAL_LEN = 10, TRIAL_COOLDOWN = 3600e3;
 let _trial = null;   // the trial being played: { key, name, level, ids, n, powered, servedId, answeredId, done }
@@ -10033,10 +10049,10 @@ function openAchievementDetail(ach, ctx) {
     const best = Object.values((ctx.stats && ctx.stats.questionsByDate) || {}).sort((a, b) => (b.questions || 0) - (a.questions || 0))[0];
     if (best) mine = `<p>Your best day was <b class="num">${(best.questions || 0).toLocaleString()}</b> questions on ${escapeHtml(best.date || "")}.</p>`;
   } else if (ach.type === "cat_specific") {
-    how = mystery ? "<p>Keep playing to find out.</p>" : `<p>Answer ${thr.toLocaleString()} questions in ${escapeHtml(achPathLabel(ach.path || ach.category))}.</p>`;
+    how = mystery ? "<p>Keep playing to find out.</p>" : `<p>Answer ${thr.toLocaleString()} questions in ${achList(ach.path || ach.category).map((x) => escapeHtml(achPathLabel(x))).join(" and ")}.</p>`;
   } else if (ach.type === "answer_power") {
     const topics = achList(ach.topic), groups = achGroups(ach), mode = ach.count || "questions";
-    const within = ach.within === "*" ? [] : achList(ach.within || apAchCategory(ach.id));
+    const within = ach.within === "*" ? [] : achList(ach.within || achCatOf(ach));
     const counted = mode === "targets" ? `${thr} different ${thr === 1 ? "one" : "ones"} of the list` : mode === "answers" ? `${thr} different answers` : `${thr} different ${thr === 1 ? "question" : "questions"}`;
     how = `<p>Power ${counted}${topics.length && !groups.length ? " in the topic below" : ""}. Each question counts once.</p>` +
       (groups.length && topics.length ? `<p>${ach.either ? "Either a question in the topic or one whose answer is on the list counts." : "The question has to be in the topic and its answer on the list."}</p>` : "") +
@@ -10125,10 +10141,10 @@ function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
   if (apAchs.length) {
     html += '<div class="achievement-section-title">Answer Powers</div>';
     for (const [prefix, label] of AP_CATEGORY_PREFIXES) {
-      html += group("ap:" + prefix, label, apAchs.filter(a => a.id.startsWith(prefix)).map((a) => [a, achData[a.id]]), true);
+      html += group("ap:" + prefix, label, apAchs.filter(a => achCatOf(a) === label).map((a) => [a, achData[a.id]]), true);
     }
-    const known = new Set(AP_CATEGORY_PREFIXES.map(p => p[0]));
-    const other = apAchs.filter(a => ![...known].some(p => a.id.startsWith(p)));
+    const known = new Set(AP_CATEGORY_PREFIXES.map(p => p[1]));
+    const other = apAchs.filter(a => !known.has(achCatOf(a)));
     html += group("ap:other", "Other", other.map((a) => [a, achData[a.id]]), true);
   }
 
@@ -10285,16 +10301,16 @@ const ACHIEVEMENT_LIST = [
   { id:"streak30", name:"Locked In", desc:"30 day streak", type:"streak", threshold:30, icon:"年" },
   { id:"cat3333_History", name:"Keskil Khan", desc:"3333 in History", type:"cat_specific", threshold:3333, icon:"汗", category:"History", path:"History" },
   { id:"cat3333_Literature", name:"Keskil Collector", desc:"3333 in Literature", type:"cat_specific", threshold:3333, icon:"文", category:"Literature", path:"Literature" },
-  { id:"cat3333_Science", name:"Keskil Chemist", desc:"3333 in Science and Math", type:"cat_specific", threshold:3333, icon:"科", category:"Science and Math", path:"Science and Math" },
+  { id:"cat3333_Science", name:"Keskil Chemist", desc:"3333 in Science and Math", type:"cat_specific", threshold:3333, icon:"科", category:"Science", path:["Science", "Math"] },
   { id:"cat3333_Fine Arts", name:"Keskil Craftsmen", desc:"3333 in Fine Arts", type:"cat_specific", threshold:3333, icon:"芸", category:"Fine Arts", path:"Fine Arts" },
   { id:"cat3333_Religion", name:"Keskil Kultist", desc:"3333 in Theology", type:"cat_specific", threshold:3333, icon:"宗", category:"Theology", path:"Theology" },
   { id:"cat3333_Mythology", name:"Keskil Legend", desc:"3333 in Mythology", type:"cat_specific", threshold:3333, icon:"神", category:"Mythology", path:"Mythology" },
   { id:"cat3333_Philosophy", name:"Keskil Questioner", desc:"3333 in Philosophy", type:"cat_specific", threshold:3333, icon:"哲", category:"Philosophy", path:"Philosophy" },
   { id:"cat3333_Current Events", name:"Keskil King", desc:"3333 in Current Events", type:"cat_specific", threshold:3333, icon:"王", category:"Current Events", path:"Current Events" },
   { id:"cat3333_Geography", name:"Keskil Cartographer", desc:"3333 in Geography", type:"cat_specific", threshold:3333, icon:"地", category:"Geography", path:"Geography" },
-  { id:"cat3333_Math", name:"Keskil Calculator", desc:"3333 in Math", type:"cat_specific", threshold:3333, icon:"数", category:"Science and Math", path:"Science and Math > Math" },
-  { id:"cat3333_Computer Science", name:"Keskil claude user", desc:"3333 in Computer Science", type:"cat_specific", threshold:3333, icon:"算", category:"Science and Math", path:"Science and Math > Science > Computer Science" },
-  { id:"cat3333_Trash", name:"Keskil's Opps", desc:"3333 in Pop Culture & Sports (Trash)", type:"cat_specific", threshold:3333, icon:"屑", category:"Pop Culture Sports", path:"Pop Culture Sports" },
+  { id:"cat3333_Math", name:"Keskil Calculator", desc:"3333 in Math", type:"cat_specific", threshold:3333, icon:"数", category:"Math", path:"Math" },
+  { id:"cat3333_Computer Science", name:"Keskil claude user", desc:"3333 in Computer Science", type:"cat_specific", threshold:3333, icon:"算", category:"Science", path:"Science > Computer Science" },
+  { id:"cat3333_Trash", name:"Keskil's Opps", desc:"3333 in Pop Culture and Sports (Trash)", type:"cat_specific", threshold:3333, icon:"屑", category:"Pop Culture", path:["Pop Culture", "Sports"] },
   { id:"day25", name:"Full Round", desc:"Answer 25 questions in a day", type:"daily", threshold:25, icon:"準" },
   { id:"day50", name:"Prelims", desc:"Answer 50 questions in a day", type:"daily", threshold:50, icon:"予" },
   { id:"day100", name:"Playoffs", desc:"Answer 100 questions in a day", type:"daily", threshold:100, icon:"決" },
@@ -10344,52 +10360,52 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-hist-thatcher",name:"Milk Snatcher",desc:"Power on a Margaret Thatcher question",type:"answer_power",threshold:1,answers:["@margaret thatcher"],icon:"鉄"},
   {id:"ap-hist-genghis",name:"Great Conqueror",desc:"Power on Genghis Khan or the Mongol Empire",type:"answer_power",threshold:1,answers:["genghis khan","temujin","mongol empire","mongols"],icon:"征"},
   {id:"ap-hist-workers",name:"Workers of the World, Unite!",desc:"Power on 7 different communist revolutionaries",type:"answer_power",threshold:7,count:"targets",answers:[["@joseph stalin"],["@vladimir lenin"],["@leon trotsky"],["mao zedong","mao tse tung"],["@che guevara"],["ho chi minh"],["@fidel castro"],["@friedrich engels"],["@rosa luxemburg"],["@josip broz tito"],["@karl marx"],["pol pot"],["kim il sung"],["@deng xiaoping"],["@enver hoxha"],["@antonio gramsci"],["raul castro"],["zhou enlai"],["@nikita khrushchev"],["@thomas sankara"]],within:"*",icon:"革"},
-  {id:"ap-geo-siberia",name:"Birthplace of Keskil",desc:"Power on Siberia or one of its places (Baikal, Kamchatka, the Yenisei …)",type:"answer_power",threshold:1,answers:["siberia", "lake baikal", "kamchatka peninsula", "kamchatka", "yenisei river", "yenisei", "lena river", "ob river", "novosibirsk", "yakutsk", "trans siberian railway", "vladivostok"],within:["Geography", "History", "Science and Math > Science > Earth Science"],icon:"寒"},
+  {id:"ap-geo-siberia",name:"Birthplace of Keskil",desc:"Power on Siberia or one of its places (Baikal, Kamchatka, the Yenisei …)",type:"answer_power",threshold:1,answers:["siberia", "lake baikal", "kamchatka peninsula", "kamchatka", "yenisei river", "yenisei", "lena river", "ob river", "novosibirsk", "yakutsk", "trans siberian railway", "vladivostok"],within:["Geography", "History", "Science > Earth Science"],icon:"寒"},
   {id:"ap-geo-newfin",name:"New-fin-land",desc:"Power on Newfoundland or Finland",type:"answer_power",threshold:1,answers:["newfoundland", "newfoundland and labrador", "labrador", "finland", "helsinki"],within:["Geography", "History", "Current Events"],icon:"島"},
   {id:"ap-geo-mormon",name:"Land of the Mormons",desc:"Power on Utah or Salt Lake City",type:"answer_power",threshold:1,answers:["utah","salt lake city","great salt lake"],icon:"塩"},
-  {id:"ap-geo-faithful",name:"Old Faithful",desc:"Power on Yellowstone or another U.S. national park",type:"answer_power",threshold:1,topic:"Geography > North American Geography > US Physical Features & Parks",answers:["yellowstone national park", "yellowstone", "old faithful"],either:true,within:["Geography", "Science and Math > Science > Earth Science"],icon:"泉"},
+  {id:"ap-geo-faithful",name:"Old Faithful",desc:"Power on Yellowstone or another U.S. national park",type:"answer_power",threshold:1,topic:"Geography > North American Geography > US Physical Features & Parks",answers:["yellowstone national park", "yellowstone", "old faithful"],either:true,within:["Geography", "Science > Earth Science"],icon:"泉"},
   {id:"ap-geo-carnival",name:"Carnival",desc:"Power on Brazil or Rio de Janeiro",type:"answer_power",threshold:1,answers:["brazil","rio de janeiro"],icon:"祭"},
   {id:"ap-geo-lion",name:"Lion City",desc:"Power on Singapore",type:"answer_power",threshold:1,answers:["singapore"],within:["Geography", "History", "Current Events"],icon:"獅"},
   {id:"ap-geo-harbour",name:"Fragrant Harbour",desc:"Power on Hong Kong",type:"answer_power",threshold:1,answers:["hong kong"],icon:"港"},
   {id:"ap-geo-capitals",name:"Capital of Capitals",desc:"Power on London",type:"answer_power",threshold:1,answers:["london"],within:["Geography", "History", "Current Events"],icon:"都"},
   {id:"ap-geo-pearl",name:"Pearl of the Orient",desc:"Power on Shanghai",type:"answer_power",threshold:1,answers:["shanghai"],within:["Geography", "History", "Current Events"],icon:"珠"},
-  {id:"ap-geo-snow",name:"Abode of Snow",desc:"Power on the Himalayas, Everest or K2",type:"answer_power",threshold:1,answers:["himalayas", "himalaya", "mount everest", "k2", "annapurna", "kangchenjunga", "tibetan plateau"],within:["Geography", "Science and Math > Science > Earth Science", "History"],icon:"雪"},
+  {id:"ap-geo-snow",name:"Abode of Snow",desc:"Power on the Himalayas, Everest or K2",type:"answer_power",threshold:1,answers:["himalayas", "himalaya", "mount everest", "k2", "annapurna", "kangchenjunga", "tibetan plateau"],within:["Geography", "Science > Earth Science", "History"],icon:"雪"},
   {id:"ap-geo-penguins",name:"Penguins",desc:"Power on Madagascar",type:"answer_power",threshold:1,answers:["madagascar"],icon:"狐"},
-  {id:"ap-geo-arteries",name:"Arteries of the World",desc:"Power on 5 of the world's great rivers",type:"answer_power",threshold:5,count:"targets",answers:[["nile river", "nile"], ["yangtze river", "yangtze", "chang jiang"], ["amazon river", "amazon"], ["mississippi river", "mississippi"], ["danube river", "danube"], ["congo river", "congo"], ["volga river", "volga"], ["rhine river", "rhine"], ["ganges river", "ganges"], ["mekong river", "mekong"], ["indus river", "indus"], ["tigris river", "tigris"], ["euphrates river", "euphrates"], ["niger river", "niger"], ["zambezi river", "zambezi"], ["missouri river", "missouri"], ["saint lawrence river", "st lawrence river"], ["colorado river"], ["rio grande"], ["thames"], ["seine"], ["yellow river", "huang he"], ["orinoco river", "orinoco"]],within:["Geography","Science and Math > Science > Earth Science"],icon:"河"},
+  {id:"ap-geo-arteries",name:"Arteries of the World",desc:"Power on 5 of the world's great rivers",type:"answer_power",threshold:5,count:"targets",answers:[["nile river", "nile"], ["yangtze river", "yangtze", "chang jiang"], ["amazon river", "amazon"], ["mississippi river", "mississippi"], ["danube river", "danube"], ["congo river", "congo"], ["volga river", "volga"], ["rhine river", "rhine"], ["ganges river", "ganges"], ["mekong river", "mekong"], ["indus river", "indus"], ["tigris river", "tigris"], ["euphrates river", "euphrates"], ["niger river", "niger"], ["zambezi river", "zambezi"], ["missouri river", "missouri"], ["saint lawrence river", "st lawrence river"], ["colorado river"], ["rio grande"], ["thames"], ["seine"], ["yellow river", "huang he"], ["orinoco river", "orinoco"]],within:["Geography","Science > Earth Science"],icon:"河"},
   {id:"ap-geo-potassium",name:"Greatest Exporter of Potassium",desc:"Power on Kazakhstan or one of its places",type:"answer_power",threshold:1,answers:["kazakhstan", "astana", "almaty", "nursultan nazarbayev", "baikonur cosmodrome", "aral sea"],within:["Geography", "History", "Current Events"],icon:"鉀"},
   {id:"ap-geo-stans",name:"Stan(d) Up Comedy",desc:"Power on 3 different -stan countries",type:"answer_power",threshold:3,count:"targets",answers:["kazakhstan","uzbekistan","turkmenistan","kyrgyzstan","tajikistan","afghanistan","pakistan"],within:["Geography","History","Current Events"],icon:"邦"},
   {id:"ap-geo-seas",name:"Seven Seas",desc:"Power on 7 different oceans and seas",type:"answer_power",threshold:7,count:"targets",answers:[["pacific ocean"],["atlantic ocean"],["indian ocean"],["arctic ocean"],["southern ocean"],["mediterranean sea"],["caribbean sea"],["baltic sea"],["black sea"],["red sea"],["caspian sea"],["north sea"],["south china sea"],["arabian sea"],["bering sea"],["sargasso sea"],["aral sea"],["dead sea"],["sea of japan"],["adriatic sea"],["aegean sea"]],within:"*",icon:"海"},
   {id:"ap-sci-alloys",name:"Too Complicated for Simple Wikipedia",desc:"Power on an alloy (steel, bronze, brass …)",type:"answer_power",threshold:1,answers:["alloys","steel","bronze","brass","pewter","solder","amalgam","stainless steel","cast iron","nichrome","invar","sterling silver"],icon:"合"},
   {id:"ap-sci-mito",name:"Powerhouse of the Cell",desc:"Power on mitochondria",type:"answer_power",threshold:1,answers:["mitochondria","mitochondrion"],icon:"粒"},
   {id:"ap-sci-blackhole",name:"Hail Mary",desc:"Power on black holes",type:"answer_power",threshold:1,answers:["black holes","supermassive black hole","event horizon","hawking radiation"],icon:"孔"},
-  {id:"ap-sci-nobel",name:"Nobel Intentions",desc:"Power on a landmark discovery or its scientist",type:"answer_power",threshold:1,topic:["Science and Math > Science > Biology > Any Biology > Biologists & Landmark Discoveries","Science and Math > Science > Chemistry > Any Chemistry > Chemists & Landmark Discoveries","Science and Math > Science > Physics > Any Physics > Physicists & Landmark Experiments"],icon:"賞"},
+  {id:"ap-sci-nobel",name:"Nobel Intentions",desc:"Power on a landmark discovery or its scientist",type:"answer_power",threshold:1,topic:["Science > Biology > Any Biology > Biologists & Landmark Discoveries","Science > Chemistry > Any Chemistry > Chemists & Landmark Discoveries","Science > Physics > Any Physics > Physicists & Landmark Experiments"],icon:"賞"},
   {id:"ap-sci-dna",name:"Double Helix",desc:"Power on DNA",type:"answer_power",threshold:1,answers:["dna","deoxyribonucleic acid","double helix"],icon:"螺"},
   {id:"ap-sci-gut",name:"Gut Instinct",desc:"Power on digestion or a digestive enzyme",type:"answer_power",threshold:1,answers:["digestion","digestive system","stomach","small intestine","large intestine","pancreas","liver","bile","pepsin","trypsin","amylase","lipase","enzymes","gallbladder","esophagus"],icon:"腸"},
-  {id:"ap-sci-ideal",name:"Ideal Gas",desc:"Power on a thermodynamics question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Physics > FluidMechanics Thermo Optics Nuclear > Thermodynamics & Statistical Mechanics","Science and Math > Science > Chemistry > Non Element > Thermodynamics, Kinetics & Equilibrium"],icon:"熱"},
-  {id:"ap-sci-em",name:"Electromagnetism",desc:"Power on an electricity & magnetism question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > ClassicalMechanics and EM > Electricity & Magnetism",icon:"磁"},
-  {id:"ap-sci-schrodinger",name:"Schrödinger's Cat",desc:"Power on a quantum mechanics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > Other Physics > Quantum Mechanics",icon:"量"},
-  {id:"ap-sci-lagrangian",name:"Lagrangian",desc:"Power on a classical mechanics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > ClassicalMechanics and EM > Classical Mechanics",icon:"力"},
-  {id:"ap-sci-selection",name:"Law of the Jungle",desc:"Power on natural selection or Darwin",type:"answer_power",threshold:1,answers:["natural selection", "sexual selection", "kin selection", "artificial selection", "survival of the fittest", "@charles darwin", "on the origin of species", "evolution"],within:["Science and Math", "History"],icon:"進"},
+  {id:"ap-sci-ideal",name:"Ideal Gas",desc:"Power on a thermodynamics question",type:"answer_power",threshold:1,topic:["Science > Physics > FluidMechanics Thermo Optics Nuclear > Thermodynamics & Statistical Mechanics","Science > Chemistry > Non Element > Thermodynamics, Kinetics & Equilibrium"],icon:"熱"},
+  {id:"ap-sci-em",name:"Electromagnetism",desc:"Power on an electricity & magnetism question",type:"answer_power",threshold:1,topic:"Science > Physics > ClassicalMechanics and EM > Electricity & Magnetism",icon:"磁"},
+  {id:"ap-sci-schrodinger",name:"Schrödinger's Cat",desc:"Power on a quantum mechanics question",type:"answer_power",threshold:1,topic:"Science > Physics > Other Physics > Quantum Mechanics",icon:"量"},
+  {id:"ap-sci-lagrangian",name:"Lagrangian",desc:"Power on a classical mechanics question",type:"answer_power",threshold:1,topic:"Science > Physics > ClassicalMechanics and EM > Classical Mechanics",icon:"力"},
+  {id:"ap-sci-selection",name:"Law of the Jungle",desc:"Power on natural selection or Darwin",type:"answer_power",threshold:1,answers:["natural selection", "sexual selection", "kin selection", "artificial selection", "survival of the fittest", "@charles darwin", "on the origin of species", "evolution"],within:["Science", "Math", "History"],icon:"進"},
   {id:"ap-sci-water",name:"Universal Solvent",desc:"Power on water",type:"answer_power",threshold:1,answers:["water","h2o"],icon:"水"},
-  {id:"ap-sci-standard",name:"Standard Model",desc:"Power on a particle physics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Physics > Other Physics > Particle Physics & Quantum Field Theory",icon:"粒"},
-  {id:"ap-sci-speciation",name:"Speciation",desc:"Power on an evolution question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Biology > Organismal Population Biology > Evolution, Population Genetics & Taxonomy",icon:"種"},
+  {id:"ap-sci-standard",name:"Standard Model",desc:"Power on a particle physics question",type:"answer_power",threshold:1,topic:"Science > Physics > Other Physics > Particle Physics & Quantum Field Theory",icon:"粒"},
+  {id:"ap-sci-speciation",name:"Speciation",desc:"Power on an evolution question",type:"answer_power",threshold:1,topic:"Science > Biology > Organismal Population Biology > Evolution, Population Genetics & Taxonomy",icon:"種"},
   {id:"ap-sci-chloroplast",name:"Chloroplast",desc:"Power on photosynthesis",type:"answer_power",threshold:1,answers:["photosynthesis","chloroplasts","chlorophyll","calvin cycle","light dependent reactions","rubisco","c4 carbon fixation","cam photosynthesis","photosystem ii","photosystem i"],icon:"葉"},
-  {id:"ap-sci-mendel",name:"Mendelian",desc:"Power on a genetics question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Biology > Cell Molecular Biology > Molecular Biology & Genetics",icon:"遺"},
-  {id:"ap-sci-aero",name:"Curious",desc:"Power on an aerospace or fluid mechanics question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Other Science > Engineering > Mechanical & Aerospace Engineering","Science and Math > Science > Physics > FluidMechanics Thermo Optics Nuclear > Fluid Mechanics, Plasmas & Elasticity"],icon:"翼"},
-  {id:"ap-sci-fibonacci",name:"Fibonacci",desc:"Power on the golden ratio or the Fibonacci numbers",type:"answer_power",threshold:1,answers:["golden ratio","fibonacci numbers","fibonacci sequence","fibonacci"],icon:"比"},
-  {id:"ap-sci-gaussian",name:"Gaussian",desc:"Power on Gauss or the normal distribution",type:"answer_power",threshold:1,answers:["@carl friedrich gauss","normal distribution","gaussian distribution","gaussian elimination"],icon:"鐘"},
-  {id:"ap-sci-sort",name:"Stalin Sort",desc:"Power on an algorithms or data structures question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Computer Science > Algorithms & Data Structures",icon:"序"},
-  {id:"ap-sci-turing",name:"Turing Test",desc:"Power on an AI or machine learning question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Computer Science > Artificial Intelligence & Machine Learning","Current Events > Science > Technology & AI"],icon:"機"},
-  {id:"ap-sci-compiler",name:"Compiler",desc:"Power on a programming languages question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Computer Science > Programming Languages & Software Engineering",icon:"訳"},
-  {id:"ap-sci-kernels",name:"Kernels",desc:"Power on a computer hardware or operating systems question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Computer Science > Computer Architecture, Hardware & Operating Systems",icon:"核"},
-  {id:"ap-sci-sun",name:"The Sun Is a Deadly Laser",desc:"Power on a question about the Sun",type:"answer_power",threshold:1,topic:"Science and Math > Science > Astronomy > Any Astronomy > Solar System > The Sun & Space Weather",icon:"燃"},
-  {id:"ap-sci-v12",name:"V12 Engine",desc:"Power on a technology or invention question",type:"answer_power",threshold:1,topic:"Science and Math > Science > Other Science > Technology & Inventions",icon:"輪"},
-  {id:"ap-sci-stress",name:"Stress-Strain Curve",desc:"Power on a materials science question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Other Science > Engineering > Materials Science, Metallurgy & Manufacturing","Science and Math > Science > Physics > Other Physics > Condensed Matter & Materials Physics"],icon:"張"},
-  {id:"ap-sci-hydrology",name:"Water Cycle",desc:"Power on a weather or hydrology question",type:"answer_power",threshold:1,topic:["Science and Math > Science > Earth Science > Meteorology & Weather","Science and Math > Science > Earth Science > Rivers, Glaciers, Soils & Landforms"],icon:"雨"},
-  {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different chemical elements",type:"answer_power",threshold:7,count:"answers",topic:"Science and Math > Science > Chemistry > Any Chemistry > Element",icon:"元"},
-  {id:"ap-sci-spectroscopy",name:"Spectroscopy",desc:"Power on 5 different analytical chemistry & spectroscopy answers",type:"answer_power",threshold:5,count:"answers",topic:"Science and Math > Science > Chemistry > Non Element > Analytical Chemistry, Separations & Spectroscopy",icon:"光"},
+  {id:"ap-sci-mendel",name:"Mendelian",desc:"Power on a genetics question",type:"answer_power",threshold:1,topic:"Science > Biology > Cell Molecular Biology > Molecular Biology & Genetics",icon:"遺"},
+  {id:"ap-sci-aero",name:"Curious",desc:"Power on an aerospace or fluid mechanics question",type:"answer_power",threshold:1,topic:["Science > Other Science > Engineering > Mechanical & Aerospace Engineering","Science > Physics > FluidMechanics Thermo Optics Nuclear > Fluid Mechanics, Plasmas & Elasticity"],icon:"翼"},
+  {id:"ap-sci-fibonacci",cat:"Math",within:["Math","Science"],name:"Fibonacci",desc:"Power on the golden ratio or the Fibonacci numbers",type:"answer_power",threshold:1,answers:["golden ratio","fibonacci numbers","fibonacci sequence","fibonacci"],icon:"比"},
+  {id:"ap-sci-gaussian",cat:"Math",within:["Math","Science"],name:"Gaussian",desc:"Power on Gauss or the normal distribution",type:"answer_power",threshold:1,answers:["@carl friedrich gauss","normal distribution","gaussian distribution","gaussian elimination"],icon:"鐘"},
+  {id:"ap-sci-sort",name:"Stalin Sort",desc:"Power on an algorithms or data structures question",type:"answer_power",threshold:1,topic:"Science > Computer Science > Algorithms & Data Structures",icon:"序"},
+  {id:"ap-sci-turing",name:"Turing Test",desc:"Power on an AI or machine learning question",type:"answer_power",threshold:1,topic:["Science > Computer Science > Artificial Intelligence & Machine Learning","Current Events > Science > Technology & AI"],icon:"機"},
+  {id:"ap-sci-compiler",name:"Compiler",desc:"Power on a programming languages question",type:"answer_power",threshold:1,topic:"Science > Computer Science > Programming Languages & Software Engineering",icon:"訳"},
+  {id:"ap-sci-kernels",name:"Kernels",desc:"Power on a computer hardware or operating systems question",type:"answer_power",threshold:1,topic:"Science > Computer Science > Computer Architecture, Hardware & Operating Systems",icon:"核"},
+  {id:"ap-sci-sun",name:"The Sun Is a Deadly Laser",desc:"Power on a question about the Sun",type:"answer_power",threshold:1,topic:"Science > Astronomy > Any Astronomy > Solar System > The Sun & Space Weather",icon:"燃"},
+  {id:"ap-sci-v12",name:"V12 Engine",desc:"Power on a technology or invention question",type:"answer_power",threshold:1,topic:"Science > Other Science > Technology & Inventions",icon:"輪"},
+  {id:"ap-sci-stress",name:"Stress-Strain Curve",desc:"Power on a materials science question",type:"answer_power",threshold:1,topic:["Science > Other Science > Engineering > Materials Science, Metallurgy & Manufacturing","Science > Physics > Other Physics > Condensed Matter & Materials Physics"],icon:"張"},
+  {id:"ap-sci-hydrology",name:"Water Cycle",desc:"Power on a weather or hydrology question",type:"answer_power",threshold:1,topic:["Science > Earth Science > Meteorology & Weather","Science > Earth Science > Rivers, Glaciers, Soils & Landforms"],icon:"雨"},
+  {id:"ap-sci-periodic",name:"Periodic Table",desc:"Power on 7 different chemical elements",type:"answer_power",threshold:7,count:"answers",topic:"Science > Chemistry > Any Chemistry > Element",icon:"元"},
+  {id:"ap-sci-spectroscopy",name:"Spectroscopy",desc:"Power on 5 different analytical chemistry & spectroscopy answers",type:"answer_power",threshold:5,count:"answers",topic:"Science > Chemistry > Non Element > Analytical Chemistry, Separations & Spectroscopy",icon:"光"},
   {id:"ap-sci-solvay",name:"Solvay Conference",desc:"Power on Einstein, Bohr, Heisenberg, Dirac, Pauli, Curie and Schrödinger",type:"answer_power",threshold:7,count:"targets",answers:[["@albert einstein"],["@niels bohr"],["@werner heisenberg"],["@paul dirac"],["@wolfgang pauli"],["@marie curie","marie sklodowska curie"],["@erwin schrodinger"]],icon:"学"},
-  {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on 5 space exploration questions",type:"answer_power",threshold:5,topic:["Science and Math > Science > Astronomy > Any Astronomy > Space Exploration & Missions","Current Events > Science > Space & Spaceflight"],icon:"宙"},
+  {id:"ap-sci-spacerace",name:"Space Race",desc:"Power on 5 space exploration questions",type:"answer_power",threshold:5,topic:["Science > Astronomy > Any Astronomy > Space Exploration & Missions","Current Events > Science > Space & Spaceflight"],icon:"宙"},
   {id:"ap-myth-lightning",name:"God of Lightning",desc:"Power on 3 different gods of thunder and lightning (Thor, Zeus, Indra, Perun, Raijin …)",type:"answer_power",threshold:3,count:"targets",answers:["thor", "zeus", "indra", "perun", "raijin", "shango", "taranis", "jupiter", "tlaloc", "teshub", "baal", "thunderbird", "donar", "ukko", "perkunas", "raiden"],within:["Mythology", "Theology"],icon:"雷"},
   {id:"ap-myth-freaky",name:"Freaky Deaky",desc:"Power on Oedipus",type:"answer_power",threshold:1,within:["Mythology","Literature"],answers:["oedipus","oedipus rex","oedipus the king"],icon:"眼"},
   {id:"ap-myth-underworld",name:"Underworld",desc:"Power on Anubis, Hades and Osiris",type:"answer_power",threshold:3,count:"targets",answers:["anubis","hades","osiris"],icon:"冥"},
@@ -10406,18 +10422,50 @@ const ACHIEVEMENT_LIST = [
   {id:"ap-myth-iliad",name:"Iliad Heroes",desc:"Power on 5 heroes of the Trojan War",type:"answer_power",threshold:5,count:"targets",answers:["achilles", "hector", "agamemnon", ["odysseus", "ulysses"], ["ajax", "ajax the great", "telamonian ajax"], "diomedes", "patroclus", "menelaus", ["paris", "alexandros"], "nestor", "priam", "aeneas", ["helen of troy", "helen"], "andromache", "cassandra", "philoctetes", "neoptolemus", "penthesilea", "memnon"],within:["Mythology","Literature"],icon:"英"},
   {id:"ap-myth-allfather",name:"Allfather's Blessing",desc:"Power on 10 different Norse mythology questions",type:"answer_power",threshold:10,topic:"Mythology > Scandinavian Myth",icon:"北"},
   {id:"ap-pop-kanye",name:"I Guess We'll Never Know",desc:"Power on Kanye West",type:"answer_power",threshold:1,answers:["@kanye west","ye"],icon:"韻"},
-  {id:"ap-pop-mj",name:"King of Pop",desc:"Power on a pop music question",type:"answer_power",threshold:1,topic:"Pop Culture Sports > Pop Culture > Music",icon:"舞"},
+  {id:"ap-pop-mj",name:"King of Pop",desc:"Power on a pop music question",type:"answer_power",threshold:1,topic:"Pop Culture > Music",icon:"舞"},
   {id:"ap-pop-starwars",name:"Skywalker",desc:"Power on Star Wars",type:"answer_power",threshold:1,answers:["star wars", "luke skywalker", "darth vader", "anakin skywalker", "han solo", "yoda", "obi wan kenobi", "the empire strikes back", "return of the jedi", "the mandalorian", "@george lucas", "jedi", "sith", "death star", "lightsaber", "princess leia", "boba fett", "chewbacca", "r2 d2", "c 3po", "palpatine"],within:"*",icon:"星"},
   {id:"ap-pop-minecraft",name:"Master of the Craft",desc:"Power on Minecraft",type:"answer_power",threshold:1,answers:["minecraft"],icon:"塊"},
-  {id:"ap-pop-nba",name:"Point Guard",desc:"Power on an NBA or WNBA question",type:"answer_power",threshold:1,topic:["Pop Culture Sports > Sports > Major Sport > Basketball > Modern > NBA & WNBA","Pop Culture Sports > Sports > Major Sport > Basketball > Any Time > NBA & WNBA"],icon:"球"},
-  {id:"ap-pop-lebron",name:"LeSunshine",desc:"Power on LeBron James or one of his teams",type:"answer_power",threshold:1,answers:["@lebron james", "cleveland cavaliers", "miami heat", "los angeles lakers"],within:"*",icon:"覇"},
+  {id:"ap-pop-nba",cat:"Sports",name:"Point Guard",desc:"Power on an NBA or WNBA question",type:"answer_power",threshold:1,topic:["Sports > Major Sport > Basketball > Modern > NBA & WNBA","Sports > Major Sport > Basketball > Any Time > NBA & WNBA"],icon:"球"},
+  {id:"ap-pop-lebron",cat:"Sports",name:"LeSunshine",desc:"Power on LeBron James or one of his teams",type:"answer_power",threshold:1,answers:["@lebron james", "cleveland cavaliers", "miami heat", "los angeles lakers"],within:"*",icon:"覇"},
   {id:"ap-pop-zelda",name:"Hyrule",desc:"Power on The Legend of Zelda",type:"answer_power",threshold:1,answers:["the legend of zelda", "zelda", "hyrule", "link", "ganon", "ganondorf", "triforce", "breath of the wild", "ocarina of time", "tears of the kingdom", "majoras mask", "twilight princess", "the wind waker", "skyward sword", "a link to the past", "links awakening", "@shigeru miyamoto"],within:"*",icon:"剣"},
-  {id:"ap-pop-fortnite",name:"Battle Royale",desc:"Power on a video game question",type:"answer_power",threshold:1,topic:"Pop Culture Sports > Pop Culture > Video Games",icon:"闘"},
-  {id:"ap-pop-harry",name:"Wizarding World",desc:"Power on Harry Potter",type:"answer_power",threshold:1,within:["Pop Culture Sports","Literature"],answers:["harry potter","hogwarts","hermione granger","@albus dumbledore","lord voldemort","@severus snape","quidditch","@j k rowling","ron weasley","@rubeus hagrid"],icon:"杖"},
-  {id:"ap-pop-lol",name:"Get a Life",desc:"Power on 5 different video game questions",type:"answer_power",threshold:5,topic:"Pop Culture Sports > Pop Culture > Video Games",icon:"戯"},
-  {id:"ap-pop-nfl",name:"Touchdown",desc:"Power on an NFL question",type:"answer_power",threshold:1,topic:["Pop Culture Sports > Sports > Major Sport > Football > Modern > NFL","Pop Culture Sports > Sports > Major Sport > Football > Any Time > NFL"],icon:"突"},
+  {id:"ap-pop-fortnite",name:"Battle Royale",desc:"Power on a video game question",type:"answer_power",threshold:1,topic:"Pop Culture > Video Games",icon:"闘"},
+  {id:"ap-pop-harry",name:"Wizarding World",desc:"Power on Harry Potter",type:"answer_power",threshold:1,within:["Pop Culture", "Sports", "Literature"],answers:["harry potter","hogwarts","hermione granger","@albus dumbledore","lord voldemort","@severus snape","quidditch","@j k rowling","ron weasley","@rubeus hagrid"],icon:"杖"},
+  {id:"ap-pop-lol",name:"Get a Life",desc:"Power on 5 different video game questions",type:"answer_power",threshold:5,topic:"Pop Culture > Video Games",icon:"戯"},
+  {id:"ap-pop-nfl",cat:"Sports",name:"Touchdown",desc:"Power on an NFL question",type:"answer_power",threshold:1,topic:["Sports > Major Sport > Football > Modern > NFL","Sports > Major Sport > Football > Any Time > NFL"],icon:"突"},
   {id:"ap-pop-nintendo",name:"64",desc:"Power on a Nintendo franchise",type:"answer_power",threshold:1,answers:["nintendo","super mario","mario","the legend of zelda","pokemon","donkey kong","kirby","metroid","animal crossing","super smash bros","splatoon","fire emblem","star fox","nintendo switch","game boy","wii"],icon:"遊"},
   {id:"ap-pop-mario",name:"Wahoo!",desc:"Power on Mario",type:"answer_power",threshold:1,answers:["mario","super mario","super mario bros","super mario 64","mario kart","luigi","princess peach","bowser"],icon:"跳"},
+  {id:"ap-math-trig",name:"SOH CAH TOA",desc:"Power on a geometry or trigonometry question",type:"answer_power",threshold:1,topic:"Math > Theory > Geometry & Trigonometry",icon:"角"},
+  {id:"ap-math-calc",name:"Infinitesimal",desc:"Power on a calculus question",type:"answer_power",threshold:1,topic:"Math > Theory > Calculus & Analysis",icon:"積"},
+  {id:"ap-math-stats",name:"Monty Hall",desc:"Power on a probability or statistics question",type:"answer_power",threshold:1,topic:"Math > Theory > Probability & Statistics",icon:"確"},
+  {id:"ap-math-number",name:"Fermat's Margin",desc:"Power on a number theory question",type:"answer_power",threshold:1,topic:"Math > Theory > Number Theory",icon:"素"},
+  {id:"ap-math-linear",name:"Eigenvalue",desc:"Power on a linear algebra question",type:"answer_power",threshold:1,topic:"Math > Theory > Linear Algebra",icon:"列"},
+  {id:"ap-math-graph",name:"Seven Bridges",desc:"Power on a combinatorics or graph theory question",type:"answer_power",threshold:1,topic:"Math > Theory > Combinatorics & Graph Theory",icon:"橋"},
+  {id:"ap-math-history",name:"Elements",desc:"Power on a mathematician or the history of math",type:"answer_power",threshold:1,topic:"Math > Theory > Mathematicians & History of Mathematics",icon:"幾"},
+  {id:"ap-math-abstract",name:"Galois",desc:"Power on an abstract algebra question",type:"answer_power",threshold:1,topic:"Math > Theory > Abstract Algebra",icon:"群"},
+  {id:"ap-math-topology",name:"Donut or Mug",desc:"Power on a topology question",type:"answer_power",threshold:1,topic:"Math > Theory > Topology",icon:"環"},
+  {id:"ap-math-logic",name:"Incompleteness",desc:"Power on a logic or set theory question",type:"answer_power",threshold:1,topic:"Math > Theory > Logic & Set Theory",icon:"論"},
+  {id:"ap-math-mental",name:"Mental Math",desc:"Power on a computation question",type:"answer_power",threshold:1,topic:"Math > Computation",icon:"計"},
+  {id:"ap-math-mathlete",name:"Mathlete",desc:"Power on 10 different math questions",type:"answer_power",threshold:10,topic:"Math",icon:"学"},
+  {id:"ap-math-pi",name:"Pi Day",desc:"Power on pi or e",type:"answer_power",threshold:1,answers:["pi","e"],within:["Math","Science"],icon:"円"},
+  {id:"ap-sport-mlb",name:"Seventh-Inning Stretch",desc:"Power on a baseball question",type:"answer_power",threshold:1,topic:"Sports > Major Sport > Baseball",icon:"塁"},
+  {id:"ap-sport-soccer",name:"The Beautiful Game",desc:"Power on a soccer question",type:"answer_power",threshold:1,topic:["Sports > Minor Sport > Any Time > Soccer","Sports > Minor Sport > Modern > Soccer"],icon:"蹴"},
+  {id:"ap-sport-chess",name:"Checkmate",desc:"Power on a chess, billiards, darts or bowling question",type:"answer_power",threshold:1,topic:["Sports > Minor Sport > Any Time > Cue, Target, Bowling & Mind Sports","Sports > Minor Sport > Modern > Cue, Target, Bowling & Mind Sports"],icon:"棋"},
+  {id:"ap-sport-hockey",name:"Hat Trick",desc:"Power on an ice hockey question",type:"answer_power",threshold:1,topic:["Sports > Minor Sport > Any Time > Ice Hockey","Sports > Minor Sport > Modern > Ice Hockey"],icon:"氷"},
+  {id:"ap-sport-tennis",name:"Grand Slam",desc:"Power on a tennis question",type:"answer_power",threshold:1,topic:["Sports > Minor Sport > Any Time > Tennis & Racket Sports","Sports > Minor Sport > Modern > Tennis & Racket Sports"],icon:"庭"},
+  {id:"ap-sport-olympics",name:"Citius, Altius, Fortius",desc:"Power on an Olympics, track or swimming question",type:"answer_power",threshold:1,topic:["Sports > Any Sports > Any Time > Olympic Games & Multi-Sport Events","Sports > Any Sports > Modern > Olympic Games & Multi-Sport Events","Sports > Minor Sport > Any Time > Track, Swimming & Individual Olympic Sports","Sports > Minor Sport > Modern > Track, Swimming & Individual Olympic Sports"],icon:"輪"},
+  {id:"ap-sport-college",name:"March Madness",desc:"Power on a college basketball or college football question",type:"answer_power",threshold:1,topic:["Sports > Major Sport > Basketball > Any Time > College Basketball","Sports > Major Sport > Basketball > Modern > College Basketball","Sports > Major Sport > Football > Any Time > College Football","Sports > Major Sport > Football > Modern > College Football"],icon:"校"},
+  {id:"ap-sport-combat",name:"Knockout",desc:"Power on a boxing, martial arts or wrestling question",type:"answer_power",threshold:1,topic:["Sports > Minor Sport > Any Time > Combat Sports & Pro Wrestling","Sports > Minor Sport > Modern > Combat Sports & Pro Wrestling"],icon:"拳"},
+  {id:"ap-sport-motor",name:"Pit Stop",desc:"Power on a motorsports or horse racing question",type:"answer_power",threshold:1,topic:["Sports > Minor Sport > Any Time > Motorsports & Horse Racing","Sports > Minor Sport > Modern > Motorsports & Horse Racing"],icon:"車"},
+  {id:"ap-sport-cricket",name:"Howzat",desc:"Power on a cricket or rugby question",type:"answer_power",threshold:1,topic:["Sports > Minor Sport > Any Time > Cricket & Rugby","Sports > Minor Sport > Modern > Cricket & Rugby"],icon:"柱"},
+  {id:"ap-sport-golf",name:"Fore!",desc:"Power on a golf question",type:"answer_power",threshold:1,topic:["Sports > Minor Sport > Any Time > Golf","Sports > Minor Sport > Modern > Golf"],icon:"芝"},
+  {id:"ap-sport-fan",name:"Hall of Famer",desc:"Power on 10 different sports questions",type:"answer_power",threshold:10,topic:"Sports",icon:"殿"},
+  {id:"ap-pop-classic",name:"Rosebud",desc:"Power on a silent or classic film question",type:"answer_power",threshold:1,topic:"Pop Culture > Film > Pop Culture Film Any Time > Silent & Classic Film",icon:"映"},
+  {id:"ap-pop-auteur",name:"Auteur Theory",desc:"Power on 3 of these directors (Hitchcock, Kubrick, Kurosawa, Chaplin, Welles …)",type:"answer_power",threshold:3,count:"targets",answers:[["@alfred hitchcock"],["@stanley kubrick"],["@akira kurosawa"],["@charlie chaplin"],["@orson welles"],["@martin scorsese"],["@ingmar bergman"],["@federico fellini"],["@quentin tarantino"]],within:["Pop Culture","Fine Arts"],icon:"監"},
+  {id:"ap-pop-broadway",name:"Broadway Baby",desc:"Power on a musical",type:"answer_power",threshold:1,topic:"Pop Culture > Musicals",icon:"劇"},
+  {id:"ap-pop-tv",name:"Must-See TV",desc:"Power on a TV question",type:"answer_power",threshold:1,topic:"Pop Culture > TV",icon:"視"},
+  {id:"ap-pop-comics",name:"Excelsior",desc:"Power on a comics question",type:"answer_power",threshold:1,topic:"Pop Culture > Comics",icon:"画"},
+  {id:"ap-pop-pokemon",name:"Gotta Catch 'Em All",desc:"Power on a Pokémon question",type:"answer_power",threshold:1,topic:"Pop Culture > Video Games > Pokemon",icon:"球"},
+  {id:"ap-pop-rock",name:"Rock On",desc:"Power on a rock or metal question",type:"answer_power",threshold:1,topic:"Pop Culture > Music > Pop Culture Music Any Time > Rock & Metal",icon:"岩"},
   {id:"ap-fa-requiem",name:"Requiem",desc:"Power on Mozart",type:"answer_power",threshold:1,answers:["@wolfgang amadeus mozart","the magic flute","don giovanni","the marriage of figaro","requiem in d minor"],icon:"奏"},
   {id:"ap-fa-messiah",name:"Messiah",desc:"Power on Handel",type:"answer_power",threshold:1,answers:["@george frideric handel","messiah","water music","music for the royal fireworks"],icon:"唱"},
   {id:"ap-fa-tmnt",name:"Teenage Mutant Ninja Turtles",desc:"Power on Raphael, Michelangelo, Donatello and Leonardo",type:"answer_power",threshold:4,count:"targets",answers:[["raphael","raffaello sanzio"],["michelangelo","@michelangelo buonarroti"],["donatello"],["@leonardo da vinci","leonardo"]],icon:"絵"},
@@ -11783,7 +11831,7 @@ function init() {
       // path = the category-tree prefix an achievement counts within (cat kept for older plugins)
       // a result recorded outside practice (a multiplayer buzz): achievements pop up with it
       noteAchievementResult: (e) => achNoteResult(e),
-      getAchievementList: () => ACHIEVEMENT_LIST.map((a) => { const cat = a.cat || (a.type === "answer_power" ? apAchCategory(a.id) : undefined); return { ...a, cat, path: a.path || cat || undefined }; }),
+      getAchievementList: () => ACHIEVEMENT_LIST.map((a) => { const cats = [].concat(a.cat || (a.type === "answer_power" ? achCatOf(a) : []) || []), paths = [].concat(a.path || cats); return { ...a, cat: cats[0], path: paths[0] || undefined, paths }; }),   // strings, as before 14.97 (paths: every node)
       // Open the app's own session-history overlay over a supplied list, so a
       // plugin gets the real GUI — filters, compact/expand, buzz track, star
       // and save actions — instead of a hand-rolled imitation.
@@ -13438,7 +13486,7 @@ window.QB?.on?.("screen:change", (e) => { if (e && e.name === "title" && _dbRead
 //    and the app switches to it and reloads the moment it is ready. Nothing
 //    else can be opened: no closing the window, no other section, no screen,
 //    no plugin page, no hotkey. ──
-const REQUIRED_DB_BUILT = 1791275706103;   // db-1791275706103 on the updates repo
+const REQUIRED_DB_BUILT = 1792133864065;   // db-1792133864065 on the updates repo (14.97: Science, Math, Pop Culture and Sports are top-level)
 var _dbLocked = false;   // var: guards above may run before this line during load
 function isDbLocked() { return _dbLocked; }
 async function enforceRequiredDb() {

@@ -1,5 +1,5 @@
 {
-  "version": "14.96",
+  "version": "14.97",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,22 +55,22 @@
     }
   ],
   "main": true,
-  "notes": "minor ui fixes",
+  "notes": "new categories",
   "files": {
     "renderer/index.html": "a5d27573d6bdbb571d8ede347308b92779a594dccd9e08669e70734ba489ec7a",
     "renderer/style.css": "4187c30c19ce3921529ba0ca2d9e834f40ab6bcaa0a46d3596d48b4998293eef",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "0ccf349ce6693b3816dd11a6e635ac59bc2ea49f4e444d53f98a0547e06212c2",
-    "renderer/app.js": "8e75b449cf7432d4065ca6e6a678f60df1d20c5cad2a8dd4465439ac370a8abc",
-    "plugins/achievement-glyphs.zip": "b599187c01003c7881d9d75048f11622e8de7e5465a5196f4dd7f1af5ab0e6ba",
-    "plugins/buzz-words.zip": "87b3172c5554412e09182e63a5c593dd547ac513867c425e949d36f115782a07",
-    "plugins/canon-tracker.zip": "c28d6cbed98efb8b831e4637dbdcbfdff0a3d53f7c5779a6137a62a7e221253f",
-    "plugins/coach-mode.zip": "870486c07a6a0281b56dabcb5b71a453e5e127934d5085c0543cfba76f23c4a3",
-    "plugins/fact-sheet.zip": "e7f6157bef344401939aabc98a56a2a01c8357c9423f705ed60c22f8705e7463",
-    "plugins/flashcards.zip": "379215d3effa5c008e72c49a38ce9ead8251e34df51707ea9e5baafbc1431467",
-    "plugins/folders.zip": "d855bb05feb61e1e147cf32f36092c70617267a59b922e957ec258dd14a18ef1",
-    "plugins/keyword-freq.zip": "33f38298a52e85ee0cea79d25dec253462c68173745a930a3cfaf4e8424386f2",
-    "plugins/packet-builder.zip": "34bb38e29359357825c43ec3fc87217b2240faca31805dae0fb6b6078d6d092e"
+    "renderer/extensions.js": "7adce7a11b30d2755804b0e3bd63f290a188c90c36c14e19a176a59ad2093249",
+    "renderer/app.js": "8ad09b7a753f7f3054975382ff90af6d289e50449a1ebd10d9dff74136c6f896",
+    "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
+    "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
+    "plugins/canon-tracker.zip": "61700802d7421b309f884be764a6733dade6942dfa209ef93b8efa74985cd7a0",
+    "plugins/coach-mode.zip": "e23183227fe3dec730e3f37e43906ee5e1d6c0e74b063c9a4e8a2da77a623fad",
+    "plugins/fact-sheet.zip": "92fc11ea847559264937e96a7279cdd38c59554854fcd1bf6ef631e73fa5646f",
+    "plugins/flashcards.zip": "b7d9c887a1d181db2511ccd595d63a013c2f0e15694a889b2b7499d7219b8bdc",
+    "plugins/folders.zip": "c6b3b1c2a9723af244dae0913eb8847178ae767cbfcfbb4a8ffad7276979faf6",
+    "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
+    "plugins/packet-builder.zip": "c9f68e95cb536ed51d1c5bb5e1a30fe603a94320737a78b9bd991b38789a4bc3"
   },
-  "signature": "8fIutJtFYUA113D02AZnh0z+f406Q2/oLfJqy3/aFsP5yUJ+u1DA8yRiZV3yjmbxGnBqZxEu6jVBZUJA4WxFDg=="
+  "signature": "7Y2rCvu1EFfBQvNw0A1JWut3wPMbaoDo2orT5HuGg2TuzbU8uaKCuFnOGeZLodzT4q1iHoTE+OIqfeSmdk3tAg=="
 }

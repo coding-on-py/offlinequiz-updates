@@ -41,11 +41,11 @@ const DEFAULT_USER_DB_PATH = join(
 // "garc a m rquez"), so ASCII-spelled answers never matched their targets.
 // Trials: [key, name, category-tree path] — Science / Math and Pop Culture / Sports are trials of their own
 const TRIAL_CATS = [
-  ["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science and Math > Science"],
-  ["math", "Math", "Science and Math > Math"], ["fa", "Fine Arts", "Fine Arts"], ["myth", "Mythology", "Mythology"],
+  ["lit", "Literature", "Literature"], ["hist", "History", "History"], ["sci", "Science", "Science"],
+  ["math", "Math", "Math"], ["fa", "Fine Arts", "Fine Arts"], ["myth", "Mythology", "Mythology"],
   ["phil", "Philosophy", "Philosophy"], ["rel", "Theology", "Theology"], ["geo", "Geography", "Geography"],
   ["ss", "Social Science", "Social Science"], ["ce", "Current Events", "Current Events"],
-  ["pop", "Pop Culture", "Pop Culture Sports > Pop Culture"], ["sports", "Sports", "Pop Culture Sports > Sports"],
+  ["pop", "Pop Culture", "Pop Culture"], ["sports", "Sports", "Sports"],
   ["misc", "Miscellaneous", "Miscellaneous"],
 ];
 const TRIAL_COOLDOWN_MS = 3600e3, TRIAL_LEN = 10;
@@ -1018,7 +1018,7 @@ export class App {
   _inCategories(entries, categoryIds) {
     const ids = (Array.isArray(categoryIds) ? categoryIds : String(categoryIds || "").split(",")).map(String).filter(Boolean);
     if (!ids.length) return entries;
-    const paths = ids.map((id) => this.questionDb.getCategoryNode(id)).filter(Boolean).map((n) => n.path);
+    const paths = this.questionDb.expandCategoryIds(ids).map((id) => this.questionDb.getCategoryNode(id)).filter(Boolean).map((n) => n.path);
     if (!paths.length) return entries;
     return entries.filter((e) => { const p = e.category_path || e.category || ""; return paths.some((u) => p === u || p.startsWith(u + " > ")); });
   }
@@ -1088,7 +1088,8 @@ export class App {
       const best = Object.entries(all).reduce((b, [k, v]) => { const [c, l] = k.split("|"); return c === cat[0] && v && v.p && +l > b ? +l : b; }, 0);
       if (level > best + 1) return { ok: false, locked: true, error: "Pass " + cat[1] + " " + ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][best + 1] + " first." };
       if (t.s && now - t.s < TRIAL_COOLDOWN_MS && !(t.l >= t.s)) return { ok: false, cooldownUntil: t.s + TRIAL_COOLDOWN_MS };
-      const node = (this.questionDb._loadTree().nodes || []).find((n) => n.path === cat[2]);
+      const tree = this.questionDb._loadTree().nodes || [];
+      const node = tree.find((n) => n.path === cat[2]) || tree.find((n) => n.depth === 2 && n.name === cat[2]);   // a database from before the 14.97 split
       if (!node) return { ok: false, error: "This category isn't in the question database." };
       const r = this.questionDb.queryTossups({ categoryIds: [node.id], difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN });
       const ids = ((r && r.rows) || []).map((q) => q.id).filter(Boolean);

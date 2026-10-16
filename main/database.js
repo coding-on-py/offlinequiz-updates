@@ -5,6 +5,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 // "subject" is matched as a category-tree node (its id), never as text.
 export const TAG_FAMILIES = ["era", "place", "theme", "form", "answer_type", "format"];
 const TAG_FAMILY_SET = new Set(TAG_FAMILIES);
+// 14.97: "Science and Math" and "Pop Culture Sports" were split into four top-level categories; their
+// children kept their ids. An old id saved somewhere (a filter, a preset, a plugin, a room) means both halves.
+export const SPLIT_ROOTS = { n5c3932cefa: ["nc7da6ff213", "nf9d9ab0a2a"], n2bf00654e4: ["n9b8235c01e", "nc647c3608a"] };
 const TAG_FAMILY_SQL = "(" + TAG_FAMILIES.map((f) => `'${f}'`).join(",") + ")";
 // Normalize a tag filter list (from the query string or IPC): at most 12
 // entries of { f, v, x, id }.
@@ -193,6 +196,11 @@ export class QuestionDatabase {
   getCategoryNode(id) {
     return this._loadTree().byId.get(id) || null;
   }
+  // ids -> ids, an old split root standing for its halves (only where the tree no longer has it)
+  expandCategoryIds(ids) {
+    const byId = this._loadTree().byId;
+    return (ids || []).flatMap((id) => (!byId.has(id) && SPLIT_ROOTS[id] ? SPLIT_ROOTS[id].filter((k) => byId.has(k)) : [id]));
+  }
 
   // Judge-only: never route this to display code, IPC payloads for display,
   // multiplayer state or exports (brief §7).
@@ -254,7 +262,7 @@ export class QuestionDatabase {
     if (filters.categoryIds && filters.categoryIds.length > 0) {
       const ors = [];
       const names = ["category", "subcategory", "alternate_subcategory"];
-      filters.categoryIds.forEach((id, i) => {
+      this.expandCategoryIds(filters.categoryIds).forEach((id, i) => {
         const n = this.getCategoryNode(id);
         if (!n) return;
         if (this.v2) {
@@ -654,7 +662,7 @@ export class QuestionDatabase {
   // One node id or several (comma list / array): the union of their subtrees.
   _freqNode(where, params, nodeIds) {
     const ids = Array.isArray(nodeIds) ? nodeIds : String(nodeIds || "").split(",");
-    const nodes = ids.filter(Boolean).map((id) => this.getCategoryNode(id)).filter(Boolean);
+    const nodes = this.expandCategoryIds(ids.filter(Boolean)).map((id) => this.getCategoryNode(id)).filter(Boolean);
     if (!nodes.length) return where;
     if (this.v2) {
       const parts = nodes.map((n, i) => { params["co" + i] = n.ord; params["ce" + i] = n.ord_end; return `category_ord BETWEEN :co${i} AND :ce${i}`; });

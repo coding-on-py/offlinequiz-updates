@@ -1,34 +1,34 @@
 {
   "format": 1,
-  "version": "1792037056886",
-  "name": "Question database 2026-10-15",
+  "version": "1792133864065",
+  "name": "Question database 2026-10-16",
   "schema": 2,
   "mode": "final",
   "tree": "v3.7",
   "tossups": 187083,
   "bonuses": 159309,
-  "size": 1646104576,
-  "sha256": "4e0bd62a708695dd93bb426c95504eb16f5b2c2aa2d0b1c669bdec1d970fc8bc",
+  "size": 1641000960,
+  "sha256": "bd169389da457a811be363727dc35d5a0bab2127cb6715c67ce9e54560bbaa3b",
   "compression": "br",
   "parts": [
     {
       "name": "questions.db.br.000",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792037056886/questions.db.br.000",
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792133864065/questions.db.br.000",
       "size": 99614720,
-      "sha256": "26d6ef76d0a5975f6b3f5ad72b393b16fdae08a04137dfaac99e46cd6322a223"
+      "sha256": "5a366cd1160e1d6ed215d0f157ca1911a6fb70ac7372091249eb7484fd84b5c5"
     },
     {
       "name": "questions.db.br.001",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792037056886/questions.db.br.001",
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792133864065/questions.db.br.001",
       "size": 99614720,
-      "sha256": "db04e5058da5f99b21890d9e42a2df01f5c6199bc633a14f81cf4d24c8613d8b"
+      "sha256": "88e7ecb814333662947ab41bbf0f36cfa77ddf63f5f0726b5c3a8cc960596c90"
     },
     {
       "name": "questions.db.br.002",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792037056886/questions.db.br.002",
-      "size": 78806388,
-      "sha256": "18b7d3e8a8809cd6421b5f8b0599fc3df61131758b7a21d30bb767cc97cb7f6f"
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1792133864065/questions.db.br.002",
+      "size": 79066898,
+      "sha256": "1fa1e3b875f227288baae967bf9977187f9485303345491502fead0e18ef97bf"
     }
   ],
-  "signature": "dPbBMxUpieCjahrzcp4AUKUJrIvbkgOULaeQQQ0iyO2jZCW6ZWtOIdziCX5+3LCZNX1/Wz1SisYPCPDloDnIDQ=="
+  "signature": "vB9xM8B69V3VVUBHymrQIuGgR3LNe/IZDA+BbERTdYKfqZBfTMcYvSpAHIrYb4Z97N1SH/9018i8n3M0utQQAQ=="
 }

@@ -36,8 +36,8 @@ export function computeStats(entries) {
     averagePointsPerQuestion: 0,
     byCategory: {},
     byAltSubcategory: {},
-    // every prefix of each entry's category_path ("Science and Math",
-    // "Science and Math > Math", …) -> { totalQuestions, tossups, bonuses }
+    // every prefix of each entry's category_path ("Science",
+    // "Science > Physics", …) -> { totalQuestions, tossups, bonuses }
     byPath: {},
     byDifficulty: {},
     celerityDistribution: { power: [], early: [], mid: [], late: [], end: [] },
@@ -236,8 +236,8 @@ export function emptyStats() {
     averagePointsPerQuestion: 0,
     byCategory: {},
     byAltSubcategory: {},
-    // every prefix of each entry's category_path ("Science and Math",
-    // "Science and Math > Math", …) -> { totalQuestions, tossups, bonuses }
+    // every prefix of each entry's category_path ("Science",
+    // "Science > Physics", …) -> { totalQuestions, tossups, bonuses }
     byPath: {},
     byDifficulty: {},
     celerityDistribution: { power: [], early: [], mid: [], late: [], end: [] },
