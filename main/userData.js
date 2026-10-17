@@ -36,7 +36,7 @@ export function mergeTrials(a, b) {
   for (const src of [a || {}, b || {}]) for (const [k, v] of Object.entries(src)) {
     if (!/^[a-z]+\|\d{1,2}$/.test(k) || !v || typeof v !== "object") continue;
     const o = out[k] || (out[k] = {});
-    if (Number(v.s) > (o.s || 0)) o.s = Number(v.s);
+    if (Number(v.s) > (o.s || 0)) { o.s = Number(v.s); if (v.run) o.run = String(v.run).slice(0, 40); else delete o.run; }   // (who runs the latest start)
     if (Number(v.p) > 0 && (!o.p || Number(v.p) < o.p)) o.p = Number(v.p);
     if (Number(v.l) > (o.l || 0)) o.l = Number(v.l);
     if (Number(v.e) > (o.e || 0)) o.e = Number(v.e);   // 15.0: the last attempt's end (the cooldown counts from it)

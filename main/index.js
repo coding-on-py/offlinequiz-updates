@@ -50,7 +50,7 @@ const TRIAL_CATS = [
   ["pop", "Pop Culture", "Pop Culture", "n9b8235c01e"], ["sports", "Sports", "Sports", "nc647c3608a"],
   ["misc", "Miscellaneous", "Miscellaneous", "n5f2cbd1070"],
 ];
-const TRIAL_LEN = 10;
+const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3;
 // 15.0 (XP): every attempt reads all ten; each power earns 10 × the level in XP, and the run is multiplied by 1.25
 // for 5 powers, 1.5 for 6–9 and 2.5 for all ten (which passes the level and opens the next). A level can be tried
 // again after its cooldown, counted from the last attempt: none for I, 5 min for II–III, 10 min for IV–X.
@@ -1087,7 +1087,7 @@ export class App {
   getTrials() {
     return { trials: this._trialsOf().t, cats: TRIAL_CATS.map(([key, name, path]) => ({ key, name, path })), cooldowns: Array.from({ length: 11 }, (_, l) => trialCooldownMs(l)), length: TRIAL_LEN, now: Date.now(), api: 3 };   // api 2: categories by node id (14.99); 3: XP and "finish" (15.0)
   }
-  trialAction(action, category, level, powers) {
+  trialAction(action, category, level, powers, instance) {
     const cat = TRIAL_CATS.find((c) => c[0] === category); level = parseInt(level, 10);
     if (!cat || !(level >= 1 && level <= 10)) throw Object.assign(new Error("No such trial."), { status: 400 });
     const { pid, t: all } = this._trialsOf(), key = cat[0] + "|" + level, t = all[key] || {}, now = Date.now();
@@ -1096,6 +1096,11 @@ export class App {
       // progressive (14.95): a level opens once the one below is passed — or any above it (a badge from before keeps its level)
       const best = Object.entries(all).reduce((b, [k, v]) => { const [c, l] = k.split("|"); return c === cat[0] && v && v.p && +l > b ? +l : b; }, 0);
       if (level > best + 1) return { ok: false, locked: true, error: "Pass " + cat[1] + " " + ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][best + 1] + " first." };
+      // one run of a trial at a time (15.5): another window (or the app and the website, once synced) can't start it
+      // while it runs — an attempt not finished counts as running for 20 minutes (a window closed mid-trial)
+      const me = String(instance || "").slice(0, 40);
+      if (t.s && !(Number(t.e) >= t.s) && now - t.s < TRIAL_RUN_MS && t.run && me && t.run !== me)
+        return { ok: false, busy: true, error: "This trial is running in another window. Finish it there first." };
       const since = Math.max(Number(t.s) || 0, Number(t.e) || 0), cd = trialCooldownMs(level);
       if (cd && since && now - since < cd) return { ok: false, cooldownUntil: since + cd };
       const tree = this.questionDb._loadTree().nodes || [];
@@ -1104,7 +1109,7 @@ export class App {
       const r = this.questionDb.queryTossups({ categoryIds: [node.id], difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN });
       const ids = ((r && r.rows) || []).map((q) => q.id).filter(Boolean);
       if (ids.length < TRIAL_LEN) return { ok: false, error: "There aren't enough power-marked questions for this trial yet." };
-      t.s = now; save();
+      t.s = now; t.run = me; save();
       return { ok: true, ids, startedAt: now };
     }
     // the end of an attempt: its powers → XP (kept by the attempt's start, so a repeat or a sync never counts it twice).
@@ -1133,6 +1138,9 @@ export class App {
     // distinct names (ten powers on Thor are one Norse figure but may be ten
     // questions) — see computeAchievementData distinct:"questions".
     const questions = {};
+    // 15.5: every other name the answer line gives ("normal distribution [Gaussian distribution; accept bell curve]"):
+    // an answer power counts when the line names its target, not only by its required part ("normal")
+    const alts = {};
     for (const qid of ids) {
       let t;
       try { t = this.questionDb.getTossup(qid); } catch (e) { t = null; }
@@ -1141,6 +1149,15 @@ export class App {
       try { head = primaryAnswer(t.answer || "", t.answer_sanitized || ""); } catch (e) { head = ""; }
       const norm = apFold(head || t.answer_sanitized || t.answer || "");
       if (!norm) continue;
+      // (a question's names never change: worked out once per question, kept for the process)
+      const ac = this._apAltCache || (this._apAltCache = new Map());
+      let names = ac.get(qid);
+      if (names === undefined) {
+        try { names = [...new Set((parseDirectives(t.answer || "", t.answer_sanitized || "").accept || []).map(apFold).filter((n) => n && n !== norm))].slice(0, 12); } catch (e) { names = []; }
+        if (ac.size > 50000) ac.clear();
+        ac.set(qid, names);
+      }
+      if (names.length) alts[qid] = names;
       counts[norm] = (counts[norm] || 0) + 1;
       // class = the question's category PATH (achievements match by prefix)
       const ck = t.category_path || [t.category, t.subcategory, t.alternate_subcategory].filter(Boolean).join(" > ");
@@ -1153,7 +1170,7 @@ export class App {
     let poweredAt = {}, event = null;
     try { poweredAt = this.userData.getPowerTimes(); } catch { poweredAt = {}; }
     try { event = { id: EVENT.id, start: EVENT.start, end: EVENT.end, goal: EVENT.goal, on: eventOn(), pumpkins: this.userData.eventPumpkins() }; } catch { event = null; }
-    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, powered_at: poweredAt, event };
+    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, answer_alts: alts, powered_at: poweredAt, event };
   }
 
   getSessionBreakdown(category, difficulty, categoryIds) {

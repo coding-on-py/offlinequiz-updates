@@ -1878,6 +1878,7 @@ document.addEventListener("keydown", (e) => {
     if (matchesHotkey(e, "start-skip") && !isInput) {
       e.preventDefault();
       if (!state.sessionActive) startSession();
+      else if (trialShown()) trialDismiss();
       else if (practiceStalled()) nextQuestion();   // nothing to play (no match / list done): try again with the settings as they are now
       else if (advanceBonusPart()) { /* revealed the next bonus part */ }
       else if (state.resultAreaVisible) nextQuestion();
@@ -5150,6 +5151,7 @@ function practiceStalled() {
 }
 function practiceMain() {
   if (!state.sessionActive) return { label: "Start", key: "start-skip", run: () => startSession() };
+  if (trialShown()) return { label: "Done", key: "start-skip", run: () => trialDismiss() };
   if (practiceStalled()) return { label: "Next", key: "next-question", next: true, run: () => nextQuestion() };
   if (state.mode === "bonuses" && state.bonusAwait != null) return { label: "Next part", key: "next-question", run: () => advanceBonusPart() };
   if (!state.resultAreaVisible && skipsOk() && state.currentQuestion && !state.isBuzzed && !state._loadingQuestion) return { label: "Skip", key: "start-skip", run: () => skipQuestion() };
@@ -9317,7 +9319,9 @@ function achRecordHit(ach, rec) {
   const inTopic = topics.length > 0 && achPathIn(rec.p, topics);
   if (!groups.length) return inTopic ? 0 : -1;
   const within = ach.within === "*" ? [] : achList(ach.within || achCatOf(ach));
-  const g = within.length && !achPathIn(rec.p, within) ? -1 : groups.findIndex((gr) => gr.some((x) => achAnsHit(rec.a, x.t, x.person)));
+  // the main answer, or another name the line gives for it (15.5: "Gaussian distribution" on a normal distribution line)
+  const hit = (x) => achAnsHit(rec.a, x.t, x.person) || (rec.alts ? rec.alts.some((n) => achAnsHit(n, x.t, x.person)) : false);
+  const g = within.length && !achPathIn(rec.p, within) ? -1 : groups.findIndex((gr) => gr.some(hit));
   if (!topics.length) return g;
   if (ach.either) return g >= 0 ? g : inTopic ? 0 : -1;
   return inTopic && g >= 0 ? g : -1;
@@ -9333,12 +9337,16 @@ function achTopicProgress(ach, records) {
 }
 // /api/answer-powers' answer_questions ({ answer: { path: [ids] } }) as records; with powered_at (first power, ms)
 // and the event's pumpkins (14.90) each record also has t and pk
-function achRecordsOf(apQuestions, poweredAt, pumpkins) {
+function achRecordsOf(apQuestions, poweredAt, pumpkins, alts) {
   const out = [], pk = new Set(pumpkins || []);
-  for (const a in apQuestions || {}) for (const ck in apQuestions[a]) for (const q of apQuestions[a][ck]) out.push({ q, a, p: apKeyPath(ck), t: (poweredAt && poweredAt[q]) || 0, pk: pk.has(q) });
+  for (const a in apQuestions || {}) for (const ck in apQuestions[a]) for (const q of apQuestions[a][ck]) {
+    const r = { q, a, p: apKeyPath(ck), t: (poweredAt && poweredAt[q]) || 0, pk: pk.has(q) };
+    if (alts && Array.isArray(alts[q]) && alts[q].length) r.alts = alts[q];
+    out.push(r);
+  }
   return out;
 }
-const achRecordsFrom = (d) => achRecordsOf((d && d.answer_questions) || {}, d && d.powered_at, d && d.event && d.event.pumpkins);
+const achRecordsFrom = (d) => achRecordsOf((d && d.answer_questions) || {}, d && d.powered_at, d && d.event && d.event.pumpkins, d && d.answer_alts);
 // ACH-ENGINE END
 
 function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
@@ -9431,7 +9439,9 @@ function achLiveApply(e) {
     let head = "";
     try { head = window.QBAnswerChecker ? window.QBAnswerChecker.primaryAnswer(q.answer || "", q.answer_sanitized || "") : ""; } catch (er) {}
     const a = apNorm(head || q.answer_sanitized || q.answer || "");
-    if (a && !_achLive.records.some((r) => r.q === q.id)) _achLive.records.push({ q: q.id, a, p: path, t: Date.now(), pk: !!q._pumpkin && hwOn() });
+    let alts = [];
+    try { alts = window.QBAnswerChecker ? [...new Set((window.QBAnswerChecker.parseDirectives(q.answer || "", q.answer_sanitized || "").accept || []).map(apNorm).filter((n) => n && n !== a))].slice(0, 12) : []; } catch (er) {}
+    if (a && !_achLive.records.some((r) => r.q === q.id)) _achLive.records.push({ q: q.id, a, p: path, t: Date.now(), pk: !!q._pumpkin && hwOn(), ...(alts.length ? { alts } : {}) });
   }
 }
 // a result: { type, q (the question, or just { id }), points, correct, isPower }
@@ -9814,6 +9824,13 @@ function openTrialPicker(key) {
   paint();
   try { el.querySelector(".tp-modal").focus({ preventScroll: true }); } catch (e) {}
 }
+// this window's id (kept across a reload, its own per tab): the backend runs one copy of a trial at a time
+function trialInstance() {
+  let id = null;
+  try { id = sessionStorage.getItem("qb-tab"); } catch (e) {}
+  if (!id) { id = Math.random().toString(36).slice(2, 12) + Date.now().toString(36); try { sessionStorage.setItem("qb-tab", id); } catch (e) {} }
+  return id;
+}
 function trialPending() { try { return !!(_trial && _trial.pending && !_trial.done); } catch (e) { return false; } }   // safe before _trial exists (showScreen at boot)
 function prepTrial(t) {
   if (_trial && _trial.pending) _trial = null;
@@ -9831,7 +9848,10 @@ async function beginTrial() {
   const b = document.getElementById("btn-drawer-start"), err = document.getElementById("trial-setup-err");
   if (b) b.disabled = true; if (err) err.textContent = "";
   let r = null;
-  try { r = await API.post("/api/trials", { action: "start", category: t.key, level: t.level }); } catch (e) { r = { ok: false, error: (e && e.message) || "Couldn't start the trial." }; }
+  // signed in on the app: the account's state first (a run started on the website), and it hears of this one soon
+  if (typeof _cloudOn !== "undefined" && _cloudOn) { try { await Promise.race([cloudSyncNow(), new Promise((res) => setTimeout(res, 4000))]); } catch (e) {} }
+  try { r = await API.post("/api/trials", { action: "start", category: t.key, level: t.level, instance: trialInstance() }); } catch (e) { r = { ok: false, error: (e && e.message) || "Couldn't start the trial." }; }
+  if (r && r.ok && typeof _cloudOn !== "undefined" && _cloudOn) cloudSyncSoon(1500);
   t.starting = false; if (b) b.disabled = false;
   if (_trial !== t) return;   // left meanwhile
   if (!r || !r.ok) {
@@ -9889,10 +9909,21 @@ function paintTrialBar() {
   bar.innerHTML = `<span class="tb-k">${ic("award", 14)}Trial</span><b class="tb-name">${escapeHtml(trialName(_trial.key, _trial.level))}</b>` +
     `<span class="tb-pips" aria-label="${_trial.powered} of ${TRIAL_LEN} powered">${pips}</span><span class="tb-n num">${_trial.powered}/${TRIAL_LEN}</span>` +
     `<span class="tb-xp num">+${fmtXp(trialXp(_trial.level, _trial.powered))}</span>` +
-    (_trial.done ? "" : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
+    (_trial.done ? `<button type="button" class="btn btn-sm btn-ghost" id="tb-result">Result</button><button type="button" class="btn btn-sm" id="tb-done">Done</button>`
+      : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
+  const rb = bar.querySelector("#tb-result"), db = bar.querySelector("#tb-done"), tt = _trial;
+  if (rb) rb.onclick = () => { if (tt.shown && !document.getElementById("trial-done")) showTrialResult(tt, tt.shown.passed, tt.shown.why); };
+  if (db) db.onclick = () => trialDismiss();
   const lv = bar.querySelector("#tb-leave");
   if (lv && _trial.pending) lv.onclick = () => { closeSetupDrawer(); trialEnd("left"); };
   else if (lv) lv.onclick = () => confirmDialog("Leave the trial? You keep the XP you've earned.", () => trialEnd("left"), { yes: "Leave" });
+}
+// a finished trial's question stays on the page until Done (the bar, the page's main button, the start-skip key)
+function trialShown() { try { return !!(_trial && _trial.done); } catch (e) { return false; } }
+function trialDismiss() {
+  document.getElementById("trial-done")?.remove();
+  _trial = null; paintTrialBar();
+  if (state.sessionActive) endSession();
 }
 function trialOnResult(result) {
   const power = !!(result && result.isPower);
@@ -9957,30 +9988,28 @@ function showTrialResult(t, passed, why) {
       </div>
       <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn${next || again ? "" : " btn-primary"}" id="td-trials">${ic("award", 14)}Trials</button>${next ? `<button type="button" class="btn btn-primary" id="td-next">${ic("play", 14)}Try ${escapeHtml(trialName(t.key, next))}</button>` : again ? `<button type="button" class="btn btn-primary" id="td-again">${ic("review", 14)}Again</button>` : ""}</div>
     </div>`;
-  const finish = (toTrials) => {
-    document.removeEventListener("keydown", onKey, true);
-    animateRemove(el);
-    _trial = null; paintTrialBar();
-    if (state.sessionActive) endSession();
-    if (toTrials) goTo("player");
-  };
+  // Close (or Esc) only shuts the window: the question and its answer stay on the page to look over, the trial bar
+  // offers Result / Done. Trials, Try next and Again clear the trial first.
+  t.shown = { passed, why };
+  const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); paintTrialBar(); };
+  const finish = (toTrials) => { close(); trialDismiss(); if (toTrials) goTo("player"); };
   // the result owns the keyboard: Esc closes, Enter is its main button, nothing reaches practice (no N, Space, S …)
   const onKey = (e) => {
     if (e.key === "Tab") return;
     e.stopPropagation();
-    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    if (e.key === "Escape") { e.preventDefault(); close(); }
     else if (e.key === "Enter") { e.preventDefault(); (el.querySelector("#td-next") || el.querySelector("#td-again") || el.querySelector("#td-trials"))?.click(); }
     else if (!e.metaKey && !e.ctrlKey) e.preventDefault();
   };
   document.addEventListener("keydown", onKey, true);
   document.body.appendChild(el);
-  el.querySelector("#td-close").onclick = () => finish(false);
+  el.querySelector("#td-close").onclick = () => close();
   el.querySelector("#td-trials").onclick = () => finish(true);
   const nx = el.querySelector("#td-next"), ag = el.querySelector("#td-again"), cat = TRIAL_CATS.find((c) => c[0] === t.key);
   if (nx) nx.onclick = () => { finish(false); prepTrial({ key: t.key, name: cat[1], level: t.level + 1 }); };
   if (ag) ag.onclick = () => { finish(false); prepTrial({ key: t.key, name: cat[1], level: t.level }); };
   growProgress(el);
-  if (passed || upgraded) { try { Sound.achievement(); } catch (e) {} }
+  if ((passed || upgraded) && !t._sounded) { t._sounded = true; try { Sound.achievement(); } catch (e) {} }
   try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 

@@ -2293,7 +2293,9 @@ function wordCost(w, r, ctx, fuzzy, required) {
   if (w.num && /^\d/.test(w.t) && w.kind === "R") return -1;
   if (abbrevEq(w.t, rt)) return 0;
   const cands = w.kind === "O" ? [w.t] : wordCands(w);
-  const prot = !!w.protect;
+  // a capitalised head word may be a name that never loses its s ("Mars" is not "Mar"), unless the answer is known
+  // not to be one: answer lines start with a capital, and "dwarf" is <u>Dwarves</u> (opts.answerProper, 15.5)
+  const prot = !!w.protect && ctx.answerProper !== false;
   for (const c of cands) if (c === rt || inflEq(c, rt, prot) || spellEq(c, rt)) return 0;
   const base = w.kind === "O" ? w.t : w.segs.filter((x) => x[0]).map((x) => x[1]).join("");
   // word forms: any word when the line accepts them; otherwise a lowercase (common) word's forms, unless the line
@@ -3461,6 +3463,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     rules, extraBudget: (lenient ? 1 : 0) + (strictness < 10 ? 1 : 0) + (strictness < 5 ? 1 : 0),
     formBudget: (strictness >= 20 ? 1 : strictness >= 15 ? 2 : strictness >= 10 ? 3 : 4) + (lenient ? 1 : 0), wordForms: false, qWords: rc.qWords || null,
     lenientSpell: !!rules.lenientSpell && !exact, freeOrder: strictness < 10 && rules.order !== "fixed" && !exact, articleOptional: strictness < 15 && !exact,
+    answerProper: typeof opts.answerProper === "boolean" ? opts.answerProper : undefined,
   };
   // the line's own "accept X alone after …" decides the bare word; the generic-word rule then stays out
   if (F.accepts.some((f) => f.window && f.scope === "bare")) ctx.qWords = null;
@@ -3823,7 +3826,7 @@ const TG_FUNCTION = new Set(("of in on at to for by with from into onto upon abo
   "the a an de del della di da du des la le les el los las von van der den ter zu v vs like etc such as it its they them their he him his she her himself herself itself themselves").split(" "));
 function tooGeneral(F, T, x) {
   const { P, opts = {}, H, rules = {}, live = () => true, respKey } = x;
-  if (opts.answerName === true || rules.partial_policy === "reject") return null;
+  if (rules.partial_policy === "reject") return null;
   if (/\b(?:do\s+not|don['’]t|never)\s+prompt\b(?!\s+(?:on|for|with)\b)|\bno\s+prompts?\b/i.test(String(P.text || ""))) return null;
   const TT = contentToks(T);
   if (!TT.length || TT.some((t) => t.num)) return null;
@@ -3846,6 +3849,8 @@ function tooGeneral(F, T, x) {
     // ("Heights" isn't a more general Battle of Bemis Heights, nor "Stone" The Story of the Stone)
     if (ws.slice(0, ws.length - said.length).some((w) => TG_FUNCTION.has(w.t))) continue;
     if (opts.answerName == null && ws.filter((w) => !TG_FUNCTION.has(w.t)).every((w) => w.cap)) continue;
+    // a name or a title keeps its words (spec J12: "Strauss" for Richard Strauss); a place's name its capitalised ones
+    if (opts.answerName === true || (opts.answerPlace === true && ws[ws.length - 1].cap)) continue;
     if (tgKnownElsewhere(T, F, H, opts, respKey)) return null;
     return f;
   }
@@ -3864,8 +3869,11 @@ function tgKnownElsewhere(T, F, H, opts, respKey) {
 
 // The answer's kind for J12: a name or a title (the record's tags.answer_type), and on a bonus the other parts'
 // answers. index.js (_judgeOpts) and the page's judge (judge.js) both pass these.
-// (a place's name counts as a name: "Joel" for Kiryas Joel or "Sahara" for Western Sahara isn't a more general answer)
-const TG_NAME_TYPES = new Set(["Person", "Fictional Character", "Deity or Mythic Being", "Legendary or Scriptural Figure", "Group, Dynasty or Family", "Musical Group or Band", "Place", "Fictional Place or Object", "Vehicle, Ship or Aircraft", "Brand or Product"]);
+const TG_NAME_TYPES = new Set(["Person", "Fictional Character", "Deity or Mythic Being", "Legendary or Scriptural Figure", "Group, Dynasty or Family", "Musical Group or Band"]);
+// (ours: a place's or a thing's name keeps its capitalised words too — "Joel" for Kiryas Joel, "Sahara" for Western
+// Sahara — but a common word at the end of a phrase the line takes is still too general: "underworld" for Mayan
+// underworld on a Xibalba line)
+const TG_PLACE_TYPES = new Set(["Place", "Fictional Place or Object", "Vehicle, Ship or Aircraft", "Brand or Product"]);
 export function answerContext(q, part = null) {
   const out = {};
   if (!q) return out;
@@ -3877,11 +3885,17 @@ export function answerContext(q, part = null) {
       // a bonus's types follow its parts when there is one for each; otherwise any name among them counts
       const mine = part != null && types.length === list(q.answers).length ? [types[part]] : types;
       out.answerName = mine.some((t) => TG_NAME_TYPES.has(t) || /^Work\b/.test(String(t)));
+      if (!out.answerName && mine.some((t) => TG_PLACE_TYPES.has(t))) out.answerPlace = true;
+      // a proper name keeps its exact number (Mars, Athens, Williams); a group, a people, a being or a thing doesn't
+      out.answerProper = mine.some((t) => PROPER_TYPES.has(t) || /^Work\b/.test(String(t)));
     }
   } catch (e) { /* no tags */ }
   if (part != null) out.otherAnswers = list(q.answers_sanitized).filter((_, i) => i !== part).map(String);
   return out;
 }
+
+const PROPER_TYPES = new Set(["Person", "Fictional Character", "Legendary or Scriptural Figure", "Place", "Fictional Place or Object", "Celestial Object",
+  "Organization or Company", "Brand or Product", "Vehicle, Ship or Aircraft", "Musical Group or Band"]);
 
 // J1 chemical case: element symbols and formulas that read two ways in lower case ("co": CO or Co).
 const CHEM_ELEMENTS = new Set("H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og".split(" "));
