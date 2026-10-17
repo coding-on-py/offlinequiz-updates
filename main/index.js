@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { QuestionDatabase } from "./database.js";
 import { UserData, EVENT, eventOn, isPumpkin } from "./userData.js";
-import { checkAnswer, checkBonus, evaluateAnswer, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer } from "./answerChecker.js";
+import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer } from "./answerChecker.js";
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
 import * as updater from "./updater.js";
@@ -664,6 +664,7 @@ export class App {
       }
       if (slot && typeof slot === "object" && !Array.isArray(slot)) out.hidden = slot;
     } catch { /* none */ }
+    Object.assign(out, answerContext(q, part));   // J12 "too general": a name / title? the other parts' answers
     return out;
   }
 

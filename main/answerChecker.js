@@ -3527,6 +3527,11 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   if (g3) return g3;
   let noPrompt = false;
   for (const r of F.noprompts) if (live(r) && !r.superset && r.terms.some((t) => strictEq(t, T, false))) noPrompt = true;
+  // ---- J1 / J12 chemical symbols and formulas are case-sensitive when typed (CO ≠ Co, NO ≠ No): another one of them
+  // is wrong, an all lower-case one that two of them share ("co") is asked which
+  const chem = chemCase(resp, F, live, rc);
+  if (chem === "reject") return verdict("reject", { rule: "J1" });
+  if (chem === "prompt" && !noPrompt) return verdict("prompt", { rule: "J12", prompt: { target: null, ask: "Which one? Say its name." } });
   // ---- J5 exact accept
   const liveAccepts = F.accepts.filter(live);
   // extra words may come from the line's other live accept forms ("Saul of Tarsus"), never a number
@@ -3673,7 +3678,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
       return v;
     }
     // ---- J12 NAQT implicit prompts (closed list)
-    const imp = implicitPrompt(F, T);
+    const imp = implicitPrompt(F, T, { P, opts, H, rules, live, respKey });
     if (imp) return out("prompt", imp, "J12");
   }
   // ---- J13 hidden answers, then the open class
@@ -3779,7 +3784,8 @@ function extraWordsOk(T, m, opts, form) {
 // is the group italic (a title, not a person's name)?
 function P_IT(f, g) { const w = f.words[g.words[0]]; return !!(w && w.it); }
 // J12: the NAQT implicit prompts (closed list).
-function implicitPrompt(F, T) {
+function implicitPrompt(F, T, x = {}) {
+  const lineText = String((x.P && x.P.text) || "");
   for (const f of F.accepts) {
     if (!f.isMain) continue;
     // part of a space-separated compound surname that follows a given name (J§5.3)
@@ -3789,6 +3795,8 @@ function implicitPrompt(F, T) {
       if (!w1.cap || !w2.cap || w1.kind !== "R" || w2.kind !== "R") continue;
       const before = f.words[g.words[0] - 1];
       if (!before || before.kind !== "O" || !before.cap || ARTICLES_ALL.has(before.t) || CONNECTIVES.has(before.t)) continue;
+      // a hyphenated surname is one name: no part of it is promptable (J§5.3)
+      if (w1.k1 != null && w2.k0 != null && /[-‐‑–]/.test(lineText.slice(w1.k1, w2.k0))) continue;
       if (f.raw && f.raw.src === "main" && P_IT(f, g)) continue;
       const rest = T.filter((t) => !(t.t === before.t || ARTICLES_ALL.has(t.t)));
       if (rest.length === 1 && (rest[0].t === w1.t || rest[0].t === w2.t)) return f;
@@ -3800,6 +3808,107 @@ function implicitPrompt(F, T) {
       const rv = TT.length === 1 ? TT[0].num : null;
       if (rv && rv.v === w.num.v % 100 && !!rv.decade === !!w.num.decade) return f;
     }
+  }
+  return x.P ? tooGeneral(F, T, x) : null;
+}
+
+// J12 too general (NAQT correctness rule 1.2; the spec, 2026-10-17): the whole response is the head of a multi-word
+// required span, its last word or last words ("revolution" on French Revolution, "acid" on sulfuric acid,
+// "racing" on car racing): PROMPT. Not when the line says not to prompt, the head is a function word or 2 letters
+// or fewer, the answer is a name or a title (opts.answerName, from tags.answer_type: those keep J9; a place's name
+// counts), or the head is
+// another answer known for the question (a line item, a hidden item, another part's answer). With no answer type
+// known (a bare answer line), an all-capitalized span counts as a name.
+const TG_FUNCTION = new Set(("of in on at to for by with from into onto upon about against among across after before behind between beyond during over under through toward towards until via per without within versus and or nor but " +
+  "the a an de del della di da du des la le les el los las von van der den ter zu v vs like etc such as it its they them their he him his she her himself herself itself themselves").split(" "));
+function tooGeneral(F, T, x) {
+  const { P, opts = {}, H, rules = {}, live = () => true, respKey } = x;
+  if (opts.answerName === true || rules.partial_policy === "reject") return null;
+  if (/\b(?:do\s+not|don['’]t|never)\s+prompt\b(?!\s+(?:on|for|with)\b)|\bno\s+prompts?\b/i.test(String(P.text || ""))) return null;
+  const TT = contentToks(T);
+  if (!TT.length || TT.some((t) => t.num)) return null;
+  const said = TT.map((t) => t.t);
+  if (said.length === 1 && (said[0].length <= 2 || TG_FUNCTION.has(said[0]))) return null;
+  const same = (a, b) => a === b || a + "s" === b || b + "s" === a || a + "es" === b || b + "es" === a;
+  for (const f of F.accepts) {
+    if (f.weak || f.src === "subst" || !live(f) || !f.groups || f.groups.length !== 1) continue;
+    const ws = f.groups[0].words.map((i) => f.words[i]);
+    if (ws.length < 2 || said.length >= ws.length || ws.some((w) => w.kind !== "R" || w.num)) continue;
+    // an italic span is a title, a species or a foreign term: its last word isn't a more general answer
+    // ("vérité" for cinéma vérité, "cinereus" for Phascolarctos cinereus)
+    if (ws.some((w) => w.it)) continue;
+    if (/[“”"«»„/]/.test(String(f.text || ""))) continue;   // a quoted title or phrase, likewise (and a slash list)
+    // a possessive ("Anne's" for Queen Anne's War) or a verb's object ("slavery" for ending slavery) isn't the head
+    const lead = ws.slice(0, ws.length - said.length);
+    if (/['’]s?$/.test(String(ws[ws.length - 1].orig || "")) || lead.some((w) => /ing$/.test(w.t) && !w.cap)) continue;
+    if (!ws.slice(ws.length - said.length).every((w, i) => same(w.t, said[i]))) continue;
+    // the head of "X of Y" is X: a span with a preposition, article or connector before the said words is skipped
+    // ("Heights" isn't a more general Battle of Bemis Heights, nor "Stone" The Story of the Stone)
+    if (ws.slice(0, ws.length - said.length).some((w) => TG_FUNCTION.has(w.t))) continue;
+    if (opts.answerName == null && ws.filter((w) => !TG_FUNCTION.has(w.t)).every((w) => w.cap)) continue;
+    if (tgKnownElsewhere(T, F, H, opts, respKey)) return null;
+    return f;
+  }
+  return null;
+}
+function tgKnownElsewhere(T, F, H, opts, respKey) {
+  if (H && [].concat(H.accept, H.prompt, H.antiprompt, H.reject).some((t) => strictEq(t, T, true))) return true;
+  if (F.prompts.concat(F.antis).some((f) => f.key === respKey)) return true;
+  if (F.rejects.some((r) => r.terms.some((t) => strictEq(t, T, false)))) return true;
+  for (const a of Array.isArray(opts.otherAnswers) ? opts.otherAnswers : []) {
+    const main = String(a || "").split(/\s*[\[(]/)[0].trim();
+    if (main && formKey(respTokens(main, false)) === respKey) return true;
+  }
+  return false;
+}
+
+// The answer's kind for J12: a name or a title (the record's tags.answer_type), and on a bonus the other parts'
+// answers. index.js (_judgeOpts) and the page's judge (judge.js) both pass these.
+// (a place's name counts as a name: "Joel" for Kiryas Joel or "Sahara" for Western Sahara isn't a more general answer)
+const TG_NAME_TYPES = new Set(["Person", "Fictional Character", "Deity or Mythic Being", "Legendary or Scriptural Figure", "Group, Dynasty or Family", "Musical Group or Band", "Place", "Fictional Place or Object", "Vehicle, Ship or Aircraft", "Brand or Product"]);
+export function answerContext(q, part = null) {
+  const out = {};
+  if (!q) return out;
+  const list = (v) => { if (Array.isArray(v)) return v; try { const a = JSON.parse(v || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+  try {
+    const tags = typeof q.tags === "string" ? JSON.parse(q.tags || "{}") : (q.tags || {});
+    const types = tags && Array.isArray(tags.answer_type) ? tags.answer_type : [];
+    if (types.length) {
+      // a bonus's types follow its parts when there is one for each; otherwise any name among them counts
+      const mine = part != null && types.length === list(q.answers).length ? [types[part]] : types;
+      out.answerName = mine.some((t) => TG_NAME_TYPES.has(t) || /^Work\b/.test(String(t)));
+    }
+  } catch (e) { /* no tags */ }
+  if (part != null) out.otherAnswers = list(q.answers_sanitized).filter((_, i) => i !== part).map(String);
+  return out;
+}
+
+// J1 chemical case: element symbols and formulas that read two ways in lower case ("co": CO or Co).
+const CHEM_ELEMENTS = new Set("H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og".split(" "));
+function chemReadings(s, i = 0, acc = "", out = new Set()) {
+  if (out.size > 8) return out;
+  if (i === s.length) { if (acc) out.add(acc); return out; }
+  const d = /^\d+/.exec(s.slice(i));
+  if (d) return acc ? chemReadings(s, i + d[0].length, acc + d[0], out) : out;
+  for (const n of [1, 2]) {
+    if (i + n > s.length) continue;
+    const sym = s[i].toUpperCase() + s.slice(i + 1, i + n);
+    if (CHEM_ELEMENTS.has(sym)) chemReadings(s, i + n, acc + sym, out);
+  }
+  return out;
+}
+function chemCase(resp, F, live, rc) {
+  const r = String(resp || "").trim();
+  if (!/^[A-Za-z][A-Za-z0-9]{0,5}$/.test(r) || !rc || !rc.hasText || !QUALIFIER_FIELDS.chemical || !QUALIFIER_FIELDS.chemical.test(rc.folded || "")) return null;
+  const lower = r.toLowerCase(), reads = chemReadings(lower);
+  if (reads.size < 2) return null;   // one way to read it: the case doesn't matter
+  for (const f of F.accepts) {
+    if (f.weak || !live(f)) continue;
+    const ft = String(f.text || "").replace(/<[^>]+>/g, "").trim();
+    if (ft.toLowerCase() !== lower || !reads.has(ft)) continue;   // the line names one of them
+    if (r === ft) return null;                                    // exactly it
+    if (r === lower) return "prompt";                             // all lower case: which one?
+    return reads.has(r) ? "reject" : null;                        // the other symbol or formula
   }
   return null;
 }
