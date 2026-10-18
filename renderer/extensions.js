@@ -10876,6 +10876,14 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, linePool);
     if (m && m.full && m.cost === 0) return out("accept", f, "J5");
   }
+  // ---- J5b strictness 10 and below: an accepted answer anywhere in the response is right, however much else is said
+  // ("I think it's the absolute value of x"), unless the response also has something the line rejects (outside that
+  // answer: "Virginia" inside a West Virginia accept doesn't count). Not on a line that wants exactly its answer or no
+  // other; a response that is exactly one of the line's prompt targets still gets that prompt.
+  if (strictness <= 10 && !exact && !rules.closed) {
+    const v = containedAccept(T, F, H, ctx, { live, linePool, exact, lenient, rules, opts, out, plain });
+    if (v) return v;
+  }
   // ---- J6 / J7 named prompt and anti-prompt
   if (!noPrompt) {
     for (const f of F.prompts) {
@@ -11006,6 +11014,11 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
     if (m.left.length && !extraWordsOk(T, m, opts, f)) continue;
     ctx.wordForms = false;
+    if (m.left.length) {   // the extra words never carry an answer the line rejects ("birth control abortion")
+      const left = new Set(m.left), inside = new Set();
+      for (let k = 0; k < T.length; k++) if (!left.has(k)) inside.add(k);
+      if (rejectOutsideOf(T, F, H, live, inside)) return out("reject", null, "J4", { note: "the response also has an answer the line rejects" });
+    }
     return out("accept", f, "J10", m.left.length ? { note: "extra words ignored" } : m.cost ? { note: "spelling accepted" } : {});
   }
   ctx.wordForms = false;
@@ -11054,6 +11067,88 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   }
   if (openClass(rules, F)) return verdict("reject", { rule: "J13", via: "line", unsure: true, note: "the answer line allows equivalents or descriptions: judge it yourself" });
   return verdict("reject", { rule: "J14" });
+}
+
+// where a term occurs in the response: [start, end) runs
+function termRuns(T, term) {
+  const a = contentToks(term), out = [];
+  if (!a.length) return out;
+  for (let i = 0; i + a.length <= T.length; i++) {
+    let ok = true;
+    for (let j = 0; j < a.length; j++) if (!tokEqLoose(a[j], T[i + j])) { ok = false; break; }
+    if (ok) out.push([i, i + a.length]);
+  }
+  return out;
+}
+// does the response also say something the line rejects, outside the accepted answer's words (`inside`, a Set of
+// token indices)? "Virginia" inside an accepted "West Virginia" doesn't count; "West Virginia" around "Virginia" does
+function rejectOutsideOf(T, F, H, live, inside) {
+  const outside = (term) => termRuns(T, term).some(([i, j]) => { for (let k = i; k < j; k++) if (!inside.has(k)) return true; return false; });
+  for (const r of F.rejects) {
+    if (!live(r)) continue;
+    if (r.both ? r.terms.length > 1 && r.terms.every((t) => termRuns(T, t).length) && r.terms.some(outside) : r.terms.some(outside)) return true;
+  }
+  for (const c of F.contains) {
+    if (!NEG.has(c.kind) || !live(c) || !c.slots.length) continue;
+    if (c.slots.some((alts) => alts.some(outside)) && !(c.without && c.without.length && containsRun(T, c.without))) return true;
+  }
+  return !!(H && H.reject.some(outside));
+}
+// J5b: the first live accept form found inside the response (typos and word forms as J10 allows), or a hidden accept,
+// with no reject of the line anywhere outside it; null when there's none
+const NEGATIONS = new Set(["not", "no", "never", "isnt", "wasnt", "neither", "nor"]);
+function containedAccept(T, F, H, ctx, x) {
+  const { live, linePool, exact, lenient, rules, opts, out, plain } = x;
+  if (T.length < 2) return null;   // one word: the usual rules
+  // a response that is exactly one of the line's prompt targets keeps its prompt (J6 / J7), and exactly one of its
+  // answers whose time is over stays wrong (J8: "River Flows in You" after the first line, though it has "river")
+  for (const f of F.accepts) {
+    if (live(f)) continue;
+    const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, null);
+    if (m && m.full && m.cost === 0) return null;
+  }
+  for (const f of F.prompts.concat(F.antis)) {
+    if (!live(f)) continue;
+    const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, F.promptPool);
+    if (m && m.full && m.cost === 0) return null;
+  }
+  const runs = (term) => termRuns(T, term);
+  const rejectOutside = (inside) => rejectOutsideOf(T, F, H, live, inside);
+  const negated = (inside) => { const first = Math.min(...inside); return first > 0 && NEGATIONS.has(T[first - 1].t); };
+  const keep = [ctx.wordForms, ctx.wordFormsAuto, ctx.autoForm];
+  ctx.wordForms = (!!(rules.word_forms && rules.word_forms.some((w) => /^accept:/.test(w))) || lenient) && !exact;
+  ctx.wordFormsAuto = !(rules.word_forms && rules.word_forms.some((w) => /^reject:/.test(w)));
+  let v = null;
+  try {
+    for (const f of F.accepts) {
+      if (!live(f)) continue;
+      ctx.autoForm = false;
+      const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk: true, prefixOk: !!f.specificEx }, linePool);
+      if (!m || !m.full || !m.left.length) continue;   // all of it the answer: the usual rules judged it
+      if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
+      if (otherGivenName(T, m, f)) continue;
+      const left = new Set(m.left), inside = new Set();
+      for (let k = 0; k < T.length; k++) if (!left.has(k)) inside.add(k);
+      if (!inside.size || negated(inside)) continue;
+      v = rejectOutside(inside) ? out("reject", null, "J4", { note: "the response also has an answer the line rejects" })
+        : out("accept", f, "J10", { note: "the answer is in the response" });
+      break;
+    }
+    if (!v && H) {
+      for (const h of H.accept) {
+        const r0 = runs(h).find(([i, j]) => j - i < T.length);
+        if (!r0) continue;
+        const inside = new Set(); for (let k = r0[0]; k < r0[1]; k++) inside.add(k);
+        if (negated(inside)) continue;
+        v = rejectOutside(inside) ? verdict("reject", { rule: "J4", via: "hidden", note: "the response also has an answer the line rejects" })
+          : verdict("accept", { rule: "J13", via: "hidden", matchedAnswer: h.map((t) => t.orig).join(" "), note: "the answer is in the response" });
+        break;
+      }
+    }
+  } finally {
+    [ctx.wordForms, ctx.wordFormsAuto, ctx.autoForm] = keep;
+  }
+  return v;
 }
 
 function containsWordsLoose(T, term) {
@@ -11119,16 +11214,27 @@ function collides(form, T, m, F, opts) {
 // Extra unaccounted words (J10 below strictness 20): never a negation or a hedge, never a known different answer.
 function extraWordsOk(T, m, opts, form) {
   for (const k of m.left) if (NEVER_ACCOUNTED.has(T[k].t)) return false;
+  if (otherGivenName(T, m, form)) return false;
+  return !(opts.isKnownAnswer && opts.isKnownAnswer(T.map((x) => x.t).join(" ")));
+}
+// a word said where the form has a given name, before its surname: someone else of that name ("Mary Boleyn" for Anne
+// Boleyn, "John Adams" for John Quincy Adams; NAQT 8.3)
+// (an everyday word there is no name: "it is Plath", "I think Plath")
+const NOT_A_NAME = new Set(("is are was were be been am i im it its this that these those so then because maybe probably perhaps " +
+  "think guess say said believe sure answer the a an of and or to in on at for by with from my me we you he she they him her his " +
+  "their them like um uh er hmm just ok okay yes no not called named known as about which who what whom where mr mrs ms dr").split(" "));
+function otherGivenName(T, m, form) {
   if (form && !form.specificEx) {
     for (let gi = 0; gi < m.sel.length; gi++) {
       const o = m.sel[gi];
       if (!o || o === true || !m.left.includes(o.s - 1)) continue;
+      if (NOT_A_NAME.has(T[o.s - 1].t)) continue;
       const g = form.groups[gi];
       const first = form.words[g.words[0]], before = form.words[g.words[0] - 1];
-      if (first && first.cap && before && before.kind === "O" && before.cap && !ARTICLES_ALL.has(before.t) && !CONNECTIVES.has(before.t) && !HONORIFICS.has(before.t)) return false;
+      if (first && first.cap && before && before.kind === "O" && before.cap && !ARTICLES_ALL.has(before.t) && !CONNECTIVES.has(before.t) && !HONORIFICS.has(before.t)) return true;
     }
   }
-  return !(opts.isKnownAnswer && opts.isKnownAnswer(T.map((x) => x.t).join(" ")));
+  return false;
 }
 
 // is the group italic (a title, not a person's name)?

@@ -256,7 +256,7 @@ function persistSettingsToLocalStorage() {
   const map = {
     "qb-speed": st.revealSpeed, "qb-auto-reveal": st.autoReveal,
     "qb-buzz-timeout": st.buzzTimeout, "qb-buzz-window": st.buzzWindow, "qb-bonus-timer": st.bonusTimer,
-    "qb-strictness": st.strictness, "qb-allow-rebuzzes": st.allowRebuzzes,
+    "qb-strictness": st.strictness, "qb-strict-v": st.strictV || 0, "qb-allow-rebuzzes": st.allowRebuzzes,
     "qb-stop-on-power": st.stopOnPower, "qb-allow-skips": st.allowSkips,
     "qb-show-qmeta": st.showQuestionMeta, "qb-hide-pron": st.hidePronunciations, "qb-hide-notes": st.hideNotes, "qb-use-weights": st.useWeights,
     "qb-app-accent": st.appAccent, "qb-app-radius": st.appRadius, "qb-app-btngap": st.appBtnGap,
@@ -273,6 +273,9 @@ async function loadProfileSettings() {
     const d = await API.get("/api/profile-settings");
     const p = d && d.settings;
     if (!p) { pushProfileSettings(); return; }
+    // a copy saved before the default strictness was 10 gets the same one-time change (and goes back up changed)
+    let migrated = false;
+    if (p.settings && !(Number(p.settings.strictV) >= 2)) { const f = migrateStrictness(p.settings, p.filters); if (f && p.filters) p.filters = f; migrated = true; }
     if (p.settings) Object.assign(state.settings, p.settings);
     if (p.username != null) state.username = p.username;
     if (p.avatar != null) state.avatar = p.avatar;
@@ -285,7 +288,25 @@ async function loadProfileSettings() {
     updateKeyLabels();
     renderGreeting();
     renderTopbarProfile();
+    if (migrated) pushProfileSettings();
   } catch {}
+}
+// 15.7: the default strictness went from 20 to 10. A saved 20 (the old default, saved for nearly everyone) becomes
+// 10 once, in the settings and in each mode's saved setup; settings.strictV = 2 marks it done (synced with the profile,
+// so a 20 chosen afterwards stays). Returns the filters JSON, changed, or null when there was nothing to do.
+function migrateStrictness(settings, filtersJson) {
+  if (!settings || Number(settings.strictV) >= 2) return null;
+  if (Number(settings.strictness) === 20) settings.strictness = 10;
+  settings.strictV = 2;
+  let f = filtersJson || "";
+  try {
+    const b = JSON.parse(filtersJson || "null");
+    if (b && typeof b === "object") {
+      for (const k of Object.keys(b)) { const st = b[k] && b[k].settings; if (st && Number(st.strictness) === 20) st.strictness = 10; }
+      f = JSON.stringify(b);
+    }
+  } catch (e) {}
+  return f;
 }
 
 
@@ -330,7 +351,8 @@ const state = {
     buzzTimeout: parseInt(localStorage.getItem("qb-buzz-timeout") || "10"),
     buzzWindow: parseInt(localStorage.getItem("qb-buzz-window") || "10"),
     bonusTimer: parseInt(localStorage.getItem("qb-bonus-timer") || "15"),
-    strictness: parseInt(localStorage.getItem("qb-strictness") || "20"),
+    strictness: parseInt(localStorage.getItem("qb-strictness") || "10"),
+    strictV: Number(localStorage.getItem("qb-strict-v") || 0),
     allowRebuzzes: localStorage.getItem("qb-allow-rebuzzes") === "true",
     stopOnPower: localStorage.getItem("qb-stop-on-power") === "true",
     allowSkips: localStorage.getItem("qb-allow-skips") !== "false",
@@ -356,6 +378,13 @@ const state = {
   },
   hotkeyRebinding: null,
 };
+
+{ // this device's saved settings (see migrateStrictness)
+  const f = migrateStrictness(state.settings, localStorage.getItem("qb-filters"));
+  if (f !== null) {
+    try { localStorage.setItem("qb-strictness", String(state.settings.strictness)); localStorage.setItem("qb-strict-v", "2"); if (f) localStorage.setItem("qb-filters", f); } catch (e) {}
+  }
+}
 
 Object.defineProperty(state, "sessionHistory", {
   get() { return state.histories[_historyKey()]; },
@@ -2762,7 +2791,7 @@ function resetPracticeFiltersToDefaults() {
   setBuzzTimer(10);
   setBuzzWindow(10);
   const strict = $("#strictness-slider");
-  if (strict) { strict.value = 20; state.settings.strictness = 20; lsSet("qb-strictness", "20"); const lbl = $("#strictness-label"); if (lbl) lbl.textContent = "20"; }
+  if (strict) { strict.value = 10; state.settings.strictness = 10; lsSet("qb-strictness", "10"); const lbl = $("#strictness-label"); if (lbl) lbl.textContent = "10"; }
   const std = $("#filter-standard"); if (std) std.checked = false;
   const pm = $("#filter-powermark"); if (pm) pm.checked = true;
   const st = $("#filter-starred"); if (st) st.checked = false;
@@ -9949,10 +9978,10 @@ function trialOver() { try { return !!(_trial && !_trial.pending && (_trial.done
 function trialRunning() { try { return !!(_trial && !_trial.done && !_trial.pending); } catch (e) { return false; } }   // (safe before _trial exists)
 const skipsOk = () => !!state.settings.allowSkips && !trialRunning();   // no skipping in a trial
 // a trial plays by its own rules, whatever the player's practice setup says (only the reading speed is theirs):
-// no rebuzzes, no stop at the power mark, strictness 20, 10 seconds to answer and to buzz after the end
+// no rebuzzes, no stop at the power mark, strictness 10, 10 seconds to answer and to buzz after the end
 function playSetting(k) {
   if (trialRunning()) {
-    const R = { allowRebuzzes: false, stopOnPower: false, strictness: 20, buzzTimeout: 10, buzzWindow: 10, bonusAfter: false, allowSkips: false };
+    const R = { allowRebuzzes: false, stopOnPower: false, strictness: 10, buzzTimeout: 10, buzzWindow: 10, bonusAfter: false, allowSkips: false };
     if (k in R) return R[k];
   }
   return state.settings[k];
