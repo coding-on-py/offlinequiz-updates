@@ -212,6 +212,26 @@ export class QuestionDatabase {
     } catch { return null; }
   }
 
+  // Answer lines (tossups, and bonus parts) that hold every given phrase, for the answer checker's otherName:
+  // [{ id, part, answer, sanitized }] (part null for a tossup). Phrases are plain words.
+  answerLinesWith(phrases, limit = 300) {
+    const ph = (phrases || []).map((x) => String(x || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()).filter(Boolean);
+    if (!ph.length) return [];
+    const out = [];
+    try {
+      const q = ph.map((x) => '"' + x + '"').join(" AND ");
+      for (const r of this.db.prepare("SELECT t.id, t.answer, t.answer_sanitized FROM tossups_fts f JOIN tossups t ON t.rowid = f.rowid WHERE tossups_fts MATCH ? AND t.playable = 1 LIMIT ?").all("answer_sanitized : (" + q + ")", limit)) {
+        out.push({ id: r.id, part: null, answer: r.answer || "", sanitized: r.answer_sanitized || "" });
+      }
+      for (const r of this.db.prepare("SELECT b.id, b.answers, b.answers_sanitized FROM bonuses_fts f JOIN bonuses b ON b.rowid = f.rowid WHERE bonuses_fts MATCH ? AND b.playable = 1 LIMIT ?").all("answers_sanitized : (" + q + ")", limit)) {
+        let a = [], z = [];
+        try { a = JSON.parse(r.answers || "[]"); z = JSON.parse(r.answers_sanitized || "[]"); } catch { continue; }
+        z.forEach((t, i) => out.push({ id: r.id, part: i, answer: a[i] || "", sanitized: t || "" }));   // the caller picks the part
+      }
+    } catch { /* no FTS on this database */ }
+    return out;
+  }
+
   // A set name as the user may have saved it before 151 sets were renamed.
   resolveSetName(name) {
     if (!name || !this.v2) return name;

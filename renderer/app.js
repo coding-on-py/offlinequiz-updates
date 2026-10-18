@@ -4985,7 +4985,7 @@ function renderTossup(q) {
   if (state.settings.revealSpeed === 0 && state.settings.autoReveal) {
     // Instant reveal still honours "Stop on power": hold at the mark, paused;
     // resuming (P) shows the rest instantly (revealText's own speed-0 path).
-    if (state.settings.stopOnPower && state.prePowerEnd > 0) {
+    if (playSetting("stopOnPower") && state.prePowerEnd > 0) {
       state.revealIndex = state.prePowerEnd;
       state.buzzPosition = state.revealIndex;
       $("#question-text").innerHTML = formatQuestionText(displayText, state.revealIndex, state.prePowerEnd);
@@ -5305,8 +5305,10 @@ async function judgeBonusPart(idx, answer) {
   if (canJudgeHere(q)) {
     r = window.QBJudge.evaluateBonusPart(answer, q, idx, state.settings.strictness, previous);
     if (!r) r = window.QBAnswerChecker.evaluateAnswer(answer, state.bonusAnswersRaw?.[idx] || state.bonusAnswers?.[idx] || "", state.bonusAnswers?.[idx] || "", state.settings.strictness);
-    if (state.currentQuestion === q) (state._bonusEval ||= [])[idx] = { key, r };
-    return r;
+    if (!needsServer(r)) {
+      if (state.currentQuestion === q) (state._bonusEval ||= [])[idx] = { key, r };
+      return r;
+    }
   }
   try {
     r = await API.post("/api/evaluate-bonus-part", { questionId: q.id, part: idx, answer, strictness: state.settings.strictness, previous });
@@ -5412,8 +5414,8 @@ async function submitBonusAnswers() {
     const q = state.currentQuestion, previous = Array.from({ length: n }, (_, i) => (state._bonusPromptFrom || [])[i] || null);
     const body = { questionId: q.id, answers, sessionId: state.sessionId, strictness: state.settings.strictness, previous };   // same strictness as the per-part ✓/✗ verdicts
     let result;
-    if (canJudgeHere(q)) {
-      const r = window.QBJudge.scoreBonusResult(answers, q, state.settings.strictness, null, previous);
+    const r = canJudgeHere(q) ? window.QBJudge.scoreBonusResult(answers, q, state.settings.strictness, null, previous) : null;
+    if (r && !(r.parts || []).some(needsServer)) {
       result = { totalPoints: r.totalPoints, partsCorrect: r.partsCorrect, parts: r.parts, answers: (() => { try { return JSON.parse(q.answers_sanitized || "[]"); } catch { return []; } })() };
       recordInBackground("/api/check-bonus", body).then((srv) => { if (srv && !srv.error && srv.totalPoints !== result.totalPoints) reconcileBonus(q, result, srv); });
     } else result = await API.post("/api/check-bonus", body);
@@ -5439,7 +5441,7 @@ function revealText(text) {
   if (speed === 0) {
     // Instant reading still honours "Stop on power": reveal exactly to the
     // power mark and pause there; resuming reveals the rest instantly.
-    if (state.settings.stopOnPower && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) {
+    if (playSetting("stopOnPower") && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) {
       state.revealIndex = state.prePowerEnd;
       state.buzzPosition = state.revealIndex;
       $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
@@ -5464,7 +5466,7 @@ function revealText(text) {
     if (state.revealIndex >= text.length) return;
     const curSpeed = state.settings.revealSpeed;
     if (curSpeed === 0) {
-      if (state.settings.stopOnPower && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) {
+      if (playSetting("stopOnPower") && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) {
         state.revealIndex = state.prePowerEnd;
         state.buzzPosition = state.revealIndex;
         $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
@@ -5494,12 +5496,12 @@ function revealText(text) {
     // reading stops there
     let n = Math.max(1, Math.floor((ts - lastTime) / curSpeed));
     lastTime += n * curSpeed;
-    if (state.settings.stopOnPower && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) n = Math.min(n, state.prePowerEnd - state.revealIndex);
+    if (playSetting("stopOnPower") && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) n = Math.min(n, state.prePowerEnd - state.revealIndex);
     state.revealIndex = Math.min(text.length, state.revealIndex + n);
     state.buzzPosition = state.revealIndex;
     $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
     followReading($("#question-text .revealed"), state.currentQuestion && state.currentQuestion.id);
-    if (state.settings.stopOnPower && state.prePowerEnd > 0 && state.revealIndex >= state.prePowerEnd && !state._stoppedAtPower) {
+    if (playSetting("stopOnPower") && state.prePowerEnd > 0 && state.revealIndex >= state.prePowerEnd && !state._stoppedAtPower) {
       state._stoppedAtPower = true;
       state.isPaused = true;
       const el = document.createElement("div");
@@ -5757,7 +5759,7 @@ function renderEventTimer(label) {
 }
 
 function startBuzzTimer() {
-  startEventTimer(state.settings.buzzTimeout, "Answer", () => {
+  startEventTimer(playSetting("buzzTimeout"), "Answer", () => {
     if (state.isBuzzed && state.resultAreaVisible === false && state.mode === "tossups") {
       submitTossupAnswer($("#buzz-input")?.value?.trim() || "");
     }
@@ -5767,7 +5769,7 @@ function stopBuzzTimer() { stopEventTimer(); }
 
 function startBuzzWindow() {
   if (ttsHold) return;
-  startEventTimer(state.settings.buzzWindow, "Buzz", () => {
+  startEventTimer(playSetting("buzzWindow"), "Buzz", () => {
     markDeadQuestion(state.currentDisplayText || state.currentQuestion?.question_sanitized || "");
   });
 }
@@ -5811,18 +5813,20 @@ function clearPromptBanner() {
 // ever disagree, the server's verdict (what's recorded) replaces the shown one. Questions
 // without `_hidden` (an older backend) are judged by the server as before.
 const canJudgeHere = (q) => !!(window.QBJudge && window.QBJudge.ready(q));
+// extra words that may be another name for the answer (strictness 20): only the server can look that up, so it judges
+const needsServer = (ev) => !!(ev && ev.askName);
 const verdictOf = (ev) => ({ status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt, unsure: !!ev.unsure });
 async function hostJudgeTossup(q, answer, o) {
   const strictness = o.strictness || 10, buzzPosition = o.buzzPosition == null ? null : o.buzzPosition, previous = o.previous || null;
   if (canJudgeHere(q)) {
-    try { return { ...verdictOf(window.QBJudge.evaluateTossup(answer, q, strictness, buzzPosition, previous)), answer: q.answer_sanitized, answerRaw: q.answer }; } catch (e) { console.error("[judge]", e); }
+    try { const ev = window.QBJudge.evaluateTossup(answer, q, strictness, buzzPosition, previous); if (!needsServer(ev)) return { ...verdictOf(ev), answer: q.answer_sanitized, answerRaw: q.answer }; } catch (e) { console.error("[judge]", e); }
   }
   return API.post("/api/evaluate-tossup", { questionId: q && q.id, answer, strictness, buzzPosition, previous });
 }
 async function hostJudgeBonusPart(q, part, answer, o) {
   const strictness = o.strictness || 10, previous = o.previous || null;
   if (canJudgeHere(q)) {
-    try { const ev = window.QBJudge.evaluateBonusPart(answer, q, Number(part), strictness, previous); return ev ? verdictOf(ev) : { error: "No such part" }; } catch (e) { console.error("[judge]", e); }
+    try { const ev = window.QBJudge.evaluateBonusPart(answer, q, Number(part), strictness, previous); if (!ev) return { error: "No such part" }; if (!needsServer(ev)) return verdictOf(ev); } catch (e) { console.error("[judge]", e); }
   }
   return API.post("/api/evaluate-bonus-part", { questionId: q && q.id, part, answer, strictness, previous });
 }
@@ -5852,12 +5856,14 @@ function recordInBackground(path, body) {
 const afterRecording = () => state._recordP || Promise.resolve();
 function judgeTossupHere(answer) {
   const q = state.currentQuestion, fullyRead = !!state.questionFullyRead, origPos = displayPosToOriginal(state.buzzPosition);
-  const previous = state.promptActive ? state._promptFrom : null, strictness = state.settings.strictness;
+  const previous = state.promptActive ? state._promptFrom : null, strictness = playSetting("strictness");
   if (!state.promptActive) {
     const ev = window.QBJudge.evaluateTossup(answer, q, strictness, fullyRead ? null : origPos, null);
+    if (needsServer(ev)) return null;
     if (ev && ev.status === "prompt") return { prompted: true, prompt: ev.prompt, antiprompt: !!ev.antiprompt, answer: q.answer_sanitized };
   }
   const r = window.QBJudge.scoreTossupResult(answer, q, origPos, fullyRead, strictness, previous);
+  if (needsServer(r)) return null;
   const result = { correct: !!r.isCorrect, points: r.points || 0, isPower: !!r.isPower, celerity: r.celerity, answer: q.answer_sanitized, unsure: !r.isCorrect && !!r.unsure };
   recordInBackground("/api/check-tossup", { questionId: q.id, answer, buzzPosition: origPos, sessionId: state.sessionId, fullyRead, strictness, allowPrompt: false, previous })
     .then((srv) => { if (srv && !srv.error && !srv.prompted && (!!srv.correct !== result.correct || (srv.points || 0) !== result.points)) reconcileTossup(q, result, srv); });
@@ -5888,14 +5894,13 @@ async function submitTossupAnswer(answer) {
   try {
     const result = window.QB?.hasJudgingRules?.()
       ? await judgeWithPluginRules(answer)
-      : canJudgeHere(state.currentQuestion) ? judgeTossupHere(answer)
-      : await API.post("/api/check-tossup", {
+      : (canJudgeHere(state.currentQuestion) && judgeTossupHere(answer)) || await API.post("/api/check-tossup", {
         questionId: state.currentQuestion.id,
         answer,
         buzzPosition: displayPosToOriginal(state.buzzPosition),
         sessionId: state.sessionId,
         fullyRead: !!state.questionFullyRead,
-        strictness: state.settings.strictness,
+        strictness: playSetting("strictness"),
         allowPrompt: !state.promptActive,
         previous: state.promptActive ? state._promptFrom : null,
       });
@@ -5915,7 +5920,7 @@ async function submitTossupAnswer(answer) {
     state.promptActive = false;
     clearPromptBanner();
 
-    if (!result.correct && state.settings.allowRebuzzes && !state.questionFullyRead) {
+    if (!result.correct && playSetting("allowRebuzzes") && !state.questionFullyRead) {
       updateSessionStats(result);
       // A -5 row is now recorded for this question — a later skip/dead must
       // NOT post an overriding 0-point entry that would rewrite it.
@@ -5951,12 +5956,12 @@ async function judgeWithPluginRules(answer) {
   const origPos = displayPosToOriginal(state.buzzPosition);
   let verdict;
   try {
-    const ev = canJudgeHere(q)
-      ? window.QBJudge.evaluateTossup(answer, q, state.settings.strictness, fullyRead ? null : origPos, state.promptActive ? state._promptFrom : null)
+    const here = canJudgeHere(q) ? window.QBJudge.evaluateTossup(answer, q, playSetting("strictness"), fullyRead ? null : origPos, state.promptActive ? state._promptFrom : null) : null;
+    const ev = here && !needsServer(here) ? here
       : await API.post("/api/evaluate-tossup", {
       questionId: q.id,
       answer,
-      strictness: state.settings.strictness,
+      strictness: playSetting("strictness"),
       buzzPosition: fullyRead ? null : origPos,
       previous: state.promptActive ? state._promptFrom : null,
     });
@@ -5971,7 +5976,7 @@ async function judgeWithPluginRules(answer) {
     question: q,
     buzzPosition: origPos,
     fullyRead,
-    strictness: state.settings.strictness,
+    strictness: playSetting("strictness"),
   };
   verdict = window.QB.applyAnswerRules(verdict, ruleCtx);
 
@@ -6060,7 +6065,7 @@ function displayTossupResult(result, userAnswer) {
 
   renderTossupResult();
 
-  if (state.settings.bonusAfter && result.correct && state.mode === "tossups" && state._practiceBase === "tossups" && !state.reviewIds) {
+  if (playSetting("bonusAfter") && result.correct && state.mode === "tossups" && state._practiceBase === "tossups" && !state.reviewIds) {
     state._wantBonus = true;
     state._bonusFromQ = state.currentQuestion;
     const _mv = $("#mode-select")?.value;
@@ -9943,6 +9948,15 @@ function trialMark(power, why) {
 function trialOver() { try { return !!(_trial && !_trial.pending && (_trial.done || _trial.ending)); } catch (e) { return false; } }
 function trialRunning() { try { return !!(_trial && !_trial.done && !_trial.pending); } catch (e) { return false; } }   // (safe before _trial exists)
 const skipsOk = () => !!state.settings.allowSkips && !trialRunning();   // no skipping in a trial
+// a trial plays by its own rules, whatever the player's practice setup says (only the reading speed is theirs):
+// no rebuzzes, no stop at the power mark, strictness 20, 10 seconds to answer and to buzz after the end
+function playSetting(k) {
+  if (trialRunning()) {
+    const R = { allowRebuzzes: false, stopOnPower: false, strictness: 20, buzzTimeout: 10, buzzWindow: 10, bonusAfter: false, allowSkips: false };
+    if (k in R) return R[k];
+  }
+  return state.settings[k];
+}
 const trialComplete = () => !!(_trial && !_trial.done && !_trial.pending && (_trial.res || []).length >= TRIAL_LEN);
 async function trialEnd(why, quiet) {
   if (!_trial || _trial.done) return;

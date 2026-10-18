@@ -7334,12 +7334,14 @@ window.QBAnswerChecker = (function () {
 // Public API (unchanged shapes; additions are optional):
 //   evaluateAnswer(response, answerHtml, answerText, strictness = 10, opts = {})
 //     -> { status: "accept" | "prompt" | "reject", matchedAnswer, prompt: { target, ask } | null,
-//          antiprompt?: true, unsure?: true, rule?: "J5"…, via?: "line" | "hidden", note?: string }
+//          antiprompt?: true, unsure?: true, rule?: "J5"…, via?: "line" | "hidden", note?: string,
+//          askName?: string (extra words only opts.otherName could clear: judge it where that's given) }
 //     opts: readText / fullText / readLen   read position (no position = end of the question, J3)
 //           jointPieces  [[pieceA, pieceB], …] from the JOINTLY_REQUIRED_PIECES flag (one required portion)
 //           hidden       { accept: [], prompt: [], antiprompt: [], reject: [] } (hidden_answers_spec.md)
 //           previous     earlier response(s) on this question (prompt follow-up: reply, first+reply, reply+first)
 //           isKnownAnswer(normalisedText) -> bool   optional corpus lexicon for the J10 collision guard
+//           otherName(text) -> bool   at strictness 20: are these extra words another name the corpus accepts for this answer?
 //   parseDirectives(answerHtml, answerText)  legacy summary { accept, prompt, reject, antiprompt, qualifiers,
 //           wordForms, mainAnswer } plus { forms, rules }
 //   checkAnswer / checkBonusPart / checkBonus, primaryAnswer, healAnswerline, normalizeText, frequencyKey, …
@@ -10922,6 +10924,25 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     if (!rc._qStems) rc._qStems = new Set(tokenize(rc.folded || "", null, false).flatMap((t) => [t.t, stem(t.t)]));
     return left.every((k) => rc._qStems.has(T[k].t) || rc._qStems.has(stem(T[k].t)));
   };
+  // …or, all together, another name for this same answer that other lines in the database accept ("absolute value
+  // magnitude"): opts.otherName(text) answers that (the server, from the database); without it the verdict carries
+  // `askName` so the page can have the server judge it
+  const otherName = (left) => {
+    const ks = [...left].sort((x, y) => x - y);
+    if (ks.some((k, i) => i && k !== ks[i - 1] + 1)) return false;
+    const text = ks.map((k) => T[k].orig || T[k].t).join(" ");
+    // never a name this line itself rejects or only prompts on ("abortion" on birth control, "barriers" on barricades)
+    const sub = respTokens(text, plain), subKey = formKey(sub);
+    if (F.rejects.some((r) => r.terms.some((t) => strictEq(t, sub, false)))) return false;
+    const af = ctx.autoForm;
+    const prompted = F.prompts.concat(F.antis).some((x) => x.key === subKey || (() => { const mm = matchForm(x, sub, ctx, { fuzzy: false, extraOk: false }, F.promptPool); return mm && mm.full; })());
+    ctx.autoForm = af;
+    if (prompted) return false;
+    if (H && H.reject.concat(H.prompt, H.antiprompt).some((t) => strictEq(t, sub, true))) return false;
+    if (typeof opts.otherName === "function") { try { return !!opts.otherName(text); } catch { return false; } }
+    if (!ASK_NAME) ASK_NAME = text;
+    return false;
+  };
   const wordFormsOk = (!!(rules.word_forms && rules.word_forms.some((x) => /^accept:/.test(x))) || lenient) && !exact;
   ctx.wordFormsAuto = !exact && !rules.closed && !(rules.word_forms && rules.word_forms.some((x) => /^reject:/.test(x)));
   for (const f of liveAccepts) {
@@ -10980,7 +11001,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     ctx.autoForm = false;
     const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk: extraOk || extraOk20(f), prefixOk: !!f.specificEx }, linePool);
     if (!m || !m.full) continue;
-    if (m.left.length && !extraOk && extraOk20(f) && !f.specificEx && !fromText(m.left)) continue;
+    if (m.left.length && !extraOk && extraOk20(f) && !f.specificEx && !fromText(m.left) && !otherName(m.left)) continue;
     if (ctx.autoForm && rejectedText()) continue;
     if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
     if (m.left.length && !extraWordsOk(T, m, opts, f)) continue;
@@ -11369,6 +11390,8 @@ function judgeTop(resp, P, strictness, opts, plain) {
 // Public API
 // ======================================================================
 const RANK = { accept: 3, prompt: 2, reject: 1 };
+// extra words at strictness 20 that only the database can clear (J10 otherName), from the last judging
+let ASK_NAME = null;
 const rankOf = (v) => (RANK[v.status] || 0) + (v.unsure ? 0.5 : 0);
 
 function judgeWithFollowups(resp, P, strictness, opts, plain) {
@@ -11397,12 +11420,15 @@ function evaluateAnswer(userAnswer, answerline, sanitizedAnswerline, strictness 
   if (!resp) return { status: "reject", matchedAnswer: null, prompt: null };
   const s = Number.isFinite(Number(strictness)) ? Number(strictness) : 10;
   try {
+    ASK_NAME = null;
     const P = getLine(answerline, sanitizedAnswerline);
     let v = judgeWithFollowups(resp, P, s, opts, false);
     if (v.status !== "accept" && v.rule !== "J4" && /[öüäÖÜÄ]/.test(P.src)) {
       const v2 = judgeWithFollowups(resp, P, s, opts, true);
       if (rankOf(v2) > rankOf(v)) v = v2;
     }
+    if (v.status !== "accept" && ASK_NAME && typeof opts.otherName !== "function") v = { ...v, askName: ASK_NAME };
+    ASK_NAME = null;
     return v;
   } catch (e) {
     // never throw into the caller: fall back to a plain comparison with the main answer
@@ -11476,6 +11502,7 @@ function checkAnswer(userAnswer, answerline, sanitizedAnswerline, strictness = 1
     prompt: r.prompt || null,
     antiprompt: !!r.antiprompt,
     unsure: !!r.unsure,
+    ...(r.askName ? { askName: r.askName } : {}),
   };
 }
 
@@ -11490,6 +11517,7 @@ function checkBonusPart(userAnswer, partAnswerline, partSanitizedLine, pointValu
     prompt: result.prompt,
     antiprompt: result.antiprompt,
     unsure: result.unsure,
+    ...(result.askName ? { askName: result.askName } : {}),
   };
 }
 
@@ -11660,10 +11688,11 @@ function evaluateTossup(ua, t, strictness = 10, buzzPosition = null, previous = 
 }
 function scoreTossupResult(ua, t, buzzCharIndex, fullyRead, strictness, previous = null) {
   const pos = readPos(t, fullyRead ? null : buzzCharIndex);
-  let unsure = false;
+  let unsure = false, askName = null;
   const res = S.scoreTossup({ userAnswer: ua, answerline: t.answer, sanitizedAnswer: t.answer_sanitized, buzzCharIndex, questionText: t.question_sanitized || t.question, fullyRead },
-    (u, al, sa) => { const ev = C.evaluateAnswer(u, al, sa, strictness, { ...pos, ...judgeOpts(t), ...(previous ? { previous } : {}) }); unsure = ev.status !== "accept" && !!ev.unsure; return { correct: ev.status === "accept" }; });
+    (u, al, sa) => { const ev = C.evaluateAnswer(u, al, sa, strictness, { ...pos, ...judgeOpts(t), ...(previous ? { previous } : {}) }); unsure = ev.status !== "accept" && !!ev.unsure; askName = ev.askName || null; return { correct: ev.status === "accept" }; });
   if (unsure) res.unsure = true;
+  if (askName) res.askName = askName;   // only the server (the database) can judge it: see answerChecker.js otherName
   return res;
 }
 function evaluateBonusPart(ua, b, part, strictness = 10, previous = null) {

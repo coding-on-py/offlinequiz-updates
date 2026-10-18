@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { QuestionDatabase } from "./database.js";
 import { UserData, EVENT, eventOn, isPumpkin } from "./userData.js";
-import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer } from "./answerChecker.js";
+import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer, normalizeText } from "./answerChecker.js";
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
 import * as updater from "./updater.js";
@@ -665,7 +665,39 @@ export class App {
       if (slot && typeof slot === "object" && !Array.isArray(slot)) out.hidden = slot;
     } catch { /* none */ }
     Object.assign(out, answerContext(q, part));   // J12 "too general": a name / title? the other parts' answers
+    out.otherName = (text) => this._isOtherName(q, part, text);   // J10 at strictness 20
     return out;
+  }
+
+  // Extra words at strictness 20 are fine when they're another name for this same answer: accepted on at least two
+  // other answer lines whose main answer is this one, and on at least 15% of all its lines ("magnitude" for absolute
+  // value, 3 of 15; not "cranes" for birds, 2 of 223, a more specific answer some lines take). Only asked when the
+  // extra words are all that stands between the response and an accept.
+  _isOtherName(q, part, text) {
+    const list = (v) => { if (Array.isArray(v)) return v; try { const a = JSON.parse(v || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } };
+    const al = part == null ? q.answer : list(q.answers)[part], sa = part == null ? q.answer_sanitized : list(q.answers_sanitized)[part];
+    let main = "";
+    try { main = normalizeText(primaryAnswer(al || "", sa || "")); } catch { return false; }
+    const want = normalizeText(String(text || ""));
+    if (!main || !want || want === main) return false;
+    const key = main + "\u0000" + want;
+    const memo = (this._otherNames ||= new Map());
+    if (memo.has(key)) return memo.get(key);
+    let lines = 1, n = 0;   // this line, and the others with this main answer; how many of them accept `want`
+    for (const r of this.questionDb.answerLinesWith ? this.questionDb.answerLinesWith([main], 3000) : []) {
+      if (r.id === q.id) continue;
+      try {
+        const low = normalizeText(r.sanitized);
+        if (!low.startsWith(main) && !low.includes(" " + main)) continue;
+        if (normalizeText(primaryAnswer(r.answer, r.sanitized)) !== main) continue;
+        lines++;
+        if (low.includes(want) && parseDirectives(r.answer, r.sanitized).accept.some((x) => normalizeText(x) === want)) n++;
+      } catch { /* an odd line */ }
+    }
+    const ok = n >= 2 && n / lines >= 0.15;
+    if (memo.size > 5000) memo.clear();
+    memo.set(key, ok);
+    return ok;
   }
 
   // One bonus part, judged exactly as check-bonus judges it (the part's hidden
