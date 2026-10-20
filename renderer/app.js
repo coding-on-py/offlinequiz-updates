@@ -12161,6 +12161,12 @@ function accountPanelHtml(reason) {
     '<div class="acct-panel-btns"><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button><button type="button" class="btn" data-acct="signup">Create account</button></div></div>';
 }
 document.addEventListener("click", (e) => { const b = e.target.closest("[data-acct]"); if (b) { e.preventDefault(); openAccount(b.dataset.acct); } });
+// the policies (onlinequiz.net/terms, /privacy, /refunds: server-rendered pages): the app opens them in the browser
+document.addEventListener("click", (e) => {
+  const a = e.target.closest && e.target.closest("a.legal-link"); if (!a || IS_WEB) return;
+  e.preventDefault();
+  API.post("/api/cloud/open", { url: "https://www.onlinequiz.net" + a.getAttribute("href") }).catch(() => {});
+});
 async function refreshAccount(opts) {
   opts = opts || {};
   try {
@@ -12306,6 +12312,7 @@ function openAccount(mode, opts) {
       `<div class="acct-code">Code <b>${escapeHtml(o.code || "")}</b></div>` + err + `<div class="acct-actions"><button type="button" class="btn" data-to="reopen">Open the page again</button><button type="button" class="btn" data-to="signin">Cancel</button></div>`;
     else if (m === "signup") html = head("Create an account", o.reason ? escapeHtml(o.reason) : "") + googleBtn() +
       `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${handleField(handle)}${displayField(display)}${field("acct-pass", "password", "Password (8+ characters)", "new-password")}${field("acct-pass2", "password", "Confirm password", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Create account</button></form>` +
+      `<p class="acct-legal">By creating an account, you agree to the <a class="legal-link" href="/terms" target="_blank" rel="noopener">Terms of Service</a> and <a class="legal-link" href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>` +
       `<div class="acct-links">${link("signin", "Already have an account? Sign in")}</div>`;
     else if (m === "sent") html = head("Check your email", `We sent a link to <b>${escapeHtml(email)}</b>. Open it to confirm your account${Account.app ? ", then sign in here" : ""}.`) + okLine + err + `<div class="acct-actions"><button type="button" class="btn" data-to="resend">Resend email</button><button type="button" class="btn btn-primary" data-to="signin">Sign in</button></div>`;
     else if (m === "forgot") html = head("Reset your password") + `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${err}<button type="submit" class="btn btn-primary btn-md">Send reset link</button></form><div class="acct-links">${link("signin", "Back to sign in")}</div>`;
@@ -13151,6 +13158,7 @@ function renderStore() {
       </article>
     </section>
     <p class="st-fine">Questions about a purchase? <a href="mailto:${escapeHtml((info && info.support) || "support@onlinequiz.net")}">${escapeHtml((info && info.support) || "support@onlinequiz.net")}</a></p>
+    <p class="st-fine">Full refunds within 14 days, no questions asked. <a class="legal-link" href="/refunds">Refund Policy</a> · <a class="legal-link" href="/terms">Terms of Service</a> · <a class="legal-link" href="/privacy">Privacy Policy</a></p>
   </div>`;
   c.querySelectorAll("[data-store-buy]").forEach((b) => b.addEventListener("click", () => storeBuy(b.dataset.storeBuy, b)));
   c.querySelectorAll("[data-store-go]").forEach((b) => b.addEventListener("click", () => openStore(b.dataset.storeGo)));
