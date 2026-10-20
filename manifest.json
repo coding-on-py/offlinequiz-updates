@@ -1,5 +1,5 @@
 {
-  "version": "15.7",
+  "version": "15.8",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,13 +55,13 @@
     }
   ],
   "main": true,
-  "notes": "answer checking improvements",
+  "notes": "new features",
   "files": {
-    "renderer/index.html": "0dc11aadfd073e5543ff46a5d625730c88d578ce23180ce3ccec27362d468310",
-    "renderer/style.css": "a0bbcdd53ebd8b346c2e648c377d2e542eeaf3197022b2d1970f6afbe27b772b",
+    "renderer/index.html": "a93d64a85ff962ef11f2f79ffd6e275ea1e216c5696669ec90e916d6294fbe7d",
+    "renderer/style.css": "0c335a4cba9a32f0a213d15a346c335b3c6ae19981e4946f96eab9cfc3699321",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "2cdc998b3e38871b808835aa0dcb6471ce2c821f111ab4d4583e1958bc2ed5d7",
-    "renderer/app.js": "99f93959d9b66bc6865337233a9ef4f31d2443f09d8a2c10e4d5e5204fd4468c",
+    "renderer/extensions.js": "05134f089d123965f06d5e569eb3c354239e977a913c36d856bd3411c5910ceb",
+    "renderer/app.js": "20c5f572e4c6f60edaf6b214b47cecd4d81c9aff09d0cd535b724ab149abea33",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
     "plugins/canon-tracker.zip": "61700802d7421b309f884be764a6733dade6942dfa209ef93b8efa74985cd7a0",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/packet-builder.zip": "c9f68e95cb536ed51d1c5bb5e1a30fe603a94320737a78b9bd991b38789a4bc3"
   },
-  "signature": "pwzUiaAsQyDmEA1+WVGQcM/MizCGTcrFytu7g4HrAubOzVp+IjYqsiZWAWQkJC0RUUK/5btzxDHngH6S3sfZCw=="
+  "signature": "BVgWf8sjJB0AiG9u537+L6XRSVDXWwIzkDRADBsHlE07Xj/7cNOPcYQ/m4GatOFE8aHqAZwFNl7qaMrSYMntDw=="
 }

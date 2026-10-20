@@ -124,7 +124,7 @@ const API = isElectron
         if (path === "/api/import-questions") return window.qbreader.importQuestions(data.sets, data.tossups, data.bonuses);
         if (path === "/api/apply-update") return window.qbreader.applyUpdate(data.folderId);
         if (path === "/api/app-update-check") return window.qbreader.appUpdateCheck ? window.qbreader.appUpdateCheck() : { configured: false, updated: false, dev: true };
-        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/|clubs\/|diag\/)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
+        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/|clubs\/|diag\/|reports$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
         throw new Error("Unknown API route: " + path);
       },
       delete(url) {
@@ -543,6 +543,7 @@ const ICON = {
   sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   award: '<circle cx="12" cy="9" r="6"/><path d="M8.6 13.8 7 22l5-3 5 3-1.6-8.2"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  flag: '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4.5L17 13H5"/>',
 };
 function ic(name, size, extra) {
   const s = size || 18;
@@ -883,6 +884,7 @@ function goTo(target) {
     case "streaks": showScreen("streaks"); renderStreaks(); break;
     case "admin": _adm.tab = "stats"; showScreen("admin"); renderAdmin(); break;
     case "admin-users": _adm.tab = "users"; showScreen("admin"); renderAdmin(); break;
+    case "admin-reports": _adm.tab = "reports"; showScreen("admin"); renderAdmin(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -917,7 +919,7 @@ function webPathNow() {
     case "leaderboards-screen": return "/leaderboards";
     case "store-screen": return "/store";
     case "streaks-screen": return "/streaks";
-    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : "/admin";
+    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : "/admin";
     case "download-screen": return "/download";
     case "clubs-screen": case "diagnostic-screen": case "irl-screen": case "report-screen": return window.QBClubs ? window.QBClubs.webPath(a.id) : "/";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
@@ -978,7 +980,7 @@ function webRoute(path) {
       goTo("plugins");
       if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
     } else if (a === "admin") {
-      goTo(b === "users" ? "admin-users" : "admin");
+      goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : "admin");
     } else if ((a === "clubs" || a === "diagnostic" || a === "report") && window.QBClubs) {
       window.QBClubs.route(seg);
     } else if (a && WEB_PATHS[a]) {
@@ -4945,6 +4947,7 @@ function renderQuestion(question) {
     <span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[parseInt(diffLabel)] || diffName)}">Diff ${escapeHtml(String(diffLabel))}</span>
     ${yearBadgeHtml(question.set_year)}</span>
     <span class="spacer q-spacer"></span>
+    <span class="star-btn report-btn" id="report-indicator" role="button" tabindex="0" title="Report this question" aria-label="Report this question">⚑</span>
     <span class="star-btn save-plus" id="save-indicator" title="Save to review / folders">+</span>
     <span class="star-btn" id="star-indicator" data-id="${question.id}" data-type="${isTossup ? "tossup" : "bonus"}" title="Star">
       ${getStarChar(question.id, isTossup ? "tossup" : "bonus")}
@@ -4956,6 +4959,10 @@ function renderQuestion(question) {
     ev.stopPropagation();
     if (state.currentQuestion) openSaveMenu(state.currentQuestion, state.mode === "tossups" ? "tossup" : "bonus", ev.currentTarget);
   });
+  const rpt = document.getElementById("report-indicator");
+  const reportThis = (ev) => { ev.stopPropagation(); ev.preventDefault(); if (state.currentQuestion) openReportDialog(state.currentQuestion, state.mode === "tossups" ? "tossup" : "bonus"); };
+  rpt?.addEventListener("click", reportThis);
+  rpt?.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") reportThis(ev); });
 
   checkStarStatus(question.id, isTossup ? "tossup" : "bonus");
   // a new question starts at the top, without the room a long one before it added (followReading)
@@ -6508,8 +6515,75 @@ function openSaveMenu(question, type, anchor) {
     },
   });
   (window.QB?.getSaveActions?.(question, type) || []).forEach((a) => items.push({ label: a.label, fn: a.onClick }));
-  if (!items.length) items.push({ label: "Nothing to add to (enable the Folders plugin)", fn: () => {} });
+  items.push({ label: "Report question", fn: () => openReportDialog(question, type) });
   _renderSaveMenu(items, anchor);
+}
+
+// ── Reporting a question ──
+// Any question, wherever it shows (the practice question's flag, every + menu, right-click, a room's answer):
+// a reason and an optional note go to the site's admins (POST /api/reports, web/reports.mjs; the app forwards
+// it as the signed-in account). Signed out, it goes in as a guest. The admins see it on Site stats > Reports.
+const REPORT_REASONS = [["category", "Wrong Category/Tags"], ["info", "Wrong Info"], ["missing", "Missing Info"], ["answer", "Wrong Answer"]];
+// "2012 BDAT II", not "2012 2012 BDAT II" (most set names start with their year)
+const yearAndSet = (year, name) => { name = String(name || "").trim(); return year && !name.startsWith(String(year)) ? (year + " " + name).trim() : name || (year ? String(year) : ""); };
+function openReportDialog(question, type) {
+  if (!question || question.id == null) return;
+  type = type === "bonus" ? "bonus" : "tossup";
+  document.getElementById("report-dialog")?.remove();
+  const el = document.createElement("div");
+  el.id = "report-dialog";
+  el.className = "qb-overlay confirm-overlay";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "rp-title");
+  // which question, without its answer (it may still be live)
+  const where = [type === "bonus" ? "Bonus" : "Tossup", question.category_path || [question.category, question.subcategory].filter(Boolean).join(" > "),
+    yearAndSet(question.set_year, question.set_name)].filter(Boolean).join(" · ");
+  el.innerHTML = `<form class="confirm-box report-box" tabindex="-1" novalidate>
+    <div class="confirm-title" id="rp-title">Report this question</div>
+    ${where ? `<p class="report-where">${escapeHtml(where)}</p>` : ""}
+    <div class="report-reasons" role="radiogroup" aria-label="What's wrong">${REPORT_REASONS.map(([k, l]) =>
+      `<button type="button" class="report-reason" role="radio" aria-checked="false" data-reason="${k}">${escapeHtml(l)}</button>`).join("")}</div>
+    <textarea class="mode-input report-note" id="rp-note" maxlength="1000" rows="4" placeholder="Tell us more (optional)" aria-label="Tell us more (optional)"></textarea>
+    <p class="report-err" id="rp-err" role="alert"></p>
+    <div class="confirm-actions"><button type="button" class="btn btn-ghost" id="rp-no">Cancel</button><button type="submit" class="btn btn-primary" id="rp-send" disabled>Send report</button></div>
+  </form>`;
+  // a tossup still being read waits while you report it (not in a trial: a pause there would help)
+  let paused = false;
+  if (question === state.currentQuestion && state.mode === "tossups" && state.sessionActive && !state.isPaused && !state.isBuzzed && !state.resultAreaVisible && !trialRunning()) { togglePause(); paused = state.isPaused; }
+  const close = () => {
+    animateRemove(el);
+    if (paused && state.isPaused && state.currentQuestion === question) togglePause();
+    paused = false;
+  };
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
+  el.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(); } });
+  document.body.appendChild(el);
+  let reason = null;
+  const send = el.querySelector("#rp-send"), err = el.querySelector("#rp-err");
+  const pick = (b) => {
+    reason = b.dataset.reason;
+    el.querySelectorAll(".report-reason").forEach((x) => { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-checked", String(on)); });
+    send.disabled = false; err.textContent = "";
+  };
+  el.querySelectorAll(".report-reason").forEach((b) => { b.onclick = () => pick(b); });
+  el.querySelector("#rp-no").onclick = close;
+  el.querySelector("form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (!reason) { err.textContent = "Pick what's wrong first."; return; }
+    send.disabled = true; send.textContent = "Sending…"; err.textContent = "";
+    let r = null;
+    try { r = await API.post("/api/reports", { type, questionId: question.id, reason, note: el.querySelector("#rp-note").value.trim() }); } catch (e) { r = null; }
+    if (!el.isConnected) return;
+    if (!r || !r.ok) {
+      send.disabled = false; send.textContent = "Send report";
+      err.textContent = (r && r.error && !/^Not available|Unknown API/.test(r.error)) ? r.error : "Couldn't send the report. Try again.";
+      return;
+    }
+    const box = el.querySelector(".report-box");
+    box.innerHTML = `<div class="report-sent">${ic("check", 22)}</div><div class="confirm-title">Report sent</div><div class="confirm-msg">Thanks. An admin will take a look.</div>
+      <div class="confirm-actions"><button type="button" class="btn btn-primary" id="rp-ok">OK</button></div>`;
+    const ok = box.querySelector("#rp-ok"); ok.onclick = close; ok.focus();
+  });
+  setTimeout(() => el.querySelector(".report-box")?.focus({ preventScroll: true }), 30);
 }
 
 // Unified "Saved for Review" list — cross-type (keywords, buzz words, flashcards).
@@ -7431,6 +7505,7 @@ $("#question-content")?.addEventListener("contextmenu", (e) => {
     danger: !isQuestionHidden(q.id, qtype),
     onClick: () => toggleQuestionHidden(q.id, qtype, q.answer_sanitized || q.id),
   });
+  items.push({ label: "Report question", onClick: () => openReportDialog(q, qtype) });
   e.preventDefault();
   if (picked) {
     window.QB.contextMenu(e.clientX, e.clientY, [{ label: "Copy", onClick: () => copyToClipboard(picked) }, { sep: true }, ...selectionTermItems(picked).filter((it) => !it.sep), { sep: true }, ...items], { title: "\u201C" + picked.slice(0, 40) + "\u201D" });
@@ -11983,6 +12058,8 @@ function init() {
       confetti: (el) => confettiBurst(el),
       refreshOwned: () => refreshOwned(),
       openSaveMenu: (question, type, anchor) => openSaveMenu(question, type, anchor),
+      // report a question to the site's admins (a reason and a note): { id, category_path?, set_name?, … }, "tossup" | "bonus"
+      reportQuestion: (question, type) => openReportDialog(question, type),
       openItemSaveMenu: (spec, anchor) => openItemSaveMenu(spec, anchor),
       itemReviewAdd: (it) => itemReviewAdd(it),
       itemReviewHas: (it) => itemReviewHas(it),
@@ -12127,6 +12204,7 @@ function renderAccountMenu() {
   const fr = document.getElementById("tbm-friends"); if (fr) fr.hidden = false;
   const adm = document.getElementById("tbm-admin"); if (adm) adm.hidden = !(IS_WEB && Account.user && Account.user.admin);
   const admU = document.getElementById("tbm-admin-users"); if (admU) admU.hidden = !(IS_WEB && Account.user && Account.user.admin);
+  const admR = document.getElementById("tbm-admin-reports"); if (admR) admR.hidden = !(IS_WEB && Account.user && Account.user.admin);
   const lbBtn = document.getElementById("tb-leaderboards"); if (lbBtn) lbBtn.hidden = false;
   const clBtn = document.getElementById("tb-clubs"); if (clBtn) clBtn.hidden = false;
   const head = document.querySelector("#tb-profile-menu .tbm-who");
@@ -13272,8 +13350,8 @@ const _adm = { metric: "visitors", data: null, tab: "stats" };
 // whole product, rooms included), its profile, its rooms, its orders and what it keeps here ──
 const ADM_GRANT_NAMES = { "plugin:keyword-freq": "Keyword Frequency", "plugin:canon-tracker": "Canon Tracker", "plugin:buzz-words": "Buzzwords", "plugin:fact-sheet": "Fact Sheet", neon: "Neon name" };
 const _admu = { q: "", list: null, id: null, d: null, gen: 0 };
-const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"]].map(([k, l]) =>
-  `<button type="button" class="db-tab${(_adm.tab || "stats") === k ? " active" : ""}" role="tab" aria-selected="${(_adm.tab || "stats") === k}" data-adm-tab="${k}">${l}</button>`).join("")}</div>`;
+const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"], ["reports", "Reports"]].map(([k, l]) =>
+  `<button type="button" class="db-tab${(_adm.tab || "stats") === k ? " active" : ""}" role="tab" aria-selected="${(_adm.tab || "stats") === k}" data-adm-tab="${k}">${l}${k === "reports" && _admr.counts && _admr.counts.open ? ` <span class="adm-tabn num">${_admr.counts.open}</span>` : ""}</button>`).join("")}</div>`;
 function wireAdmTabs(c) {
   c.querySelectorAll("[data-adm-tab]").forEach((b) => b.onclick = () => { _adm.tab = b.dataset.admTab; renderAdmin(); window.qbWebPathSync?.(); });
 }
@@ -13404,12 +13482,14 @@ function paintAdmUser() {
 async function renderAdmin() {
   const c = document.getElementById("admin-container"); if (!c) return;
   if (_adm.tab === "users") { paintAdminUsers(c); return; }
+  if (_adm.tab === "reports") { renderAdminReports(c); return; }
   if (!c.querySelector(".adm-page")) c.innerHTML = loadingBarHtml("Loading…");
   let d;
   try { d = await API.get("/api/admin/stats"); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
   if (!document.querySelector("#admin-screen.active")) return;
   if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml(d && d.error === "Not found" ? "Nothing here." : (d && d.error) || "Couldn't load the stats.")}</div>`; return; }
   _adm.data = d;
+  if (d.reports) _admr.counts = d.reports;   // the Reports tab's count
   paintAdmin(c);
 }
 function paintAdmin(c) {
@@ -13434,6 +13514,83 @@ function paintAdmin(c) {
   </div>`;
   c.querySelectorAll("[data-adm]").forEach((b) => b.onclick = () => { _adm.metric = b.dataset.adm; paintAdmin(c); });
   wireAdmTabs(c);
+}
+
+// ── Site stats → Reports (admins): every question someone reported (web/reports.mjs): the reason, their
+// note, who sent it (an account opens in Users, a guest is a guest), and the question as it is now. Each one is
+// marked done, reopened or deleted. Open ones first; the tab shows how many are open. ──
+const _admr = { status: "open", list: null, counts: null, err: null, more: false, gen: 0, open: new Set() };
+async function renderAdminReports(c, more) {
+  const my = ++_admr.gen;
+  if (!more && !c.querySelector(".adm-rpage")) { c.innerHTML = `<div class="adm-page adm-rpage">${admTabsHtml()}${loadingBarHtml("Loading…")}</div>`; wireAdmTabs(c); }
+  let d = null;
+  const from = more ? (_admr.list || []).length : 0;
+  try { d = await API.get("/api/admin/reports?status=" + _admr.status + "&limit=50&offset=" + from); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
+  if (my !== _admr.gen || !document.querySelector("#admin-screen.active") || _adm.tab !== "reports") return;
+  if (!d || d.error) _admr.err = d && d.error === "Not found" ? "Nothing here." : (d && d.error) || "Couldn't load the reports.";
+  else { _admr.err = null; _admr.list = more ? (_admr.list || []).concat(d.reports || []) : (d.reports || []); _admr.counts = d.counts || null; _admr.more = (d.reports || []).length === 50; }
+  paintAdminReports(c);
+}
+const admAgo = (t) => {
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return m + " min ago";
+  if (m < 60 * 24) return Math.round(m / 60) + " h ago";
+  return admWhen(t);
+};
+function adminReportHtml(r) {
+  const q = r.question;
+  const who = r.by
+    ? `<button type="button" class="adm-rwho" data-ruser="${escapeHtml(r.by.id)}" title="Open this account in Users">${admAv(r.by.name || r.by.handle || "?", r.by.neon)}<span class="adm-uname"><b>${neonName(r.by.name || r.by.handle || "(no name)", r.by.neon)}</b><small>${r.by.handle ? "@" + escapeHtml(r.by.handle) : "no username yet"}</small></span></button>`
+    : `<span class="adm-rwho guest">${admAv("?")}<span class="adm-uname"><b>Guest</b><small>not signed in</small></span></span>`;
+  const meta = [r.kind === "bonus" ? "Bonus" : "Tossup", q && q.path, q && yearAndSet(q.year, q.set),
+    q && q.packet != null ? "Packet " + q.packet + (q.number != null ? " · #" + q.number : "") : "", q && q.difficulty != null ? "Diff " + q.difficulty : ""].filter(Boolean).join(" · ");
+  let body;
+  if (!q) body = `<p class="adm-rgone">This question isn't in the database anymore (${escapeHtml(r.kind)} ${escapeHtml(r.qid)}).</p>`;
+  else if (r.kind === "bonus") {
+    body = (q.leadin ? `<p class="adm-rtext">${escapeHtml(q.leadin)}</p>` : "") + (q.parts || []).map((p, i) =>
+      `<p class="adm-rtext"><b class="num">${i + 1}.</b> ${escapeHtml(p)}</p><p class="adm-rans"><span>Answer</span> ${safeInlineHtml((q.answersHtml || [])[i] || (q.answers || [])[i] || "")}</p>`).join("");
+  } else body = `<p class="adm-rtext">${escapeHtml(q.text)}</p>`;
+  const tuAns = q && r.kind !== "bonus" ? `<p class="adm-rans adm-rans-tu"><span>Answer</span> ${safeInlineHtml(q.answerHtml || q.answer || "")}</p>` : "";
+  const long = !!q && ((q.text || q.leadin || "").length + (q.parts || []).join("").length) > 420;
+  const settled = r.status === "done" ? `<small class="adm-rdone">Done ${escapeHtml(admAgo(r.doneAt))}${r.doneBy ? " by @" + escapeHtml(r.doneBy) : ""}</small>` : "";
+  return `<article class="fr-card adm-report" data-rid="${escapeHtml(r.id)}">
+    <header class="adm-rtop"><span class="adm-rreason adm-rr-${escapeHtml(r.reason)}">${escapeHtml(r.reasonLabel || r.reason)}</span><span class="adm-rmeta">${escapeHtml(meta)}</span></header>
+    <div class="adm-rby">${who}<small>${escapeHtml(admAgo(r.at))} · ${r.source === "app" ? "in the app" : "on the website"}${r.openOnQuestion > 1 && r.status === "open" ? ` · <b>${r.openOnQuestion} open reports on this question</b>` : ""}</small></div>
+    ${r.note ? `<blockquote class="adm-rnote">${escapeHtml(r.note)}</blockquote>` : `<p class="adm-rnote none">No note</p>`}
+    <div class="adm-rqwrap"><div class="adm-rq${long && !_admr.open.has(r.id) ? " clamp" : ""}">${body}</div>
+      ${long ? `<button type="button" class="adm-rexpand" data-rexp="${escapeHtml(r.id)}">${_admr.open.has(r.id) ? "Show less" : "Show all"}</button>` : ""}${tuAns}</div>
+    <footer class="adm-ract">${settled}<span class="spacer"></span>
+      <button type="button" class="btn btn-sm btn-ghost" data-ract="delete">Delete</button>
+      ${r.status === "done" ? '<button type="button" class="btn btn-sm" data-ract="open">Reopen</button>' : '<button type="button" class="btn btn-sm btn-primary" data-ract="done">Mark done</button>'}
+    </footer>
+  </article>`;
+}
+function paintAdminReports(c) {
+  const counts = _admr.counts || { open: 0, done: 0 }, list = _admr.list || [];
+  const segs = [["open", "Open"], ["done", "Done"]].map(([k, l]) =>
+    `<button type="button" class="adm-rseg${_admr.status === k ? " on" : ""}" data-rstatus="${k}" aria-pressed="${_admr.status === k}">${l} <span class="num">${Number(counts[k] || 0).toLocaleString()}</span></button>`).join("");
+  c.innerHTML = `<div class="adm-page adm-rpage">${admTabsHtml()}
+    <div class="adm-rsegs" role="group" aria-label="Which reports">${segs}</div>
+    ${_admr.err ? `<div class="db-empty">${escapeHtml(_admr.err)}</div>`
+      : !list.length ? `<div class="db-empty">${_admr.status === "open" ? "No open reports." : "No reports marked done yet."}</div>`
+      : `<div class="adm-reports">${list.map(adminReportHtml).join("")}</div>`}
+    ${_admr.more && !_admr.err ? '<button type="button" class="btn btn-ghost adm-rmore" id="adm-rmore">Show more</button>' : ""}
+  </div>`;
+  wireAdmTabs(c);
+  c.querySelectorAll("[data-rstatus]").forEach((b) => b.onclick = () => { if (_admr.status === b.dataset.rstatus) return; _admr.status = b.dataset.rstatus; _admr.list = null; renderAdminReports(c); });
+  c.querySelector("#adm-rmore")?.addEventListener("click", (e) => { e.currentTarget.disabled = true; renderAdminReports(c, true); });
+  c.querySelectorAll("[data-ruser]").forEach((b) => b.onclick = () => { _adm.tab = "users"; renderAdmin(); window.qbWebPathSync?.(); admOpen(b.dataset.ruser); });
+  c.querySelectorAll("[data-rexp]").forEach((b) => b.onclick = () => { const id = b.dataset.rexp; if (_admr.open.has(id)) _admr.open.delete(id); else _admr.open.add(id); paintAdminReports(c); });
+  c.querySelectorAll(".adm-report [data-ract]").forEach((b) => b.onclick = () => {
+    const card = b.closest(".adm-report"), id = card.dataset.rid, action = b.dataset.ract;
+    const run = () => removeOptimistic(card, () => API.post("/api/admin/reports", { id, action }).then((r) => {
+      if (r && r.ok) { _admr.list = (_admr.list || []).filter((x) => x.id !== id); if (r.counts) _admr.counts = r.counts; }
+      return r;
+    }), { failText: "Couldn't do that. Try again." }).then((ok) => { if (ok) paintAdminReports(c); });
+    if (action === "delete") confirmDialog("Delete this report?", run, { yes: "Delete", danger: true, detail: "It's gone for good. Mark it done to keep it." });
+    else run();
+  });
 }
 
 // ── Friends ──

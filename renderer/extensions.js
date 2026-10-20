@@ -5394,10 +5394,15 @@ function __qbMain(ctx) {
           : d.noBuzz
             ? '<div class="result-banner incorrect">Time! Nobody buzzed.</div>'
             : '<div class="result-banner incorrect">Nobody got it</div>';
+        var canReport = !!(current && current.id && ctx.host && ctx.host.reportQuestion);
         res.innerHTML =
           banner +
-          '<div class="result-answer">ANSWER: <span class="actual">' + ansHtml(d.answerRaw, d.answer || "") + "</span></div>";
+          '<div class="result-answer">ANSWER: <span class="actual">' + ansHtml(d.answerRaw, d.answer || "") + "</span>" +
+          (canReport ? '<button type="button" class="mp-report" title="Report this question">Report</button>' : "") + "</div>";
         var n2 = res.querySelector("#mp-next2"); if (n2) n2.onclick = function () { requestNext(); };
+        // report the question just read to the site's admins
+        var rp = res.querySelector(".mp-report"), rq = current;
+        if (rp) rp.onclick = function () { ctx.host.reportQuestion({ id: rq.id, category_path: rq.path || rq.category_path || "", set_name: rq.set || rq.set_name || "", set_year: rq.year || rq.set_year || null }, "tossup"); };
       } else {
         res.className = "result-area hidden"; res.innerHTML = "";
       }
