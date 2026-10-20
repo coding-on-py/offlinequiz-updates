@@ -1381,6 +1381,12 @@ export class App {
     // leaderboards: the account's, through the website
     // (the Teams / Organizations rankings are public, as the global leaderboard is)
     if (key === "GET /api/leaderboards/groups") return this._cloudFetch("GET", path + (body.qs ? "?" + body.qs : ""), null, c && c.token);
+    // share links: anyone may look at one; making one, or befriending / joining through one, is the account's
+    if (key === "GET /api/links/view") return this._cloudFetch("GET", path + (body.qs ? "?" + body.qs : ""), null, c && c.token);
+    if (key === "POST /api/links" || key === "POST /api/links/accept") {
+      if (!c) return { error: "Sign in first.", authRequired: true };
+      return this._cloudFetch("POST", path, body, c.token);
+    }
     // reporting a question: to the site's admins, as this account (or a guest when signed out)
     if (key === "POST /api/reports") return this._cloudFetch("POST", path, { type: body.type, questionId: body.questionId, reason: body.reason, note: body.note, source: "app" }, c && c.token);
     if (/^(GET|POST) \/api\/(clubs|diag)(\/[a-z-]+)*$/.test(key)) {

@@ -1,5 +1,5 @@
 {
-  "version": "15.8",
+  "version": "15.9",
   "renderer": [
     "index.html",
     "style.css",
@@ -57,11 +57,11 @@
   "main": true,
   "notes": "new features",
   "files": {
-    "renderer/index.html": "a93d64a85ff962ef11f2f79ffd6e275ea1e216c5696669ec90e916d6294fbe7d",
-    "renderer/style.css": "0c335a4cba9a32f0a213d15a346c335b3c6ae19981e4946f96eab9cfc3699321",
+    "renderer/index.html": "0f7f13758824e44db34abbbaf376be9e3be38763adccc5dd71a17196814c6418",
+    "renderer/style.css": "804af0ec06c4f13adf9904ebed15ae87b18e79d6b06f70f14b81ec7a3d7ade8a",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "05134f089d123965f06d5e569eb3c354239e977a913c36d856bd3411c5910ceb",
-    "renderer/app.js": "20c5f572e4c6f60edaf6b214b47cecd4d81c9aff09d0cd535b724ab149abea33",
+    "renderer/extensions.js": "3e78a8709266f4f0ee3e8b7ea75c84effd1092dd530211265332983faeb53452",
+    "renderer/app.js": "dee33b78f7607b1c02df730dbeef7862c5e731a028f241d872da4c9bd73960dc",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
     "plugins/canon-tracker.zip": "61700802d7421b309f884be764a6733dade6942dfa209ef93b8efa74985cd7a0",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/packet-builder.zip": "c9f68e95cb536ed51d1c5bb5e1a30fe603a94320737a78b9bd991b38789a4bc3"
   },
-  "signature": "BVgWf8sjJB0AiG9u537+L6XRSVDXWwIzkDRADBsHlE07Xj/7cNOPcYQ/m4GatOFE8aHqAZwFNl7qaMrSYMntDw=="
+  "signature": "ivHBispQJ2xL21CBhZbau3jDoIOWqAPSurNpzI+tIlKY5ZmoCShVq3np34GxuG0crWiV0YWphueTXZNuMkxVBQ=="
 }

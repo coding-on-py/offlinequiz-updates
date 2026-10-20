@@ -5716,6 +5716,7 @@ function __qbMain(ctx) {
     swap: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+    link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
   };
   const ico = (n, s, extra) => '<svg width="' + (s || 18) + '" height="' + (s || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || "") + ">" + (ICONS[n] || "") + "</svg>";
   // the site's ⓘ: explanations live here, never as visible text
@@ -5746,7 +5747,8 @@ function __qbMain(ctx) {
     dx: null,                         // the setup form
     dxFor: null,                      // { org, team } asked for by a "Diagnostic" button
     irl: null,                        // { id, packet, state, edit, saveT }
-    rep: null,                        // { id, d, cov: {}, pc: {} }
+    rep: null,                        // { id, d, cov: {}, pc: {}, shared? }
+    link: null,                       // { token, d, done, orgId } — a shared link (onlinequiz.net/l/<token>)
   };
 
   // ── names, avatars ──
@@ -6047,6 +6049,7 @@ function __qbMain(ctx) {
     const roster = t.roster.slice().sort((a, b) => (b === t.captain) - (a === t.captain)).map(P).filter(Boolean);
     const menu = can ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="team-' + esc(t.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(t.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' +
       '<button type="button" class="pop-item" role="menuitem" data-cl="team-rename" data-team="' + esc(t.id) + '">' + ico("pencil", 15) + "Rename…</button>" +
+      (admin || (capsInvite() && capOf(t)) ? '<button type="button" class="pop-item" role="menuitem" data-cl="team-link" data-team="' + esc(t.id) + '">' + ico("link", 15) + "Share a link…</button>" : "") +
       (admin ? '<button type="button" class="pop-item danger" role="menuitem" data-cl="team-delete" data-team="' + esc(t.id) + '">' + ico("trash", 15) + "Delete team</button>" : "") + "</div></div>" : "";
     const capP = t.captain ? P(t.captain) : null;
     const cap = '<div class="tcard-cap"><span class="eyebrow">Captain</span>' + (admin && roster.length
@@ -6158,6 +6161,11 @@ function __qbMain(ctx) {
         (admin ? '<label class="checkbox-row"><input type="checkbox" id="cl-approve"' + (o.approve ? " checked" : "") + ">Admins approve code joins" + info(TIP.approve, "About approving joins") + "</label>" : "")
         : '<p class="cl-none">' + ico("lock", 13) + " Joining with a code is off." + (admin ? "" : " Ask an admin for an invite.") + "</p>" + (admin ? '<button type="button" class="btn btn-sm cl-self-start" data-cl="settings">Organization settings</button>' : "")) + "</section>";
     if (!inv) return '<div class="inv-grid"><div class="inv-col">' + codeCard + "</div></div>";
+    // links anyone can open: the organization, and each team this person may invite onto
+    const linkTeams = admin ? teams() : capsInvite() ? myCapTeams() : [];
+    const linkCard = '<section class="cl-card" aria-label="Share a link"><h2 class="sec-title">Share a link' + info("Anyone with a link can see " + (o.name || "the organization") + " without an account, and join with one. No approval needed. A new link turns the old one off.", "About links") + "</h2>" +
+      '<div class="ln-btns"><button type="button" class="btn" data-cl="club-link">' + ico("link", 15) + "Organization link</button>" +
+      linkTeams.map((t) => '<button type="button" class="btn" data-cl="team-link" data-team="' + esc(t.id) + '">' + ico("link", 15) + esc(t.name) + " link</button>").join("") + "</div></section>";
     const teamOpts = '<option value="">No team</option>' + (admin ? teams() : capsInvite() ? myCapTeams() : []).map((t) => '<option value="' + esc(t.id) + '"' + (S.invTeam === t.id ? " selected" : "") + ">" + esc(t.name) + "</option>").join("");
     const row = (p, sub, acts) => '<div class="fr-row"' + (p.handle ? ' data-user="' + esc(p.handle) + '" data-user-name="' + esc(p.name || p.handle) + '"' : "") + ">" + av(p) + '<span class="fr-name"><b>' + nm(p) + "</b><small>" + sub + '</small></span><span class="fr-act">' + acts + "</span></div>";
     const pend = (S.org.invites || []).length ? S.org.invites.map((r) => {
@@ -6169,7 +6177,7 @@ function __qbMain(ctx) {
       '<section class="cl-card" aria-label="Invite by username"><h2 class="sec-title">Invite by username' + info(TIP.invite, "About invites") + "</h2>" +
       '<form id="cl-inv-form" class="inv-form" novalidate><span class="at-input"><span aria-hidden="true">@</span><input type="text" id="cl-inv-user" class="mode-input" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Username to invite"></span>' +
       '<select class="mode-input" id="cl-inv-team" aria-label="Team">' + teamOpts + '</select><button type="submit" class="btn btn-primary">Invite</button></form>' +
-      '<p class="fr-msg" id="cl-inv-msg" role="status"></p></section>' + codeCard + '</div><div class="inv-col">' +
+      '<p class="fr-msg" id="cl-inv-msg" role="status"></p></section>' + codeCard + linkCard + '</div><div class="inv-col">' +
       '<section class="sub-sec" aria-label="Pending invites"><h2 class="eyebrow">Pending invites</h2><div class="fr-list">' + pend + "</div></section></div></div>";
   }
 
@@ -6288,6 +6296,8 @@ function __qbMain(ctx) {
       case "create": return joinCreateDialog("create");
       case "run": S.dxFor = { org, team: tid || null }; return goTo("diagnostic");
       case "new-team": return promptDialog("New team", "", (name) => act(null, "/api/clubs/team/create", { org, name }), { placeholder: (["A team", "B team", "C team", "D team"][teams().length] || "Novice"), yes: "Create team", max: 24 });
+      case "club-link": return shareDialog({ title: "Share " + o.name, note: "Anyone with this link can see " + o.name + ". Signed in, they can join right away.", req: { kind: "club", org } });
+      case "team-link": return shareDialog({ title: "Share " + tm.name, note: "Anyone with this link can see " + tm.name + ". Signed in, they can join " + o.name + " on this team right away.", req: { kind: "team", org, team: tid } });
       case "team-rename": return promptDialog("Rename " + tm.name, tm.name, (name) => act(null, "/api/clubs/team/rename", { org, team: tid, name }), { yes: "Save", max: 24 });
       case "team-delete": return confirmDialog("Delete " + tm.name + "? Its players stay in " + o.name + ".", () => act(null, "/api/clubs/team/delete", { org, team: tid }), { yes: "Delete", danger: true });
       case "roster-off": return act(t, "/api/clubs/team/roster", { org, team: tid, mid, on: false });
@@ -6425,6 +6435,110 @@ function __qbMain(ctx) {
     return el;
   }
   const closeOverlay = (el) => (typeof animateRemove === "function" ? animateRemove(el) : el.remove());
+
+  // ── share links (web/links.mjs): onlinequiz.net/l/<token>, opened by anyone, no account needed ──
+  // spec: { title, note, req: { kind, org?, team?, diag? }, cardsOption? } — the link is made (or the one there is
+  // reused) when this opens; "New link" turns the old one off; a report can take every player card
+  function shareDialog(spec) {
+    const el = overlay('<div class="confirm-box share-box"><div class="confirm-title">' + esc(spec.title) + '</div><p class="share-note">' + esc(spec.note) + "</p>" +
+      '<div class="share-row"><input class="mode-input share-url" id="sh-url" readonly aria-label="Link" placeholder="Making the link…"><button type="button" class="btn btn-primary" id="sh-copy" disabled>' + ico("copy", 16) + "<span>Copy</span></button></div>" +
+      (spec.cardsOption ? '<label class="checkbox-row share-cards"><input type="checkbox" id="sh-cards">Include every player card</label>' : "") +
+      '<p class="share-err" id="sh-err" role="alert"></p>' +
+      '<div class="confirm-actions"><button type="button" class="btn btn-ghost" id="sh-new" disabled>' + ico("refresh", 15) + "New link</button><button type=\"button\" class=\"btn\" data-x>Done</button></div></div>");
+    const url = el.querySelector("#sh-url"), copy = el.querySelector("#sh-copy"), nw = el.querySelector("#sh-new"), errEl = el.querySelector("#sh-err"), cards = el.querySelector("#sh-cards");
+    let gen = 0;
+    const load = async (reset) => {
+      const my = ++gen;
+      copy.disabled = nw.disabled = true; errEl.textContent = "";
+      const r = await post("/api/links", { ...spec.req, cards: !!(cards && cards.checked), reset: !!reset });
+      if (!el.isConnected || my !== gen) return;
+      if (!r || r.error) { errEl.textContent = (r && r.error) || OFFLINE; url.value = ""; return; }
+      url.value = r.url; copy.disabled = nw.disabled = false;
+    };
+    copy.onclick = async () => {
+      let ok = false;
+      try { await navigator.clipboard.writeText(url.value); ok = true; } catch (e) { url.focus(); url.select(); try { ok = document.execCommand("copy"); } catch (e2) {} }
+      const sp = copy.querySelector("span"); sp.textContent = ok ? "Copied" : "Select and copy";
+      setTimeout(() => { if (sp.isConnected) sp.textContent = "Copy"; }, 1600);
+    };
+    nw.onclick = () => confirmDialog("Make a new link? The old one stops working.", () => load(true), { yes: "New link" });
+    if (cards) cards.onchange = () => load(false);
+    url.addEventListener("focus", () => url.select());
+    load(false);
+    return el;
+  }
+
+  function openLink(token) {
+    S.link = { token, d: null, done: null };
+    if (typeof goTo === "function") goTo("link");
+  }
+  async function renderLink() {
+    const c = document.getElementById("ln-container"); if (!c) return;
+    const L = S.link;
+    if (!L || !L.token) { c.innerHTML = plainPanel("link", "No link is open."); return; }
+    if (!L.d) {
+      c.innerHTML = loading("Opening the link…");
+      if (typeof Account !== "undefined" && !Account.known && typeof accountFresh === "function") { try { await accountFresh(); } catch (e) {} }
+      const d = await get("/api/links/view?t=" + encodeURIComponent(L.token));
+      if (S.link !== L) return;
+      L.d = d;
+    }
+    paintLink(c);
+  }
+  const LINK_TITLE = { friend: "Friend link", club: "Organization", team: "Team", diag: "Diagnostic report" };
+  function paintLink(c) {
+    const L = S.link, d = L.d, home = '<button type="button" class="btn btn-primary" data-go="home">Go to onlinequiz</button>';
+    const title = document.querySelector("#link-screen .top-bar-title"); if (title) title.textContent = (d && LINK_TITLE[d.kind]) || "Shared link";
+    try { if (typeof updateTopbar === "function") updateTopbar(); if (typeof webTitleSync === "function") webTitleSync(); } catch (e) {}
+    if (!d || d.error) { c.innerHTML = plainPanel("link", (d && d.error) || OFFLINE, home); return; }
+    if (d.kind === "diag") {
+      const r = d.report || {};
+      if (r.locked) { c.innerHTML = plainPanel("lock", (r.team ? r.team + "'s" : "This") + " report comes out when the diagnostic ends. Open this link again then.", home); return; }
+      S.rep = { id: null, d: r, shared: true, cov: {}, pc: {} };
+      paintReport(c);
+      return;
+    }
+    // what signing in would let them do here, and the button for it
+    const acctBtns = (what) => '<p class="ln-why">' + esc(what) + '</p><div class="ln-act"><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button><button type="button" class="btn" data-acct="signup">Create account</button></div>';
+    const handleBtn = '<p class="ln-why">Choose a username first.</p><div class="ln-act"><button type="button" class="btn btn-primary" data-acct="account">Account</button></div>';
+    let body = "", act = "";
+    if (d.kind === "friend") {
+      const u = d.user || {}, p = { name: u.displayName || u.handle, handle: u.handle, neon: u.neon };
+      body = '<div class="ln-who">' + av(p, "lg") + '<div><h2>' + nm(p) + "</h2><small>@" + esc(u.handle || "") + "</small></div></div>";
+      act = L.done ? '<p class="ln-done">' + ico("check", 16) + esc(L.done) + '</p><div class="ln-act"><button type="button" class="btn btn-primary" data-go="friends">See your friends</button></div>'
+        : d.you ? '<p class="ln-why">This is your friend link. Anyone who opens it can add you right away.</p>'
+        : d.friends ? '<p class="ln-done">' + ico("check", 16) + "You're friends already.</p>" + '<div class="ln-act"><button type="button" class="btn" data-go="friends">See your friends</button></div>'
+        : !d.signedIn ? acctBtns("Sign in to add " + (u.displayName || "@" + u.handle) + " as a friend.")
+        : !d.hasHandle ? handleBtn
+        : '<div class="ln-act"><button type="button" class="btn btn-primary" data-ln="accept">' + ico("userplus", 16) + "Add friend</button></div>";
+    } else {
+      const o = d.org || {}, t = d.team;
+      const teamsList = (o.teams || []).map((x) => "<li><span>" + esc(x.name) + '</span><small>' + plural(x.players, "player") + "</small></li>").join("");
+      body = '<div class="ln-who"><span class="ln-tag">' + esc(o.tag || "") + "</span><div><h2>" + esc(t ? t.name : o.name) + "</h2><small>" +
+        esc(t ? o.name + " · " + plural((t.players || []).length, "player") : plural(o.members || 0, "member") + " · " + plural((o.teams || []).length, "team")) + "</small></div></div>" +
+        (t ? '<ul class="ln-list">' + ((t.players || []).map((x) => "<li>" + av(x, "xs") + "<span>" + nm(x) + "</span>" + (x.captain ? '<small class="ln-cap">' + ico("crown", 12) + "Captain</small>" : "") + "</li>").join("") || '<li class="cl-none">No players yet</li>') + "</ul>"
+          : teamsList ? '<ul class="ln-list">' + teamsList + "</ul>" : "");
+      const where = t ? t.name : o.name;
+      act = L.done ? '<p class="ln-done">' + ico("check", 16) + esc(L.done) + '</p><div class="ln-act"><button type="button" class="btn btn-primary" data-ln="clubs">Open Clubs</button></div>'
+        : d.member && (!t || d.onTeam) ? '<p class="ln-done">' + ico("check", 16) + "You're in " + esc(where) + " already.</p>" + '<div class="ln-act"><button type="button" class="btn" data-ln="clubs">Open Clubs</button></div>'
+        : !d.signedIn ? acctBtns("Sign in to join " + where + ".")
+        : !d.hasHandle ? handleBtn
+        : '<div class="ln-act"><button type="button" class="btn btn-primary" data-ln="accept">' + ico("userplus", 16) + "Join " + esc(where) + "</button></div>";
+    }
+    c.innerHTML = '<div class="cl-page ln-page"><section class="cl-card ln-card">' + body + '<div class="ln-foot">' + act + '<p class="ln-err" id="ln-err" role="alert"></p></div></section></div>';
+    c.onclick = async (e) => {
+      const b = e.target.closest("[data-ln]"); if (!b) return;
+      if (b.dataset.ln === "clubs") { if (L.orgId) { S.orgId = L.orgId; ls.set("qb-club-org", L.orgId); S.org = null; } open("teams"); return; }
+      if (b.dataset.ln !== "accept") return;
+      b.disabled = true;
+      const r = await post("/api/links/accept", { t: L.token });
+      if (S.link !== L) return;
+      if (!r || r.error) { b.disabled = false; const m = document.getElementById("ln-err"); if (m) m.textContent = (r && r.error) || OFFLINE; return; }
+      if (d.kind === "friend") L.done = "You and " + ((d.user && d.user.displayName) || "@" + (d.user && d.user.handle)) + " are friends now.";
+      else { L.orgId = r.id; L.done = "You're in " + (r.name || "the organization") + (r.team ? " on " + r.team : "") + "."; S.list = null; try { poll(); } catch (e2) {} }
+      paintLink(c);
+    };
+  }
 
   // a room (together, or my own run): the server opens it on the game server, then multiplayer joins it
   async function openRoom(btn, id) {
@@ -7143,10 +7257,12 @@ function __qbMain(ctx) {
     const meta = [FORMATS[d.format] && FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), yearsText(d.years), "NAQT distribution", plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
     const topics = topicsHtml(d, who), dims = dimsHtml(d), sheet = scoresheetHtml(d), bz = hasTu ? buzzesHtml(d) : "", qs = questionsHtml(d, who);
     const jump = [["rp-summary", "Summary"], sheet ? ["rp-sheet", "Scoresheet"] : null, bz ? ["rp-buzzes", "Buzzes"] : null, hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], topics ? ["rp-topics", "Topics"] : null, dims ? ["rp-dims", "Breakdown"] : null,
-      qs ? ["rp-questions", "Questions"] : null, ["rp-plan", "Practice"], ["rp-players", seeAll ? "Players" : "Your card"]].filter(Boolean);
+      qs ? ["rp-questions", "Questions"] : null, ["rp-plan", "Practice"], R.shared && !(d.cards || []).length ? null : ["rp-players", seeAll || R.shared ? "Players" : "Your card"]].filter(Boolean);
     let html = '<div class="cl-page rp-page"><div class="rp-head"><div><p class="eyebrow">' + esc([d.org && d.org.name, d.team].filter(Boolean).join(" · ")) + "</p><h1>" + esc(date) + " diagnostic" + info("Released to every player at once" + (d.date ? ", " + whenText(d.date) : "") + ".", "When this report was released") + '</h1><p class="rp-meta">' + esc(meta) + "</p></div>" +
-      '<div class="ph-right"><button type="button" class="btn" data-go-clubs="diagnostics">' + ico("doc", 16) + "All reports</button>" +
-      (R.canManage ? '<button type="button" class="btn btn-ghost" data-rp-delete>' + ico("trash", 16) + "Delete report</button>" : "") + "</div></div>" +
+      '<div class="ph-right">' + (R.shared ? '<span class="rp-shared">' + ico("link", 15) + "Shared report</span>"
+        : '<button type="button" class="btn" data-go-clubs="diagnostics">' + ico("doc", 16) + "All reports</button>" +
+          (R.canManage ? '<button type="button" class="btn" data-rp-share>' + ico("link", 16) + "Share</button>" : "") +
+          (R.canManage ? '<button type="button" class="btn btn-ghost" data-rp-delete>' + ico("trash", 16) + "Delete report</button>" : "")) + "</div></div>" +
       '<nav class="rp-jump" aria-label="Report sections">' + jump.map((j) => '<button type="button" class="db-tab" data-jump="' + j[0] + '">' + j[1] + "</button>").join("") + "</nav>";
     // summary
     const trend = (d.trend || []).length >= 2 ? '<div class="cl-trend"><span class="eyebrow">' + esc(d.team) + " conversion</span>" + trendSvg(d.trend) + "</div>" : "";
@@ -7179,7 +7295,8 @@ function __qbMain(ctx) {
     // players
     // you first, then by tossups got and points
     const cards = (d.cards || []).slice().sort((a, b) => (who(b.mid).you - who(a.mid).you) || (b.got - a.got) || (b.points - a.points)).map((x) => playerCard(x, d, who)).join("");
-    html += '<section class="rp-sec" id="rp-players" aria-label="Players"><div class="rp-sec-head"><h2>' + (seeAll ? "Players" : "Your card") + "</h2>" + (seeAll ? "" : info("The captain and admins see every player's card.", "Who sees every card")) + '</div><div class="pcards">' + (cards || '<div class="cl-card pc-note"><p>You didn\'t play in this one.</p></div>') + "</div></section></div>";
+    if (R.shared) html += (cards ? '<section class="rp-sec" id="rp-players" aria-label="Players"><div class="rp-sec-head"><h2>Players</h2></div><div class="pcards">' + cards + "</div></section>" : "") + "</div>";
+    else html += '<section class="rp-sec" id="rp-players" aria-label="Players"><div class="rp-sec-head"><h2>' + (seeAll ? "Players" : "Your card") + "</h2>" + (seeAll ? "" : info("The captain and admins see every player's card.", "Who sees every card")) + '</div><div class="pcards">' + (cards || '<div class="cl-card pc-note"><p>You didn\'t play in this one.</p></div>') + "</div></section></div>";
     c.innerHTML = html;
     c.onclick = (e) => {
       const b = e.target.closest("button"); if (!b) return;
@@ -7187,6 +7304,10 @@ function __qbMain(ctx) {
       if (b.dataset.cov) { R.cov[b.dataset.cov] = !R.cov[b.dataset.cov]; const sub = document.getElementById("cov-sub-" + b.dataset.cov); if (sub) sub.hidden = !R.cov[b.dataset.cov]; b.setAttribute("aria-expanded", String(!!R.cov[b.dataset.cov])); return; }
       if (b.dataset.pc) { R.pc[b.dataset.pc] = !R.pc[b.dataset.pc]; const card = b.closest(".pcard"); if (card) card.classList.toggle("open", !!R.pc[b.dataset.pc]); b.textContent = R.pc[b.dataset.pc] ? "Less" : "More"; b.setAttribute("aria-expanded", String(!!R.pc[b.dataset.pc])); return; }
       if (b.dataset.goClubs) { open(b.dataset.goClubs); return; }
+      if (b.hasAttribute("data-rp-share")) {
+        shareDialog({ title: "Share this report", note: "Anyone with this link can read this report. No account needed.", req: { kind: "diag", diag: R.id }, cardsOption: !!d.canSeeAll });
+        return;
+      }
       if (b.hasAttribute("data-rp-delete")) {
         confirmDialog("Delete this report for everyone? It can't be brought back.", async () => {
           const r = await post("/api/diag/delete", { id: R.id });
@@ -7293,6 +7414,7 @@ function __qbMain(ctx) {
     else if (name === "diagnostic") renderSetup();
     else if (name === "irl") renderIrl();
     else if (name === "report") renderReport();
+    else if (name === "link") renderLink();
   }
   document.addEventListener("change", (e) => {
     const s = e.target; if (!s || s.id !== "clubs-org-sel") return;
@@ -7305,6 +7427,7 @@ function __qbMain(ctx) {
     if (screenId === "diagnostic-screen") return "/diagnostic";
     if (screenId === "irl-screen") return S.irl && S.irl.id ? "/diagnostic/irl/" + encodeURIComponent(S.irl.id) : "/clubs/diagnostics";
     if (screenId === "report-screen") return S.rep && S.rep.id ? "/report/" + encodeURIComponent(S.rep.id) : "/clubs/diagnostics";
+    if (screenId === "link-screen") return S.link && S.link.token ? "/l/" + encodeURIComponent(S.link.token) : "/";
     return null;
   }
   function route(seg) {
@@ -7314,9 +7437,10 @@ function __qbMain(ctx) {
     if (a === "diagnostic" && b && /^dx-/i.test(b) && window.QB && window.QB.dxJoin) { window.QB.dxJoin(b); return true; }
     if (a === "diagnostic") { if (typeof goTo === "function") goTo("diagnostic"); return true; }
     if (a === "report" && b) { openReport(b); return true; }
+    if (a === "l" && b) { openLink(b); return true; }
     return false;
   }
-  window.QBClubs = { poll, paintBadge, onScreen, open, openIrl, openReport, webPath, route, renderGroups, groupsTip, renderClubs, beforeBack };
+  window.QBClubs = { poll, paintBadge, onScreen, open, openIrl, openReport, openLink, shareDialog, webPath, route, renderGroups, groupsTip, renderClubs, beforeBack };
   if (window.QB) {
     window.QB.openClubs = (tab) => open(tab || "diagnostics");
     window.QB.openDiagReport = (id) => openReport(id);

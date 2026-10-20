@@ -97,7 +97,7 @@ const API = isElectron
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
-        if (/^\/api\/(account\/|friends$|leaderboards(\/board|\/groups)?$|users\/profile$|shop\/|clubs(\/|$)|diag(\/|$))/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
+        if (/^\/api\/(account\/|friends$|leaderboards(\/board|\/groups)?$|users\/profile$|shop\/|clubs(\/|$)|diag(\/|$)|links\/view$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
         throw new Error("Unknown API route: " + path);
       },
       post(url, data) {
@@ -124,7 +124,7 @@ const API = isElectron
         if (path === "/api/import-questions") return window.qbreader.importQuestions(data.sets, data.tossups, data.bonuses);
         if (path === "/api/apply-update") return window.qbreader.applyUpdate(data.folderId);
         if (path === "/api/app-update-check") return window.qbreader.appUpdateCheck ? window.qbreader.appUpdateCheck() : { configured: false, updated: false, dev: true };
-        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/|clubs\/|diag\/|reports$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
+        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/|clubs\/|diag\/|reports$|links(\/accept)?$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
         throw new Error("Unknown API route: " + path);
       },
       delete(url) {
@@ -499,7 +499,7 @@ function updateKeyLabels() {
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
   if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
-  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-store-home"], ["#btn-streaks-home"], ["#btn-admin-home"], ["#btn-clubs-home"], ["#btn-dx-home"], ["#btn-irl-home"], ["#btn-report-home"]]
+  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-store-home"], ["#btn-streaks-home"], ["#btn-admin-home"], ["#btn-clubs-home"], ["#btn-dx-home"], ["#btn-irl-home"], ["#btn-report-home"], ["#btn-link-home"]]
     .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
@@ -543,6 +543,7 @@ const ICON = {
   sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   award: '<circle cx="12" cy="9" r="6"/><path d="M8.6 13.8 7 22l5-3 5 3-1.6-8.2"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
   flag: '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4.5L17 13H5"/>',
 };
 function ic(name, size, extra) {
@@ -880,7 +881,7 @@ function goTo(target) {
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
     case "store": showScreen("store"); renderStore(); refreshOwned(); break;
     // Clubs & Team Diagnostic (clubs.js)
-    case "clubs": case "diagnostic": case "irl": case "report": showScreen(target); window.QBClubs?.onScreen(target); break;
+    case "clubs": case "diagnostic": case "irl": case "report": case "link": showScreen(target); window.QBClubs?.onScreen(target); break;
     case "streaks": showScreen("streaks"); renderStreaks(); break;
     case "admin": _adm.tab = "stats"; showScreen("admin"); renderAdmin(); break;
     case "admin-users": _adm.tab = "users"; showScreen("admin"); renderAdmin(); break;
@@ -921,7 +922,7 @@ function webPathNow() {
     case "streaks-screen": return "/streaks";
     case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : "/admin";
     case "download-screen": return "/download";
-    case "clubs-screen": case "diagnostic-screen": case "irl-screen": case "report-screen": return window.QBClubs ? window.QBClubs.webPath(a.id) : "/";
+    case "clubs-screen": case "diagnostic-screen": case "irl-screen": case "report-screen": case "link-screen": return window.QBClubs ? window.QBClubs.webPath(a.id) : "/";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
   }
   const pg = ((window.QB && window.QB._pages) || []).find((p) => p.screenEl === a);
@@ -981,7 +982,7 @@ function webRoute(path) {
       if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
     } else if (a === "admin") {
       goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : "admin");
-    } else if ((a === "clubs" || a === "diagnostic" || a === "report") && window.QBClubs) {
+    } else if ((a === "clubs" || a === "diagnostic" || a === "report" || a === "l") && window.QBClubs) {
       window.QBClubs.route(seg);
     } else if (a && WEB_PATHS[a]) {
       goTo(WEB_PATHS[a]);
@@ -1629,7 +1630,7 @@ function buildScreen(name) {
   else if (name === "leaderboards") renderLeaderboards();
   else if (name === "store") renderStore();
   else if (name === "admin") renderAdmin();
-  else if (name === "clubs" || name === "diagnostic" || name === "irl" || name === "report") window.QBClubs?.onScreen(name);
+  else if (name === "clubs" || name === "diagnostic" || name === "irl" || name === "report" || name === "link") window.QBClubs?.onScreen(name);
 }
 function reviveScreen(name) {
   if (name === "database") {
@@ -7634,7 +7635,7 @@ $("#btn-leaderboards-home")?.addEventListener("click", goBack);
 $("#btn-store-home")?.addEventListener("click", goBack);
 $("#btn-streaks-home")?.addEventListener("click", goBack);
 $("#btn-admin-home")?.addEventListener("click", goBack);
-["#btn-clubs-home", "#btn-dx-home", "#btn-irl-home", "#btn-report-home"].forEach((id) => $(id)?.addEventListener("click", goBack));
+["#btn-clubs-home", "#btn-dx-home", "#btn-irl-home", "#btn-report-home", "#btn-link-home"].forEach((id) => $(id)?.addEventListener("click", goBack));
 
 function renderResultPanels(resultCtx) {
   document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
@@ -13631,7 +13632,7 @@ async function renderFriends(note) {
   const reqs = (d.incoming || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
   const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
   c.innerHTML = `<div class="fr-page">` +
-    `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button></div>` +
+    `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button><button type="button" class="btn btn-sm fr-link" id="fr-link">${ic("link", 15)}Friend link</button></div>` +
       `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Friend's username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +
       `<div class="fr-msg" id="fr-msg" role="status">${note ? escapeHtml(note) : ""}</div></section>` +
     (reqs ? `<section class="fr-sec"><h2 class="eyebrow">Requests</h2><div class="fr-list">${reqs}</div></section>` : "") +
@@ -13647,6 +13648,8 @@ async function renderFriends(note) {
     if (r && r.error) { const m = document.getElementById("fr-msg"); if (m) { m.textContent = r.error; m.classList.add("err"); } return; }
     renderFriends(okNote || "");
   };
+  // a link anyone can open to be friends with you at once (web/links.mjs)
+  document.getElementById("fr-link")?.addEventListener("click", () => window.QBClubs?.shareDialog?.({ title: "Your friend link", note: "Anyone who opens this link can add you as a friend right away. A new link turns the old one off.", req: { kind: "friend" } }));
   document.getElementById("fr-add").addEventListener("submit", (e) => {
     e.preventDefault();
     const h = document.getElementById("fr-handle").value.trim().replace(/^@/, "");
