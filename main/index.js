@@ -1172,14 +1172,54 @@ export class App {
   // (userData overriddenKeys), never multiplayer (not saved here). A trial that ended on such an answer counts it
   // as powered and ends there: the attempt's XP becomes one more power's, and a tenth passes the level.
   // → { ok, already? , regraded, points, negs, powers, trials: [{ key, name, level, xp, passed }], xp }
+  // The window that says what came back stays owed until it's seen: a run that changed something keeps its summary
+  // (config regrade_note:<profile>, { summary, seen }) and an "already" answer carries it (`note`) until the page
+  // says it was seen (opts.seen). A run from before the note existed is summed up from its log.
   async regrade(opts = {}) {
-    const pid = this.userData.getActiveProfileId();
+    const pid = this.userData.getActiveProfileId(), noteKey = "regrade_note:" + pid;
+    const readNote = () => { try { return JSON.parse(this.userData.getConfig(noteKey) || "null"); } catch { return null; } };
+    if (opts.seen) { const n = readNote(); if (n) { n.seen = true; this.userData.setConfig(noteKey, JSON.stringify(n)); } return { ok: true }; }
     let built = "0"; try { built = String((this.questionDb.getMeta && this.questionDb.getMeta("built_at")) || "0"); } catch {}
     const doneKey = "regrade:" + pid, stamp = REGRADE_V + "|" + built;
-    if (!opts.force && this.userData.getConfig(doneKey) === stamp) return { ok: true, already: true };
+    if (!opts.force && this.userData.getConfig(doneKey) === stamp) {
+      let n = readNote();
+      if (!n) { const sum = this._regradeFromLog(pid); if (sum) { n = { summary: sum, seen: false }; this.userData.setConfig(noteKey, JSON.stringify(n)); } }
+      return n && !n.seen ? { ok: true, already: true, note: n.summary } : { ok: true, already: true };
+    }
     if (this._regradeP) return this._regradeP;
-    this._regradeP = this._regradeRun(pid, doneKey, stamp).finally(() => { this._regradeP = null; });
+    this._regradeP = this._regradeRun(pid, doneKey, stamp).then((out) => {
+      if (out && (out.regraded > 0 || (out.trials || []).length)) this.userData.setConfig(noteKey, JSON.stringify({ summary: out, seen: false }));
+      return out;
+    }).finally(() => { this._regradeP = null; });
     return this._regradeP;
+  }
+  // a regrade that ran before notes were kept: its log (rows and points) and the trial attempts one of them ended
+  // (the logged row is the attempt's last power, and the attempt's XP is that power count's)
+  _regradeFromLog(pid) {
+    let log = []; try { log = JSON.parse(this.userData.getConfig("regrade_log:" + pid) || "[]") || []; } catch {}
+    if (!Array.isArray(log) || !log.length) return null;
+    const out = { ok: true, regraded: log.length, points: 0, negs: 0, powers: 0, trials: [], xp: 0, fromLog: true };
+    const powered = new Set();
+    for (const e of log) { out.points += (Number(e.to) || 0) - (Number(e.from) || 0); if (Number(e.from) < 0) out.negs++; if (Number(e.to) >= 15) { out.powers++; powered.add(Number(e.id)); } }
+    const { t: trials } = this._trialsOf(), U = this.userData, tu = new Map();
+    const tossupOf = (id) => { if (!tu.has(id)) { let q = null; try { q = this.questionDb.getTossup(id) || null; } catch {} tu.set(id, q); } return tu.get(id); };
+    for (const [key, tr] of Object.entries(trials)) {
+      const [ck, lv] = key.split("|"), level = parseInt(lv, 10), cat = TRIAL_CATS.find((c) => c[0] === ck);
+      if (!cat || !tr || !tr.a) continue;
+      for (const [ts, xp] of Object.entries(tr.a)) {
+        const p = Array.from({ length: TRIAL_LEN + 1 }, (_, i) => i).find((i) => trialXp(level, i) === Number(xp));
+        if (!(p >= 1)) continue;
+        const fits = (r) => { const q = tossupOf(r.question_id); return !!q && Number(q.difficulty) === level && (q.category === cat[2] || String(q.category_path || "").split(" > ")[0] === cat[2]); };
+        const after = U.tossupsBetween(Number(ts), Number(ts) + 3 * 3600e3), first = after.find(fits); if (!first) continue;
+        const run = after.filter((r) => r.session_id === first.session_id).slice(0, TRIAL_LEN);
+        if (!run.every(fits) || !run[p - 1] || !powered.has(Number(run[p - 1].id))) continue;
+        if (run.slice(0, p).some((r) => !(Number(r.points) >= 15))) continue;
+        const gain = trialXp(level, p) - trialXp(level, p - 1);
+        out.trials.push({ key, name: cat[1], level, xp: gain, passed: p >= TRIAL_LEN });
+        out.xp += gain;
+      }
+    }
+    return out;
   }
   async _regradeRun(pid, doneKey, stamp) {
     const U = this.userData, skip = U.overriddenKeys();

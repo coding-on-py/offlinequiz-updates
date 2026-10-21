@@ -384,7 +384,7 @@ export async function start(env) {
     });
 
     ipcMain.handle("get-trials", () => qbApp.getTrials());
-    ipcMain.handle("regrade", () => qbApp.regrade());
+    ipcMain.handle("regrade", (_e, d) => qbApp.regrade({ seen: !!(d && d.seen) }));
     ipcMain.handle("trial-action", (_e, d) => qbApp.trialAction(String((d && d.action) || ""), String((d && d.category) || ""), d && d.level, d && d.powers, d && d.instance));
     ipcMain.handle("get-answer-powers", () => {
       return qbApp.getAnswerPowers();

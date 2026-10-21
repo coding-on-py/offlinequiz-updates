@@ -110,7 +110,7 @@ const API = isElectron
         if (path === "/api/profile-settings") return window.qbreader.saveProfileSettings(data.settings);
         if (path === "/api/review/dismiss") return window.qbreader.dismissReview(data.questionId);
         if (path === "/api/trials") return window.qbreader.trialAction ? window.qbreader.trialAction(data) : { ok: false, error: "Restart the app to use trials." };
-        if (path === "/api/regrade") return window.qbreader.regrade ? window.qbreader.regrade() : { ok: true, already: true };
+        if (path === "/api/regrade") return window.qbreader.regrade ? window.qbreader.regrade(data) : { ok: true, already: true };
         if (path === "/api/review/manual") return window.qbreader.reviewManual(data.questionId, data.add !== false, data.type);
         if (path === "/api/review/clear") return window.qbreader.clearReview();
         if (path === "/api/sessions/prune") return window.qbreader.pruneSessions(data.days);
@@ -11711,6 +11711,7 @@ async function runRegrade() {
   if (_cloudOn) { try { await Promise.race([cloudSyncNow(), new Promise((r) => setTimeout(r, 10000))]); } catch (e) {} }
   let r = null;
   try { r = await API.post("/api/regrade", {}, 180000); } catch (e) { return; }
+  if (r && r.ok && r.already && r.note) r = r.note;   // a run whose window wasn't seen yet (closed page, an older version)
   if (!r || !r.ok || r.already || !(r.regraded > 0 || (r.trials || []).length)) return;
   if (_cloudOn) cloudSyncSoon(1500);
   try { loadTrialInfo(); refreshReviewBadge(); } catch (e) {}
@@ -11744,9 +11745,9 @@ function showRegrade(r) {
     ${trials ? `<ul class="rg-trials" aria-label="Trials">${trials}</ul>` : ""}
     <div class="confirm-actions"><button type="button" class="btn btn-primary" id="rg-ok">Nice!</button></div>
   </div>`;
-  const close = () => animateRemove(el);
-  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
-  el.addEventListener("keydown", (ev) => { if (ev.key === "Escape" || ev.key === "Enter") { ev.preventDefault(); ev.stopPropagation(); close(); } });
+  // it stays until it's closed on purpose (the button or Escape, never a stray click), and only then counts as seen
+  const close = () => { animateRemove(el); API.post("/api/regrade", { seen: true }).catch(() => {}); };
+  el.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(); } });
   document.body.appendChild(el);
   el.querySelector("#rg-ok").onclick = close;
   setTimeout(() => { el.querySelector(".rg-box")?.focus({ preventScroll: true }); try { confettiBurst(el.querySelector(".rg-ico")); } catch (e) {} }, 60);
