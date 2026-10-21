@@ -11724,33 +11724,46 @@ async function runRegrade() {
 function showRegrade(r) {
   document.getElementById("regrade-dialog")?.remove();
   const num = (v) => Number(v || 0).toLocaleString();
-  const tiles = [
-    ["+" + num(r.points), r.points === 1 ? "point" : "points"],
-    r.negs ? [num(r.negs), r.negs === 1 ? "neg removed" : "negs removed"] : null,
-    [num(r.regraded), r.regraded === 1 ? "answer now right" : "answers now right"],
-    r.powers ? [num(r.powers), r.powers === 1 ? "new power" : "new powers"] : null,
-    r.xp ? ["+" + num(r.xp), "trial XP"] : null,
-  ].filter(Boolean);
   const roman = (n) => ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][n] || String(n);
-  const trials = (r.trials || []).map((t) => `<li><span>${escapeHtml(t.name)} ${roman(t.level)}</span><small>+${num(t.xp)} XP</small>${t.passed ? `<b class="rg-pass">${ic("check", 13)}Passed${t.level < 10 ? `, ${escapeHtml(t.name)} ${roman(t.level + 1)} is open` : ""}</b>` : ""}</li>`).join("");
+  // the points are the headline; the rest is one strip of what changed (a zero stays out of it)
+  const facts = [[r.negs, r.negs === 1 ? "neg removed" : "negs removed"], [r.regraded, r.regraded === 1 ? "answer fixed" : "answers fixed"],
+    [r.powers, r.powers === 1 ? "new power" : "new powers"]].filter(([v]) => Number(v) > 0);
+  const trials = (r.trials || []).slice().sort((a, b) => (b.passed - a.passed) || (b.xp - a.xp));
+  const trialRows = trials.map((t) => {
+    const key = String(t.key || "").split("|")[0], next = t.passed && t.level < 10 ? `${escapeHtml(t.name)} ${roman(t.level + 1)} is open` : "";
+    return `<li class="rg-trial${t.passed ? " passed" : ""}" style="--hue:${trialHue(key)}"><span class="rg-lv">${roman(t.level)}</span>` +
+      `<span class="rg-tname"><b>${escapeHtml(t.name)} ${roman(t.level)}</b>${t.passed ? `<small class="rg-passed">${ic("check", 12)}Passed</small>${next ? `<small class="rg-next">${next}</small>` : ""}` : ""}</span>` +
+      `<span class="rg-txp num">+${num(t.xp)} XP</span></li>`;
+  }).join("");
   const el = document.createElement("div");
   el.id = "regrade-dialog";
   el.className = "qb-overlay confirm-overlay";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "rg-title");
   el.innerHTML = `<div class="confirm-box rg-box" tabindex="-1">
-    <div class="rg-ico">${ic("check", 26)}</div>
-    <div class="confirm-title" id="rg-title">Your points have been refunded!</div>
-    <p class="rg-sub">Some answers were marked wrong by mistake. They count now.</p>
-    <div class="rg-tiles" style="--n:${tiles.length}">${tiles.map(([v, l]) => `<div class="rg-tile"><b class="num">${escapeHtml(v)}</b><small>${escapeHtml(l)}</small></div>`).join("")}</div>
-    ${trials ? `<ul class="rg-trials" aria-label="Trials">${trials}</ul>` : ""}
-    <div class="confirm-actions"><button type="button" class="btn btn-primary" id="rg-ok">Nice!</button></div>
+    <div class="rg-hero">
+      <p class="rg-kicker">${ic("sparkle", 13)}Answer checker fixes</p>
+      <h2 class="rg-title" id="rg-title">Your points have been refunded!</h2>
+      <div class="rg-big"><b class="num" id="rg-points" data-to="${Number(r.points) || 0}">+${num(r.points)}</b><span>${Number(r.points) === 1 ? "point" : "points"} back</span></div>
+      <p class="rg-sub">Answers that were marked wrong by mistake count now.</p>
+    </div>
+    ${facts.length ? `<div class="rg-facts" style="--n:${facts.length}">${facts.map(([v, l]) => `<div class="rg-fact"><b class="num">${num(v)}</b><small>${escapeHtml(l)}</small></div>`).join("")}</div>` : ""}
+    ${trialRows ? `<section class="rg-trials-sec" aria-label="Trials"><div class="rg-trials-head"><span>Trials</span><b class="num">+${num(r.xp)} XP</b></div><ul class="rg-trials">${trialRows}</ul></section>` : ""}
+    <button type="button" class="btn btn-primary rg-ok" id="rg-ok">Nice!</button>
   </div>`;
   // it stays until it's closed on purpose (the button or Escape, never a stray click), and only then counts as seen
   const close = () => { animateRemove(el); API.post("/api/regrade", { seen: true }).catch(() => {}); };
   el.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(); } });
   document.body.appendChild(el);
   el.querySelector("#rg-ok").onclick = close;
-  setTimeout(() => { el.querySelector(".rg-box")?.focus({ preventScroll: true }); try { confettiBurst(el.querySelector(".rg-ico")); } catch (e) {} }, 60);
+  // the points count up (not with reduced motion)
+  const big = el.querySelector("#rg-points"), to = Number(big.dataset.to) || 0;
+  if (to > 0 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    const t0 = performance.now(), dur = Math.min(1100, 450 + to * 3);
+    const step = (now) => { const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3); big.textContent = "+" + Math.round(to * e).toLocaleString(); if (k < 1 && big.isConnected) requestAnimationFrame(step); };
+    big.textContent = "+0"; requestAnimationFrame(step);
+  }
+  setTimeout(() => { el.querySelector(".rg-box")?.focus({ preventScroll: true }); try { confettiBurst(el.querySelector(".rg-big")); } catch (e) {} }, 60);
+  try { Sound.achievement(); } catch (e) {}
 }
 
 // Start-up: what the Database tabs open on first — Search's results as they
