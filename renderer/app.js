@@ -10020,11 +10020,11 @@ function paintTrialBar() {
   bar.innerHTML = `<span class="tb-k">${ic("award", 14)}Trial</span><b class="tb-name">${escapeHtml(trialName(_trial.key, _trial.level))}</b>` +
     `<span class="tb-pips" aria-label="${_trial.powered} of ${TRIAL_LEN} powered">${pips}</span><span class="tb-n num">${_trial.powered}/${TRIAL_LEN}</span>` +
     `<span class="tb-xp num">+${fmtXp(trialXp(_trial.level, _trial.powered))}</span>` +
-    (_trial.done ? `<button type="button" class="btn btn-sm btn-ghost" id="tb-result">Result</button><button type="button" class="btn btn-sm" id="tb-done">Done</button>`
+    // over: Result reopens its window; Done is the page's main button (and the start-skip key), not one here too
+    (_trial.done ? `<button type="button" class="btn btn-sm btn-ghost" id="tb-result">Result</button>`
       : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
-  const rb = bar.querySelector("#tb-result"), db = bar.querySelector("#tb-done"), tt = _trial;
+  const rb = bar.querySelector("#tb-result"), tt = _trial;
   if (rb) rb.onclick = () => { if (tt.shown && !document.getElementById("trial-done")) showTrialResult(tt, tt.shown.passed, tt.shown.why); };
-  if (db) db.onclick = () => trialDismiss();
   const lv = bar.querySelector("#tb-leave");
   if (lv && _trial.pending) lv.onclick = () => { closeSetupDrawer(); trialEnd("left"); };
   else if (lv) lv.onclick = () => confirmDialog("Leave the trial? You keep the XP you've earned.", () => trialEnd("left"), { yes: "Leave" });
