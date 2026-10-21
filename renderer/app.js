@@ -8,6 +8,10 @@ const isElectron = !!(window.qbreader);
 // The website differs from the app only where it must: a Download page and home
 // box, no drag-and-drop plugin install, no app / database updates.
 const IS_WEB = !isElectron && !!window.QB_WEB;
+// An offline room's page (15.17): the host's app serves this renderer on the local network (runtime.js
+// lanRoomServer) with window.QB_LAN set, and the page plays that one room.
+const IS_LAN = !isElectron && !IS_WEB && !!window.QB_LAN;
+if (IS_LAN) document.documentElement.classList.add("lan");
 
 // Writes to the profile's own data schedule an account sync in the app
 // (cloudDirty, defined with the account code below).
@@ -46,7 +50,30 @@ function parseQuery(qs) {
   return out;
 }
 
-const API = isElectron
+// An offline room's page keeps nothing: it plays the room and the host's app judges and scores it. Its data
+// calls answer here, empty, except the category tree and the set list (the host's computer serves those).
+const LAN_STUB = {
+  "/api/profiles": () => ({ profiles: [{ id: 1, name: "Player" }], activeId: 1 }),
+  "/api/profiles/active": () => ({ id: 1, name: "Player" }),
+  "/api/stats": () => ({ stats: {} }),
+  "/api/trials": () => ({ trials: {}, cats: [] }),
+  "/api/starred": () => ({ starred: [], questions: [] }),
+  "/api/sessions": () => ({ sessions: [] }),
+  "/api/answer-powers": () => ({ answer_counts: {}, answer_classes: {} }),
+  "/api/db-update-status": () => ({ state: "idle" }),
+  "/api/app-update-info": () => ({ configured: false, active: false, version: 0, dev: true }),
+  "/api/account/me": () => ({ available: false, user: null }),
+};
+const LAN_API = {
+  async get(url) {
+    const path = String(url).split("?")[0];
+    if (path === "/api/category-tree" || path === "/api/sets") { try { return await (await fetch(url, { cache: "no-store" })).json(); } catch (e) { return {}; } }
+    return LAN_STUB[path] ? LAN_STUB[path]() : {};
+  },
+  async post(url) { return String(url).startsWith("/api/regrade") ? { ok: true, already: true } : { ok: true }; },
+  async delete() { return { ok: true }; },
+};
+const API = IS_LAN ? LAN_API : isElectron
   ? {
       get(url) {
         const [path, qs] = url.split("?");
@@ -111,6 +138,7 @@ const API = isElectron
         if (path === "/api/review/dismiss") return window.qbreader.dismissReview(data.questionId);
         if (path === "/api/trials") return window.qbreader.trialAction ? window.qbreader.trialAction(data) : { ok: false, error: "Restart the app to use trials." };
         if (path === "/api/regrade") return window.qbreader.regrade ? window.qbreader.regrade(data) : { ok: true, already: true };
+        if (path === "/api/lan/room") return window.qbreader.lanRoom ? window.qbreader.lanRoom(data) : { error: "Restart the app to make offline rooms." };
         if (path === "/api/review/manual") return window.qbreader.reviewManual(data.questionId, data.add !== false, data.type);
         if (path === "/api/review/clear") return window.qbreader.clearReview();
         if (path === "/api/sessions/prune") return window.qbreader.pruneSessions(data.days);
@@ -546,6 +574,8 @@ const ICON = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
   flag: '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4.5L17 13H5"/>',
+  bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/>',
 };
 function ic(name, size, extra) {
   const s = size || 18;
@@ -1001,11 +1031,14 @@ if (IS_WEB) {
 }
 (function wireTopbar() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener("click", fn);
-  on("tb-brand", () => { closeSetupDrawer(); if (!document.querySelector("#title-screen.active")) goHome(); });
+  on("tb-brand", () => { closeSetupDrawer(); if (IS_LAN) { goTo("multiplayer"); return; } if (!document.querySelector("#title-screen.active")) goHome(); });
   on("tb-streak", () => goTo("streaks"));
   on("tb-plugins", () => goTo("plugins"));
   on("tb-scheme", () => toggleScheme());
-  document.getElementById("opt-light-mode")?.addEventListener("change", (e) => { if (e.target.checked !== (uiScheme() === "light")) toggleScheme(); });
+  document.getElementById("opt-light-mode")?.addEventListener("change", (e) => {
+    if (document.documentElement.classList.contains("hw")) { e.target.checked = true; setTimeout(() => { e.target.checked = false; }, 1150); toggleScheme(); return; }
+    if (e.target.checked !== (uiScheme() === "light")) toggleScheme();
+  });
   on("tb-settings", () => toggleSettings());
   // the avatar opens a small menu: Profile (achievements) and, later, Account
   on("tb-profile", (e) => {
@@ -1483,6 +1516,31 @@ const Sound = {
   pause()  { this._beep(400, 0.05, "triangle", 0.03); },
   achievement(){ this._beep(660, 0.08, "sine", 0.06); setTimeout(() => this._beep(880, 0.08, "sine", 0.06), 90); setTimeout(() => this._beep(1320, 0.18, "sine", 0.07), 180); },
   click()  { if (soundPrefs().clicks) this._beep(620, 0.02, "square", 0.022); },
+  // Halloween's lightning: a crack, then a low rumble that rolls away (filtered noise, no sound file)
+  thunder() {
+    const p = soundPrefs();
+    if (!p.on) return;
+    this._init();
+    const c = this._ctx;
+    if (!c) return;
+    try { if (c.state === "suspended") c.resume(); } catch (e) {}
+    const vol = 0.45 * p.vol / 70, t = c.currentTime, len = 2.8;
+    const noise = (secs, brown) => {
+      const b = c.createBuffer(1, Math.floor(c.sampleRate * secs), c.sampleRate), d = b.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < d.length; i++) { const w = Math.random() * 2 - 1; if (brown) { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; } else d[i] = w; }
+      const src = c.createBufferSource(); src.buffer = b; return src;
+    };
+    const rumble = noise(len, true), lp = c.createBiquadFilter(), g = c.createGain();
+    lp.type = "lowpass"; lp.frequency.setValueAtTime(1100, t); lp.frequency.exponentialRampToValueAtTime(110, t + 2);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.04); g.gain.exponentialRampToValueAtTime(vol * 0.5, t + 0.6);
+    g.gain.exponentialRampToValueAtTime(vol * 0.7, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    rumble.connect(lp); lp.connect(g); g.connect(c.destination); rumble.start(t); rumble.stop(t + len);
+    const crack = noise(0.25, false), hp = c.createBiquadFilter(), g2 = c.createGain();
+    hp.type = "highpass"; hp.frequency.value = 1800;
+    g2.gain.setValueAtTime(vol * 0.5, t); g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    crack.connect(hp); hp.connect(g2); g2.connect(c.destination); crack.start(t); crack.stop(t + 0.25);
+  },
 };
 
 (function initGlobalClickSound() {
@@ -1966,7 +2024,7 @@ function applyTheme() {
   const b = document.getElementById("tb-scheme");
   if (b) {
     b.hidden = themed;
-    const light = uiScheme() === "light";
+    const light = uiScheme() === "light" && !document.documentElement.classList.contains("hw");   // Halloween is always dark
     b.setAttribute("aria-label", light ? "Switch to dark mode" : "Switch to light mode");
     b.title = light ? "Dark mode" : "Light mode";
     b.querySelector(".ic-sun")?.toggleAttribute("hidden", light);
@@ -1974,11 +2032,17 @@ function applyTheme() {
   }
   const row = document.getElementById("row-light-mode"), sw = document.getElementById("opt-light-mode");
   if (row) row.hidden = themed;
-  if (sw) sw.checked = uiScheme() === "light";
+  if (sw) sw.checked = uiScheme() === "light" && !document.documentElement.classList.contains("hw");
 }
 function toggleScheme() {
+  // Halloween stays dark: the switch calls down lightning instead, then flips back
+  if (document.documentElement.classList.contains("hw") && typeof hwLightning === "function") { hwLightning(document.getElementById("tb-scheme")); return; }
   lsSet("qb-scheme", uiScheme() === "light" ? "dark" : "light");
   applyTheme();
+// Focus rings follow the keyboard: Tab turns them on, a click or tap turns them off (ui.css html.kb-nav), so a
+// window that focuses its button as it opens from a click doesn't show one.
+document.addEventListener("keydown", (e) => { if (e.key === "Tab") document.documentElement.classList.add("kb-nav"); }, true);
+document.addEventListener("pointerdown", () => document.documentElement.classList.remove("kb-nav"), true);
   applyDefaultAppearance();
 }
 
@@ -7246,6 +7310,7 @@ function copyWithCheck(btn, text) {
   if (fallback()) show();
 }
 window.qbCopyWithCheck = copyWithCheck;
+window.qbAnimateRemove = (el) => animateRemove(el);
 
 // A selection only counts for a given element's menu if it actually lies
 // INSIDE that element — otherwise a stale highlight elsewhere on the page
@@ -10102,8 +10167,8 @@ function hwLogos(on) {
 }
 // a few bats cross the top once a visit
 let _hwBats = false;
-function hwBats() {
-  if (_hwBats) return;
+function hwBats(again) {
+  if (_hwBats && !again) return;
   _hwBats = true;
   try { if (matchMedia("(prefers-reduced-motion: reduce)").matches) return; } catch (e) {}
   const box = document.createElement("div");
@@ -10111,6 +10176,99 @@ function hwBats() {
   box.innerHTML = [0, 1, 2].map((i) => `<span class="hw-bat b${i}">${BAT_SVG}</span>`).join("");
   document.body.appendChild(box);
   setTimeout(() => box.remove(), 9500);
+}
+// Halloween's light/dark switch (14.90 theme, always dark): lightning strikes the screen. A jagged bolt with forks
+// drops from the top, the page lights up white-violet in two quick flashes (a backdrop filter over everything),
+// sparks fly from where it hits, thunder rolls, the bats scatter, and the switch spins to light and back to dark.
+let _hwStorm = false;
+function hwLightning(btn) {
+  if (_hwStorm) return;
+  _hwStorm = true;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const W = innerWidth, H = innerHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+  const wrap = document.createElement("div");
+  wrap.className = "hw-storm"; wrap.setAttribute("aria-hidden", "true");
+  const flash = document.createElement("div"); flash.className = "hw-flash";
+  const cv = document.createElement("canvas"); cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  wrap.append(flash, cv);
+  document.body.appendChild(wrap);
+  const ctx = cv.getContext("2d");
+  ctx.scale(dpr, dpr);
+  // the switch: spins over to light, then back to dark when the sky clears
+  const flip = (light) => {
+    if (!btn) return;
+    btn.querySelector(".ic-sun")?.toggleAttribute("hidden", light);
+    btn.querySelector(".ic-moon")?.toggleAttribute("hidden", !light);
+    btn.classList.remove("hw-spin"); void btn.offsetWidth; btn.classList.add("hw-spin");
+  };
+  flip(true);
+  btn?.classList.add("hw-zap");
+  try { Sound.thunder(); } catch (e) {}
+  // a bolt: midpoint displacement from the sky to a point low on the screen, forks off its upper part
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const seg = (x0, y0, x1, y1, disp, out) => {
+    if (disp < 6) { out.push([x1, y1]); return out; }
+    const mx = (x0 + x1) / 2 + rnd(-0.5, 0.5) * disp, my = (y0 + y1) / 2 + rnd(-0.5, 0.5) * disp * 0.35;
+    seg(x0, y0, mx, my, disp / 2, out); seg(mx, my, x1, y1, disp / 2, out);
+    return out;
+  };
+  const sx = W * rnd(0.25, 0.75), ex = sx + W * rnd(-0.18, 0.18), ey = H * rnd(0.68, 0.9);
+  const main = seg(sx, -20, ex, ey, Math.max(160, H * 0.32), [[sx, -20]]);
+  const forks = [];
+  for (let k = 0, n = 3 + Math.floor(Math.random() * 3); k < n; k++) {
+    const at = main[Math.floor(rnd(0.12, 0.7) * main.length)], dir = Math.random() < 0.5 ? -1 : 1;
+    const fx = at[0] + dir * rnd(70, 240), fy = at[1] + rnd(90, 260);
+    forks.push(seg(at[0], at[1], fx, fy, rnd(60, 110), [at]));
+    if (Math.random() < 0.5) { const p = forks[forks.length - 1], q = p[Math.floor(p.length / 2)]; forks.push(seg(q[0], q[1], q[0] + dir * rnd(30, 90), q[1] + rnd(40, 110), 40, [q])); }
+  }
+  flash.style.setProperty("--sx", (sx / W * 100).toFixed(1) + "%");
+  const sparks = Array.from({ length: reduce ? 0 : 34 }, () => {
+    const a = rnd(-Math.PI, 0), v = rnd(2, 7.5);
+    return { x: ex, y: ey, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 1, life: rnd(0.55, 1), hue: Math.random() < 0.55 ? "255,170,80" : "200,170,255" };
+  });
+  const stroke = (pts, w, color, blur) => {
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.lineWidth = w; ctx.strokeStyle = color; ctx.shadowBlur = blur; ctx.shadowColor = "rgba(170,140,255,0.95)"; ctx.stroke();
+  };
+  // [ms, flash, bolt]: a strike, a dark beat, a second stroke down the same channel, then it fades
+  const KEYS = reduce ? [[0, 0, 0], [90, 0.55, 0], [700, 0, 0]]
+    : [[0, 0, 0], [25, 1, 1], [85, 0.22, 0.3], [140, 0.08, 0.12], [185, 0.9, 1], [250, 0.5, 0.85], [320, 0.62, 0.95], [460, 0.22, 0.55], [1000, 0, 0]];
+  const level = (t, k) => { for (let i = 1; i < KEYS.length; i++) if (t <= KEYS[i][0]) { const a = KEYS[i - 1], b = KEYS[i], f = (t - a[0]) / (b[0] - a[0] || 1); return a[k] + (b[k] - a[k]) * f; } return 0; };
+  const t0 = performance.now(), END = reduce ? 700 : 1500;
+  const frame = (now) => {
+    const t = now - t0;
+    flash.style.opacity = String(level(t, 1));
+    ctx.clearRect(0, 0, W, H);
+    const b = level(t, 2) * (0.85 + Math.random() * 0.15);
+    if (b > 0.01) {
+      ctx.lineJoin = "round"; ctx.lineCap = "round";
+      ctx.globalCompositeOperation = "lighter";
+      forks.forEach((f) => { stroke(f, 5, `rgba(150,120,255,${0.22 * b})`, 18); stroke(f, 1.4, `rgba(235,228,255,${0.8 * b})`, 6); });
+      stroke(main, 16, `rgba(140,110,255,${0.22 * b})`, 40);
+      stroke(main, 6, `rgba(200,185,255,${0.6 * b})`, 22);
+      stroke(main, 2.4, `rgba(255,255,255,${b})`, 8);
+      // where it hits: a glow on the ground
+      const g = ctx.createRadialGradient(ex, ey, 0, ex, ey, 140);
+      g.addColorStop(0, `rgba(255,240,255,${0.55 * b})`); g.addColorStop(0.35, `rgba(170,130,255,${0.22 * b})`); g.addColorStop(1, "rgba(120,80,255,0)");
+      ctx.shadowBlur = 0; ctx.fillStyle = g; ctx.fillRect(ex - 140, ey - 140, 280, 280);
+    }
+    if (t > 25) {
+      ctx.globalCompositeOperation = "lighter"; ctx.shadowBlur = 0;
+      sparks.forEach((p) => {
+        if (p.life <= 0) return;
+        p.x += p.vx; p.y += p.vy; p.vy += 0.22; p.vx *= 0.985; p.life -= 0.016;
+        ctx.fillStyle = `rgba(${p.hue},${Math.max(0, p.life)})`;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 1.1 + p.life * 1.6, 0, Math.PI * 2); ctx.fill();
+      });
+    }
+    if (t < END && wrap.isConnected) requestAnimationFrame(frame);
+    else { wrap.remove(); _hwStorm = false; }
+  };
+  requestAnimationFrame(frame);
+  setTimeout(() => { try { hwBats(true); } catch (e) {} }, 260);
+  setTimeout(() => { flip(false); btn?.classList.remove("hw-zap"); }, reduce ? 500 : 1150);
+  setTimeout(() => btn?.classList.remove("hw-spin"), reduce ? 1000 : 1700);
 }
 // Cobwebs: each box gets its own — a web drawn from a seed (the box's kind, place and text): how many threads and
 // rings, where they sag, a broken strand, now and then a spider; its corner, size and strength vary too. The big
@@ -11660,13 +11818,14 @@ function showRegrade(r) {
   const num = (v) => Number(v || 0).toLocaleString();
   const roman = (n) => ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][n] || String(n);
   // the points are the headline; the rest is one strip of what changed (a zero stays out of it)
-  const facts = [[r.negs, r.negs === 1 ? "neg removed" : "negs removed"], [r.regraded, r.regraded === 1 ? "answer fixed" : "answers fixed"],
-    [r.powers, r.powers === 1 ? "new power" : "new powers"]].filter(([v]) => Number(v) > 0);
+  const facts = [[r.negs, r.negs === 1 ? "neg removed" : "negs removed", "undo", "var(--red)"], [r.regraded, r.regraded === 1 ? "answer fixed" : "answers fixed", "check", "var(--green, var(--accent))"],
+    [r.powers, r.powers === 1 ? "new power" : "new powers", "bolt", "var(--yellow, var(--accent))"]].filter(([v]) => Number(v) > 0);
   const trials = (r.trials || []).slice().sort((a, b) => (b.passed - a.passed) || (b.xp - a.xp));
   const trialRows = trials.map((t) => {
     const key = String(t.key || "").split("|")[0], next = t.passed && t.level < 10 ? `${escapeHtml(t.name)} ${roman(t.level + 1)} is open` : "";
     return `<li class="rg-trial${t.passed ? " passed" : ""}" style="--hue:${trialHue(key)}"><span class="rg-lv">${roman(t.level)}</span>` +
-      `<span class="rg-tname"><b>${escapeHtml(t.name)} ${roman(t.level)}</b>${t.passed ? `<small class="rg-passed">${ic("check", 12)}Passed</small>${next ? `<small class="rg-next">${next}</small>` : ""}` : ""}</span>` +
+      `<span class="rg-tname"><b>${escapeHtml(t.name)} ${roman(t.level)}</b>` +
+      (t.passed ? `<small class="rg-passed">${ic("check", 12)}Passed${next ? `<span class="rg-next"> · ${next}</span>` : ""}</small>` : `<small class="rg-next">One more power counted</small>`) + `</span>` +
       `<span class="rg-txp num">+${num(t.xp)} XP</span></li>`;
   }).join("");
   const el = document.createElement("div");
@@ -11680,7 +11839,7 @@ function showRegrade(r) {
       <div class="rg-big"><b class="num" id="rg-points" data-to="${Number(r.points) || 0}">+${num(r.points)}</b><span>${Number(r.points) === 1 ? "point" : "points"} back</span></div>
       <p class="rg-sub">Answers that were marked wrong by mistake count now.</p>
     </div>
-    ${facts.length ? `<div class="rg-facts" style="--n:${facts.length}">${facts.map(([v, l]) => `<div class="rg-fact"><b class="num">${num(v)}</b><small>${escapeHtml(l)}</small></div>`).join("")}</div>` : ""}
+    ${facts.length ? `<div class="rg-facts" style="--n:${facts.length}">${facts.map(([v, l, icon, tone]) => `<div class="rg-fact" style="--tone:${tone}"><span class="rg-fic">${ic(icon, 15)}</span><b class="num">${num(v)}</b><small>${escapeHtml(l)}</small></div>`).join("")}</div>` : ""}
     ${trialRows ? `<section class="rg-trials-sec" aria-label="Trials"><div class="rg-trials-head"><span>Trials</span><b class="num">+${num(r.xp)} XP</b></div><ul class="rg-trials">${trialRows}</ul></section>` : ""}
     <button type="button" class="btn btn-primary rg-ok" id="rg-ok">Nice!</button>
   </div>`;
@@ -11852,7 +12011,7 @@ function startSplash() {
 // "Not now" — then only a name. Signing in finishes it (the account's display name is used).
 function showSetupOverlay() {
   const overlay = document.getElementById("player-setup");
-  if (!overlay) return;
+  if (!overlay || IS_LAN) return;   // an offline room's page asks for a name on its own form
   const stepAcct = document.getElementById("setup-step-account"), stepName = document.getElementById("setup-step-name");
   const done = (name) => {
     clearInterval(showSetupOverlay._watch);
@@ -12127,8 +12286,10 @@ function init() {
   if (IS_WEB) handleAccountLinks().then(refreshAccount); else refreshAccount();
   // the website opened at a page's address (a link, a bookmark, a reload)
   if (IS_WEB) setTimeout(() => { if (location.pathname !== "/") webRoute(location.pathname); else webTitleSync(); }, 0);
-  // the website runs on the server's (current) question database and has no app to update
-  if (!IS_WEB) {
+  // the website runs on the server's (current) question database and has no app to update (nor has an
+  // offline room's page, which opens its room)
+  if (IS_LAN) setTimeout(() => { try { goTo("multiplayer"); } catch (e) {} }, 0);
+  if (!IS_WEB && !IS_LAN) {
     enforceRequiredDb();
     applyStagedPluginUpdates().then(maybeAutoCheckAppUpdate).then(() => { if (!_dbLocked) maybeAutoDbUpdate(); });
   }
@@ -12310,7 +12471,7 @@ function openAccount(mode, opts) {
       `<div class="acct-links">${link("forgot", "Forgot password?")}${link("signup", "Create an account")}</div>`;
     else if (m === "syncing") html = head("Signing in", "Syncing your stats and stars…") + `<div class="qb-loading"><div class="qb-loadbar"><div class="qb-loadbar-fill"></div></div></div>`;
     else if (m === "browser") html = head("Finish in your browser", `Sign in on the page that opened${o.google ? " with Google" : ""} and press <b>Connect app</b>. This window signs in by itself.`) +
-      `<div class="acct-code">Code <b>${escapeHtml(o.code || "")}</b></div>` + err + `<div class="acct-actions"><button type="button" class="btn" data-to="reopen">Open the page again</button><button type="button" class="btn" data-to="signin">Cancel</button></div>`;
+      `<div class="acct-code">Code <b>${escapeHtml(o.code || "")}</b></div>` + err + `<div class="acct-actions"><button type="button" class="btn" data-to="reopen">Reopen the page</button><button type="button" class="btn" data-to="signin">Cancel</button></div>`;
     else if (m === "signup") html = head("Create an account", o.reason ? escapeHtml(o.reason) : "") + googleBtn() +
       `<form class="acct-form">${field("acct-email", "email", "Email", "email", email)}${handleField(handle)}${displayField(display)}${field("acct-pass", "password", "Password (8+ characters)", "new-password")}${field("acct-pass2", "password", "Confirm password", "new-password")}${err}<button type="submit" class="btn btn-primary btn-md">Create account</button></form>` +
       `<p class="acct-legal">By creating an account, you agree to the <a class="legal-link" href="/terms" target="_blank" rel="noopener">Terms of Service</a> and <a class="legal-link" href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>` +
@@ -12330,7 +12491,9 @@ function openAccount(mode, opts) {
       `<div class="acct-rows"><div class="acct-row"><span class="fr-av"${avatarStyle(u.neon)}>${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${neonName(u.displayName || u.handle || "", u.neon)}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
       `<div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}${u.google ? '<small>Signs in with Google</small>' : ""}</span></div>` +
       (Account.app ? `<div class="acct-row">${ic("review", 16)}<span class="acct-v" id="acct-sync-line">${escapeHtml(syncLineText())}</span><button type="button" class="btn btn-sm" id="acct-sync-now">Sync now</button></div>` : "") +
-      `</div><div class="acct-actions"><button type="button" class="btn" id="acct-logout">Sign out</button><button type="button" class="btn" data-to="leaderboards">Leaderboards</button><button type="button" class="btn" data-to="friends">Friends</button><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
+      `</div><div class="acct-rows"><button type="button" class="acct-row acct-nav" data-to="leaderboards">${ic("chart", 16)}<span class="acct-v">Leaderboards</span>${ic("right", 16)}</button>` +
+      `<button type="button" class="acct-row acct-nav" data-to="friends">${ic("users", 16)}<span class="acct-v">Friends</span>${ic("right", 16)}</button></div>` +
+      `<div class="acct-actions"><button type="button" class="btn" id="acct-logout">Sign out</button><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
     el.innerHTML = `<div class="confirm-box acct-box">${html}</div>`;
     mode = m;
     el.querySelectorAll("[data-to]").forEach((b) => b.addEventListener("click", () => go(b.dataset.to)));
@@ -12743,10 +12906,10 @@ async function cloudSyncNow() {
 }
 setInterval(() => { if (_cloudOn && !document.hidden) cloudSyncNow(); }, 5 * 60e3);
 
-// ── The app offline: Multiplayer greys out ──
-// Rooms need the game server (or, failing that, the relay). Without either —
-// no internet, or a network that blocks them — the home's Multiplayer button
-// stays where it is but can't be clicked; it comes back by itself.
+// ── The app offline: Multiplayer's online rooms hide ──
+// Online rooms need the game server (or, failing that, the relay). Without either (no internet, or a network
+// that blocks them) Multiplayer still opens: its lobby hides the online rooms and plays offline rooms instead
+// (multiplayer.js, 15.17). window.qbMpOnline says which; "qb-mp-online" fires when it changes.
 async function mpReachable() {
   if (navigator.onLine === false) return false;
   const probe = (url) => fetch(url, { mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(6000) }).then(() => true, () => false);
@@ -12756,14 +12919,22 @@ async function mpReachable() {
   return (await probe("https://mp.onlinequiz.net/health")) || (await probe("https://offlinequiz-mp-relay.warren2028045.workers.dev/"));
 }
 function setMpAvailable(ok) {
-  document.querySelectorAll('[data-go="multiplayer"]').forEach((b) => {
-    b.disabled = !ok; b.classList.toggle("mp-offline", !ok);
-    b.setAttribute("aria-description", ok ? "" : "Multiplayer needs an internet connection");
-  });
+  const was = window.qbMpOnline;
+  window.qbMpOnline = !!ok;
+  if (was !== undefined && was !== !!ok) { try { window.dispatchEvent(new CustomEvent("qb-mp-online", { detail: !!ok })); } catch (e) {} }
 }
-async function checkMpReachable() { if (IS_WEB) return; setMpAvailable(await mpReachable()); }
+let _mpCheckAt = 0, _mpChecking = null;
+async function checkMpReachable(force) {
+  if (IS_WEB || IS_LAN) return;
+  if (_mpChecking) return _mpChecking;
+  if (!force && Date.now() - _mpCheckAt < 4000) return;   // the lobby asks each time it draws
+  _mpCheckAt = Date.now();
+  _mpChecking = mpReachable().then((ok) => setMpAvailable(ok)).finally(() => { _mpChecking = null; });
+  return _mpChecking;
+}
+window.qbCheckMp = () => { checkMpReachable(); };
 if (!IS_WEB) {
-  window.addEventListener("online", () => checkMpReachable());
+  window.addEventListener("online", () => checkMpReachable(true));
   window.addEventListener("offline", () => setMpAvailable(false));
   setInterval(() => { if (document.querySelector("#title-screen.active")) checkMpReachable(); }, 30000);
 }

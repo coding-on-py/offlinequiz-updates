@@ -1,5 +1,5 @@
 {
-  "version": "15.16",
+  "version": "15.17",
   "files": {
     "index.js": "03a36271420fd03b80ee4873fd84a91064784741f1c37fe8d9e2d94b15d809e9",
     "database.js": "33154188b82b20223da43b425b8b88a10ee737f0b2855c9f6ca7fcbfaa8287ba",
@@ -8,8 +8,8 @@
     "scoring.js": "ddd77cebe56bc87fdc1676d8ea528342c9c2720a4357dfd809cea0a2a65369a6",
     "stats.js": "c03ff97b4aae87d865ba398a37540950d367e6627537fde172e838b5d105f2ca",
     "updater.js": "52b63950890c2b787b9083d5b539a007fdd3d4b07f586cb9127f34143b634a99",
-    "preload.js": "930cefd16746c8aada0a264249a4c3f935532643e0ead046a7ca3af54f072ad2",
-    "runtime.js": "735b70b76d68e9c7b66e0a14dce95a3647829eee57a8e7b8290f29b8641eefe0"
+    "preload.js": "f789c86519c659f97f40088d2bf9befa685844d12a4dacdb37fa4620b191ca33",
+    "runtime.js": "1c2c9f133120a538950802baa42368fd5ae224013827e9d7ff941e27317ec56f"
   },
-  "signature": "NvzuGkNrXg4u890xDXlW+/S2YBTK8BnjVjU4vrh+i6PRLtxwQflwQmY8MuTvkT47ZnjMv5IqmLH9eXdfozTOBA=="
+  "signature": "BZ4KcTqwGxj/OJ6BlDqpxTh9dHzUAyZ993U8Zpq5Z89zdg7vz0dKdWwf3Nv8q8750t+UxYgnQHbKqlk1mh2CBA=="
 }

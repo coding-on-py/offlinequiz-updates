@@ -2389,6 +2389,130 @@ function __qbMain(ctx) {
     var pubTimer = null;   // the lobby's Public rooms refresh
     function gameServerUrl() { try { return localStorage.getItem("qb-mp-server") || GAME_SERVER; } catch (e) { return GAME_SERVER; } }
     var lobby = "", myName = "", body = null, page = null;
+    // ── offline rooms (15.17): a room on the local network, no internet. The host's app serves it
+    // (runtime.js lanRoomServer): a relay at ws://<address>:<port>/lobby/<room> that speaks the online
+    // relay's protocol (this app hosts, as in a relay room) and this same page for phones and laptops
+    // without the app. lan: { url, key (the hosting app's, so it alone is the host), port, addresses }.
+    // LAN_PAGE: this page came from the host's computer (window.QB_LAN): it plays that one room.
+    var LAN_PAGE = window.QB_LAN || null;
+    var lan = LAN_PAGE ? { url: (location.protocol === "https:" ? "wss://" : "ws://") + location.host } : null;
+    // an address typed where a room code goes: 192.168.2.1:4747, http://… , mac.local
+    var LAN_ADDR = /^(?:https?:\/\/)?(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9-]+\.local)(?::\d{2,5})?\/?$/i;
+    // the game server (or its relay) answers: app.js mpReachable; the website is always online
+    function mpOnline() { return !LAN_PAGE && window.qbMpOnline !== false; }
+    function inApp() { var st = (ctx.host && ctx.host.getState && ctx.host.getState()) || {}; return !st.web && !window.QB_WEB && !LAN_PAGE; }
+    window.addEventListener("qb-mp-online", function () { if (body && !lobby && !admitting && active()) render(); });
+    // ── QR codes (an offline room's address, for a phone's camera) ──
+    // Byte mode, error correction M, versions 1 to 10 (up to 213 bytes); the mask with the lowest penalty.
+    // Returns rows of booleans (true = dark), or null when the text is too long.
+    function qrMatrix(text) {
+      var bytes = Array.from(new TextEncoder().encode(String(text)));
+      var ECC = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26], BLOCKS = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5];
+      var rawModules = function (v) { var r = (16 * v + 128) * v + 64; if (v >= 2) { var na = Math.floor(v / 7) + 2; r -= (25 * na - 10) * na - 55; if (v >= 7) r -= 36; } return r; };
+      var ver = 0, cap = 0;
+      for (var v = 1; v <= 10; v++) { cap = Math.floor(rawModules(v) / 8) - ECC[v] * BLOCKS[v]; if (4 + (v < 10 ? 8 : 16) + bytes.length * 8 <= cap * 8) { ver = v; break; } }
+      if (!ver) return null;
+      // the data: mode, length, bytes, terminator, padding
+      var bits = [];
+      var put = function (val, n) { for (var i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+      put(4, 4); put(bytes.length, ver < 10 ? 8 : 16); bytes.forEach(function (b) { put(b, 8); });
+      put(0, Math.min(4, cap * 8 - bits.length)); put(0, (8 - bits.length % 8) % 8);
+      for (var pad = 0xec; bits.length < cap * 8; pad ^= 0xec ^ 0x11) put(pad, 8);
+      var data = [];
+      for (var i = 0; i < bits.length; i += 8) { var b = 0; for (var k = 0; k < 8; k++) b = (b << 1) | bits[i + k]; data.push(b); }
+      // Reed-Solomon error correction over GF(256), blocks interleaved
+      var mul = function (x, y) { var z = 0; for (var i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11d); z ^= ((y >>> i) & 1) * x; } return z; };
+      var deg = ECC[ver], div = []; for (i = 0; i < deg - 1; i++) div.push(0); div.push(1);
+      for (var root = 1, r = 0; r < deg; r++) { for (var j = 0; j < deg; j++) { div[j] = mul(div[j], root); if (j + 1 < deg) div[j] ^= div[j + 1]; } root = mul(root, 2); }
+      var rem = function (dat) { var out = div.map(function () { return 0; }); dat.forEach(function (b) { var f = b ^ out.shift(); out.push(0); div.forEach(function (c, i) { out[i] ^= mul(c, f); }); }); return out; };
+      var nb = BLOCKS[ver], raw = Math.floor(rawModules(ver) / 8), shortLen = Math.floor(raw / nb), nShort = nb - raw % nb, blocks = [];
+      for (i = 0, k = 0; i < nb; i++) {
+        var dat = data.slice(k, k + shortLen - deg + (i < nShort ? 0 : 1)); k += dat.length;
+        var ecc = rem(dat); if (i < nShort) dat.push(0);
+        blocks.push(dat.concat(ecc));
+      }
+      var words = [];
+      for (i = 0; i < blocks[0].length; i++) for (j = 0; j < nb; j++) if (i !== shortLen - deg || j >= nShort) words.push(blocks[j][i]);
+      // the grid: finders, timing, alignment, version, then the data in its zigzag
+      var size = ver * 4 + 17, m = [], fn = [];
+      for (i = 0; i < size; i++) { m.push(new Array(size).fill(false)); fn.push(new Array(size).fill(false)); }
+      var set = function (x, y, d) { if (x < 0 || y < 0 || x >= size || y >= size) return; m[y][x] = !!d; fn[y][x] = true; };
+      var finder = function (cx, cy) { for (var dy = -4; dy <= 4; dy++) for (var dx = -4; dx <= 4; dx++) { var dist = Math.max(Math.abs(dx), Math.abs(dy)); set(cx + dx, cy + dy, dist !== 2 && dist !== 4); } };
+      for (i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+      finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+      if (ver > 1) {
+        var na = Math.floor(ver / 7) + 2, step = Math.ceil((ver * 4 + 4) / (na * 2 - 2)) * 2, pos = [6];
+        for (var p = size - 7; pos.length < na; p -= step) pos.splice(1, 0, p);
+        pos.forEach(function (ay, ai) { pos.forEach(function (ax, aj) {
+          if ((ai === 0 && aj === 0) || (ai === 0 && aj === na - 1) || (ai === na - 1 && aj === 0)) return;
+          for (var dy = -2; dy <= 2; dy++) for (var dx = -2; dx <= 2; dx++) set(ax + dx, ay + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+        }); });
+      }
+      var format = function (mask) {
+        var d = (0 << 3) | mask, r = d;   // M is 00
+        for (var i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+        var f = ((d << 10) | r) ^ 0x5412, bit = function (i) { return (f >>> i) & 1; };
+        for (i = 0; i <= 5; i++) set(8, i, bit(i));
+        set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+        for (i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+        for (i = 0; i < 8; i++) set(size - 1 - i, 8, bit(i));
+        for (i = 8; i < 15; i++) set(8, size - 15 + i, bit(i));
+        set(8, size - 8, true);
+      };
+      format(0);
+      if (ver >= 7) {
+        var vr = ver; for (i = 0; i < 12; i++) vr = (vr << 1) ^ ((vr >>> 11) * 0x1f25);
+        var vb = (ver << 12) | vr;
+        for (i = 0; i < 18; i++) { var bt = (vb >>> i) & 1, a = size - 11 + i % 3, c = Math.floor(i / 3); set(a, c, bt); set(c, a, bt); }
+      }
+      for (var right = size - 1, n = 0; right >= 1; right -= 2) {
+        if (right === 6) right = 5;
+        for (var vert = 0; vert < size; vert++) for (j = 0; j < 2; j++) {
+          var x = right - j, y = ((right + 1) & 2) === 0 ? size - 1 - vert : vert;
+          if (!fn[y][x] && n < words.length * 8) { m[y][x] = ((words[n >>> 3] >>> (7 - (n & 7))) & 1) === 1; n++; }
+        }
+      }
+      var MASKS = [function (x, y) { return (x + y) % 2 === 0; }, function (x, y) { return y % 2 === 0; }, function (x) { return x % 3 === 0; }, function (x, y) { return (x + y) % 3 === 0; },
+        function (x, y) { return (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0; }, function (x, y) { return x * y % 2 + x * y % 3 === 0; },
+        function (x, y) { return (x * y % 2 + x * y % 3) % 2 === 0; }, function (x, y) { return ((x + y) % 2 + x * y % 3) % 2 === 0; }];
+      var flip = function (mask) { for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) if (!fn[y][x] && MASKS[mask](x, y)) m[y][x] = !m[y][x]; };
+      // the penalty (runs, 2x2 blocks, finder look-alikes, dark balance)
+      var penalty = function () {
+        var s = 0, dark = 0, A = [true, false, true, true, true, false, true, false, false, false, false], B = A.slice().reverse();
+        var line = function (get) {
+          for (var i = 0; i < size; i++) {
+            var run = 1;
+            for (var j = 1; j <= size; j++) {
+              if (j < size && get(i, j) === get(i, j - 1)) run++;
+              else { if (run >= 5) s += run - 2; run = 1; }
+              if (j + 10 < size + 1 && j >= 1) {
+                var okA = true, okB = true;
+                for (var t = 0; t < 11 && (okA || okB); t++) { var v2 = get(i, j - 1 + t); if (j - 1 + t >= size) { okA = okB = false; break; } if (v2 !== A[t]) okA = false; if (v2 !== B[t]) okB = false; }
+                if (okA) s += 40; if (okB) s += 40;
+              }
+            }
+          }
+        };
+        line(function (i, j) { return m[i][j]; }); line(function (i, j) { return m[j][i]; });
+        for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+          if (m[y][x]) dark++;
+          if (x < size - 1 && y < size - 1 && m[y][x] === m[y][x + 1] && m[y][x] === m[y + 1][x] && m[y][x] === m[y + 1][x + 1]) s += 3;
+        }
+        return s + Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10;
+      };
+      var best = 0, bestScore = Infinity;
+      for (var mk = 0; mk < 8; mk++) { flip(mk); format(mk); var sc = penalty(); if (sc < bestScore) { bestScore = sc; best = mk; } flip(mk); }
+      flip(best); format(best);
+      return m;
+    }
+    // the code as an SVG: black on white with its quiet zone, whatever the theme
+    function qrSvg(text, px) {
+      var m = qrMatrix(text);
+      if (!m) return "";
+      var n = m.length + 8, d = "";
+      m.forEach(function (row, y) { row.forEach(function (on, x) { if (on) d += "M" + (x + 4) + " " + (y + 4) + "h1v1h-1z"; }); });
+      return '<svg class="qr" viewBox="0 0 ' + n + " " + n + '" width="' + (px || 180) + '" height="' + (px || 180) + '" shape-rendering="crispEdges" role="img" aria-label="QR code"><rect width="' + n + '" height="' + n + '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+    }
     var mySpec = false;  // joined as spectator (watch + chat, no buzzing)
     function myAv() { return ""; }   // (the emoji avatars are gone: a player is their initial)
     // your onlinequiz username when signed in: other players can open your profile / add you
@@ -2650,6 +2774,8 @@ function __qbMain(ctx) {
         else if (window.confirm("Leave the diagnostic room?")) leaveToClubs();
         return;
       }
+      // the app hosting an offline room: leaving closes it for everyone
+      if (lan && lan.key && ctx.host && ctx.host.confirm) { ctx.host.confirm("Close the offline room?", function () { leave(); }, { yes: "Close room", detail: "Everyone in it is disconnected." }); return; }
       if (ctx.host && ctx.host.confirm) ctx.host.confirm("Leave the lobby?", function () { leave(); }, { yes: "Leave" });
       else if (window.confirm("Leave the lobby?")) leave();
     }
@@ -2742,7 +2868,7 @@ function __qbMain(ctx) {
       var el = document.createElement("div");
       el.id = "mp-disconnect"; el.className = "mp-disconnect"; el.setAttribute("role", "alert");
       el.innerHTML = '<div class="mp-disc-box"><div class="mp-disc-title">Lost the connection to the room</div>' +
-        '<div class="mp-disc-sub">Check your internet connection, then rejoin. Your seat and score are kept.</div>' +
+        '<div class="mp-disc-sub">' + (lan ? "Check that you're on the host's Wi-Fi, then rejoin." : "Check your internet connection, then rejoin.") + ' Your seat and score are kept.</div>' +
         '<div class="mp-disc-actions"><button type="button" class="btn btn-ghost" id="mp-discleave">Leave</button><button type="button" class="btn btn-primary" id="mp-rejoin">Rejoin</button></div></div>';
       area.appendChild(el);
       el.querySelector("#mp-rejoin").onclick = function () { el.remove(); reconnectN = 0; rejoining = true; isHost = false; join(); };
@@ -2832,10 +2958,10 @@ function __qbMain(ctx) {
       if (ctx.host && ctx.host.whenAccountKnown) { try { await Promise.race([ctx.host.whenAccountKnown(), new Promise(function (r) { setTimeout(r, 5000); })]); } catch (e) {} }
       var stNow = (ctx.host && ctx.host.getState && ctx.host.getState()) || {};
       if (stNow.web && stNow.account) myName = stNow.account.displayName || stNow.account.handle;
-      await getTicket();   // a bought room lets its members in by their account
+      if (!lan) await getTicket();   // a bought room lets its members in by their account
       // the door first: a bought room that's members only, or needs a password this account doesn't
       // have to type, says so here — before anything opens (preloaded, so usually no wait)
-      var dc = await Promise.race([doorInfo(lobby), new Promise(function (r) { setTimeout(function () { r(null); }, 2500); })]);
+      var dc = lan ? null : await Promise.race([doorInfo(lobby), new Promise(function (r) { setTimeout(function () { r(null); }, 2500); })]);
       if (dc && dc.owned && !dc.member && (dc.access === "members" || (dc.access === "password" && !(myPassword && myPasswordFor === String(lobby).toLowerCase())))) {
         var dcode = lobby;
         markBusy(false); lobby = ""; admitting = false;
@@ -2844,7 +2970,7 @@ function __qbMain(ctx) {
         return;
       }
       // until the room lets us in, the page stays on the lobby ("Joining …"), never the room
-      if (gameServerUrl() && gameServerUrl() !== "off" && !rejoining) admitting = true;
+      if (!lan && gameServerUrl() && gameServerUrl() !== "off" && !rejoining) admitting = true;
       // Fresh log: on (re)join the host replays every entry, so keeping the old
       // list would duplicate the entire session history.
       sessionLog = []; logCollapsed = {}; chatHist = [];
@@ -2853,7 +2979,9 @@ function __qbMain(ctx) {
       var srv = gameServerUrl();
       // a room on the game server that dropped: try the game server again (not the backup relay — that
       // would be an empty room of its own)
-      if (rejoining && wasServer && srv && srv !== "off") joinRelay(srv, function () { serverMode = true; showDisconnected(); });
+      // an offline room: the host's own server (the hosting app brings its key)
+      if (lan) joinRelay(lan.url, null, lan.key ? "?key=" + encodeURIComponent(lan.key) : "");
+      else if (rejoining && wasServer && srv && srv !== "off") joinRelay(srv, function () { serverMode = true; showDisconnected(); });
       // a diagnostic room lives only on the game server: no backup relay (it would be an empty room)
       else if (srv && srv !== "off") joinRelay(srv, inDiag() ? dxUnreachable : function () { joinRelay(relayUrl()); });
       else if (inDiag()) dxUnreachable();
@@ -2866,13 +2994,13 @@ function __qbMain(ctx) {
     }
     // ── relay transport: one outbound WebSocket per player ──
     // `fallback` runs instead of an error when this server never answers.
-    function joinRelay(relay, fallback) {
+    function joinRelay(relay, fallback, query) {
       setStatus("Connecting…");
       var base = relay.replace(/\/+$/, "");
       if (/^https?:/i.test(base)) base = base.replace(/^http/i, "ws").replace(/^HTTPS/i, "wss");
       if (!/^wss?:/i.test(base)) base = "wss://" + base;
       var sock;
-      try { sock = new WebSocket(base + "/lobby/" + encodeURIComponent(inDiag() ? dxRoomId(lobby) : lobbyId(lobby))); }
+      try { sock = new WebSocket(base + "/lobby/" + encodeURIComponent(inDiag() ? dxRoomId(lobby) : lobbyId(lobby)) + (query || "")); }
       catch (e) { if (fallback) { fallback(); return; } setStatus("Bad relay URL."); return; }
       ws = sock;
       var opened = false, fellBack = false;
@@ -2925,7 +3053,7 @@ function __qbMain(ctx) {
       };
       sock.onclose = function () {
         if (!opened && fallback) { giveUp(); return; }
-        if (!opened) setStatus("Couldn't reach the relay. Check the URL and that the worker is deployed.");
+        if (!opened) setStatus(lan ? "Couldn't reach the offline room. Check that you're on the host's Wi-Fi." : "Couldn't reach the relay. Check the URL and that the worker is deployed.");
         else if (admitting && ws === sock) {
           // closed before it let us in (too many wrong passwords, the server restarting …)
           admitting = false; lobby = ""; ws = null; markBusy(false);
@@ -2937,7 +3065,7 @@ function __qbMain(ctx) {
         else if (!leftIntentionally && lobby) showDisconnected();
         if (ws === sock) ws = null;
       };
-      sock.onerror = function () { if (!opened && fallback) { giveUp(); return; } if (!opened) setStatus("Couldn't reach the relay. Check the URL."); };
+      sock.onerror = function () { if (!opened && fallback) { giveUp(); return; } if (!opened) setStatus(lan ? "Couldn't reach the offline room. Check that you're on the host's Wi-Fi." : "Couldn't reach the relay. Check the URL."); };
     }
 
     // The relay promoted THIS client to host (the old host disconnected). The
@@ -3855,6 +3983,7 @@ function __qbMain(ctx) {
     var _guest = null;
     function guestName() { return _guest || (_guest = "Player" + (1000 + Math.floor(Math.random() * 9000))); }
     function renderForm() {
+      if (LAN_PAGE) { renderLanForm(); return; }
       // The website: an account plays under its display name; a signed-out
       // player is "Player" + four digits (kept for this visit). The app: the name
       // last used here, else the account's display name, else the profile's.
@@ -3871,7 +4000,10 @@ function __qbMain(ctx) {
         myName = saved || (acct && acct.displayName) || st.username || guestName();
       }
       var initial = (String(myName).trim()[0] || "?").toUpperCase();
-      var recent = recentRooms();
+      // the app without the game server: online rooms are hidden, offline rooms are how to play
+      var app = inApp(), offline = app && !mpOnline();
+      if (app && window.qbCheckMp) window.qbCheckMp();
+      var recent = offline ? [] : recentRooms();
       // a new room's code, shown in grey in the box: Join/Create with nothing typed opens it
       var suggested = newRoomCode();
       body.innerHTML =
@@ -3882,29 +4014,68 @@ function __qbMain(ctx) {
             (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name. Change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
           '<section class="mp-card mp-join-card">' +
             '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="The grey code is a new room, ready for you: press Join/Create Room to open it, or type another room\u2019s code to join that one. Share the code so others can join.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code" placeholder="' + esc(suggested) + '"></label>' +
+            (app ? '<label class="checkbox-row" id="mp-lan-row"><input type="checkbox" id="mp-lan"' + (offline ? " checked disabled" : "") + '> Create offline room <span class="qb-info" data-tip="' + esc(LAN_TIP) + '">i</span></label>' : "") +
             '<label class="checkbox-row"><input type="checkbox" id="mp-spectate"> Join as spectator</label>' +
-            '<button type="button" class="btn btn-lg btn-go" id="mp-join">Join/Create Room</button>' +
+            '<button type="button" class="btn btn-lg btn-go" id="mp-join">' + (offline ? "Create offline room" : "Join/Create Room") + '</button>' +
           "</section>" +
-          '<div class="mp-status" id="mp-status"></div>' +
+          (offline ? '<section class="mp-card mp-lan-join" id="mp-lan-join"><h2 class="eyebrow">Join an offline room <span class="qb-info" data-tip="Be on the same Wi-Fi as the host, then type the address their room shows.">i</span></h2>' +
+            '<div class="mp-lan-join-row"><input id="mp-lan-addr" class="code-input" placeholder="192.168.2.1:4747" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url" aria-label="The host\u2019s address"><button type="button" class="btn btn-go" id="mp-lan-go">Join</button></div></section>' : "") +
+          '<div class="mp-status" id="mp-status">' + (offline ? '<span class="mp-offline-note">You\u2019re offline, so online rooms are hidden.</span>' : "") + '</div>' +
+          (offline ? "" :
           // a nudge to the room you can own, all the way down the page
           '<a class="mp-own-teaser" id="mp-own-teaser" href="#mp-shop" hidden>Want a room that stays yours for good?<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg></a>' +
           '<section class="mp-recent mp-mine" id="mp-my-rooms" hidden><h2 class="eyebrow">Your rooms</h2><div class="list" id="mp-my-list"></div></section>' +
           '<section class="mp-recent mp-public mp-official" id="mp-official" hidden><h2 class="eyebrow">Official rooms</h2><div class="list" id="mp-official-list"></div></section>' +
-          '<section class="mp-recent mp-public" id="mp-public-rooms" hidden><h2 class="eyebrow">Public rooms</h2><div class="list" id="mp-public-list"></div></section>' +
+          '<section class="mp-recent mp-public" id="mp-public-rooms" hidden><h2 class="eyebrow">Public rooms</h2><div class="list" id="mp-public-list"></div></section>') +
           (recent.length ? '<section class="mp-recent"><h2 class="eyebrow">Recent rooms</h2><div class="list">' + recent.map(function (r) {
             return '<button type="button" class="list-row clickable mp-recent-row" data-code="' + esc(r.code) + '"><b class="mp-rcode">' + esc(String(r.code).toUpperCase()) + '</b><span class="mp-rwho"><span class="mp-rcount" data-code="' + esc(r.code) + '">' + esc(countText(null)) + "</span>" + (r.host ? " · you hosted" : "") + '</span><span class="mp-rwhen">' + esc(whenLabel(r.at)) + '</span><span class="mp-rjoin">Rejoin ›</span></button>';
           }).join("") + "</div></section>" : "") +
           "</div>" +
-          ownRoomHtml() +
+          (offline ? "" : ownRoomHtml()) +
         "</div>";
       var nameEl = body.querySelector("#mp-name"), codeEl = body.querySelector("#mp-lobby"), joinBtn = body.querySelector("#mp-join");
       if (window.QB.neonField && window.QB.myNeon) window.QB.neonField(nameEl, window.QB.myNeon());   // "Playing as" your neon name
       // one button: a typed code joins that room (or opens it if nobody is
       // there yet); an empty box makes a new room with a fresh code
       // nothing typed: the room shown in grey
-      var goTyped = function () { go(codeEl.value.trim() || suggested); };
+      // the app: an address typed for the code joins that offline room; "Create offline room" opens one here
+      var lanBox = body.querySelector("#mp-lan");
+      var goTyped = function () {
+        var v = codeEl.value.trim();
+        if (app && LAN_ADDR.test(v)) { joinLanAddr(v); return; }
+        if (lanBox && lanBox.checked) { createLan(v || suggested); return; }
+        go(v || suggested);
+      };
+      if (lanBox) lanBox.addEventListener("change", function () { joinBtn.textContent = lanBox.checked ? "Create offline room" : "Join/Create Room"; });
+      var createLan = function (code) {
+        myName = nameEl.value.trim() || myName;
+        ctx.setSetting("name", myName);
+        setStatus("Opening the room\u2026");
+        Promise.resolve(ctx.api.post("/api/lan/room", { room: code, name: myName })).then(function (r) {
+          if (!r || !r.ok) { setStatus((r && r.error) || "Couldn\u2019t open an offline room on this computer."); return; }
+          lan = { url: "ws://127.0.0.1:" + r.port, key: r.key, port: r.port, addresses: r.addresses || [], fresh: true };
+          go(r.room);
+        }, function () { setStatus("Couldn\u2019t open an offline room on this computer."); });
+      };
+      var joinLanAddr = function (addr) {
+        addr = String(addr || "").trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+        if (!addr) { setStatus("Type the address the host\u2019s room shows."); return; }
+        if (!/:\d+$/.test(addr)) addr += ":4747";
+        setStatus("Connecting\u2026");
+        var ac = new AbortController(); setTimeout(function () { ac.abort(); }, 6000);
+        fetch("http://" + addr + "/lan.json", { cache: "no-store", signal: ac.signal }).then(function (r) { return r.json(); }).then(function (d) {
+          if (!d || d.app !== "offlinequiz" || !d.room) { setStatus("There\u2019s no open room at " + addr + "."); return; }
+          lan = { url: "ws://" + addr, addr: addr };
+          go(d.room);
+        }).catch(function () { setStatus("Couldn\u2019t reach " + addr + ". Check that you\u2019re on the same Wi-Fi as the host."); });
+      };
+      var lanAddrEl = body.querySelector("#mp-lan-addr"), lanGo = body.querySelector("#mp-lan-go");
+      if (lanAddrEl && lanGo) {
+        lanGo.onclick = function () { joinLanAddr(lanAddrEl.value); };
+        lanAddrEl.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); joinLanAddr(lanAddrEl.value); } });
+      }
       codeEl.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); goTyped(); } });
-      codeEl.addEventListener("input", function () { clearTimeout(codeEl._door); var v = codeEl.value.trim(); if (v.length >= 3) codeEl._door = setTimeout(function () { doorInfo(v); }, 250); });
+      codeEl.addEventListener("input", function () { clearTimeout(codeEl._door); var v = codeEl.value.trim(); if (v.length >= 3 && !offline && !LAN_ADDR.test(v)) codeEl._door = setTimeout(function () { doorInfo(v); }, 250); });
       nameEl.addEventListener("change", function () { var v = nameEl.value.trim(); if (v) { myName = v; ctx.setSetting("name", v); var av = body.querySelector(".mp-who .avatar"); if (av) av.textContent = (v[0] || "?").toUpperCase(); } });
       var go = goJoin = function (code) {
         if (door && String(door.code).toLowerCase() !== String(code || "").trim().toLowerCase()) door = null;
@@ -3949,9 +4120,12 @@ function __qbMain(ctx) {
         prePublic().then(function (d) { paintPublic(d); preloadDoors(); });
         refreshCounts();
       };
-      if (pre.pub) paintPublic(pre.pub);
-      clearInterval(pubTimer); pubTimer = setInterval(loadPublic, 5000); loadPublic();
-      loadShop(body);
+      clearInterval(pubTimer); pubTimer = null;
+      if (!offline) {
+        if (pre.pub) paintPublic(pre.pub);
+        pubTimer = setInterval(loadPublic, 5000); loadPublic();
+        loadShop(body);
+      }
       if (admitting && lobby) codeEl.value = lobby;
       if (door) showDoor();
       else if (admitting) {
@@ -3961,6 +4135,84 @@ function __qbMain(ctx) {
       try { if (ctx.host && ctx.host.tip) ctx.host.tip(body.querySelector(".mp-lobby"), "mp-lobby"); } catch (e) {}
       body.querySelectorAll(".mp-recent-row").forEach(function (r) { r.onclick = function () { go(r.dataset.code); }; });
     }
+    var LAN_TIP = "Play without internet. Others on the same Wi-Fi join from a browser or the app. No Wi-Fi network? A Mac can make one with Internet Sharing.";
+    // An offline room's page (a phone): the room it came from, a name, Join
+    function renderLanForm() {
+      var saved = "";
+      try { saved = localStorage.getItem("qb-lan-name") || ""; } catch (e) {}
+      if (!myName || /^Player\d{4}$/.test(myName)) myName = saved || guestName();
+      var room = String(LAN_PAGE.room || "");
+      body.innerHTML =
+        '<div class="mp-lobby mp-lan-page"><div class="mp-lobby-main">' +
+          '<section class="mp-card mp-join-card mp-lan-card">' +
+            '<div class="mp-lan-head"><span class="mp-lan-ico" aria-hidden="true">' + WIFI_SVG + '</span><span class="eyebrow">Offline room</span><b class="mp-lan-code">' + esc(room.toUpperCase() || "Closed") + "</b>" +
+              (LAN_PAGE.host ? '<small>Hosted by ' + esc(LAN_PAGE.host) + "</small>" : "") + "</div>" +
+            '<label class="mp-field"><span>Your name</span><input id="mp-name" class="code-input mp-lan-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" enterkeyhint="go"></label>' +
+            '<label class="checkbox-row"><input type="checkbox" id="mp-spectate"> Join as spectator</label>' +
+            '<button type="button" class="btn btn-lg btn-go" id="mp-join"' + (room ? "" : " disabled") + ">Join room</button>" +
+          "</section>" +
+          '<div class="mp-status" id="mp-status">' + (room ? "" : "This room has closed.") + "</div>" +
+        "</div></div>";
+      var nameEl = body.querySelector("#mp-name"), joinBtn = body.querySelector("#mp-join");
+      var goLan = function () {
+        if (!room) return;
+        myName = nameEl.value.trim() || myName;
+        try { localStorage.setItem("qb-lan-name", myName); } catch (e) {}
+        mySpec = !!body.querySelector("#mp-spectate").checked;
+        lobby = room; dxMode = false;
+        join();
+      };
+      joinBtn.onclick = goLan;
+      nameEl.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); goLan(); } });
+    }
+    var WIFI_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><path d="M12 20h.01"/></svg>';
+    // the hosting app's room addresses (address:port), the first the likeliest
+    function lanAddrs() { return lan && lan.port ? (lan.addresses || []).map(function (a) { return a + ":" + lan.port; }) : []; }
+    // Invite players (the hosting app): the address as a QR code and as text. Opens by itself when the
+    // room is made, and from the room's Invite button.
+    function openLanInvite() {
+      if (!lan || !lan.key) return;
+      document.getElementById("mp-lan-invite")?.remove();
+      var addrs = lanAddrs(), main = addrs[0] || "";
+      var el = document.createElement("div");
+      el.id = "mp-lan-invite"; el.className = "qb-overlay confirm-overlay";
+      el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "mp-li-h");
+      el.innerHTML = '<div class="confirm-box mp-li-box">' +
+        '<div class="confirm-title" id="mp-li-h">Invite players <span class="qb-info" data-tip="' + esc("No Wi-Fi network? On a Mac, turn on Internet Sharing in System Settings > General > Sharing, sharing to Wi-Fi. Then join that network on the other devices.") + '">i</span></div>' +
+        (main
+          ? '<div class="mp-li-qr">' + qrSvg("http://" + main, 196) + "</div>" +
+            '<p class="mp-li-sub">On the same Wi-Fi, scan this or open the address in a browser.</p>' +
+            '<div class="mp-li-addr"><span class="mp-li-url">http://<b>' + esc(main) + '</b></span><button type="button" class="btn btn-sm" id="mp-li-copy">Copy</button></div>' +
+            (addrs.length > 1 ? '<p class="mp-li-more">Also at ' + addrs.slice(1).map(esc).join(", ") + "</p>" : "") +
+            '<p class="mp-li-app">In the app, type <b>' + esc(main) + "</b> where the room code goes.</p>"
+          : '<div class="mp-li-none">' + WIFI_SVG + "</div>" +
+            '<p class="mp-li-sub">This computer isn\u2019t on a network yet. Turn on Wi-Fi or Internet Sharing, then check again.</p>') +
+        '<div class="confirm-actions">' + (main ? "" : '<button type="button" class="btn" id="mp-li-again">Check again</button>') + '<button type="button" class="btn btn-primary" id="mp-li-ok">Done</button></div></div>';
+      var close = function () { if (window.qbAnimateRemove) window.qbAnimateRemove(el); else el.remove(); };
+      el.addEventListener("click", function (e) { if (e.target === el) close(); });
+      el.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } });
+      document.body.appendChild(el);
+      el.querySelector("#mp-li-ok").onclick = close;
+      var cp = el.querySelector("#mp-li-copy");
+      if (cp) cp.onclick = function () { var t = "http://" + main; if (window.qbCopyWithCheck) window.qbCopyWithCheck(cp, t); else { try { navigator.clipboard.writeText(t); } catch (e) {} } };
+      var again = el.querySelector("#mp-li-again");
+      if (again) again.onclick = function () {
+        again.disabled = true;
+        Promise.resolve(ctx.api.post("/api/lan/room", { room: lobby, name: myName })).then(function (r) {
+          if (r && r.ok && lan) { lan.addresses = r.addresses || []; if (r.key) lan.key = r.key; }
+          openLanInvite(); paintLanBadge();
+        }, function () { again.disabled = false; });
+      };
+      setTimeout(function () { el.querySelector("#mp-li-ok")?.focus({ preventScroll: true }); }, 30);
+    }
+    // the room's head: "Offline" (and the address the hosting app is at)
+    function paintLanBadge() {
+      var b = body && body.querySelector("#mp-lanbadge");
+      if (!b) return;
+      var main = lanAddrs()[0] || (lan && lan.addr) || (LAN_PAGE ? location.host : "");
+      b.innerHTML = WIFI_SVG + "<span>Offline" + (main ? " · " + esc(main) : "") + "</span>";
+    }
+
     // ── the shop: Buy a room / Your rooms ──
     var LOCK_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
     var shopInfo = null;
@@ -4259,7 +4511,7 @@ function __qbMain(ctx) {
     }
     function recentRooms() { try { var r = ctx.storage.get("recent"); return Array.isArray(r) ? r.slice(0, 6) : []; } catch (e) { return []; } }
     function rememberRoom() {
-      if (!lobby || inDiag()) return;   // a diagnostic room is opened from Clubs, not Recent rooms
+      if (!lobby || inDiag() || lan) return;   // a diagnostic room is opened from Clubs, an offline room by its address
       try {
         var list = recentRooms().filter(function (r) { return String(r.code).toLowerCase() !== lobby.toLowerCase(); });
         list.unshift({ code: lobby, at: Date.now(), players: order.filter(function (id) { return players[id] && !players[id].spec; }).length || 1, host: !!isHost });
@@ -4357,6 +4609,7 @@ function __qbMain(ctx) {
             '<button type="button" class="btn btn-ghost btn-icon btn-sm" id="mp-copy" title="Copy room code" aria-label="Copy room code"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>' +
             (inDiag() ? '<span class="badge rh-dx" id="mp-dxbadge">Diagnostic</span>' : "") +
             '<span class="badge rh-off" id="mp-offbadge" hidden></span>' +
+            (lan ? '<span class="badge rh-lan" id="mp-lanbadge"></span>' + (lan.key ? '<button type="button" class="btn btn-sm rh-invite" id="mp-lan-invite-btn">Invite</button>' : "") : "") +
             '<span class="badge rh-host" id="mp-hostbadge"' + (hostBadgeOn() ? "" : " hidden") + ">You host</span>" +
             '<span class="badge rh-own" id="mp-ownbadge" hidden></span>' +
             (mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
@@ -4429,8 +4682,13 @@ function __qbMain(ctx) {
       // the website copies the room's link (onlinequiz.net/multiplayer/<room>); the app, its code
       var webLink = !window.qbreader && window.QB_WEB;
       if (webLink) { var cb = body.querySelector("#mp-copy"); cb.title = "Copy room link"; cb.setAttribute("aria-label", "Copy room link"); }
+      if (lan) { var cbl = body.querySelector("#mp-copy"); cbl.title = "Copy the room\u2019s address"; cbl.setAttribute("aria-label", "Copy the room\u2019s address"); }
+      paintLanBadge();
+      var lib = body.querySelector("#mp-lan-invite-btn");
+      if (lib) lib.onclick = openLanInvite;
+      if (lan && lan.key && lan.fresh) { lan.fresh = false; setTimeout(openLanInvite, 250); }
       body.querySelector("#mp-copy").onclick = function () {
-        var text = webLink ? location.origin + "/multiplayer/" + encodeURIComponent(lobby) : String(lobby).toUpperCase();
+        var text = lan ? "http://" + (lanAddrs()[0] || lan.addr || location.host) : webLink ? location.origin + "/multiplayer/" + encodeURIComponent(lobby) : String(lobby).toUpperCase();
         if (window.qbCopyWithCheck) window.qbCopyWithCheck(this, text);   // a checkmark shows it worked
         else { try { navigator.clipboard.writeText(text); } catch (e) {} }
       };
@@ -5605,6 +5863,9 @@ function __qbMain(ctx) {
       bonusState = null; bonusView = null; bonusPending = false;
       try { if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); } } catch (e) {}
       ws = null; _relayConns = {};
+      if (lan && lan.key) { try { ctx.api.post("/api/lan/room", { stop: true }); } catch (e) {} }
+      if (!LAN_PAGE) lan = null;
+      document.getElementById("mp-lan-invite")?.remove();
       isHost = false; serverMode = false; current = null;
       players = {}; order = []; lobby = ""; qCount = 0; sessionLog = [];
       dxInfo = null; dxDone = null; dxMode = false; officialRoom = null;

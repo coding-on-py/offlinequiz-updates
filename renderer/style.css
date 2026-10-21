@@ -3163,6 +3163,12 @@ html[data-scheme="light"] .qchip { color: color-mix(in srgb, var(--c) 60%, #000)
 .modal-head { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; height: 60px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--line-soft); }
 .modal-head h2 { margin: 0; font-size: 16px; color: var(--strong); }
 .modal-foot { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 12px 16px; border-top: 1px solid var(--line-soft); }
+/* a footer with one button (Close) keeps it on the right, where a window's buttons end */
+.modal-foot:not(:has(> .btn ~ .btn)) > .btn { margin-left: auto; }
+.modal-foot:not(:has(> .btn ~ .btn)) > .spacer { display: none; }
+/* focus rings are for the keyboard: a window that focuses its button as it opens from a click shows none
+   (html.kb-nav: the last thing pressed was Tab) */
+html:not(.kb-nav) :is(.qb-overlay, .pop, [role="dialog"]) :is(.btn, button, a):focus-visible { outline: none; }
 
 /* settings */
 .set-modal { width: min(1000px, calc(96vw / var(--ui-zoom, 1))); height: min(720px, calc(92vh / var(--ui-zoom, 1))); max-height: none; }
@@ -4032,7 +4038,9 @@ html.web .set-nav-btn[data-sec="updates"], html.web #ovl-updates, html.web .set-
 .acct-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; }
 .acct-link:hover { text-decoration: underline; }
 .acct-err .acct-link { font-size: 13px; }
-.acct-actions { display: flex; justify-content: flex-end; gap: 10px; }
+/* a window's buttons share its whole width, like a confirm's */
+.acct-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 10px; margin-top: 2px; }
+.acct-actions > .btn { width: 100%; min-width: 0; min-height: 40px; margin: 0; padding: 0 14px; justify-content: center; white-space: nowrap; }
 .acct-email { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); color: var(--strong); font-size: 14px; word-break: break-all; }
 .acct-email svg { color: var(--muted); flex: 0 0 auto; }
 /* a screen showing the sign-in panel hides its page-head controls (Stats' period
@@ -4064,11 +4072,17 @@ html.web .set-name-row { display: none; }   /* the website's name is the account
 .acct-v small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
 .acct-row .fr-av { width: 30px; height: 30px; flex-basis: 30px; font-size: 13px; }
 .acct-row.checkbox-row { min-height: 48px; cursor: pointer; }
-.acct-actions { flex-wrap: wrap; }
+button.acct-row { width: 100%; border: 0; background: none; font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background 0.12s; }
+button.acct-row:first-child { border-radius: var(--r) var(--r) 0 0; }
+button.acct-row:last-child { border-radius: 0 0 var(--r) var(--r); }
+button.acct-row:only-child { border-radius: var(--r); }
+button.acct-row:hover { background: var(--raised); }
+.acct-nav > svg:last-child { flex: 0 0 auto; color: var(--muted); transition: transform 0.15s, color 0.15s; }
+.acct-nav:hover > svg:last-child { color: var(--strong); transform: translateX(2px); }
 .prompt-box { min-width: min(380px, calc(100vw - 32px)); }
 .prompt-box .mode-input { height: 40px; font-size: 14px; }
 .prompt-box:has(.prompt-note) { max-width: min(440px, calc(100vw - 32px)); }
-.prompt-note { margin: -4px 0 12px; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.prompt-note { margin: -4px 0 12px; color: var(--muted); font-size: 12.5px; line-height: 1.55; text-align: center; }
 /* every password box: a show / hide eye */
 .pw-wrap { position: relative; display: block; width: 100%; }
 .pw-wrap > input { width: 100%; padding-right: 40px !important; }
@@ -5774,7 +5788,7 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .trial-bar #tb-leave { margin-left: auto; }
 
 .ach-modal, .tp-modal { width: min(560px, calc(94vw / var(--ui-zoom, 1))); max-height: min(86vh, 760px); display: flex; flex-direction: column; }
-.achd-body { padding: 4px 20px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.achd-body { padding: 18px 20px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
 .achd-top { display: flex; align-items: flex-start; gap: 14px; }
 .achd-icon .achievement-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; background: var(--surface-2); color: var(--muted); font-size: 24px; }
 .achd-top.earned .achd-icon .achievement-icon { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
@@ -5840,6 +5854,16 @@ html.hw body { background: radial-gradient(1200px 500px at 50% -180px, rgba(255,
 .hw-o .hw-pumpkin { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 4px rgba(255, 122, 26, 0.5)); }
 .hw-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* bats across the top, once a visit */
+/* Halloween's light/dark switch: lightning (app.js hwLightning) */
+.hw-storm { position: fixed; inset: 0; z-index: 100000; pointer-events: none; }
+.hw-storm canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hw-flash { position: absolute; inset: 0; opacity: 0; will-change: opacity;
+  background: radial-gradient(130% 95% at var(--sx, 50%) 0%, rgba(240, 234, 255, 0.5), rgba(160, 130, 255, 0.2) 50%, rgba(70, 40, 140, 0.1));
+  -webkit-backdrop-filter: brightness(2.2) saturate(0.35) contrast(1.12); backdrop-filter: brightness(2.2) saturate(0.35) contrast(1.12); }
+html.hw .tb-scheme.hw-zap { color: #fff; filter: drop-shadow(0 0 6px rgba(200, 180, 255, 0.95)); }
+.tb-scheme.hw-spin svg:not([hidden]) { animation: hw-switch 0.5s cubic-bezier(0.3, 1.5, 0.5, 1); }
+@keyframes hw-switch { from { transform: rotate(-140deg) scale(0.3); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .tb-scheme.hw-spin svg:not([hidden]) { animation: none; } }
 .hw-bats { position: fixed; left: 0; right: 0; top: 0; height: 170px; z-index: 60; overflow: hidden; pointer-events: none; }
 .hw-bat { position: absolute; left: -70px; width: 46px; color: #6a4a8c; opacity: 0; animation: hw-fly 7s ease-in-out forwards; }
 .hw-bat svg { display: block; width: 100%; height: auto; filter: drop-shadow(0 0 3px rgba(255, 140, 60, 0.45)); animation: hw-flap 0.26s ease-in-out infinite alternate; transform-origin: center; }
@@ -6120,25 +6144,68 @@ button.adm-rwho:hover { background: var(--surface-2); border-color: var(--line);
 .rg-big b { font-size: 52px; line-height: 1; font-weight: 800; letter-spacing: -0.02em; color: var(--green, var(--accent)); text-shadow: 0 0 28px color-mix(in srgb, var(--green, var(--accent)) 35%, transparent); }
 .rg-big span { margin-top: 6px; color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
 .rg-sub { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
-.rg-facts { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); margin: 4px 24px 0; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
-.rg-fact { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 6px; min-width: 0; }
-.rg-fact + .rg-fact { border-left: 1px solid var(--line); }
-.rg-fact b { color: var(--strong); font-size: 20px; line-height: 1.2; }
+/* what changed, one tile each: a coloured mark, the number, what it is */
+.rg-facts { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 8px; margin: 6px 24px 0; }
+.rg-fact { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; padding: 14px 6px 12px; border: 1px solid color-mix(in srgb, var(--tone) 26%, var(--line-soft)); border-radius: var(--r); background: linear-gradient(180deg, color-mix(in srgb, var(--tone) 11%, var(--surface)), var(--surface) 75%); }
+.rg-fic { display: grid; place-items: center; width: 30px; height: 30px; margin-bottom: 4px; border-radius: 50%; color: var(--tone); background: color-mix(in srgb, var(--tone) 17%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 6%, transparent); }
+.rg-fact b { color: var(--strong); font-size: 22px; line-height: 1.1; font-weight: 800; }
 .rg-fact small { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.rg-trials-sec { margin: 18px 24px 0; text-align: left; }
-.rg-trials-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 8px; }
+.rg-trials-sec { margin: 20px 24px 0; text-align: left; }
+.rg-trials-head { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 10px; }
 .rg-trials-head span { color: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
-.rg-trials-head b { color: var(--strong); font-size: 13px; }
-.rg-trials { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.rg-trial { display: flex; align-items: center; gap: 12px; padding: 9px 12px 9px 9px; border: 1px solid var(--line-soft); border-radius: var(--r); background: color-mix(in srgb, var(--surface) 70%, transparent); }
-.rg-trial.passed { border-color: color-mix(in srgb, var(--green, var(--accent)) 45%, var(--line)); background: color-mix(in srgb, var(--green, var(--accent)) 9%, var(--surface)); }
-.rg-lv { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: color-mix(in srgb, var(--hue) 20%, var(--surface)); border: 1px solid color-mix(in srgb, var(--hue) 45%, transparent); color: var(--hue); font-size: 13px; font-weight: 800; letter-spacing: 0.02em; }
-.rg-tname { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.rg-trials-head b { padding: 2px 9px; border-radius: 999px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); font-size: 12.5px; font-weight: 700; }
+.rg-trials { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.rg-trial { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 10px; border: 1px solid var(--line-soft); border-radius: var(--r); background: var(--surface); overflow: hidden; }
+.rg-trial::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--hue); opacity: 0.85; }
+.rg-trial.passed { border-color: color-mix(in srgb, var(--green, var(--accent)) 40%, var(--line)); background: linear-gradient(90deg, color-mix(in srgb, var(--green, var(--accent)) 10%, var(--surface)), var(--surface) 80%); }
+.rg-trial.passed::before { background: var(--green, var(--accent)); }
+.rg-lv { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin-left: 2px; border-radius: 10px; background: linear-gradient(160deg, color-mix(in srgb, var(--hue) 28%, var(--surface)), color-mix(in srgb, var(--hue) 10%, var(--surface))); border: 1px solid color-mix(in srgb, var(--hue) 45%, transparent); color: var(--hue); font-size: 13px; font-weight: 800; letter-spacing: 0.02em; }
+.rg-tname { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .rg-tname b { color: var(--strong); font-size: 13.5px; }
-.rg-tname small { margin-top: 1px; font-size: 12px; line-height: 1.4; }
+.rg-tname small { font-size: 12px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rg-tname .rg-passed { display: inline-flex; align-items: center; gap: 4px; color: var(--green, var(--accent)); font-weight: 600; }
-.rg-tname .rg-next { color: var(--muted); }
-.rg-txp { flex: none; color: var(--strong); font-size: 13px; font-weight: 600; }
-.rg-trial.passed .rg-txp { color: var(--green, var(--accent)); }
+.rg-tname .rg-passed svg { flex: none; }
+.rg-tname .rg-next { color: var(--muted); font-weight: 400; }
+.rg-txp { flex: none; padding: 3px 9px; border-radius: 999px; background: var(--raised, var(--surface-2)); color: var(--strong); font-size: 12.5px; font-weight: 700; }
+.rg-trial.passed .rg-txp { color: var(--green, var(--accent)); background: color-mix(in srgb, var(--green, var(--accent)) 15%, transparent); }
 .rg-ok { display: block; width: calc(100% - 48px); margin: 20px 24px 0; height: 42px; font-size: 14px; }
 @media (max-width: 600px) { .rg-big b { font-size: 44px; } .rg-hero { padding: 22px 18px 14px; } .rg-facts, .rg-trials-sec { margin-left: 18px; margin-right: 18px; } .rg-ok { width: calc(100% - 36px); margin: 18px 18px 0; } }
+
+/* ═══ Offline rooms (15.17, multiplayer.js) ═══ */
+.mp-offline-note { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12.5px; }
+.mp-lan-join { width: 100%; max-width: 520px; align-self: center; min-height: 0; gap: 12px; padding: 20px 24px; }
+.mp-lan-join h2 { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: normal; text-transform: none; }
+.mp-lan-join-row { display: flex; gap: 10px; }
+.mp-lan-join-row .code-input { flex: 1 1 auto; min-width: 0; height: 48px; font-size: 18px; letter-spacing: 0.04em; text-transform: none; }
+.mp-lan-join-row .code-input::placeholder { letter-spacing: 0.04em; }
+.mp-lan-join-row .btn { flex: 0 0 auto; height: 48px; padding: 0 22px; }
+#mp-lan-row .qb-info { margin-left: 2px; }
+#mp-lan-row:has(input:disabled) { cursor: default; }
+/* the room's head: Offline · address, and Invite (the hosting app) */
+.rh-lan { display: inline-flex; align-items: center; gap: 5px; background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
+.rh-lan:empty { display: none; }
+.rh-lan svg { width: 13px; height: 13px; flex: none; }
+.rh-invite { height: 28px; padding: 0 12px; }
+/* Invite players */
+.mp-li-box { width: min(380px, calc(100vw - 32px)); text-align: center; align-items: stretch; }
+.mp-li-box .confirm-title { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.mp-li-qr { align-self: center; margin: 8px 0 4px; padding: 10px; border-radius: var(--r); background: #fff; box-shadow: 0 0 0 1px var(--line), 0 8px 28px rgba(0, 0, 0, 0.25); line-height: 0; }
+.mp-li-qr svg { display: block; width: 196px; height: 196px; }
+.mp-li-sub { margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.mp-li-addr { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; padding: 8px 8px 8px 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--sunken); }
+.mp-li-url { min-width: 0; overflow-wrap: anywhere; text-align: left; color: var(--muted); font-size: 14px; }
+.mp-li-url b { color: var(--strong); }
+.mp-li-more, .mp-li-app { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.mp-li-app b { color: var(--strong); }
+.mp-li-none { align-self: center; display: grid; place-items: center; width: 64px; height: 64px; margin: 6px 0; border-radius: 50%; color: var(--muted); background: var(--surface); }
+.mp-li-none svg { width: 28px; height: 28px; }
+/* an offline room's page (a phone, html.lan): the room, a name, Join; nothing else of the app */
+.mp-lan-card { gap: 16px; }
+.mp-lan-head { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+.mp-lan-ico { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 6px; border-radius: 14px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.mp-lan-code { color: var(--strong); font-size: 26px; font-weight: 800; letter-spacing: 0.12em; overflow-wrap: anywhere; }
+.mp-lan-head small { color: var(--muted); font-size: 13px; }
+.mp-lan-name { height: 52px; font-size: 20px; letter-spacing: 0.02em; text-transform: none; }
+html.lan .tb-right > :not(#tb-scheme) { display: none !important; }
+html.lan .ext-page-home, html.lan .page-head .top-bar-right > [id$="-home"], html.lan #title-screen { display: none !important; }
+html.lan .mp-lan-page .mp-lobby-main { min-height: 0; }

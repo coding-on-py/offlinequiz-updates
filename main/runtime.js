@@ -11,9 +11,12 @@
  * `env` object the bootstrap passes in, so this file resolves cleanly whether
  * it is loaded from inside the asar or from the overlay directory.
  */
-import { join, dirname } from "node:path";
+import { join, dirname, normalize, sep, extname } from "node:path";
 import { pickDbPath } from "./updater.js";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
+import { createServer } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
+import { networkInterfaces } from "node:os";
 
 export async function start(env) {
   const { app, BrowserWindow, ipcMain, Menu, dialog, appUpdater, isDev, App, paths } = env;
@@ -22,6 +25,9 @@ export async function start(env) {
 
   let mainWindow = null;
   let qbApp = null;
+  // an offline room's server (lanRoomServer below): the window's renderer files, then the bundled ones
+  const lan = lanRoomServer({ dirs: [], app: null });
+  let lanDirs = null;
 
   // A question database downloaded by the in-app updater lives in userData
   // (writable, survives reinstalling the app) and is used over the copy
@@ -144,6 +150,17 @@ export async function start(env) {
   }
 
   function registerIpc() {
+    // offline rooms: open this computer's room (its addresses and the host's key), close it
+    ipcMain.handle("lan-room", async (_e, d = {}) => {
+      if (d && d.stop) return lan.stop();
+      if (!lanDirs) {
+        let idx = BUNDLED_INDEX;
+        try { if (!isDev) idx = appUpdater.overlayRendererIndex(OVERLAY_DIR) || BUNDLED_INDEX; } catch (e) {}
+        lanDirs = [dirname(idx), dirname(BUNDLED_INDEX)];
+        lan.setup({ dirs: lanDirs, app: qbApp });
+      }
+      return lan.start({ room: d && d.room, name: d && d.name });
+    });
     ipcMain.handle("get-sets", () => {
       return { sets: qbApp.getSets() };
     });
@@ -497,9 +514,213 @@ export async function start(env) {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
   app.on("window-all-closed", () => {
+    try { lan.stop(); } catch (e) {}
     if (qbApp) qbApp.close();
     app.quit();
   });
+}
+
+// ── Offline rooms (15.17): a multiplayer room on the local network, no internet ──
+// The host's app serves the room itself: a page server for phones and laptops without the app (they open
+// http://<this computer>:<port> and get this same renderer, told by window.QB_LAN which room to join) and a
+// relay at /lobby/<room> that speaks relay/worker.js's protocol, so multiplayer.js plays it like an online
+// relay room with this app as the host (it alone serves and judges the questions). Only the connection that
+// brings the room's key can be the host: a phone is never handed the host role, and when the host is gone for
+// good (FORGET_MS) the room closes. Nothing here reads or writes anyone's data: the pages get the app's files,
+// the category tree and the set list.
+const LAN_PORTS = [4747, 4748, 4749, 4750, 4751, 4752, 4753, 4754, 4755, 4756];
+const LAN_TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".txt": "text/plain; charset=utf-8", ".webp": "image/webp" };
+// this computer's addresses others can reach: Internet Sharing's bridge first (a Mac sharing its Wi-Fi), then
+// Wi-Fi / Ethernet; tunnels, VMs and link-local addresses left out
+export function lanAddresses() {
+  const out = [];
+  let ifs = {};
+  try { ifs = networkInterfaces(); } catch (e) {}
+  for (const [name, list] of Object.entries(ifs)) {
+    for (const a of list || []) {
+      if ((a.family !== "IPv4" && a.family !== 4) || a.internal || /^169\.254\./.test(a.address)) continue;
+      out.push({ name, address: a.address });
+    }
+  }
+  const rank = (n) => (/^bridge/i.test(n) ? 0 : /^(en0|wlan|wi-?fi|wl)/i.test(n) ? 1 : /^(en|eth)/i.test(n) ? 2 : /^(utun|tun|tap|awdl|llw|vbox|vmnet|docker|veth|br-|virbr|zt|tailscale)/i.test(n) ? 9 : 5);
+  return out.filter((a) => rank(a.name) < 9).sort((a, b) => rank(a.name) - rank(b.name)).map((a) => a.address);
+}
+// A WebSocket over a raw socket (RFC 6455, text messages, ping/pong): enough for the relay, no dependency.
+function wsUpgrade(req, socket, head) {
+  const key = req.headers["sec-websocket-key"];
+  if (!key || String(req.headers.upgrade || "").toLowerCase() !== "websocket") { socket.destroy(); return null; }
+  const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+  socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
+  try { socket.setNoDelay(true); socket.setKeepAlive(true, 20000); } catch (e) {}
+  const frame = (op, data) => {
+    const len = data.length;
+    let h;
+    if (len < 126) { h = Buffer.alloc(2); h[1] = len; }
+    else if (len < 65536) { h = Buffer.alloc(4); h[1] = 126; h.writeUInt16BE(len, 2); }
+    else { h = Buffer.alloc(10); h[1] = 127; h.writeUInt32BE(Math.floor(len / 2 ** 32), 2); h.writeUInt32BE(len >>> 0, 6); }
+    h[0] = 0x80 | op;
+    return Buffer.concat([h, data]);
+  };
+  let buf = head && head.length ? Buffer.from(head) : Buffer.alloc(0), parts = [], open = true, seen = Date.now();
+  const conn = {
+    onmessage: null, onclose: null,
+    send(text) { if (open) try { socket.write(frame(0x1, Buffer.from(String(text), "utf8"))); } catch (e) {} },
+    close() { if (!open) return; try { socket.write(frame(0x8, Buffer.from([0x03, 0xe8]))); } catch (e) {} gone(); },
+  };
+  const gone = () => {
+    if (!open) return;
+    open = false; clearInterval(ping);
+    try { socket.end(); } catch (e) {}
+    setTimeout(() => { try { socket.destroy(); } catch (e) {} }, 1000);
+    try { conn.onclose && conn.onclose(); } catch (e) {}
+  };
+  // a phone that went to sleep can leave its socket open but dead: a ping every 20 s, gone after 60 s of silence
+  const ping = setInterval(() => {
+    if (Date.now() - seen > 60000) { gone(); return; }
+    try { socket.write(frame(0x9, Buffer.alloc(0))); } catch (e) {}
+  }, 20000);
+  const parse = () => {
+    while (open && buf.length >= 2) {
+      const b0 = buf[0], b1 = buf[1], fin = b0 & 0x80, op = b0 & 0x0f, masked = b1 & 0x80;
+      let len = b1 & 0x7f, off = 2;
+      if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); off = 4; }
+      else if (len === 127) { if (buf.length < 10) return; len = buf.readUInt32BE(2) * 2 ** 32 + buf.readUInt32BE(6); off = 10; }
+      if (len > 8 * 1024 * 1024) { gone(); return; }
+      const mk = off;
+      if (masked) off += 4;
+      if (buf.length < off + len) return;
+      let data = Buffer.from(buf.subarray(off, off + len));
+      if (masked) for (let i = 0; i < data.length; i++) data[i] ^= buf[mk + (i & 3)];
+      buf = buf.subarray(off + len);
+      if (op === 0x8) { try { socket.write(frame(0x8, Buffer.alloc(0))); } catch (e) {} gone(); return; }
+      if (op === 0x9) { try { socket.write(frame(0xa, data)); } catch (e) {} continue; }
+      if (op === 0xa) continue;
+      parts.push(data);
+      if (fin) { const text = Buffer.concat(parts).toString("utf8"); parts = []; try { conn.onmessage && conn.onmessage(text); } catch (e) {} }
+    }
+  };
+  socket.on("data", (d) => { seen = Date.now(); buf = buf.length ? Buffer.concat([buf, d]) : d; parse(); });
+  socket.on("close", gone);
+  socket.on("error", gone);
+  if (buf.length) parse();
+  return conn;
+}
+// one room at a time (the host's), relay/worker.js's Lobby without the host hand-over
+export function lanRoomServer(cfg = {}) {
+  cfg = { dirs: [], app: null, ...cfg };
+  let server = null, port = 0, room = "", key = "", lobbyName = "", forgetT = null, hostName = "";
+  const peers = new Map();   // id -> { conn, host, joined }
+  const FORGET_MS = 30000;
+  const send = (p, obj) => p.conn.send(typeof obj === "string" ? obj : JSON.stringify(obj));
+  const file = (rel) => {
+    rel = decodeURIComponent(rel.split("?")[0]).replace(/^\/+/, "") || "index.html";
+    const clean = normalize(rel);
+    if (clean.startsWith("..") || clean.includes(".." + sep) || /^[a-z]:/i.test(clean) || clean.startsWith(sep)) return null;
+    for (const d of cfg.dirs || []) {
+      if (!d) continue;
+      const f = join(d, clean);
+      try { if (statSync(f).isFile()) return f; } catch (e) {}
+    }
+    return null;
+  };
+  const onRequest = (req, res) => {
+    const url = String(req.url || "/");
+    const path = url.split("?")[0];
+    const head = { "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" };
+    if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405, head); res.end(); return; }
+    // what another app asks before it joins: is this an OfflineQuiz room, and which
+    if (path === "/lan.json") { res.writeHead(200, { ...head, "Content-Type": "application/json" }); res.end(JSON.stringify({ app: "offlinequiz", v: 1, room, host: hostName, open: !!room })); return; }
+    // the little the pages read from the question database
+    if (path === "/api/category-tree" || path === "/api/sets") {
+      let body = {};
+      try {
+        const type = new URL(url, "http://x").searchParams.get("type") || "tossups";
+        const app = cfg.app;
+        body = !app ? {} : path === "/api/sets" ? { sets: app.getSets() } : { tree: app.getCategoryTree(type) };
+      } catch (e) {}
+      res.writeHead(200, { ...head, "Content-Type": "application/json" }); res.end(JSON.stringify(body)); return;
+    }
+    if (path.startsWith("/api/")) { res.writeHead(200, { ...head, "Content-Type": "application/json" }); res.end("{}"); return; }
+    const f = file(path === "/" ? "index.html" : path);
+    if (!f) { res.writeHead(404, head); res.end("Not found"); return; }
+    let data;
+    try { data = readFileSync(f); } catch (e) { res.writeHead(404, head); res.end(); return; }
+    if (/index\.html$/.test(f)) {
+      // the page joins this room: its address, and which room (before any other script runs)
+      const inject = "<script>window.QB_LAN = " + JSON.stringify({ room, host: hostName }).replace(/</g, "\\u003c") + ";</script>";
+      data = Buffer.from(String(data).replace(/<head[^>]*>/i, (m) => m + inject), "utf8");
+    }
+    res.writeHead(200, { ...head, "Content-Type": LAN_TYPES[extname(f).toLowerCase()] || "application/octet-stream" });
+    res.end(req.method === "HEAD" ? undefined : data);
+  };
+  const onUpgrade = (req, socket, head) => {
+    const u = new URL(String(req.url || "/"), "http://x");
+    const m = /^\/lobby\/([^/]+)$/.exec(u.pathname);
+    if (!m || !room || decodeURIComponent(m[1]) !== lobbyName) { socket.destroy(); return; }
+    const conn = wsUpgrade(req, socket, head);
+    if (!conn) return;
+    const asHost = !!key && u.searchParams.get("key") === key && ![...peers.values()].some((p) => p.host);
+    const id = randomBytes(4).toString("hex");
+    const me = { conn, host: asHost, joined: Date.now() };
+    const others = peers.size;
+    peers.set(id, me);
+    if (asHost) clearTimeout(forgetT);
+    send(me, { t: "welcome", id, host: asHost, peers: others });
+    conn.onmessage = (raw) => {
+      let msg;
+      try { msg = JSON.parse(raw); } catch (e) { return; }
+      if (!msg || msg.d === undefined) return;
+      const out = JSON.stringify({ t: "msg", from: id, host: me.host, d: msg.d });
+      if (msg.to === "host") { for (const p of peers.values()) if (p.host) { send(p, out); break; } }
+      else if (msg.to === "all") { for (const p of peers.values()) if (p !== me) send(p, out); }
+      else if (typeof msg.to === "string") { const p = peers.get(msg.to); if (p) send(p, out); }
+    };
+    conn.onclose = () => {
+      peers.delete(id);
+      if (!me.host) { for (const p of peers.values()) send(p, { t: "peerleft", id }); return; }
+      // the host's page dropped (a reload, a hiccup): its seat waits a while, then the room closes
+      clearTimeout(forgetT);
+      forgetT = setTimeout(() => { if (![...peers.values()].some((p) => p.host)) stop(); }, FORGET_MS);
+    };
+  };
+  const listen = (p) => new Promise((resolve) => {
+    const srv = createServer(onRequest);
+    srv.on("upgrade", onUpgrade);
+    srv.once("error", () => resolve(null));
+    srv.listen(p, "0.0.0.0", () => resolve(srv));
+  });
+  async function start(opts = {}) {
+    // multiplayer.js lobbyId's spelling of the code
+    const want = String(opts.room || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32);
+    if (!want) return { error: "Give the room a code." };
+    hostName = String(opts.name || "").slice(0, 40);
+    // another room: everyone in the old one is let go and it gets a new key (the same room keeps its key, so
+    // its host can reconnect)
+    if (!server || room !== want) {
+      for (const p of peers.values()) p.conn.close();
+      peers.clear();
+      key = randomBytes(12).toString("hex");
+    }
+    room = want;
+    lobbyName = "offlinequiz-mp-" + want;
+    if (!server) {
+      for (const p of [...(opts.port ? [Number(opts.port)] : []), ...LAN_PORTS]) { server = await listen(p); if (server) { port = p; break; } }
+      if (!server) { server = await listen(0); if (server) port = server.address().port; }
+      if (!server) return { error: "Couldn't open the room on this computer." };
+    }
+    return info();
+  }
+  function info() { return server ? { ok: true, room, port, key, addresses: lanAddresses() } : { ok: false }; }
+  function stop() {
+    clearTimeout(forgetT);
+    for (const p of peers.values()) { try { p.conn.close(); } catch (e) {} }
+    peers.clear();
+    room = ""; key = ""; lobbyName = "";
+    if (server) { try { server.close(); server.closeAllConnections?.(); } catch (e) {} }
+    server = null; port = 0;
+    return { ok: true };
+  }
+  return { start, stop, setup: (o) => { Object.assign(cfg, o || {}); }, info: () => (server ? { ...info(), key: undefined } : { ok: false }) };
 }
 
 // scripts/make-icons.py writes this line (the macOS icon, 512 px PNG)
