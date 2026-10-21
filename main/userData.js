@@ -11,8 +11,8 @@ import { existsSync, mkdirSync } from "node:fs";
 // halves of POST /api/sync — the app sends what changed since its last push and
 // applies what the server returns; the server does the same on the account's
 // own database. The newest mtime wins (review dismissals merge instead).
-const SYNC_KEY = /^(settings|review_dismissed|review_manual|trials|plug):/;
-const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials)$|^plug:[^:]+:.+$/;
+const SYNC_KEY = /^(settings|review_dismissed|review_manual|trials|overrides|plug):/;
+const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials|overrides)$|^plug:[^:]+:.+$/;
 const MAX_SYNC_VALUE = 900 * 1024;   // a bigger config value stays on its device
 const sessionKey = (r) => JSON.stringify([String(r.session_id), String(r.type), r.question_id == null ? "" : String(r.question_id), Number(r.timestamp)]);
 
@@ -222,7 +222,7 @@ export class UserData {
       ...this.db.prepare("SELECT question_id, type, starred_at, mtime, seq, src FROM starred WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n").all(p).map((r) => ({ k: "r", ...r })),
       ...this.db.prepare("SELECT kind, key, mtime, seq, src FROM sync_tomb WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n").all(p).map((r) => ({ k: "t", ...r })),
       ...this.db.prepare(`SELECT m.key, m.mtime, m.seq, m.src, c.value FROM sync_meta m JOIN config c ON c.key = m.key
-          WHERE m.seq > :since AND (m.key IN ('settings:' || :pid, 'review_dismissed:' || :pid, 'review_manual:' || :pid, 'trials:' || :pid) OR m.key LIKE 'plug:' || :pid || ':%')
+          WHERE m.seq > :since AND (m.key IN ('settings:' || :pid, 'review_dismissed:' || :pid, 'review_manual:' || :pid, 'trials:' || :pid, 'overrides:' || :pid) OR m.key LIKE 'plug:' || :pid || ':%')
           ORDER BY m.seq LIMIT :n`).all(p).map((r) => ({ k: "c", ...r })),
     ].sort((a, b) => a.seq - b.seq);
     const out = [];
@@ -330,6 +330,17 @@ export class UserData {
             // the sender lacks some of these: the merged list goes back to it
             // (the app pushes it; the server stops treating it as the sender's)
             if (Object.keys(merged).length > Object.keys(theirs).length) { seq = this._nextSeq(); from = null; }
+          } else if (name === "overrides") {
+            // answers marked right or wrong by hand (15.12): the union (a regrade never touches one of them)
+            let mine = [], theirs = [];
+            try { mine = JSON.parse(this.getConfig(key) || "[]") || []; } catch {}
+            try { theirs = JSON.parse(value) || []; } catch { continue; }
+            if (!Array.isArray(mine)) mine = [];
+            if (!Array.isArray(theirs)) continue;
+            const merged = [...new Set([...mine, ...theirs].map(String))].slice(-20000);
+            value = JSON.stringify(merged);
+            mtime = Math.max(mt, meta ? meta.mtime : 0);
+            if (merged.length > theirs.length) { seq = this._nextSeq(); from = null; }
           } else if (name === "trials") {
             // trials merge per trial: the last start, the first pass and the last pass (a badge is never lost)
             let mine = {}, theirs = {};
@@ -630,7 +641,8 @@ export class UserData {
     const row = this.db.prepare(
       "SELECT id FROM sessions WHERE session_id = :s AND question_id = :q AND profile_id = :p ORDER BY timestamp DESC LIMIT 1"
     ).get({ s: entry.session_id || "default", q: entry.question_id || null, p: pid });
-    if (!row) return this.addSessionEntry(entry);
+    if (!row) { const r = this.addSessionEntry(entry); this._noteOverride(r && r.lastInsertRowid); return r; }
+    this._noteOverride(row.id);
     return this.db.prepare(
       "UPDATE sessions SET correct = :c, points = :pt, celerity = :cel, buzz_position = :bp, given_answer = :ga, mtime = :mt, seq = :seq, src = NULL WHERE id = :id"
     ).run({
@@ -644,6 +656,38 @@ export class UserData {
       id: row.id,
     });
   }
+
+  // 15.12: an answer marked right or wrong by hand, remembered (synced) so a regrade never changes it
+  _noteOverride(rowId) {
+    if (rowId == null) return;
+    const r = this.db.prepare("SELECT session_id, type, question_id, timestamp FROM sessions WHERE id = ?").get(Number(rowId));
+    if (!r) return;
+    const key = "overrides:" + this.getActiveProfileId();
+    let list = []; try { list = JSON.parse(this.getConfig(key) || "[]") || []; } catch {}
+    if (!Array.isArray(list)) list = [];
+    const k = sessionKey(r);
+    if (!list.includes(k)) { list.push(k); this.setConfig(key, JSON.stringify(list.slice(-20000))); }
+  }
+  overriddenKeys() {
+    let list = []; try { list = JSON.parse(this.getConfig("overrides:" + this.getActiveProfileId()) || "[]") || []; } catch {}
+    return new Set(Array.isArray(list) ? list.map(String) : []);
+  }
+  // 15.12 regrades: this profile's tossups marked wrong with a typed answer (negs and wrong answers at the end)
+  regradeCandidates() {
+    return this.db.prepare(`SELECT id, session_id, type, question_id, points, correct, celerity, buzz_position, given_answer, timestamp FROM sessions
+      WHERE profile_id = ? AND type = 'tossup' AND correct = 0 AND question_id IS NOT NULL AND given_answer IS NOT NULL AND TRIM(given_answer) != ''`).all(this.getActiveProfileId());
+  }
+  // the tossups answered from `from` to `to` (a trial attempt's window), in order
+  tossupsBetween(from, to) {
+    return this.db.prepare(`SELECT id, session_id, type, question_id, points, correct, given_answer, buzz_position, timestamp FROM sessions
+      WHERE profile_id = ? AND type = 'tossup' AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp, id`).all(this.getActiveProfileId(), Number(from), Number(to));
+  }
+  // a regraded answer: right now, with its new points (synced like any change)
+  applyRegrade(rowId, points, celerity) {
+    return this.db.prepare("UPDATE sessions SET correct = 1, points = ?, celerity = ?, mtime = ?, seq = ?, src = NULL WHERE id = ? AND correct = 0")
+      .run(Number(points), celerity == null ? null : Number(celerity), Date.now(), this._nextSeq(), Number(rowId));
+  }
+  sessionKeyOf(r) { return sessionKey(r); }
 
   getSessionHistory(filters = {}) {
     const pid = this.getActiveProfileId();

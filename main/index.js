@@ -56,6 +56,9 @@ const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3;
 // again after its cooldown, counted from the last attempt: none for I, 5 min for II–III, 10 min for IV–X.
 // (app.js trialXp / trialCooldownMs are the same.)
 export const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
+// 15.12 regrades: bump when a checker fix (or a corrected database) should look at old wrong answers again. A run is
+// keyed by this and the question database's build, so a new database re-runs it too (only answers still wrong).
+export const REGRADE_V = "15.12";
 export const trialXp = (level, powers) => { const p = Math.max(0, Math.min(TRIAL_LEN, parseInt(powers, 10) || 0)); return Math.round(p * 10 * level * (p >= 10 ? 2.5 : p >= 6 ? 1.5 : p >= 5 ? 1.25 : 1)); };
 
 function apFold(s) {
@@ -1159,6 +1162,98 @@ export class App {
       return { ok: true, xp, passed: p >= TRIAL_LEN, trials: all, cooldownUntil: cd ? now + cd : 0 };
     }
     throw Object.assign(new Error("Unknown trial action."), { status: 400 });
+  }
+
+  // ── Regrades (15.12): answers the checker marked wrong that it accepts now (a checker fix, a corrected answer
+  // line, a new alternate name). Once per REGRADE_V and question database, on this profile's saved tossups marked
+  // wrong with a typed answer (negs, and wrong answers at the end of the question): each is judged again at its own
+  // buzz (the profile's strictness; a trial's at 10, as trials play), and one that's right now is written right with
+  // the points it earns there (synced like any change). Never a downgrade, never an answer marked by hand
+  // (userData overriddenKeys), never multiplayer (not saved here). A trial that ended on such an answer counts it
+  // as powered and ends there: the attempt's XP becomes one more power's, and a tenth passes the level.
+  // → { ok, already? , regraded, points, negs, powers, trials: [{ key, name, level, xp, passed }], xp }
+  async regrade(opts = {}) {
+    const pid = this.userData.getActiveProfileId();
+    let built = "0"; try { built = String((this.questionDb.getMeta && this.questionDb.getMeta("built_at")) || "0"); } catch {}
+    const doneKey = "regrade:" + pid, stamp = REGRADE_V + "|" + built;
+    if (!opts.force && this.userData.getConfig(doneKey) === stamp) return { ok: true, already: true };
+    if (this._regradeP) return this._regradeP;
+    this._regradeP = this._regradeRun(pid, doneKey, stamp).finally(() => { this._regradeP = null; });
+    return this._regradeP;
+  }
+  async _regradeRun(pid, doneKey, stamp) {
+    const U = this.userData, skip = U.overriddenKeys();
+    const tossups = new Map(), tossupOf = (id) => {
+      if (!tossups.has(id)) { let t = null; try { t = this.questionDb.getTossup(id) || null; } catch {} tossups.set(id, t); if (tossups.size > 20000) tossups.clear(); }
+      return tossups.get(id);
+    };
+    let strict = 10;
+    try { const ps = U.getProfileSettings(); const v = Number(ps && ps.settings && ps.settings.strictness); if (v >= 0 && v <= 20) strict = v; } catch {}
+    // the trial attempts that ended on a wrong answer: which answer, at which powers
+    const { t: trials } = this._trialsOf(), trialRow = new Map();
+    for (const [key, tr] of Object.entries(trials)) {
+      const [ck, lv] = key.split("|"), level = parseInt(lv, 10), cat = TRIAL_CATS.find((c) => c[0] === ck);
+      if (!cat || !(level >= 1) || !tr || !tr.a || typeof tr.a !== "object") continue;
+      for (const [ts, xp] of Object.entries(tr.a)) {
+        const powers = Array.from({ length: TRIAL_LEN + 1 }, (_, p) => p).find((p) => trialXp(level, p) === Number(xp));
+        if (powers == null || powers >= TRIAL_LEN) continue;
+        const start = Number(ts), fits = (r) => { const q = tossupOf(r.question_id); return !!q && Number(q.difficulty) === level && (q.category === cat[2] || String(q.category_path || "").split(" > ")[0] === cat[2]); };
+        const after = U.tossupsBetween(start, start + 3 * 3600e3);
+        const first = after.find(fits); if (!first) continue;
+        const run = after.filter((r) => r.session_id === first.session_id).slice(0, TRIAL_LEN);
+        if (!run.every(fits)) continue;
+        // the attempt as recorded: `powers` powers, then the answer that ended it
+        const lead = run.findIndex((r) => !(Number(r.points) >= 15));
+        if (lead !== powers || !run[lead]) continue;
+        trialRow.set(run[lead].id, { key, level, start, powers, name: cat[1] });
+      }
+    }
+    // a cheap look first: an answer sharing nothing with the answer line or its alternate names can't be right now
+    const near = (resp, q) => {
+      const r = normalizeText(String(resp || ""));
+      if (!r) return false;
+      if (/\d/.test(r)) return true;
+      let hidden = ""; try { const h = this.questionDb.getHiddenAnswers ? this.questionDb.getHiddenAnswers(q.id) : null; hidden = h ? JSON.stringify(h) : ""; } catch {}
+      const L = normalizeText(String(q.answer_sanitized || "") + " " + hidden);
+      return r.split(" ").some((w) => w.length >= 2 && L.includes(w.slice(0, 4)));
+    };
+    const out = { ok: true, regraded: 0, points: 0, negs: 0, powers: 0, trials: [], xp: 0, version: stamp };
+    const log = [];
+    let n = 0;
+    for (const r of U.regradeCandidates()) {
+      if (++n % 150 === 0) await new Promise((res) => setImmediate(res));   // the website stays responsive
+      if (skip.has(U.sessionKeyOf(r))) continue;
+      const q = tossupOf(r.question_id); if (!q) continue;
+      if (!near(r.given_answer, q)) continue;
+      const trial = trialRow.get(r.id);
+      const was = Number(r.points) || 0, fullyRead = was === 0;
+      const len = String(q.question_sanitized || q.question || "").length;
+      const pos = r.buzz_position != null ? Number(r.buzz_position) : len;
+      let res;
+      try { res = this.scoreTossupResult(String(r.given_answer), q, fullyRead ? len : pos, fullyRead, trial ? 10 : strict, null); } catch { continue; }
+      if (!res || !res.isCorrect || !(Number(res.points) > was)) continue;
+      if (!U.applyRegrade(r.id, res.points, res.celerity).changes) continue;
+      out.regraded++; out.points += Number(res.points) - was; if (was < 0) out.negs++; if (res.isPower) out.powers++;
+      log.push({ id: r.id, q: r.question_id, from: was, to: Number(res.points), at: Date.now() });
+      // a trial that ended here: one more power, and it ends there (the tenth passes)
+      if (trial && res.isPower) {
+        const tr = trials[trial.key], p = trial.powers + 1, before = Number(tr.a[trial.start]) || 0, xp = trialXp(trial.level, p);
+        if (xp > before) {
+          tr.a[trial.start] = xp;
+          const passed = p >= TRIAL_LEN;
+          if (passed) { const when = Number(r.timestamp) || Date.now(); tr.l = Math.max(Number(tr.l) || 0, when); tr.p = tr.p ? Math.min(Number(tr.p), when) : when; }
+          out.trials.push({ key: trial.key, name: trial.name, level: trial.level, xp: xp - before, passed });
+          out.xp += xp - before;
+        }
+      }
+    }
+    if (out.trials.length) U.setConfig("trials:" + pid, JSON.stringify(trials));
+    if (log.length) {
+      let old = []; try { old = JSON.parse(U.getConfig("regrade_log:" + pid) || "[]") || []; } catch {}
+      U.setConfig("regrade_log:" + pid, JSON.stringify((Array.isArray(old) ? old : []).concat(log).slice(-5000)));
+    }
+    U.setConfig(doneKey, stamp);
+    return out;
   }
 
   getAnswerPowers() {

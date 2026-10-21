@@ -110,6 +110,7 @@ const API = isElectron
         if (path === "/api/profile-settings") return window.qbreader.saveProfileSettings(data.settings);
         if (path === "/api/review/dismiss") return window.qbreader.dismissReview(data.questionId);
         if (path === "/api/trials") return window.qbreader.trialAction ? window.qbreader.trialAction(data) : { ok: false, error: "Restart the app to use trials." };
+        if (path === "/api/regrade") return window.qbreader.regrade ? window.qbreader.regrade() : { ok: true, already: true };
         if (path === "/api/review/manual") return window.qbreader.reviewManual(data.questionId, data.add !== false, data.type);
         if (path === "/api/review/clear") return window.qbreader.clearReview();
         if (path === "/api/sessions/prune") return window.qbreader.pruneSessions(data.days);
@@ -11700,6 +11701,57 @@ async function runFrequency(page) {
   }
 }
 
+// ── Regrades (15.12): old answers the checker marked wrong that it accepts now are written right by the backend
+// (index.js regrade, once per checker + question database), with trial attempts that ended on one. When anything
+// changed, a window says what came back: points, negs gone, answers now right, trial XP and levels passed.
+async function runRegrade() {
+  if (typeof _dbLocked !== "undefined" && _dbLocked) return;   // the app waiting on the question database
+  try { await Promise.race([accountKnownP, new Promise((r) => setTimeout(r, 8000))]); } catch (e) {}
+  // the app, signed in: what the website (or another device) already regraded arrives first
+  if (_cloudOn) { try { await Promise.race([cloudSyncNow(), new Promise((r) => setTimeout(r, 10000))]); } catch (e) {} }
+  let r = null;
+  try { r = await API.post("/api/regrade", {}, 180000); } catch (e) { return; }
+  if (!r || !r.ok || r.already || !(r.regraded > 0 || (r.trials || []).length)) return;
+  if (_cloudOn) cloudSyncSoon(1500);
+  try { loadTrialInfo(); refreshReviewBadge(); } catch (e) {}
+  if (document.querySelector("#stats-screen.active")) loadStats(true);
+  if (document.querySelector("#player-screen.active")) loadPlayer();
+  // not in the middle of a question: the window waits for a pause
+  for (let i = 0; i < 600 && (state.sessionActive && !trialShown() && (state.isBuzzed || !state.questionFullyRead)); i++) await new Promise((res) => setTimeout(res, 2000));
+  showRegrade(r);
+}
+function showRegrade(r) {
+  document.getElementById("regrade-dialog")?.remove();
+  const num = (v) => Number(v || 0).toLocaleString();
+  const tiles = [
+    ["+" + num(r.points), r.points === 1 ? "point" : "points"],
+    r.negs ? [num(r.negs), r.negs === 1 ? "neg removed" : "negs removed"] : null,
+    [num(r.regraded), r.regraded === 1 ? "answer now right" : "answers now right"],
+    r.powers ? [num(r.powers), r.powers === 1 ? "new power" : "new powers"] : null,
+    r.xp ? ["+" + num(r.xp), "trial XP"] : null,
+  ].filter(Boolean);
+  const roman = (n) => ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][n] || String(n);
+  const trials = (r.trials || []).map((t) => `<li><span>${escapeHtml(t.name)} ${roman(t.level)}</span><small>+${num(t.xp)} XP</small>${t.passed ? `<b class="rg-pass">${ic("check", 13)}Passed${t.level < 10 ? `, ${escapeHtml(t.name)} ${roman(t.level + 1)} is open` : ""}</b>` : ""}</li>`).join("");
+  const el = document.createElement("div");
+  el.id = "regrade-dialog";
+  el.className = "qb-overlay confirm-overlay";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "rg-title");
+  el.innerHTML = `<div class="confirm-box rg-box" tabindex="-1">
+    <div class="rg-ico">${ic("check", 26)}</div>
+    <div class="confirm-title" id="rg-title">Your points have been refunded!</div>
+    <p class="rg-sub">Some answers were marked wrong by mistake. They count now.</p>
+    <div class="rg-tiles" style="--n:${tiles.length}">${tiles.map(([v, l]) => `<div class="rg-tile"><b class="num">${escapeHtml(v)}</b><small>${escapeHtml(l)}</small></div>`).join("")}</div>
+    ${trials ? `<ul class="rg-trials" aria-label="Trials">${trials}</ul>` : ""}
+    <div class="confirm-actions"><button type="button" class="btn btn-primary" id="rg-ok">Nice!</button></div>
+  </div>`;
+  const close = () => animateRemove(el);
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
+  el.addEventListener("keydown", (ev) => { if (ev.key === "Escape" || ev.key === "Enter") { ev.preventDefault(); ev.stopPropagation(); close(); } });
+  document.body.appendChild(el);
+  el.querySelector("#rg-ok").onclick = close;
+  setTimeout(() => { el.querySelector(".rg-box")?.focus({ preventScroll: true }); try { confettiBurst(el.querySelector(".rg-ico")); } catch (e) {} }, 60);
+}
+
 // Start-up: what the Database tabs open on first — Search's results as they
 // stand (pages 1 and 2) and the default frequency lists for tossups, bonuses and
 // both (pages 1 and 2) — is fetched while the app sits idle, one request at a
@@ -11914,6 +11966,7 @@ function initApp() {
   loadStarredIds();
   loadProfileSettings().then(pruneOldSessions);
   setTimeout(() => prefetchDefaults().catch(() => {}), IS_WEB ? 600 : 2500);
+  setTimeout(() => runRegrade().catch(() => {}), IS_WEB ? 1500 : 5000);
   checkMpReachable();
   catPresetsSync();
   // the website has no name prompt: an account's display name, or "Player" + four digits in multiplayer
