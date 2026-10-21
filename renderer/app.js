@@ -9142,7 +9142,7 @@ function formatSessionTitle(sid) {
 // other "<…>" is text (questions quote pseudo-tags like "<this author>"), and
 // entities are decoded once so "&lt;" shows as "<", never as "&lt;".
 function safeInlineHtml(src) {
-  return String(src || "").split(/(<\/?(?:b|u|i|em|strong|sup)>)/i)
+  return String(src || "").split(/(<\/?(?:b|u|i|em|strong|sup|sub)>)/i)
     .map((part, i) => (i % 2 ? part.toLowerCase() : escapeHtml(decodeEntities(part)))).join("");
 }
 // A record's readable text for plugins and history: notes / guides handled

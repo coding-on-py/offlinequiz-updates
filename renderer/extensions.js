@@ -10951,7 +10951,12 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   // only a quoted term with no qualifier after it ("“Ivan” if …", "“Caesar” and another name") names the response
   const exactTerm = (r) => (r.exactQ || []).some((t) => formKey(t) === respKey);
   let protect = null;
-  for (const f of F.accepts) if (!f.weak && live(f)) for (const w of f.words) if (w.kind !== "O") { (protect || (protect = new Set())).add(w.t); if (w.kind === "M") protect.add(reqLetters(w)); }
+  for (const f of F.accepts) if (!f.weak && live(f)) for (const w of f.words) if (w.kind !== "O") {
+    (protect || (protect = new Set())).add(w.t); if (w.kind === "M") protect.add(reqLetters(w));
+    // a possessive typed without its apostrophe ("hudsons" for Hudson's) is that word, never a plural a reject folds
+    // onto: "hudsons bay company" isn't the rejected "Hudson Bay Company" (brief §8.0)
+    if (w.poss) protect.add(w.t + "s");
+  }
   // ---- J4 strict reject (and hidden rejects, G1); on a multi-answer line one rejected answer rejects the whole
   const pieces = [T];
   if (multiLine) {
