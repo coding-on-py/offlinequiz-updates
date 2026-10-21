@@ -4109,7 +4109,6 @@ $("#enable-cat-weights")?.addEventListener("change", (e) => {
   lsSet("qb-use-weights", e.target.checked);
   $("#category-filters")?.classList.toggle("weights-on", e.target.checked);
 });
-$("#btn-hidden-manager")?.addEventListener("click", openHiddenManager);
 $("#session-retention")?.addEventListener("change", (e) => {
   const days = parseInt(e.target.value) || 0;
   state.settings.sessionRetentionDays = days;
@@ -4406,8 +4405,7 @@ async function nextQuestion() {
   const params = _randomQuestionParams(filters);
 
   const qType = state.mode === "tossups" ? "tossup" : "bonus";
-  const servable = (q) => q && !isQuestionHidden(q.id, qType) &&
-    (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode }));
+  const servable = (q) => q && (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode }));
 
   // Serve from the prefetch queue when it has something valid — this is what
   // makes "next" instant. Fall back to a live fetch otherwise.
@@ -4566,7 +4564,7 @@ function _wakePrefetchWaiters() { _prefetch.waiters.splice(0).forEach((f) => f()
 function _queueReady() {
   const list = state.mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
   const t = state.mode === "tossups" ? "tossup" : "bonus";
-  return list.some((q) => q && !isQuestionHidden(q.id, t) && (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode })));
+  return list.some((q) => q && (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode })));
 }
 // wait (at most ms) for the queue to have one; the pump is started if nothing is on its way.
 // Gives up at once when nothing is in flight and nothing came (no matches / offline):
@@ -4781,11 +4779,6 @@ async function serveOrdered() {
   if (r.error) { endOfQueue(r.error); return; }
   const queue = r.queue || [];
   if (!queue.length) { endOfQueue("No questions found for that selection."); return; }
-  // Skip questions the user has hidden ("never serve again").
-  {
-    const t = state._practiceBase === "bonuses" ? "bonus" : "tossup";
-    while (state._gameIdx < queue.length && queue[state._gameIdx] && isQuestionHidden(queue[state._gameIdx].id, t)) state._gameIdx++;
-  }
   if (state._gameIdx >= queue.length) {
     endOfQueue("Packet finished");
     return;
@@ -4844,9 +4837,6 @@ async function serveStarredQuestion(filters) {
   }
   const queue = state._starredQueue;
   const noun = type === "bonus" ? "bonuses" : "tossups";
-  // Hidden questions are never served — skip at serve time so mid-session
-  // hides take effect immediately.
-  while (state._starredIdx < queue.length && queue[state._starredIdx] && isQuestionHidden(queue[state._starredIdx].id, type)) state._starredIdx++;
   if (!queue.length) { endOfQueue(`No starred ${noun} match these filters. Change Setup and press Next`); return; }
   if (state._starredIdx >= queue.length) {
     endOfQueue(`All ${queue.length} starred ${noun} done`);
@@ -7257,53 +7247,6 @@ function copyWithCheck(btn, text) {
 }
 window.qbCopyWithCheck = copyWithCheck;
 
-// ── Hidden questions ("this question is bad — never serve it again") ──
-function hiddenQs() { try { return JSON.parse(lsGet("qb-hidden-questions") || "{}") || {}; } catch (e) { return {}; } }
-function hiddenQsSave(m) { lsSet("qb-hidden-questions", JSON.stringify(m)); }
-function isQuestionHidden(id, type) { return !!hiddenQs()[(type || "tossup") + ":" + id]; }
-function toggleQuestionHidden(id, type, label) {
-  const m = hiddenQs();
-  const k = (type || "tossup") + ":" + id;
-  if (m[k]) { delete m[k]; } else { m[k] = { label: String(label || "").slice(0, 120), ts: Date.now() }; }
-  hiddenQsSave(m);
-  const on = !!m[k];
-  return on;
-}
-function openHiddenManager() {
-  document.getElementById("hidden-manager")?.remove();
-  const el = document.createElement("div");
-  el.id = "hidden-manager";
-  el.className = "qb-overlay confirm-overlay";
-  const render = () => {
-    const m = hiddenQs();
-    const keys = Object.keys(m).sort((a, b) => (m[b].ts || 0) - (m[a].ts || 0));
-    el.innerHTML = `<div class="confirm-box" style="width:min(560px,92vw);max-width:min(560px,92vw)">
-      <div class="confirm-msg">Hidden questions (${keys.length})</div>
-      <div style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
-        ${keys.length ? keys.map((k) => `
-          <div style="display:flex;align-items:center;gap:8px;font-size:12px">
-            <span class="pill">${k.startsWith("bonus") ? "BO" : "TU"}</span>
-            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m[k].label || k.split(":")[1])}</span>
-            <button class="btn btn-sm btn-ghost hid-un" data-k="${escapeHtml(k)}">Unhide</button>
-          </div>`).join("") : '<div class="text-muted" style="padding:10px">Nothing hidden</div>'}
-      </div>
-      <div class="confirm-actions">
-        ${keys.length ? '<button class="btn btn-ghost" id="hid-clear">Unhide all</button>' : ""}
-        <button class="btn btn-primary" id="hid-close">Close</button>
-      </div>
-    </div>`;
-    el.querySelector("#hid-close").onclick = () => animateRemove(el);
-    const clr = el.querySelector("#hid-clear");
-    if (clr) clr.onclick = () => confirmDialog("Unhide all hidden questions?", () => { hiddenQsSave({}); render(); }, { yes: "Unhide all" });
-    el.querySelectorAll(".hid-un").forEach((b) => {
-      b.onclick = () => { const m2 = hiddenQs(); delete m2[b.dataset.k]; hiddenQsSave(m2); render(); };
-    });
-  };
-  el.addEventListener("click", (ev) => { if (ev.target === el) animateRemove(el); });
-  render();
-  document.body.appendChild(el);
-}
-
 // A selection only counts for a given element's menu if it actually lies
 // INSIDE that element — otherwise a stale highlight elsewhere on the page
 // would hijack the menu.
@@ -7393,11 +7336,7 @@ document.addEventListener("contextmenu", (e) => {
   const idEl = save || star;
   if (idEl && idEl.dataset.qid) {
     const qid = idEl.dataset.qid, qtype = idEl.dataset.type || "tossup";
-    items.push({
-      label: isQuestionHidden(qid, qtype) ? "Unhide question" : "Hide question",
-      danger: !isQuestionHidden(qid, qtype),
-      onClick: () => toggleQuestionHidden(qid, qtype, ans || text || qid),
-    });
+    items.push({ label: "Report question", onClick: async () => { try { const d = await API.get((qtype === "bonus" ? "/api/bonuses/" : "/api/tossups/") + encodeURIComponent(qid)); const q = d && (d.tossup || d.bonus); if (q) openReportDialog(q, qtype); } catch (er) {} } });
   }
   e.preventDefault();
   if (picked) {
@@ -7502,11 +7441,6 @@ $("#question-content")?.addEventListener("contextmenu", (e) => {
   items.push({ label: "Star question", onClick: () => toggleStar() });
   items.push({ label: "Save to review / folders…", onClick: () => openSaveMenu(q, isBonus ? "bonus" : "tossup", e.target) });
   const qtype = isBonus ? "bonus" : "tossup";
-  items.push({
-    label: isQuestionHidden(q.id, qtype) ? "Unhide question" : "Hide question",
-    danger: !isQuestionHidden(q.id, qtype),
-    onClick: () => toggleQuestionHidden(q.id, qtype, q.answer_sanitized || q.id),
-  });
   items.push({ label: "Report question", onClick: () => openReportDialog(q, qtype) });
   e.preventDefault();
   if (picked) {
