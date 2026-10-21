@@ -4014,11 +4014,11 @@ function __qbMain(ctx) {
             (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name. Change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
           '<section class="mp-card mp-join-card">' +
             '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="The grey code is a new room, ready for you: press Join/Create Room to open it, or type another room\u2019s code to join that one. Share the code so others can join.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code" placeholder="' + esc(suggested) + '"></label>' +
-            (app ? '<label class="checkbox-row" id="mp-lan-row"><input type="checkbox" id="mp-lan"' + (offline ? " checked disabled" : "") + '> Create offline room <span class="qb-info" data-tip="' + esc(LAN_TIP) + '">i</span></label>' : "") +
+            (app ? '<label class="checkbox-row" id="mp-lan-row"><input type="checkbox" id="mp-lan"' + (offline ? " checked disabled" : "") + '> Create offline room ' + lanHelpBtn("Play with no internet, on the same Wi-Fi. Click for how to set one up.") + "</label>" : "") +
             '<label class="checkbox-row"><input type="checkbox" id="mp-spectate"> Join as spectator</label>' +
             '<button type="button" class="btn btn-lg btn-go" id="mp-join">' + (offline ? "Create offline room" : "Join/Create Room") + '</button>' +
           "</section>" +
-          (offline ? '<section class="mp-card mp-lan-join" id="mp-lan-join"><h2 class="eyebrow">Join an offline room <span class="qb-info" data-tip="Be on the same Wi-Fi as the host, then type the address their room shows.">i</span></h2>' +
+          (offline ? '<section class="mp-card mp-lan-join" id="mp-lan-join"><h2 class="eyebrow">Join an offline room ' + lanHelpBtn("Join the host\u2019s Wi-Fi, then type the address their room shows. Click for how to set up Wi-Fi.") + "</h2>" +
             '<div class="mp-lan-join-row"><input id="mp-lan-addr" class="code-input" placeholder="192.168.2.1:4747" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url" aria-label="The host\u2019s address"><button type="button" class="btn btn-go" id="mp-lan-go">Join</button></div></section>' : "") +
           '<div class="mp-status" id="mp-status">' + (offline ? '<span class="mp-offline-note">You\u2019re offline, so online rooms are hidden.</span>' : "") + '</div>' +
           (offline ? "" :
@@ -4135,7 +4135,98 @@ function __qbMain(ctx) {
       try { if (ctx.host && ctx.host.tip) ctx.host.tip(body.querySelector(".mp-lobby"), "mp-lobby"); } catch (e) {}
       body.querySelectorAll(".mp-recent-row").forEach(function (r) { r.onclick = function () { go(r.dataset.code); }; });
     }
-    var LAN_TIP = "Play without internet. Others on the same Wi-Fi join from a browser or the app. No Wi-Fi network? A Mac can make one with Internet Sharing.";
+    // ── Play offline: how to make a Wi-Fi network with no internet. Every offline-room ⓘ opens it (a button
+    // with data-lan-help, its hover tip says so); the steps for this computer's system come first. ──
+    function lanHelpBtn(tip) { return '<button type="button" class="qb-info qb-info-btn" data-lan-help data-tip="' + esc(tip) + '" aria-label="How to play offline">i</button>'; }
+    document.addEventListener("click", function (e) {
+      var b = e.target && e.target.closest && e.target.closest("[data-lan-help]");
+      if (!b) return;
+      e.preventDefault(); e.stopPropagation();   // an ⓘ inside a switch's label never flips it
+      openLanHelp();
+    }, true);
+    function lanOs() { return /Windows/i.test(navigator.userAgent || "") ? "win" : "mac"; }
+    var LAN_HELP = {
+      mac: { tab: "Mac", html:
+        '<section class="pg-sec"><h3>Make a Wi-Fi network on a Mac</h3><ol>' +
+          "<li>Open the Apple menu, then <b>System Settings</b> &gt; <b>General</b> &gt; <b>Sharing</b>.</li>" +
+          "<li>Click the <b>i</b> button next to <b>Internet Sharing</b>.</li>" +
+          "<li>For <b>Share your connection from</b>, pick anything but Wi-Fi. With no internet, pick <b>Thunderbolt Bridge</b>.</li>" +
+          "<li>Under <b>To devices using</b>, turn on <b>Wi-Fi</b>.</li>" +
+          "<li>Click <b>Wi-Fi Options</b>. Name the network, choose <b>WPA2/WPA3 Personal</b>, set a password of 8 or more characters and click <b>OK</b>.</li>" +
+          "<li>Click <b>Done</b>, turn on <b>Internet Sharing</b>, and click <b>Start</b> if your Mac asks.</li>" +
+          "<li>On each phone or laptop, open its Wi-Fi settings and join the network you named.</li>" +
+          "<li>Back in OfflineQuiz, make an offline room. The others scan its code with their camera, or type its address in a browser.</li>" +
+        "</ol>" +
+        '<figure class="pg-shot"><div class="pg-frame"><div class="pg-fbar"><i></i><i></i><i></i><span>System Settings &gt; General &gt; Sharing</span></div><div class="lh-mock">' +
+          '<div class="lh-sheet"><div class="lh-row lh-top"><b>Internet Sharing</b><i class="lh-sw on"></i><em class="lh-n">6</em></div>' +
+            '<div class="lh-row"><span>Share your connection from</span><span class="lh-pop">Thunderbolt Bridge</span><em class="lh-n">3</em></div>' +
+            '<div class="lh-cap">To devices using</div>' +
+            '<div class="lh-group"><div class="lh-row lh-hl"><span>Wi-Fi</span><i class="lh-sw on"></i><em class="lh-n">4</em></div><div class="lh-row"><span>iPhone USB</span><i class="lh-sw"></i></div></div>' +
+            '<div class="lh-foot"><span class="lh-btn lh-hl">Wi-Fi Options\u2026<em class="lh-n">5</em></span><span class="lh-btn lh-blue">Done</span></div></div>' +
+          '<div class="lh-sheet lh-opts"><div class="lh-cap lh-cap-top">Wi-Fi Options</div>' +
+            '<div class="lh-row"><span>Network Name</span><span class="lh-field">OfflineQuiz</span></div>' +
+            '<div class="lh-row"><span>Security</span><span class="lh-pop">WPA2/WPA3 Personal</span></div>' +
+            '<div class="lh-row"><span>Password</span><span class="lh-field">\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022</span></div>' +
+            '<div class="lh-foot"><span class="lh-btn">Cancel</span><span class="lh-btn lh-blue">OK</span></div></div>' +
+        "</div></div><figcaption>Internet Sharing set up to make a Wi-Fi network. The numbers match the steps.</figcaption></figure></section>" +
+        '<section class="pg-sec"><h3>Good to know</h3><ul>' +
+          "<li>Try it at home before you fly.</li>" +
+          "<li>If your Mac asks whether OfflineQuiz can accept incoming connections, click <b>Allow</b>.</li>" +
+          "<li>While it shares, this Mac\u2019s Wi-Fi can\u2019t join other networks. Turn Internet Sharing off when you\u2019re done.</li>" +
+          "<li>Plane Wi-Fi usually keeps devices from reaching each other, so join your Mac\u2019s network instead.</li>" +
+        "</ul></section>" },
+      win: { tab: "Windows", html:
+        '<section class="pg-sec"><h3>Make a Wi-Fi network on Windows</h3><ol>' +
+          "<li>Open <b>Settings</b> &gt; <b>Network &amp; internet</b> &gt; <b>Mobile hotspot</b>.</li>" +
+          "<li>Set <b>Share over</b> to <b>Wi-Fi</b>.</li>" +
+          "<li>Under <b>Properties</b>, click <b>Edit</b>. Name the network, set a password of 8 or more characters and click <b>Save</b>.</li>" +
+          "<li>Turn on <b>Mobile hotspot</b>.</li>" +
+          "<li>On each phone or laptop, open its Wi-Fi settings and join the network you named.</li>" +
+          "<li>Back in OfflineQuiz, make an offline room. The others scan its code with their camera, or type its address in a browser.</li>" +
+        "</ol></section>" +
+        '<section class="pg-sec"><h3>Good to know</h3><ul>' +
+          "<li>Windows usually needs an internet connection to turn its hotspot on. With none, use a phone\u2019s hotspot or a travel router (see Other ways).</li>" +
+          "<li>If Windows Firewall asks about OfflineQuiz, allow it on private networks.</li>" +
+          "<li>Try it at home before you need it.</li>" +
+        "</ul></section>" },
+      other: { tab: "Other ways", html:
+        '<section class="pg-sec"><h3>Other ways to share a network</h3><ul>' +
+          "<li><b>An Android phone\u2019s hotspot.</b> Many Android phones can turn it on in airplane mode. Everyone joins it, the host\u2019s computer too.</li>" +
+          "<li><b>A travel router.</b> A pocket-sized Wi-Fi router that runs from a USB port.</li>" +
+          "<li><b>Wi-Fi at home or school.</b> It works when devices on it can reach each other. Some school and hotel networks block that.</li>" +
+          "<li>An iPhone\u2019s Personal Hotspot needs mobile data, so it won\u2019t turn on in airplane mode.</li>" +
+        "</ul></section>" },
+    };
+    function openLanHelp(which) {
+      document.getElementById("mp-lan-help")?.remove();
+      var tab = which || lanOs();
+      var el = document.createElement("div");
+      el.id = "mp-lan-help"; el.className = "qb-overlay confirm-overlay pg-overlay lh-overlay";
+      el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "lh-h");
+      el.innerHTML = '<div class="pg-box lh-box" role="document">' +
+        '<header class="pg-head"><span class="lh-ico" aria-hidden="true">' + WIFI_SVG + '</span><div class="pg-title"><h2 id="lh-h">Play offline</h2><small>Set up Wi-Fi with no internet</small></div>' +
+          '<button type="button" class="btn btn-ghost btn-icon btn-sm pg-x" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>' +
+        '<div class="pg-scroll">' +
+          '<p class="pg-tagline">Everyone in an offline room has to be on the same Wi-Fi. With no Wi-Fi around, like on a plane, the host\u2019s computer can make one.</p>' +
+          '<div class="seg lh-tabs" role="group" aria-label="Your system">' + ["mac", "win", "other"].map(function (k) { return '<button type="button" data-lh="' + k + '" aria-pressed="' + (k === tab) + '">' + LAN_HELP[k].tab + "</button>"; }).join("") + "</div>" +
+          '<div class="lh-pane"></div>' +
+        "</div></div>";
+      var pane = el.querySelector(".lh-pane");
+      var show = function (k) {
+        tab = k; pane.innerHTML = LAN_HELP[k].html;
+        el.querySelectorAll("[data-lh]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.lh === k)); });
+        el.querySelector(".pg-scroll").scrollTop = 0;
+      };
+      var close = function () { document.removeEventListener("keydown", onKey, true); if (window.qbAnimateRemove) window.qbAnimateRemove(el); else el.remove(); };
+      var onKey = function (e) { if (e.key === "Escape" && el.isConnected) { e.preventDefault(); e.stopPropagation(); close(); } };
+      document.addEventListener("keydown", onKey, true);
+      el.addEventListener("click", function (e) { if (e.target === el) close(); });
+      el.querySelector(".pg-x").onclick = close;
+      el.querySelectorAll("[data-lh]").forEach(function (b) { b.onclick = function () { show(b.dataset.lh); }; });
+      show(tab);
+      document.body.appendChild(el);
+      setTimeout(function () { el.querySelector(".pg-x")?.focus({ preventScroll: true }); }, 30);
+    }
     // An offline room's page (a phone): the room it came from, a name, Join
     function renderLanForm() {
       var saved = "";
@@ -4178,7 +4269,7 @@ function __qbMain(ctx) {
       el.id = "mp-lan-invite"; el.className = "qb-overlay confirm-overlay";
       el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "mp-li-h");
       el.innerHTML = '<div class="confirm-box mp-li-box">' +
-        '<div class="confirm-title" id="mp-li-h">Invite players <span class="qb-info" data-tip="' + esc("No Wi-Fi network? On a Mac, turn on Internet Sharing in System Settings > General > Sharing, sharing to Wi-Fi. Then join that network on the other devices.") + '">i</span></div>' +
+        '<div class="confirm-title" id="mp-li-h">Invite players ' + lanHelpBtn("No Wi-Fi network? Click for how to make one.") + "</div>" +
         (main
           ? '<div class="mp-li-qr">' + qrSvg("http://" + main, 196) + "</div>" +
             '<p class="mp-li-sub">On the same Wi-Fi, scan this or open the address in a browser.</p>' +
@@ -4186,7 +4277,8 @@ function __qbMain(ctx) {
             (addrs.length > 1 ? '<p class="mp-li-more">Also at ' + addrs.slice(1).map(esc).join(", ") + "</p>" : "") +
             '<p class="mp-li-app">In the app, type <b>' + esc(main) + "</b> where the room code goes.</p>"
           : '<div class="mp-li-none">' + WIFI_SVG + "</div>" +
-            '<p class="mp-li-sub">This computer isn\u2019t on a network yet. Turn on Wi-Fi or Internet Sharing, then check again.</p>') +
+            '<p class="mp-li-sub">This computer isn\u2019t on a network yet. Turn on Wi-Fi or Internet Sharing, then check again.</p>' +
+            '<button type="button" class="btn btn-sm mp-li-how" data-lan-help>How to set up Wi-Fi</button>') +
         '<div class="confirm-actions">' + (main ? "" : '<button type="button" class="btn" id="mp-li-again">Check again</button>') + '<button type="button" class="btn btn-primary" id="mp-li-ok">Done</button></div></div>';
       var close = function () { if (window.qbAnimateRemove) window.qbAnimateRemove(el); else el.remove(); };
       el.addEventListener("click", function (e) { if (e.target === el) close(); });

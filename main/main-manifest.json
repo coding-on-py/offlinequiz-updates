@@ -1,5 +1,5 @@
 {
-  "version": "15.17",
+  "version": "15.18",
   "files": {
     "index.js": "03a36271420fd03b80ee4873fd84a91064784741f1c37fe8d9e2d94b15d809e9",
     "database.js": "33154188b82b20223da43b425b8b88a10ee737f0b2855c9f6ca7fcbfaa8287ba",
@@ -11,5 +11,5 @@
     "preload.js": "f789c86519c659f97f40088d2bf9befa685844d12a4dacdb37fa4620b191ca33",
     "runtime.js": "1c2c9f133120a538950802baa42368fd5ae224013827e9d7ff941e27317ec56f"
   },
-  "signature": "BZ4KcTqwGxj/OJ6BlDqpxTh9dHzUAyZ993U8Zpq5Z89zdg7vz0dKdWwf3Nv8q8750t+UxYgnQHbKqlk1mh2CBA=="
+  "signature": "KAia72c9RtacT1vqTfZJg41lv3VKbRpimJ6kUGdrKEmj6/hGjp9JIq6ka9V05ZTqVK8HIASgoiyllDW+92tmDQ=="
 }
