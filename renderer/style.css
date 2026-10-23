@@ -4393,7 +4393,7 @@ button.acct-row:hover { background: var(--raised); }
 }
 
 /* Site stats (website /admin, admins only) */
-.adm-container { padding: 4px 0 40px; }
+.adm-container { padding: 4px var(--gutter) 40px; }
 .adm-page { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; margin: 0 auto; }
 .adm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .adm-card { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 14px 16px; text-align: left; cursor: pointer; font-family: var(--font); color: var(--text); transition: border-color 120ms ease, background 120ms ease; }
@@ -5612,7 +5612,7 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 @media (max-width: 560px) { .cl-set-row { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
 /* the lobby's official rooms (the game server's: Levels, then Subjects) and their badge in a room */
 .mp-official h2 { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
-#mp-official-list { display: flex; flex-direction: column; gap: 12px; }
+#mp-official-list { display: block; }   /* rows with their own dividers (the old tiles' gap left each row's name off-centre) */
 .mp-off-grp { display: flex; flex-direction: column; gap: 8px; }
 .mp-off-lbl { font-size: 12px; color: var(--muted); }
 .mp-off-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
@@ -6266,3 +6266,56 @@ html:not(.shop-on) #tb-store { display: none !important; }
 .adm-rrefund { display: inline-flex; align-items: center; gap: 6px; }
 .adm-rrefunded { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; color: var(--green); background: color-mix(in srgb, var(--green) 13%, transparent); font-size: 12.5px; font-weight: 600; }
 .adm-rrefunded small { color: var(--muted); font-weight: 400; }
+
+/* ═══ Phones, round 15.21: a pass over every page and window at 390 px ═══ */
+.mp-recent-row { align-content: center; }   /* a wrapped row's lines sit in the middle, not at the top */
+.mp-recent-row .mp-rwhen:empty { display: none; }
+.stat-card-dist .stat-card-value { white-space: nowrap; }
+.db-toolbar > .ifield { flex: 1 1 auto; min-width: 0; }
+.ch-actions > .btn + .btn { margin-left: 0; }   /* Invite under Run a diagnostic lines up with it */
+.stk-scroll { padding: 3px 4px 4px 3px; }   /* today's ring and a picked day's outline aren't cut at the edge */
+@media (max-width: 760px) {
+  /* the question's source line and its tags wrap onto lines of their own: no divider left at a line's end */
+  .qmeta-row .vsep { display: none; }
+  /* the Database's tabs wrap (Plugin tools and its menu included) instead of running off the edge */
+  .db-tabs { flex-wrap: wrap; overflow: visible; row-gap: 2px; }
+  /* a room before its first question: Next right under the room's head, Players and Chat in sight */
+  .mp-room .question-area:has(> #mp-placeholder:not(.hidden)) { min-height: 0; }
+  .mp-room .question-area > #mp-placeholder:not(.hidden) { display: none; }
+  .mp-room .question-area:has(> #mp-placeholder:not(.hidden)) > .mp-actions { margin-top: 4px; }
+  /* Statistics: the bonuses' 30s · 20s · 10s · 0s on a row of its own */
+  .stat-card-dist { grid-column: 1 / -1; }
+  /* collapsible section heads, the room's name / team edits, a report's Show all: finger-sized */
+  .stats-section-title.qb-coll-head { min-height: 40px; display: flex; align-items: center; }
+  .mp-player .nm .mp-edit { min-height: 30px; }
+  .adm-rexpand { padding: 8px 0; }
+  #fr-copy { width: 36px; height: 36px; }
+  .home-foot a { display: inline-block; padding: 6px 2px; }
+}
+@media (max-width: 600px) {
+  /* Leaderboards: the periods share the row (they ran 14 px past the screen) */
+  .lb-periods { flex: 1 1 100%; display: flex; }
+  .lb-periods button { flex: 1 1 auto; padding: 0 6px; white-space: nowrap; }
+  /* Friends: your username, its copy and Friend link wrap as one; the add row is the card's width */
+  .fr-me { flex-wrap: wrap; row-gap: 8px; }
+  .fr-me .fr-link { margin-left: auto; }
+  /* Plugins → Manage: the version goes (it's in the Store); the author stays on one line */
+  .ext-row .er-ver { display: none; }
+  .ext-row .er-name small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ext-tabs .ext-bulk { flex-basis: 100%; justify-content: flex-end; margin-top: 4px; }
+  /* Profile → Trials: the badge sits small in the corner, the words have the card */
+  .tr-card { padding-right: 38px; }
+  .tr-card-emb { top: 8px; right: 6px; transform: scale(0.7); transform-origin: top right; }
+  /* the refund window: labels and a trial's line wrap instead of being cut */
+  .rg-fact small, .rg-tname small { white-space: normal; overflow: visible; text-align: inherit; line-height: 1.3; }
+  .rg-fact small { text-align: center; }
+  .rg-tname .rg-passed { display: block; }   /* "Passed · Math II is open" wraps as a sentence */
+  .rg-tname .rg-passed svg { display: inline; vertical-align: -1px; margin-right: 3px; }
+  /* Review: Saved items · Remove all on one row, View · Play under them, sharing it */
+  .rv-foot .spacer { flex: 1 1 100%; height: 0; }
+  .rv-foot #rv-clearall { margin-left: auto; }
+  .rv-foot :is(#rv-view, #rv-cards, #rv-play) { flex: 1 1 0; min-width: 0; justify-content: center; }
+  /* an achievement: one card at a time, a little smaller */
+  .ach-stack .ach-popup { padding: 10px 12px; }
+  .ach-stack .ach-popup-desc { display: none; }
+}

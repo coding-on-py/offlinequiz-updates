@@ -8233,7 +8233,7 @@ async function loadStats(preserveScroll = false) {
             <div class="stat-card-value">${view.bonusConversion.toFixed(1)}</div>
             <div class="stat-card-label">Points/Bonus</div>
           </div>
-          ${bd ? `<div class="stat-card">
+          ${bd ? `<div class="stat-card stat-card-dist">
             <div class="stat-card-value">${bd[30] || 0} · ${bd[20] || 0} · ${bd[10] || 0} · ${bd[0] || 0}</div>
             <div class="stat-card-label">30s · 20s · 10s · 0s</div>
           </div>` : ""}
@@ -10625,7 +10625,9 @@ function queueAchievementPopup(ach) {
 function showNextAchievementPopup() {
   let stack = document.getElementById("ach-stack");
   if (!stack) { stack = document.createElement("div"); stack.id = "ach-stack"; stack.className = "ach-stack"; stack.setAttribute("aria-live", "polite"); document.body.appendChild(stack); }
-  while (_achPopupQueue.length && stack.querySelectorAll(".ach-popup:not(.out)").length < ACH_POPUP_MAX) {
+  // a phone shows one at a time (three stacked covered half its screen)
+  const most = matchMedia("(max-width: 600px)").matches ? 1 : ACH_POPUP_MAX;
+  while (_achPopupQueue.length && stack.querySelectorAll(".ach-popup:not(.out)").length < most) {
     const ach = _achPopupQueue.shift();
     const el = document.createElement("div");
     el.className = "ach-popup";
