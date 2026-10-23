@@ -385,6 +385,9 @@ const KW_DEFS = [
   ["cond_if", "CONDITIONAL", "opener", B + R`if\s+(?:they|someone|somebody|anyone|a\s+player|the\s+player|players|a\s+team|the\s+team|the\s+answerer)\s+(?:\w+\s+){0,2}?(?:answers?|says?|gives?|buzz(?:es)?|responds?|offers?|provides?|mentions?)` + E],
   ["portion_either", "PORTION", "opener", B + R`(?:(?:also|and)\s+)?` + ACC + R`\s+(?:either|any|each)\s+(?:one\s+)?(?:of\s+the\s+)?(?:underlined|bolded|bold(?:ed)?\s*(?:and|/)?\s*underlined|capitali[sz]ed)\s+(?:portions?|parts?|names?|answers?|words?|terms?|sections?|pieces?|halves|half|items?|options?|segments?|components?|elements?|ones?)?`],
   ["portion_either_part", "PORTION", "opener", B + ACC + R`\s+(?:either|any)\s+(?:one\s+)?(?:of\s+the\s+)?(?:portions?|parts?|names?|halves|half|words?|surnames?)(?:\s+alone)?` + E + R`(?=\s*(?:$|[,;.)\]]|or\s+both|(?:is|are)\s|alone|by\s+itself|(?:but|and)\s))`],
+  // "accept either nickname or number" (a work's number or its nickname, "of" a common slip for "or"): an answer of
+  // two underlined pieces takes either one by itself (rules.either_kinds), and the words are never answers (15.20)
+  ["portion_either_kinds", "PORTION", "opener", B + ACC + R`\s+either\s+(?:the\s+|its\s+)?(?:nick-?names?|names?|numbers?|titles?)\s+(?:or|of|/)\s+(?:the\s+|its\s+)?(?:nick-?names?|names?|numbers?|titles?)` + E + R`(?=\s*(?:$|[,;.)\]]|alone|by\s+itself|(?:but|and)\s))`],
   ["portion_postfix", "PORTION", "postfix", B + R`(?:either|any|each)\s+(?:one\s+)?(?:of\s+the\s+)?(?:underlined\s+)?(?:portions?|parts?|names?|answers?|words?|one|is)\s+(?:(?:is|are|alone\s+is)\s+)?(?:acceptable|fine|ok|okay|sufficient|enough|accepted|good|correct)` + E],
   ["portion_both_required", "PORTION", "requirement", B + R`(?:both|all|all\s+(?:two|three|four|five))\s+(?:of\s+the\s+)?(?:underlined\s+|bolded\s+)?(?:portions?|parts?|names?|answers?|words?|terms?|pieces?|halves|items?|people|persons|countries|elements|components)?\s*(?:are\s+|is\s+)?(?:required|needed|necessary|must\s+be\s+(?:given|said|mentioned))` + E],
   ["portion_ref", "PORTION", "scope", B + R`(?:non-?\s?)?underlin(?:ed|e|ing)` + E],
@@ -1046,6 +1049,7 @@ function recordRule(L, out, txt) {
   const r = out.rules;
   const t1 = (id) => { const re = KW[id].g; re.lastIndex = 0; return re.test(t); };
   if (t1("portion_either") || t1("portion_either_part") || t1("portion_postfix")) r.either_portion = true;
+  if (t1("portion_either_kinds")) r.either_kinds = true;
   if (t1("portion_both_required") || t1("req_both")) r.all_required = true;
   if (t1("req_either_order") || t1("req_accept_either_order")) r.order = "free";
   if (t1("req_fixed_order")) r.order = "fixed";
@@ -3125,7 +3129,9 @@ function matchForm(form, T, ctx, mode, pool) {
     return list;
   });
   for (const run of initialRuns(form)) for (let j = 0; j < T.length; j++) if (T[j].t === run.letters) occ[run.gis[0]].push({ s: j, e: j + 1, cost: 0, covers: run.gis });
-  const either = !!ctx.rules.either_portion;
+  // "accept either nickname or number": the main answer, when it's exactly two underlined pieces, takes either one
+  // (the line's other forms keep needing all of theirs)
+  const either = !!ctx.rules.either_portion || (!!ctx.rules.either_kinds && (form.isMain || form.src === "main") && groups.length === 2);
   // "accept first or last name": any one group of a part that is a person's name
   // "accept first or last name": one group of each run of name groups is enough; the rest stays required
   const clusters = !either && ctx.rules.either_name ? form.parts.map((p) => nameClusters(form, p)) : null;

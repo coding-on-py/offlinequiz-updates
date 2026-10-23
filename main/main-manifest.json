@@ -1,15 +1,15 @@
 {
-  "version": "15.19",
+  "version": "15.20",
   "files": {
-    "index.js": "caa53e08d43540eb64d123933a8e05540e0bc2b9eac92150b71c74351a28fa99",
+    "index.js": "26e4497f4c767369dcdb689d01014d79ee70c00ea74d0859d9c9940ad200af72",
     "database.js": "33154188b82b20223da43b425b8b88a10ee737f0b2855c9f6ca7fcbfaa8287ba",
-    "userData.js": "70ddaa460e29d5bbc394c2fb94436c13148095d5538c80d012ad8a60e5b8ad3a",
-    "answerChecker.js": "61c8dd579744f588e74ba6c88d121b76eac32e83036aa9db409fc9df14dc20a1",
+    "userData.js": "fc1e99f24d84db24ddeca503c9eabd5cbb985ece0443103963f6f2bf70154a08",
+    "answerChecker.js": "221c8a235bae6d09da529d2d41fa31c0fd9f16661c24ba451a497dee7b2b41e5",
     "scoring.js": "ddd77cebe56bc87fdc1676d8ea528342c9c2720a4357dfd809cea0a2a65369a6",
     "stats.js": "c03ff97b4aae87d865ba398a37540950d367e6627537fde172e838b5d105f2ca",
     "updater.js": "52b63950890c2b787b9083d5b539a007fdd3d4b07f586cb9127f34143b634a99",
     "preload.js": "f789c86519c659f97f40088d2bf9befa685844d12a4dacdb37fa4620b191ca33",
     "runtime.js": "1c2c9f133120a538950802baa42368fd5ae224013827e9d7ff941e27317ec56f"
   },
-  "signature": "kLPsMV8fSmI13nNbM4sS0mUa21zex9hCx5KFiFIHLVY3EkoWWe6jG17qNj9XKdqjY1hijakTK2puaaiwXu0EAA=="
+  "signature": "BhHYVnpqxX3B1yI1AnHsI5N2YVafZCtCyVixmnw5GebHqSpqwyW5AqkA/ZGNQMGA9jebDBpZIK307N3oxjf2Ag=="
 }

@@ -58,7 +58,13 @@ const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3;
 export const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
 // 15.12 regrades: bump when a checker fix (or a corrected database) should look at old wrong answers again. A run is
 // keyed by this and the question database's build, so a new database re-runs it too (only answers still wrong).
-export const REGRADE_V = "15.12";
+export const REGRADE_V = "15.20";   // 15.20: "accept either nickname or number" (the answer checker)
+// two refund summaries as one window (an admin's refund and a regrade, or two refunds): their sums, their trials
+export function mergeRegrade(a, b) {
+  const n = (x) => Number(x) || 0;
+  return { ok: true, regraded: n(a.regraded) + n(b.regraded), points: n(a.points) + n(b.points), negs: n(a.negs) + n(b.negs), powers: n(a.powers) + n(b.powers),
+    xp: n(a.xp) + n(b.xp), trials: [...(a.trials || []), ...(b.trials || [])], manual: !!(a.manual && b.manual) };
+}
 export const trialXp = (level, powers) => { const p = Math.max(0, Math.min(TRIAL_LEN, parseInt(powers, 10) || 0)); return Math.round(p * 10 * level * (p >= 10 ? 2.5 : p >= 6 ? 1.5 : p >= 5 ? 1.25 : 1)); };
 
 function apFold(s) {
@@ -1176,20 +1182,31 @@ export class App {
   // (config regrade_note:<profile>, { summary, seen }) and an "already" answer carries it (`note`) until the page
   // says it was seen (opts.seen). A run from before the note existed is summed up from its log.
   async regrade(opts = {}) {
-    const pid = this.userData.getActiveProfileId(), noteKey = "regrade_note:" + pid;
+    const pid = this.userData.getActiveProfileId(), noteKey = "regrade_note:" + pid, refundKey = "refund_note:" + pid;
     const readNote = () => { try { return JSON.parse(this.userData.getConfig(noteKey) || "null"); } catch { return null; } };
-    if (opts.seen) { const n = readNote(); if (n) { n.seen = true; this.userData.setConfig(noteKey, JSON.stringify(n)); } return { ok: true }; }
+    // 15.20: an admin's refund (manualRefund) owes the same window, in its own synced note (the app shows it too)
+    const readRefund = () => { try { return JSON.parse(this.userData.getConfig(refundKey) || "null"); } catch { return null; } };
+    const owed = (n) => { const r = readRefund(), a = n && !n.seen ? n.summary : null, b = r && !r.seen ? r.summary : null; return a && b ? mergeRegrade(a, b) : a || b; };
+    if (opts.seen) {
+      const n = readNote(); if (n && !n.seen) { n.seen = true; this.userData.setConfig(noteKey, JSON.stringify(n)); }
+      const r = readRefund(); if (r && !r.seen) { r.seen = true; this.userData.setConfig(refundKey, JSON.stringify(r)); }
+      return { ok: true };
+    }
     let built = "0"; try { built = String((this.questionDb.getMeta && this.questionDb.getMeta("built_at")) || "0"); } catch {}
     const doneKey = "regrade:" + pid, stamp = REGRADE_V + "|" + built;
     if (!opts.force && this.userData.getConfig(doneKey) === stamp) {
       let n = readNote();
       if (!n) { const sum = this._regradeFromLog(pid); if (sum) { n = { summary: sum, seen: false }; this.userData.setConfig(noteKey, JSON.stringify(n)); } }
-      return n && !n.seen ? { ok: true, already: true, note: n.summary } : { ok: true, already: true };
+      const o = owed(n);
+      return o ? { ok: true, already: true, note: o } : { ok: true, already: true };
     }
     if (this._regradeP) return this._regradeP;
     this._regradeP = this._regradeRun(pid, doneKey, stamp).then((out) => {
-      if (out && (out.regraded > 0 || (out.trials || []).length)) this.userData.setConfig(noteKey, JSON.stringify({ summary: out, seen: false }));
-      return out;
+      // a run that changed something is added to a window still owed (never over it)
+      const prev = readNote(), unseen = prev && !prev.seen ? prev.summary : null;
+      if (out && (out.regraded > 0 || (out.trials || []).length)) this.userData.setConfig(noteKey, JSON.stringify({ summary: unseen ? mergeRegrade(unseen, out) : out, seen: false }));
+      const o = owed(readNote());
+      return o ? { ...o, ok: true } : out;
     }).finally(() => { this._regradeP = null; });
     return this._regradeP;
   }
@@ -1220,6 +1237,84 @@ export class App {
       }
     }
     return out;
+  }
+  // ── A manual refund (15.20, an admin on a question report): the reporter's attempt counts as right whatever the
+  // checker says (a typo it didn't take, a form the answer line missed). The attempt is the one the report was
+  // about (its typed answer when the report kept it, else the latest before the report). Never twice: a tossup that
+  // already counts, or any attempt refunded before (config refunds:<profile>, by its sync key), is refused. A
+  // tossup gets the points a right answer earns at its buzz (a power before the mark), and a trial it ended counts
+  // it as powered, as a regrade does; a bonus gets one more part right (its value). The window says so
+  // (refund_note, synced, so the app shows it too). → { ok, regraded, points, negs, powers, trials, xp, manual }
+  manualRefund({ type = "tossup", qid = "", before = Date.now(), text = "" } = {}) {
+    const U = this.userData, pid = U.getActiveProfileId();
+    type = type === "bonus" ? "bonus" : "tossup";
+    const row = U.attemptRow(type, qid, before, text);
+    if (!row) return { error: "There's no answer of theirs to refund." };
+    const key = U.sessionKeyOf(row), doneKey = "refunds:" + pid;
+    let done = []; try { done = JSON.parse(U.getConfig(doneKey) || "[]") || []; } catch {}
+    if (!Array.isArray(done)) done = [];
+    if (done.includes(key)) return { error: "That answer was refunded already." };
+    const out = { ok: true, regraded: 1, points: 0, negs: 0, powers: 0, trials: [], xp: 0, manual: true };
+    const attempt = { at: Number(row.timestamp) || 0, text: String(row.given_answer || "") };   // which one (other reports about it)
+    if (type === "bonus") {
+      let b = null; try { b = this.questionDb.getBonus(qid); } catch {}
+      if (!b) return { error: "That question isn't in the database." };
+      let values = []; try { values = JSON.parse(b.point_values || "[]"); } catch {}
+      const parts = Number(b.part_count) || values.length || 3, got = Number(row.bonus_parts_correct) || 0;
+      if (got >= parts) return { error: "Every part of that bonus already counts." };
+      const add = Number(values[got]) > 0 ? Number(values[got]) : 10;
+      if (!U.applyBonusRefund(row.id, add, parts).changes) return { error: "Couldn't refund that answer." };
+      out.points = add;
+    } else {
+      if (Number(row.correct)) return { error: "That answer already counts." };
+      let q = null; try { q = this.questionDb.getTossup(qid); } catch {}
+      if (!q) return { error: "That question isn't in the database." };
+      const was = Number(row.points) || 0, text0 = String(q.question_sanitized || q.question || ""), len = text0.length, fullyRead = was === 0;
+      const pos = row.buzz_position != null ? Number(row.buzz_position) : len;
+      // right at its own buzz: the scoring a right answer gets there (no checker)
+      const res = scoreTossup({ userAnswer: String(row.given_answer || ""), answerline: q.answer, sanitizedAnswer: q.answer_sanitized, buzzCharIndex: fullyRead ? len : pos, questionText: text0, fullyRead }, () => ({ correct: true }));
+      if (!U.applyRegrade(row.id, res.points, res.celerity).changes) return { error: "That answer already counts." };
+      out.points = Number(res.points) - was; if (was < 0) out.negs = 1; if (res.isPower) out.powers = 1;
+      const { trials, trialRow } = this._trialEnders(), trial = trialRow.get(row.id);
+      if (trial && res.isPower) {
+        const tr = trials[trial.key], p = trial.powers + 1, beforeXp = Number(tr.a[trial.start]) || 0, xp = trialXp(trial.level, p);
+        if (xp > beforeXp) {
+          tr.a[trial.start] = xp;
+          const passed = p >= TRIAL_LEN;
+          if (passed) { const when = Number(row.timestamp) || Date.now(); tr.l = Math.max(Number(tr.l) || 0, when); tr.p = tr.p ? Math.min(Number(tr.p), when) : when; }
+          out.trials.push({ key: trial.key, name: trial.name, level: trial.level, xp: xp - beforeXp, passed });
+          out.xp += xp - beforeXp;
+          U.setConfig("trials:" + pid, JSON.stringify(trials));
+        }
+      }
+    }
+    U.setConfig(doneKey, JSON.stringify(done.concat(key).slice(-5000)));
+    const noteKey = "refund_note:" + pid;
+    let n = null; try { n = JSON.parse(U.getConfig(noteKey) || "null"); } catch {}
+    U.setConfig(noteKey, JSON.stringify({ summary: n && !n.seen && n.summary ? mergeRegrade(n.summary, out) : out, seen: false }));
+    return { ...out, attempt };
+  }
+  // the trial attempts that ended on a wrong answer: the trials, and each ending answer's row → its attempt
+  _trialEnders() {
+    const U = this.userData, tossups = new Map(), tossupOf = (id) => { if (!tossups.has(id)) { let t = null; try { t = this.questionDb.getTossup(id) || null; } catch {} tossups.set(id, t); } return tossups.get(id); };
+    const { t: trials } = this._trialsOf(), trialRow = new Map();
+    for (const [key, tr] of Object.entries(trials)) {
+      const [ck, lv] = key.split("|"), level = parseInt(lv, 10), cat = TRIAL_CATS.find((c) => c[0] === ck);
+      if (!cat || !(level >= 1) || !tr || !tr.a || typeof tr.a !== "object") continue;
+      for (const [ts, xp] of Object.entries(tr.a)) {
+        const powers = Array.from({ length: TRIAL_LEN + 1 }, (_, p) => p).find((p) => trialXp(level, p) === Number(xp));
+        if (powers == null || powers >= TRIAL_LEN) continue;
+        const start = Number(ts), fits = (r) => { const q = tossupOf(r.question_id); return !!q && Number(q.difficulty) === level && (q.category === cat[2] || String(q.category_path || "").split(" > ")[0] === cat[2]); };
+        const after = U.tossupsBetween(start, start + 3 * 3600e3);
+        const first = after.find(fits); if (!first) continue;
+        const run = after.filter((r) => r.session_id === first.session_id).slice(0, TRIAL_LEN);
+        if (!run.every(fits)) continue;
+        const lead = run.findIndex((r) => !(Number(r.points) >= 15));
+        if (lead !== powers || !run[lead]) continue;
+        trialRow.set(run[lead].id, { key, level, start, powers, name: cat[1] });
+      }
+    }
+    return { trials, trialRow };
   }
   async _regradeRun(pid, doneKey, stamp) {
     const U = this.userData, skip = U.overriddenKeys();

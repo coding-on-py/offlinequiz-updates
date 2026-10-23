@@ -11854,10 +11854,10 @@ function showRegrade(r) {
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "rg-title");
   el.innerHTML = `<div class="confirm-box rg-box" tabindex="-1">
     <div class="rg-hero">
-      <p class="rg-kicker">${ic("sparkle", 13)}Answer checker fixes</p>
+      <p class="rg-kicker">${ic("sparkle", 13)}${r.manual ? "Your report" : "Answer checker fixes"}</p>
       <h2 class="rg-title" id="rg-title">Your points have been refunded!</h2>
       <div class="rg-big"><b class="num" id="rg-points" data-to="${Number(r.points) || 0}">+${num(r.points)}</b><span>${Number(r.points) === 1 ? "point" : "points"} back</span></div>
-      <p class="rg-sub">Answers that were marked wrong by mistake count now.</p>
+      <p class="rg-sub">${r.manual ? "An admin looked at your report, and your answer counts now." : "Answers that were marked wrong by mistake count now."}</p>
     </div>
     ${facts.length ? `<div class="rg-facts" style="--n:${facts.length}">${facts.map(([v, l, icon, tone]) => `<div class="rg-fact" style="--tone:${tone}"><span class="rg-fic">${ic(icon, 15)}</span><b class="num">${num(v)}</b><small>${escapeHtml(l)}</small></div>`).join("")}</div>` : ""}
     ${trialRows ? `<section class="rg-trials-sec" aria-label="Trials"><div class="rg-trials-head"><span>Trials</span><b class="num">+${num(r.xp)} XP</b></div><ul class="rg-trials">${trialRows}</ul></section>` : ""}
@@ -13758,9 +13758,22 @@ function adminReportAnswerHtml(r) {
   }
   const v = a.correct == null ? "" : a.correct ? (a.points > 10 ? "Power" : "Correct") : a.points < 0 ? "Neg" : "Wrong";
   const verdict = v ? `<span class="adm-rv ${a.correct ? "ok" : "bad"}">${v}${a.points != null ? " " + pts(a.points) : ""}</span>` : "";
-  const b = a.buzzAt, buzz = !b ? "" : b.end ? "after the question ended" : `buzzed at ${b.pct}%, after \u201c\u2026${escapeHtml(b.words)}\u201d`;
+  // where they buzzed: a neg at the very end was a buzz on the last word; a wrong answer there came after the reading
+  const b = a.buzzAt, last = b && b.words ? ` after \u201c\u2026${escapeHtml(b.words)}\u201d` : "";
+  const buzz = !b ? "" : !b.end ? `buzzed at ${b.pct}%,${last}` : a.points < 0 ? `buzzed on the last words,${last}` : "answered after the question ended";
   return `<div class="adm-rmine"><div class="adm-rmine-head"><span class="adm-rmine-k">Their answer</span><span class="adm-rmine-text">${escapeHtml(a.text)}</span>${verdict}${when}</div>` +
     (buzz ? `<p class="adm-rmine-buzz">${buzz}</p>` : "") + "</div>";
+}
+// 15.20: refund the reporter's answer by hand (a typo, a form the answer line missed): a button while their answer
+// doesn't count, then what it gave back
+function adminRefundHtml(r) {
+  if (r.refund) {
+    const f = r.refund, extra = [f.xp ? "+" + f.xp + " trial XP" : "", ...(f.passed || []).map((x) => x + " passed")].filter(Boolean).join(", ");
+    return `<span class="adm-rrefunded">${ic("check", 13)}Refunded ${f.points > 0 ? "+" : ""}${Number(f.points) || 0}${extra ? ", " + escapeHtml(extra) : ""}${f.by ? ` <small>by @${escapeHtml(f.by)}</small>` : ""}</span>`;
+  }
+  const a = r.answer;
+  if (!a || (r.kind !== "bonus" && a.correct) || (r.kind === "bonus" && a.got && a.got.length && a.got.every(Boolean))) return "";
+  return `<button type="button" class="btn btn-sm adm-rrefund" data-ract="refund">${ic("undo", 14)}Refund points</button>`;
 }
 function adminReportHtml(r) {
   const q = r.question;
@@ -13785,7 +13798,7 @@ function adminReportHtml(r) {
     ${r.note ? `<blockquote class="adm-rnote">${escapeHtml(r.note)}</blockquote>` : `<p class="adm-rnote none">No note</p>`}
     <div class="adm-rqwrap"><div class="adm-rq${long && !_admr.open.has(r.id) ? " clamp" : ""}">${body}</div>
       ${long ? `<button type="button" class="adm-rexpand" data-rexp="${escapeHtml(r.id)}">${_admr.open.has(r.id) ? "Show less" : "Show all"}</button>` : ""}${tuAns}${mine}</div>
-    <footer class="adm-ract">${settled}<span class="spacer"></span>
+    <footer class="adm-ract">${settled}${adminRefundHtml(r)}<span class="spacer"></span>
       <button type="button" class="btn btn-sm btn-ghost" data-ract="delete">Delete</button>
       ${r.status === "done" ? '<button type="button" class="btn btn-sm" data-ract="open">Reopen</button>' : '<button type="button" class="btn btn-sm btn-primary" data-ract="done">Mark done</button>'}
     </footer>
@@ -13814,6 +13827,17 @@ function paintAdminReports(c) {
       return r;
     }), { failText: "Couldn't do that. Try again." }).then((ok) => { if (ok) paintAdminReports(c); });
     if (action === "delete") confirmDialog("Delete this report?", run, { yes: "Delete", danger: true, detail: "It's gone for good. Mark it done to keep it." });
+    else if (action === "refund") {
+      const r = (_admr.list || []).find((x) => x.id === id) || {}, who = r.by ? (r.by.handle ? "@" + r.by.handle : r.by.name || "their") : "this guest";
+      confirmDialog(`Refund ${who === "their" ? "their" : who + "\u2019s"} answer?`, () => {
+        b.disabled = true;
+        API.post("/api/admin/reports", { id, action: "refund" }).then((res) => {
+          if (res && res.ok) { r.refund = res.refund; (res.also || []).forEach((x) => { const o = (_admr.list || []).find((y) => y.id === x); if (o) o.refund = res.refund; }); paintAdminReports(c); return; }
+          b.disabled = false;
+          confirmDialog((res && res.error) || "Couldn't refund that answer.", () => {}, { yes: "OK", noCancel: true });
+        }, () => { b.disabled = false; });
+      }, { yes: "Refund", detail: r.kind === "bonus" ? "One more part of the bonus counts. They see what came back next time they're on." : "It counts as right, with the points it earns where they buzzed. They see what came back next time they're on." });
+    }
     else run();
   });
 }

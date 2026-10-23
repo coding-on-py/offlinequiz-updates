@@ -11,8 +11,8 @@ import { existsSync, mkdirSync } from "node:fs";
 // halves of POST /api/sync — the app sends what changed since its last push and
 // applies what the server returns; the server does the same on the account's
 // own database. The newest mtime wins (review dismissals merge instead).
-const SYNC_KEY = /^(settings|review_dismissed|review_manual|trials|overrides|plug):/;
-const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials|overrides)$|^plug:[^:]+:.+$/;
+const SYNC_KEY = /^(settings|review_dismissed|review_manual|trials|overrides|refund_note|plug):/;
+const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials|overrides|refund_note)$|^plug:[^:]+:.+$/;
 const MAX_SYNC_VALUE = 900 * 1024;   // a bigger config value stays on its device
 const sessionKey = (r) => JSON.stringify([String(r.session_id), String(r.type), r.question_id == null ? "" : String(r.question_id), Number(r.timestamp)]);
 
@@ -688,6 +688,22 @@ export class UserData {
       .run(Number(points), celerity == null ? null : Number(celerity), Date.now(), this._nextSeq(), Number(rowId));
   }
   sessionKeyOf(r) { return sessionKey(r); }
+  // 15.20 a manual refund: the attempt a report was about — the one with its typed answer when the report kept it,
+  // else the latest real attempt up to `before` (the row itself, or null)
+  attemptRow(type, qid, before = Date.now(), text = "") {
+    type = type === "bonus" ? "bonus" : "tossup";
+    const rows = this.db.prepare(`SELECT * FROM sessions WHERE profile_id = ? AND type = ? AND question_id = ? AND timestamp <= ?
+      AND COALESCE(given_answer, '') <> '(skipped)' ORDER BY timestamp DESC, id DESC LIMIT 50`).all(this.getActiveProfileId(), type, String(qid || ""), Number(before) + 60000);
+    const real = type === "bonus" ? rows : rows.filter((r) => String(r.given_answer || "").trim());
+    const fold = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const want = fold(text);
+    return (want && real.find((r) => fold(r.given_answer) === want)) || real[0] || null;
+  }
+  // a bonus refunded by hand: one more part right (its value), synced like any change
+  applyBonusRefund(rowId, add, maxParts) {
+    return this.db.prepare(`UPDATE sessions SET points = points + ?, bonus_parts_correct = MIN(COALESCE(bonus_parts_correct, 0) + 1, ?), correct = 1,
+      mtime = ?, seq = ?, src = NULL WHERE id = ? AND COALESCE(bonus_parts_correct, 0) < ?`).run(Number(add), Number(maxParts), Date.now(), this._nextSeq(), Number(rowId), Number(maxParts));
+  }
   // 15.19 question reports: this profile's latest real attempt at a question (not a skip; a tossup with something
   // typed), up to `before` (a report made earlier shows the answer it was about) → { text, correct, points, buzz, at }
   // (a tossup) or { points, partsCorrect, at } (a bonus: its parts' answers aren't kept), or null
