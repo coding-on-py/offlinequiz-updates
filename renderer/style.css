@@ -6319,3 +6319,67 @@ html:not(.shop-on) #tb-store { display: none !important; }
   .ach-stack .ach-popup { padding: 10px 12px; }
   .ach-stack .ach-popup-desc { display: none; }
 }
+
+/* ═══ Phones, round 15.22: the Question database (Search above all) ═══ */
+.qcard-more { display: none; }
+@media (max-width: 760px) {
+  /* the tabs: one row, short names (Sets, Tools); Plugin tools' menu comes up from the bottom */
+  #database-screen .db-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 10px; }
+  #database-screen .db-tabs > .db-tab, #database-screen .db-plugtools-btn { padding: 0 7px; }
+  #database-screen .db-tab[data-short] { font-size: 0; gap: 4px; }
+  #database-screen .db-tab[data-short]::before { content: attr(data-short); font-size: 13px; }
+  #database-screen .db-plugtools { flex: none; }
+  #db-plugtools-menu { position: fixed; left: 12px; right: 12px; top: auto; bottom: calc(12px + env(safe-area-inset-bottom)); max-height: 60vh; overflow-y: auto; z-index: 300; }
+  /* the search field: the words and the tag button on one line, Tossups / Bonuses under them */
+  #db-searchbar .cfield { padding: 6px 6px 8px 12px; min-height: 0; row-gap: 6px; }
+  #db-searchbar .cfield .cinput { flex: 1 1 0; min-width: 0; height: 40px; }
+  #db-searchbar .cfield-tag { order: 4; flex: none; }
+  #db-searchbar .sbar-right { order: 5; flex: 1 1 100%; margin: 0 0 0 -6px; }
+  #db-searchbar .sbar-right .seg { display: flex; flex: 1 1 auto; }
+  #db-searchbar .sbar-right .seg button { flex: 1 1 0; }
+  /* the filters: Categories, Years and More share a row; Difficulty is one row of 0 to 10 */
+  .db-search .qrow { flex-wrap: wrap; gap: 8px; }
+  .db-search .qrow > .btn, .db-search .qrow > .pop-wrap { flex: 1 1 auto; min-width: 0; }
+  .db-search .qrow > .btn { width: auto; justify-content: center; padding: 0 10px; }
+  .db-search .qrow > .pop-wrap > .btn { width: 100%; justify-content: center; padding: 0 10px; }
+  .db-search .qrow > .spacer { display: none; }
+  .db-search .qrow > #db-diffs { order: 9; flex: 1 1 100%; display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 3px; padding: 6px; }
+  .db-search #db-diffs .dt-lbl { grid-column: 1 / -1; padding: 0 2px 4px; font-size: 11.5px; }
+  .db-search #db-diffs label { height: 34px; min-width: 0; font-size: 13px; padding: 0; }
+  /* More: two columns, Search in across the top */
+  .db-search .drawer-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 12px; padding: 14px; }
+  .db-search .drawer-panel .f-wide, .db-search .drawer-panel .checks { grid-column: 1 / -1; }
+  /* the results: a long question shows its first lines, Show all opens the rest */
+  #db-content .qcard { padding: 14px 14px 12px; }
+  #db-content .qcard.lc:not(.lc-open) .qcard-body { max-height: 168px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent); mask-image: linear-gradient(to bottom, #000 58%, transparent); }
+  .qcard-more { display: inline-flex; align-items: center; min-height: 34px; margin: 2px 0 0; padding: 0; border: 0; background: none; color: var(--accent); font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer; }
+}
+@media (max-width: 760px) {
+  /* Search's filters fit one row: no arrows, tighter buttons */
+  .db-search #db-cat-btn > svg, .db-search #db-years-btn > svg { display: none; }
+  .db-search .qrow > .btn, .db-search .qrow > .pop-wrap > .btn { padding: 0 8px; gap: 6px; }
+  /* a set's packets: Packet N, its name under it */
+  #db-packet-list .db-row { min-height: 56px; padding-top: 9px; padding-bottom: 9px; }
+  #db-packet-list .pk-n { color: var(--strong); font-weight: 600; }
+  #db-packet-list .pk-sep { display: none; }
+  #db-packet-list .pk-name { display: block; margin-top: 2px; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+}
+@media (max-width: 760px) {
+  /* a set or a packet: its buttons on a row of their own under the path; Tossups → Bonuses / Interleaved across it */
+  .db-crumb .db-pkt-view { flex: 1 1 100%; margin-left: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+  .db-crumb .db-pkt-view > .btn { flex: 1 1 auto; justify-content: center; }
+  .db-crumb .db-pkt-view > .seg { flex: 1 1 100%; display: flex; }
+  .db-crumb .db-pkt-view > .seg button { flex: 1 1 0; white-space: nowrap; }
+}
+@media (max-width: 760px) {
+  /* results: the count and the order on one row, the pages under them, always from the left */
+  .db-search .rhead { row-gap: 4px; }
+  .db-search .rhead > .spacer { flex: 1 1 100%; height: 0; }
+}
+@media (max-width: 400px) {
+  /* the Database's five tabs fit a phone */
+  #database-screen .db-tabs { padding-left: 14px; padding-right: 14px; gap: 2px; }
+  #database-screen .db-tabs > .db-tab, #database-screen .db-plugtools-btn { padding: 0 6px; font-size: 12.5px; }
+  #database-screen .db-tabs .db-tab[data-short] { font-size: 0; }
+  #database-screen .db-tabs .db-tab[data-short]::before { font-size: 12.5px; }
+}

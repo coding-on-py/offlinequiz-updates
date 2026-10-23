@@ -10892,6 +10892,21 @@ function syncDbTabActive() {
   if (pb) pb.classList.toggle("active", tab.startsWith("prov:"));
 }
 
+// Phones: a long question card shows its first lines (faded) and a Show all button; the answer is its title.
+function clampLongCards(root) {
+  if (!root || !matchMedia("(max-width: 760px)").matches) return;
+  root.querySelectorAll(".qcard.expanded:not([data-lc])").forEach((card) => {
+    const body = card.querySelector(".qcard-body");
+    if (!body || !body.offsetHeight) return;
+    card.dataset.lc = "1";
+    if (body.scrollHeight < 220) return;
+    card.classList.add("lc");
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "qcard-more"; b.textContent = "Show all";
+    b.addEventListener("click", (e) => { e.stopPropagation(); const open = card.classList.toggle("lc-open"); b.textContent = open ? "Show less" : "Show all"; });
+    body.after(b);
+  });
+}
 function loadDatabase() {
   _screenBuilt.add("database");
   // A fresh entry starts a new search history — reviveScreen (the Back path)
@@ -10913,7 +10928,7 @@ function loadDatabase() {
     document.getElementById("btn-db-compact")?.addEventListener("click", () => setAll(true));
     document.getElementById("btn-db-expand")?.addEventListener("click", () => setAll(false));
     // Compact all / Expand all only where there are question cards to fold (not Sets, Frequency…)
-    const syncCardBtns = () => { const has = !!document.querySelector("#db-content .qcard"); ["btn-db-compact", "btn-db-expand"].forEach((id) => { const b = document.getElementById(id); if (b) b.hidden = !has; }); };
+    const syncCardBtns = () => { const has = !!document.querySelector("#db-content .qcard"); ["btn-db-compact", "btn-db-expand"].forEach((id) => { const b = document.getElementById(id); if (b) b.hidden = !has; }); clampLongCards(document.getElementById("db-content")); };
     const dbc = document.getElementById("db-content");
     if (dbc) new MutationObserver(() => { cancelAnimationFrame(syncCardBtns._r); syncCardBtns._r = requestAnimationFrame(syncCardBtns); }).observe(dbc, { childList: true, subtree: true });
     syncCardBtns();
@@ -10975,6 +10990,9 @@ function renderSearchTab() {
     `<label title="${escapeHtml(DIFF_FULL[i] || name)}"><input type="checkbox" class="db-diff-cb" value="${i}"${q.diffs.includes(String(i)) ? " checked" : ""}><span>${i}</span></label>`).join("");
   const seg = [["all", "All"], ["tossup", "Tossups"], ["bonus", "Bonuses"]].map(([v, l]) => `<button type="button" data-qtype="${v}" aria-pressed="${q.qtype === v}">${l}</button>`).join("");
   const opt = (v, l, cur) => `<option value="${v}"${cur === v ? " selected" : ""}>${l}</option>`;
+  // a phone: "Search in" goes into More, so the search field keeps to the words, the tag button and the type
+  const narrow = matchMedia("(max-width: 760px)").matches;
+  const searchInHtml = `<select id="db-search-type" title="All text also matches category, subcategory and set names">${opt("all", "Question & answer", q.field)}${opt("question", "Question only", q.field)}${opt("answer", "Answer only", q.field)}</select>`;
   c.innerHTML =
     '<div class="db-page db-search">' +
       '<div id="db-searchbar" class="db-searchbar"></div>' +
@@ -10988,6 +11006,7 @@ function renderSearchTab() {
         `<button type="button" class="btn" id="db-more-toggle" aria-expanded="${_dbMoreOpen}" aria-controls="db-more">${ic("sliders", 16)}More<span class="count-badge num db-more-count" id="db-more-count"></span></button>` +
       "</div>" +
       `<section class="drawer-panel" id="db-more"${_dbMoreOpen ? "" : " hidden"} aria-label="More">` +
+        (narrow ? `<label class="f f-wide"><span>Search in</span>${searchInHtml}</label>` : "") +
         `<label class="f"><span>Match</span><select id="db-match" title="How the words must match">${opt("phrase", "Exact phrase", q.match)}${opt("all", "All words", q.match)}${opt("any", "Any word", q.match)}</select></label>` +
         `<label class="f"><span>Exclude words</span><input type="text" id="db-exclude" class="mode-input" autocomplete="off" value="${escapeHtml(q.exclude)}" aria-label="Exclude words"></label>` +
         '<label class="f"><span>Set</span><select id="db-set-filter"><option value="">All sets</option></select></label>' +
@@ -11008,7 +11027,7 @@ function renderSearchTab() {
   _searchTagField = TagField({
     host: document.getElementById("db-searchbar"), icon: "search", ariaLabel: "Search questions", chips: q.tags, textValue: q.text,
     placeholder: (chips) => (chips.length ? "Add words" : "Search questions"),
-    rightHtml: `<div class="sbar-right"><div class="seg" id="db-qtype-seg" role="group" aria-label="Question type">${seg}</div><select id="db-search-type" title="All text also matches category, subcategory and set names">${opt("all", "Question & answer", q.field)}${opt("question", "Question only", q.field)}${opt("answer", "Answer only", q.field)}</select></div>`,
+    rightHtml: `<div class="sbar-right"><div class="seg" id="db-qtype-seg" role="group" aria-label="Question type">${seg}</div>${narrow ? "" : searchInHtml}</div>`,
     onChange: (chips) => { _dbq.tags = chips; dbSearchSoon(true); },
     onText: (t) => { _dbq.text = t; dbSearchSoon(true); },
   });
@@ -11153,7 +11172,8 @@ function dbYearsLabel() {
 }
 function dbMoreCount() {
   const q = _dbq;
-  const n = [q.set, q.packet, String(q.exclude || "").trim(), q.standard, q.powermark && q.qtype !== "bonus", q.starred, q.prefix, q.hideAns, q.match !== "phrase"].filter(Boolean).length;
+  const n = [q.set, q.packet, String(q.exclude || "").trim(), q.standard, q.powermark && q.qtype !== "bonus", q.starred, q.prefix, q.hideAns, q.match !== "phrase",
+    q.field && q.field !== "all" && !!document.querySelector("#db-more #db-search-type")].filter(Boolean).length;   // (Search in sits in More on a phone)
   const el = document.getElementById("db-more-count"); if (el) el.textContent = n ? String(n) : "";
 }
 // One open popover at a time; a click anywhere else closes it.
@@ -11641,7 +11661,7 @@ async function openSet(setName) {
     packets = (res && (res.packets || (Array.isArray(res) ? res : []))) || [];
   } catch (e) { err = e.message || String(e); }
   document.getElementById("db-packet-list").innerHTML = packets.length
-    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}"><span class="lr-name">Packet ${p.packet_number}${p.packet_name && p.packet_name !== String(p.packet_number) ? " · " + escapeHtml(p.packet_name) : ""}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
+    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}"><span class="lr-name"><span class="pk-n">Packet ${p.packet_number}</span>${p.packet_name && p.packet_name !== String(p.packet_number) ? '<span class="pk-sep"> · </span><span class="pk-name">' + escapeHtml(p.packet_name) + "</span>" : ""}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
     : `<div class="db-empty" style="border:0">${err ? "Couldn't load packets: " + escapeHtml(err) : "No packets in this set."}</div>`;
   document.querySelectorAll("#db-packet-list .db-row").forEach((r) => {
     r.addEventListener("click", () => openPacket(setName, parseInt(r.dataset.pkt)));
