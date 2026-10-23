@@ -910,7 +910,12 @@ function goTo(target) {
     case "download": showScreen("download"); renderDownload(); break;
     case "friends": showScreen("friends"); renderFriends(); break;
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
-    case "store": showScreen("store"); renderStore(); refreshOwned(); break;
+    case "store":
+      // the Store is hidden while the shop is closed (no payment company set up yet): its address goes home
+      if (_shop.info && !_shop.info.on) { goHome(); break; }
+      showScreen("store"); renderStore(); refreshOwned();
+      if (!_shop.info) loadShopInfo().then(() => { if (_shop.info && !_shop.info.on && document.querySelector("#store-screen.active")) goHome(); });
+      break;
     // Clubs & Team Diagnostic (clubs.js)
     case "clubs": case "diagnostic": case "irl": case "report": case "link": showScreen(target); window.QBClubs?.onScreen(target); break;
     case "streaks": showScreen("streaks"); renderStreaks(); break;
@@ -6582,6 +6587,20 @@ function openSaveMenu(question, type, anchor) {
 const REPORT_REASONS = [["category", "Wrong Category/Tags"], ["info", "Wrong Info"], ["missing", "Missing Info"], ["answer", "Wrong Answer"]];
 // "2012 BDAT II", not "2012 2012 BDAT II" (most set names start with their year)
 const yearAndSet = (year, name) => { name = String(name || "").trim(); return year && !name.startsWith(String(year)) ? (year + " " + name).trim() : name || (year ? String(year) : ""); };
+// What you answered, when the question being reported is the one on screen and you've answered it (15.19): it goes
+// with the report so the admins see it. Elsewhere your backend adds your latest attempt from your practice.
+function reportAnswerOnScreen(question, type) {
+  if (!question || question !== state.currentQuestion) return null;
+  if (type === "tossup") {
+    const r = state.lastResult;
+    if (!r || r.questionId !== question.id || !String(r.userAnswer || "").trim()) return null;
+    return { text: r.userAnswer, correct: !!r.correct, points: r.points, buzz: r.origBuzzPosition, at: Date.now() };
+  }
+  const n = state.bonusPartCount || (state.bonusUserAnswers || []).length, typed = Array.from({ length: n }, (_, i) => (state.bonusUserAnswers || [])[i] || "");
+  const res = state._bonusResult;
+  if (!typed.some((t) => String(t).trim())) return null;
+  return { parts: typed, ...(res ? { got: (res.parts || []).map((pt) => !!(pt && pt.correct)), points: res.totalPoints } : {}), at: Date.now() };
+}
 function openReportDialog(question, type) {
   if (!question || question.id == null) return;
   type = type === "bonus" ? "bonus" : "tossup";
@@ -6627,7 +6646,8 @@ function openReportDialog(question, type) {
     if (!reason) { err.textContent = "Pick what's wrong first."; return; }
     send.disabled = true; send.textContent = "Sending…"; err.textContent = "";
     let r = null;
-    try { r = await API.post("/api/reports", { type, questionId: question.id, reason, note: el.querySelector("#rp-note").value.trim() }); } catch (e) { r = null; }
+    const answer = reportAnswerOnScreen(question, type);
+    try { r = await API.post("/api/reports", { type, questionId: question.id, reason, note: el.querySelector("#rp-note").value.trim(), ...(answer ? { answer } : {}) }); } catch (e) { r = null; }
     if (!el.isConnected) return;
     if (!r || !r.ok) {
       send.disabled = false; send.textContent = "Send report";
@@ -13196,6 +13216,8 @@ function loadShopInfo() {
   _shop.infoP = Promise.resolve(API.get("/api/shop/info")).then((d) => {
     if (!d || d.error) return;
     _shop.info = d;
+    // the top bar's Store shows only while the shop is open (ui.css html.shop-on)
+    document.documentElement.classList.toggle("shop-on", !!d.on);
     if (window.QB) {
       window.QB._shopInfo = d;
       Object.entries(d.products || {}).forEach(([sku, p]) => { if (p && p.price) window.QB._prices[sku] = p.price; });
@@ -13719,6 +13741,27 @@ const admAgo = (t) => {
   if (m < 60 * 24) return Math.round(m / 60) + " h ago";
   return admWhen(t);
 };
+// What the reporter answered (15.19): a tossup's answer with its verdict and where they buzzed; a bonus's answer
+// to each part (from the page) or its score (from their history). Nothing when they hadn't answered it.
+function adminReportAnswerHtml(r) {
+  const a = r.answer;
+  if (!a) return "";
+  const pts = (n) => (n > 0 ? "+" : n < 0 ? "\u2212" : "") + Math.abs(n);
+  const when = a.at ? `<small class="adm-rmine-when">${escapeHtml(admAgo(a.at))}</small>` : "";
+  if (r.kind === "bonus") {
+    const parts = Array.isArray(a.parts) ? a.parts : null, got = Array.isArray(a.got) ? a.got : [];
+    const total = a.points != null ? `<span class="adm-rv ${a.points > 0 ? "ok" : "bad"}">${pts(a.points)}</span>` : "";
+    const rows = parts ? parts.map((t, i) => `<li><b class="num">${i + 1}.</b> ${t ? `<span class="adm-rmine-text">${escapeHtml(t)}</span>` : '<span class="adm-rmine-none">no answer</span>'}` +
+      (got[i] == null ? "" : `<span class="adm-rv ${got[i] ? "ok" : "bad"}">${got[i] ? "Right" : "Wrong"}</span>`) + "</li>").join("") : "";
+    const score = !parts && a.partsCorrect != null ? `<span class="adm-rmine-text">${a.partsCorrect} part${a.partsCorrect === 1 ? "" : "s"} right</span>` : "";
+    return `<div class="adm-rmine"><div class="adm-rmine-head"><span class="adm-rmine-k">Their answer</span>${score}${total}${when}</div>${rows ? `<ol class="adm-rmine-parts">${rows}</ol>` : ""}</div>`;
+  }
+  const v = a.correct == null ? "" : a.correct ? (a.points > 10 ? "Power" : "Correct") : a.points < 0 ? "Neg" : "Wrong";
+  const verdict = v ? `<span class="adm-rv ${a.correct ? "ok" : "bad"}">${v}${a.points != null ? " " + pts(a.points) : ""}</span>` : "";
+  const b = a.buzzAt, buzz = !b ? "" : b.end ? "after the question ended" : `buzzed at ${b.pct}%, after \u201c\u2026${escapeHtml(b.words)}\u201d`;
+  return `<div class="adm-rmine"><div class="adm-rmine-head"><span class="adm-rmine-k">Their answer</span><span class="adm-rmine-text">${escapeHtml(a.text)}</span>${verdict}${when}</div>` +
+    (buzz ? `<p class="adm-rmine-buzz">${buzz}</p>` : "") + "</div>";
+}
 function adminReportHtml(r) {
   const q = r.question;
   const who = r.by
@@ -13733,6 +13776,7 @@ function adminReportHtml(r) {
       `<p class="adm-rtext"><b class="num">${i + 1}.</b> ${escapeHtml(p)}</p><p class="adm-rans"><span>Answer</span> ${safeInlineHtml((q.answersHtml || [])[i] || (q.answers || [])[i] || "")}</p>`).join("");
   } else body = `<p class="adm-rtext">${escapeHtml(q.text)}</p>`;
   const tuAns = q && r.kind !== "bonus" ? `<p class="adm-rans adm-rans-tu"><span>Answer</span> ${safeInlineHtml(q.answerHtml || q.answer || "")}</p>` : "";
+  const mine = adminReportAnswerHtml(r);
   const long = !!q && ((q.text || q.leadin || "").length + (q.parts || []).join("").length) > 420;
   const settled = r.status === "done" ? `<small class="adm-rdone">Done ${escapeHtml(admAgo(r.doneAt))}${r.doneBy ? " by @" + escapeHtml(r.doneBy) : ""}</small>` : "";
   return `<article class="fr-card adm-report" data-rid="${escapeHtml(r.id)}">
@@ -13740,7 +13784,7 @@ function adminReportHtml(r) {
     <div class="adm-rby">${who}<small>${escapeHtml(admAgo(r.at))} · ${r.source === "app" ? "in the app" : "on the website"}${r.openOnQuestion > 1 && r.status === "open" ? ` · <b>${r.openOnQuestion} open reports on this question</b>` : ""}</small></div>
     ${r.note ? `<blockquote class="adm-rnote">${escapeHtml(r.note)}</blockquote>` : `<p class="adm-rnote none">No note</p>`}
     <div class="adm-rqwrap"><div class="adm-rq${long && !_admr.open.has(r.id) ? " clamp" : ""}">${body}</div>
-      ${long ? `<button type="button" class="adm-rexpand" data-rexp="${escapeHtml(r.id)}">${_admr.open.has(r.id) ? "Show less" : "Show all"}</button>` : ""}${tuAns}</div>
+      ${long ? `<button type="button" class="adm-rexpand" data-rexp="${escapeHtml(r.id)}">${_admr.open.has(r.id) ? "Show less" : "Show all"}</button>` : ""}${tuAns}${mine}</div>
     <footer class="adm-ract">${settled}<span class="spacer"></span>
       <button type="button" class="btn btn-sm btn-ghost" data-ract="delete">Delete</button>
       ${r.status === "done" ? '<button type="button" class="btn btn-sm" data-ract="open">Reopen</button>' : '<button type="button" class="btn btn-sm btn-primary" data-ract="done">Mark done</button>'}

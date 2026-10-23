@@ -6246,3 +6246,19 @@ button.qb-info-btn:focus-visible { outline: 2px solid var(--accent); outline-off
 .lh-sheet .lh-row { padding-right: 12px; }
 .lh-group .lh-row { padding-right: 0; }
 .lh-group .lh-row > .lh-n { right: -22px; }
+/* the Store stays out of sight until the shop is open (app.js loadShopInfo: html.shop-on) */
+html:not(.shop-on) #tb-store { display: none !important; }
+/* a report's "Their answer" (15.19, app.js adminReportAnswerHtml) */
+.adm-rmine { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line-soft); border-left: 3px solid var(--accent); border-radius: var(--r-sm); background: var(--surface); }
+.adm-rmine-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; font-size: 13.5px; }
+.adm-rmine-k { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.adm-rmine-text { color: var(--strong); font-weight: 600; overflow-wrap: anywhere; }
+.adm-rmine-none { color: var(--muted); font-style: italic; }
+.adm-rmine-when { margin-left: auto; color: var(--muted); font-size: 12px; }
+.adm-rv { padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.adm-rv.ok { color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent); }
+.adm-rv.bad { color: var(--red); background: color-mix(in srgb, var(--red) 13%, transparent); }
+.adm-rmine-buzz { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.adm-rmine-parts { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.adm-rmine-parts li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
+.adm-rmine-parts .num { color: var(--muted); }

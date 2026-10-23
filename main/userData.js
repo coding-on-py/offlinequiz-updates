@@ -688,6 +688,20 @@ export class UserData {
       .run(Number(points), celerity == null ? null : Number(celerity), Date.now(), this._nextSeq(), Number(rowId));
   }
   sessionKeyOf(r) { return sessionKey(r); }
+  // 15.19 question reports: this profile's latest real attempt at a question (not a skip; a tossup with something
+  // typed), up to `before` (a report made earlier shows the answer it was about) → { text, correct, points, buzz, at }
+  // (a tossup) or { points, partsCorrect, at } (a bonus: its parts' answers aren't kept), or null
+  lastAttempt(type, qid, before = Date.now()) {
+    type = type === "bonus" ? "bonus" : "tossup";
+    const rows = this.db.prepare(`SELECT given_answer, correct, points, buzz_position, bonus_parts_correct, timestamp FROM sessions
+      WHERE profile_id = ? AND type = ? AND question_id = ? AND timestamp <= ? AND COALESCE(given_answer, '') <> '(skipped)'
+      ORDER BY timestamp DESC, id DESC LIMIT 20`).all(this.getActiveProfileId(), type, String(qid || ""), Number(before) + 60000);
+    for (const r of rows) {
+      if (type === "bonus") return { points: r.points, partsCorrect: r.bonus_parts_correct, at: r.timestamp };
+      if (String(r.given_answer || "").trim()) return { text: r.given_answer, correct: !!r.correct, points: r.points, buzz: r.buzz_position, at: r.timestamp };
+    }
+    return null;
+  }
 
   getSessionHistory(filters = {}) {
     const pid = this.getActiveProfileId();
