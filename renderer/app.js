@@ -4724,6 +4724,7 @@ async function skipQuestion() {
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
   if (state.isPaused) {
     state.isPaused = false;
+    state._pausedBox = null;
     state._stoppedAtPower = false;
     $("#question-text")?.classList.remove("paused-text");
     document.getElementById("pause-overlay")?.remove();
@@ -5127,7 +5128,7 @@ async function renderBonus(q) {
   bonusArea.classList.remove("hidden");
 
   state.bonusPartsAnswered = 0;
-  state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = []; state._bonusJudged = []; state._bonusLastIdx = null;
+  state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = []; state._bonusJudged = []; state._bonusLastIdx = null; state._pausedBox = null;
   state.bonusUserAnswers = [];
   state._bonusPrompted = []; state._bonusPromptFrom = []; state._bonusEval = []; state._bonusDone = [];
   bonusArea.querySelectorAll(".bonus-prompt-banner").forEach((el) => el.remove());
@@ -5338,7 +5339,8 @@ function startBonusPart(idx) {
   $(`#bonus-part-${idx}`)?.classList.remove("hidden");
   if (matchMedia("(max-width: 760px)").matches) followReading($(`#bonus-part-${idx}`), state.currentQuestion && state.currentQuestion.id, true);   // phones: the new part, above the bottom bar
   const inp = $(`#bonus-input-${idx}`);
-  if (inp) { inp.disabled = false; setTimeout(() => inp.focus(), 60); }   // typing early is fine
+  // typing early is fine; started while paused, its box waits closed for Resume
+  if (inp) { if (state.isPaused) state._pausedBox = inp.id; else { inp.disabled = false; setTimeout(() => inp.focus(), 60); } }
   stopEventTimer();
   // the part is read at the reading speed; its timer starts once it's read
   const q = state.currentQuestion, textEl = $(`#bonus-text-${idx}`);
@@ -5670,6 +5672,10 @@ function togglePause() {
   if (state.isPaused) {
     if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
     pauseEventTimer();
+    // a bonus part's answer box closes while paused: an open box counts as answering, which held every key (P
+    // couldn't resume, and typed "p" into it instead); Resume opens it again where it was
+    const box = [...document.querySelectorAll(".bonus-answer-input")].find((i) => !i.disabled && i.offsetParent !== null);
+    if (box) { state._pausedBox = box.id; box.disabled = true; box.blur(); }
     $("#question-text")?.classList.add("paused-text");
     const el = document.createElement("div");
     el.className = "pause-overlay";
@@ -5680,9 +5686,20 @@ function togglePause() {
     $("#question-text")?.classList.remove("paused-text");
     const el = document.getElementById("pause-overlay");
     if (el) el.remove();
+    reopenPausedBox();
     resumeEventTimer();
     resumeReveal();
   }
+}
+// the bonus part's box that Pause closed: open again (its part still running on this question), focused
+function reopenPausedBox() {
+  const id = state._pausedBox; state._pausedBox = null;
+  const box = id && document.getElementById(id);
+  if (!box || state.mode !== "bonuses" || !state.currentQuestion) return;
+  const idx = parseInt(id.replace("bonus-input-", ""), 10);
+  if ((state._bonusDone || [])[idx] || $(`#bonus-part-${idx}`)?.classList.contains("hidden")) return;
+  box.disabled = false;
+  setTimeout(() => { if (!box.disabled && !state.isPaused) box.focus(); }, 30);
 }
 
 // Translate a buzz index in the DISPLAYED text (pron guides stripped, "(*)"
@@ -7277,6 +7294,7 @@ function startPromptHtml() {
 function resetQuestionUI() {
   state.resultAreaVisible = false;
   state.isPaused = false;
+  state._pausedBox = null;
   const pauseOverlay = document.getElementById("pause-overlay");
   if (pauseOverlay) pauseOverlay.remove();
   const buzzMarker = document.querySelector(".buzz-marker");
