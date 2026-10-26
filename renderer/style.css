@@ -4780,6 +4780,8 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 .achievement-card:not(.earned) .achievement-name { color: var(--text); }
 .achievement-progress { flex: none; margin: 0; color: var(--muted); font-size: 11px; }
 .achievement-done { flex: none; color: var(--accent); font-size: 11px; font-weight: 600; }
+.achievement-card .ach-date { display: flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.achievement-card .ach-date svg { flex: none; color: var(--accent); }
 .achievement-desc { margin: 0; overflow-wrap: anywhere; line-height: 1.4; color: var(--muted); font-size: 12px; }
 .achievement-bar { height: 4px; margin-top: 4px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .achievement-bar-fill { height: 100%; border-radius: 99px; background: var(--accent); }
@@ -5796,6 +5798,8 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .achd-id { flex: 1; min-width: 0; }
 .achd-name { color: var(--strong); font-size: 17px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .achd-desc { margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.achd-when { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--accent); font-size: 12px; font-weight: 600; }
+.achd-when svg { flex: none; }
 .achd-state { flex: none; padding: 3px 10px; border-radius: 99px; background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 600; }
 .achd-state.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 .achd-bar { margin-top: -4px; }

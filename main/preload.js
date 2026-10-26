@@ -87,6 +87,8 @@ contextBridge.exposeInMainWorld("qbreader", {
 
   getAnswerPowers: () => ipcRenderer.invoke("get-answer-powers"),
   getTrials: () => ipcRenderer.invoke("get-trials"),
+  getAchievementTimeline: () => ipcRenderer.invoke("get-achievement-timeline"),
+  saveAchievementDates: (d) => ipcRenderer.invoke("save-achievement-dates", d),
   regrade: (d) => ipcRenderer.invoke("regrade", d || {}),
   lanRoom: (d) => ipcRenderer.invoke("lan-room", d || {}),
   trialAction: (d) => ipcRenderer.invoke("trial-action", d),

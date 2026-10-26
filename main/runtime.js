@@ -406,6 +406,8 @@ export async function start(env) {
     ipcMain.handle("get-answer-powers", () => {
       return qbApp.getAnswerPowers();
     });
+    ipcMain.handle("get-achievement-timeline", () => qbApp.getAchievementTimeline());
+    ipcMain.handle("save-achievement-dates", (_e, d) => qbApp.saveAchievementDates(d && d.dates));
 
     ipcMain.handle("prune-sessions", (_e, { days } = {}) => {
       const r = qbApp.deleteSessionsOlderThan(days);

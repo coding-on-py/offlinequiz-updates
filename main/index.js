@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { QuestionDatabase } from "./database.js";
-import { UserData, EVENT, eventOn, isPumpkin } from "./userData.js";
+import { UserData, EVENT, eventOn, isPumpkin, mergeAchDates } from "./userData.js";
 import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer, normalizeText } from "./answerChecker.js";
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
@@ -1432,7 +1432,34 @@ export class App {
     let poweredAt = {}, event = null;
     try { poweredAt = this.userData.getPowerTimes(); } catch { poweredAt = {}; }
     try { event = { id: EVENT.id, start: EVENT.start, end: EVENT.end, goal: EVENT.goal, on: eventOn(), pumpkins: this.userData.eventPumpkins() }; } catch { event = null; }
-    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, answer_alts: alts, powered_at: poweredAt, event };
+    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, answer_alts: alts, powered_at: poweredAt, event, ach_at: this.getAchievementDates() };
+  }
+
+  // ── Achievement dates (15.25): when each achievement was unlocked, kept with the profile ("ach_at", synced, the
+  // earliest time wins). The page works them out (app.js achUnlockTimes): live as one pops up, and once from the
+  // history for older ones, replaying this timeline.
+  getAchievementDates() {
+    try { return mergeAchDates(JSON.parse(this.userData.getConfig("ach_at:" + this.userData.getActiveProfileId()) || "{}")); } catch { return {}; }
+  }
+  saveAchievementDates(dates) {
+    const key = "ach_at:" + this.userData.getActiveProfileId(), had = this.getAchievementDates(), merged = mergeAchDates(had, dates);
+    if (JSON.stringify(merged) !== JSON.stringify(had)) this.userData.setConfig(key, JSON.stringify(merged));
+    return { ok: true, dates: merged };
+  }
+  // the profile's answers in time order, as stats.js counts them: { cats: [[category, path]], rows: [[t, flags,
+  // cat index]] }, flags 1 a bonus, 2 a power, 4 a neg
+  getAchievementTimeline() {
+    const cats = [], idx = new Map(), rows = [];
+    for (const e of this._relabel(this.userData.getAllSessionEntries())) {
+      if (!e || !(Number(e.timestamp) > 0)) continue;
+      const k = (e.category || "") + "\u0001" + (e.category_path || "");
+      let i = idx.get(k);
+      if (i === undefined) { i = cats.length; idx.set(k, i); cats.push([e.category || "", e.category_path || ""]); }
+      const tu = e.type === "tossup";
+      rows.push([Number(e.timestamp), (tu ? 0 : 1) | (tu && e.correct && e.points === 15 ? 2 : 0) | (tu && !e.correct && e.points < 0 ? 4 : 0), i]);
+    }
+    rows.sort((a, b) => a[0] - b[0]);
+    return { cats, rows, dates: this.getAchievementDates() };
   }
 
   getSessionBreakdown(category, difficulty, categoryIds) {

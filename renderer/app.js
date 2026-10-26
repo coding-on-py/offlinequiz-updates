@@ -105,6 +105,7 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/sessions/all-entries")
           return window.qbreader.getAllSessionEntries({ answers: q.answers === "1" || q.answers === "true" });
         if (path === "/api/answer-powers") return window.qbreader.getAnswerPowers();
+        if (path === "/api/achievements/timeline") return window.qbreader.getAchievementTimeline ? window.qbreader.getAchievementTimeline() : { rows: [], cats: [] };
         if (path === "/api/trials") return window.qbreader.getTrials ? window.qbreader.getTrials() : { trials: {}, cats: [] };
         if (path === "/api/profiles") return window.qbreader.getProfiles();
         if (path === "/api/profiles/active") return window.qbreader.getActiveProfile();
@@ -137,6 +138,7 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/profile-settings") return window.qbreader.saveProfileSettings(data.settings);
         if (path === "/api/review/dismiss") return window.qbreader.dismissReview(data.questionId);
         if (path === "/api/trials") return window.qbreader.trialAction ? window.qbreader.trialAction(data) : { ok: false, error: "Restart the app to use trials." };
+        if (path === "/api/achievements/dates") return window.qbreader.saveAchievementDates ? window.qbreader.saveAchievementDates(data) : { ok: false };
         if (path === "/api/regrade") return window.qbreader.regrade ? window.qbreader.regrade(data) : { ok: true, already: true };
         if (path === "/api/lan/room") return window.qbreader.lanRoom ? window.qbreader.lanRoom(data) : { error: "Restart the app to make offline rooms." };
         if (path === "/api/review/manual") return window.qbreader.reviewManual(data.questionId, data.add !== false, data.type);
@@ -572,6 +574,7 @@ const ICON = {
   sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   award: '<circle cx="12" cy="9" r="6"/><path d="M8.6 13.8 7 22l5-3 5 3-1.6-8.2"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M8 3v4M16 3v4M3.5 10h17"/>',
   link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
   flag: '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4.5L17 13H5"/>',
   bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
@@ -9254,7 +9257,7 @@ async function loadPlayer() {
     const powers = stats.tossupPowers || 0;
     const negs = stats.tossupNegs || 0;
 
-    const achData = computeAchievementData(stats, apCounts, apClasses, achRecordsFrom(apData));
+    const achData = computeAchievementData(stats, apCounts, apClasses, achRecordsFrom(apData), apData.ach_at);
     const pluginAchs = collectPluginAchievements(stats, apCounts);
     const achievementsHtml = buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs);
     maybeShowAchievementPopups(achData, pluginAchs, profileKey);
@@ -9289,6 +9292,7 @@ async function loadPlayer() {
     wireBadges(container, (trialInfo && trialInfo.trials) || {}, true);
     wireHwCard(container);
     wireAchievementCards(container, { achData, records: achRecordsFrom(apData), stats, pluginAchs });
+    achBackfillDates(achData, apData, (Account.user && Account.user.id ? Account.user.id + ":" : "") + profileKey);
     window.QB?.neonField?.($("#player-username-input"), myNeon());   // a bought neon name glows here too
     paintProfileNeon();   // …and its colour is picked here too
 
@@ -9495,9 +9499,54 @@ function achRecordsOf(apQuestions, poweredAt, pumpkins, alts) {
   return out;
 }
 const achRecordsFrom = (d) => achRecordsOf((d && d.answer_questions) || {}, d && d.powered_at, d && d.event && d.event.pumpkins, d && d.answer_alts);
+// When each achievement was unlocked (15.25), counted as computeAchievementData counts: the profile's answers in time
+// order (tl, /api/achievements/timeline: { cats: [[category, path]], rows: [[t, flags, cat]] }, flags 1 a bonus, 2 a
+// power, 4 a neg) and its powered tossups (records, t = the first power). → { id: ms } for every achievement the
+// history reaches, a streak too once it was long enough (even if it broke later).
+function achUnlockTimes(list, tl, records) {
+  const out = {}, rows = ((tl && tl.rows) || []).filter((r) => Array.isArray(r) && r[0] > 0), cats = (tl && tl.cats) || [];
+  const catOf = (r) => (cats[r[2]] || [])[0] || "Unknown", pathOf = (r) => (cats[r[2]] || [])[1] || "";
+  const nth = (ts, n) => (ts.length >= n ? ts[n - 1] : 0);
+  const all = rows.map((r) => r[0]), powers = rows.filter((r) => r[1] & 2).map((r) => r[0]), negs = rows.filter((r) => r[1] & 4).map((r) => r[0]);
+  const dayOf = (t) => new Date(t).toISOString().slice(0, 10);
+  // the first time a running count of one key (a category, a day) reaches n
+  const firstReach = (keyOf, n) => { const c = new Map(); for (const r of rows) { const k = keyOf(r); if (k == null) continue; const v = (c.get(k) || 0) + 1; c.set(k, v); if (v >= n) return r[0]; } return 0; };
+  // a streak as computeDailyStreak counts it: practice days no more than a day and a half apart
+  const streakAt = (n) => { let last = "", run = 0; for (const r of rows) { const d = dayOf(r[0]); if (d === last) continue; run = last && Date.parse(d) - Date.parse(last) <= 1.5 * 864e5 ? run + 1 : 1; last = d; if (run >= n) return r[0]; } return 0; };
+  const recs = (records || []).filter((r) => r && r.t > 0).sort((a, b) => a.t - b.t);
+  for (const ach of list || []) {
+    const n = Math.max(1, ach.threshold || 1);
+    let t = 0;
+    if (ach.type === "total") t = nth(all, n);
+    else if (ach.type === "powers") t = nth(powers, n);
+    else if (ach.type === "negs") t = nth(negs, n);
+    else if (ach.type === "cat") t = firstReach(catOf, n);
+    else if (ach.type === "cat_specific") {
+      // (byPath counts each listed node a question is under, so a question under two of them counts twice there too)
+      if (ach.path) { const ps = achList(ach.path); let c = 0; for (const r of rows) { const p = pathOf(r); if (p) c += ps.filter((x) => p === x || p.startsWith(x + " > ")).length; if (c >= n) { t = r[0]; break; } } }
+      else t = firstReach((r) => (catOf(r) === ach.category ? 1 : null), n);
+    } else if (ach.type === "daily") t = firstReach((r) => dayOf(r[0]), n);
+    else if (ach.type === "streak") t = streakAt(n);
+    else if (ach.type === "answer_power" || ach.type === "candy") {
+      const mode = ach.count || "questions", seen = new Set();
+      for (const r of recs) {
+        if (ach.during && !(r.t >= ach.during[0] && r.t < ach.during[1])) continue;
+        let k = r.q;
+        if (ach.type === "candy") { if (!r.pk) continue; }
+        else { const g = achRecordHit(ach, r); if (g < 0) continue; k = mode === "targets" ? g : mode === "answers" ? r.a : r.q; }
+        seen.add(k);
+        if (seen.size >= n) { t = r.t; break; }
+      }
+    }
+    if (t > 0) out[ach.id] = t;
+  }
+  return out;
+}
 // ACH-ENGINE END
 
-function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
+// dates: when each was unlocked (/api/answer-powers' ach_at, 15.25); an unlocked one stays earned (a streak that broke,
+// practice deleted later) and carries its time as `at`
+function computeAchievementData(stats, apCounts, apClasses, apQuestions, dates) {
   stats = stats || {};
   apCounts = apCounts || {};
   apClasses = apClasses || {};
@@ -9530,7 +9579,8 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions) {
     } else if (ach.type === "candy") {
       progress = records.filter((r) => r.pk && (!ach.during || (r.t >= ach.during[0] && r.t < ach.during[1]))).length;
     }
-    achData[ach.id] = { earned: progress >= ach.threshold, progress };
+    const at = dates && Number(dates[ach.id]) > 0 ? Number(dates[ach.id]) : 0;
+    achData[ach.id] = { earned: progress >= ach.threshold || at > 0, progress, at };
   }
   return achData;
 }
@@ -9546,7 +9596,7 @@ async function achProfileKey() {
 }
 function achLiveCheck() {
   if (!_achLive.stats) return;
-  const achData = computeAchievementData(_achLive.stats, null, null, _achLive.records || []);
+  const achData = computeAchievementData(_achLive.stats, null, null, _achLive.records || [], _achLive.dates);
   maybeShowAchievementPopups(achData, collectPluginAchievements(_achLive.stats, {}), _achLive.key);
 }
 // (re)read from the backend; the first read for a profile only notes what's earned (no popups)
@@ -9560,7 +9610,7 @@ function achLiveLoad() {
         API.get("/api/answer-powers").catch(() => null),
       ]);
       if (!statsData || !apData) return;
-      _achLive.key = key; _achLive.stats = statsData.stats || {}; _achLive.records = achRecordsFrom(apData);
+      _achLive.key = key; _achLive.stats = statsData.stats || {}; _achLive.records = achRecordsFrom(apData); _achLive.dates = apData.ach_at || {};
       achLiveCheck();
     } finally { _achLive.loading = null; }
   })();
@@ -9655,6 +9705,9 @@ const AP_CATEGORY_PREFIXES = [
   ["ap-phil-", "Philosophy"],
 ];
 
+// an earned card's line under its description: the day it was unlocked (15.25), when that's known
+const achDay = (t) => new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+const achDateHtml = (t) => (t > 0 ? `<div class="ach-date" title="Unlocked ${escapeHtml(new Date(t).toLocaleString())}">${ic("calendar", 12)}${escapeHtml(achDay(t))}</div>` : "");
 function renderAchievementCard(ach, data) {
   const earned = !!(data && data.earned);
   const progress = (data && data.progress) || 0;
@@ -9669,7 +9722,7 @@ function renderAchievementCard(ach, data) {
       <div class="achievement-info">
         <div class="achievement-top"><span class="achievement-name">${escapeHtml(displayName)}</span>${earned ? '<span class="achievement-done">Earned</span>' : `<span class="achievement-progress num">${Math.min(progress, threshold).toLocaleString()}/${threshold.toLocaleString()}</span>`}</div>
         <div class="achievement-desc">${escapeHtml(displayDesc)}</div>
-        ${earned ? "" : `<div class="achievement-bar"><div class="achievement-bar-fill" style="width:${pct}%"></div></div>`}
+        ${earned ? achDateHtml(data && data.at) : `<div class="achievement-bar"><div class="achievement-bar-fill" style="width:${pct}%"></div></div>`}
       </div>
     </button>`;
 }
@@ -9776,44 +9829,85 @@ const TRIAL_GLYPH = {
   sports: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18M5.6 5.6c3.2 3.2 3.2 9.6 0 12.8M18.4 5.6c-3.2 3.2-3.2 9.6 0 12.8"/>',
   misc: '<path d="M9 3h6v3a2 2 0 0 0 4 0V3h2v8h-3a2 2 0 0 0 0 4h3v6h-8v-3a2 2 0 0 0-4 0v3H3v-6h3a2 2 0 0 0 0-4H3V3z"/>',
 };
-const EMB_METAL = {   // light, mid, dark
-  bronze: ["#f6c896", "#c27a3c", "#6e3912"], silver: ["#ffffff", "#bcc6d2", "#5f6b79"], gold: ["#fff4b0", "#f0b42c", "#8f5404"],
-  legend: ["#fff6c9", "#e6a8ff", "#4a1d8c"], pumpkin: ["#ffd9a8", "#ff7a1a", "#6e2600"],
+// EMBLEM BEGIN (the badge art; drawn on its own by scripts that preview it)
+// 15.25: every level keeps all of the one below and adds a piece, and the metal rises every three, so a badge never
+// looks like a step down: I a shield, II laurel, III wings, IV silver with a star behind and ribbon tails, V bigger
+// wings, VI a crown, VII gold with rays and great wings, VIII a jeweled crown, IX double wings, X prismatic with a halo.
+const EMB_METAL = {   // the metal's bands (light to dark, with a second shine), its edge, its shine, its ribbon (top, bottom)
+  bronze: { g: ["#ffd9b0", "#dc8f52", "#94501f", "#e6a46b", "#5c2a0a"], dk: "#4a2208", hi: "#ffe6c8", rib: ["#a8441a", "#5e1f06"] },
+  silver: { g: ["#ffffff", "#d3dbe6", "#8492a5", "#eef2f8", "#536074"], dk: "#3b4656", hi: "#ffffff", rib: ["#2f66c8", "#163679"] },
+  gold: { g: ["#fff8cf", "#ffd84f", "#c4870b", "#ffe68c", "#835200"], dk: "#663d00", hi: "#fffbe0", rib: ["#d42d38", "#7a0e18"] },
+  legend: { g: null, dk: "#3d1a78", hi: "#fff6c9", rib: ["#8a4ae0", "#3a1470"] },
+  pumpkin: { g: ["#ffe2bd", "#ff8d2e", "#c4480a", "#ffa04a", "#5e2200"], dk: "#4a1a00", hi: "#ffd9a8", rib: ["#ff7a1a", "#6e2600"] },
 };
+const embParts = (lv) => ({
+  laurel: lv >= 2, wings: lv >= 9 ? 4 : lv >= 7 ? 3 : lv >= 5 ? 2 : lv >= 3 ? 1 : 0, star: lv >= 7 ? 2 : lv >= 4 ? 1 : 0,
+  tails: lv >= 4, studs: lv >= 4, crown: lv >= 8 ? 2 : lv >= 6 ? 1 : 0, halo: lv >= 10,
+});
 let _embN = 0;
 const EMB_WING = "M31 40C21 38 12 42 8 50c6-1 11 0 14 2-7 2-11 7-12 13 6-3 11-3 15-2-4 4-5 9-4 14 4-5 8-8 11-10z";
+// a star behind the shield: tips (radii, clockwise from the top) and the valleys between them
+function embRays(tips, inner, rot) {
+  let d = "";
+  tips.forEach((r, i) => {
+    for (const [rr, a] of [[r, (2 * Math.PI * i) / tips.length + rot], [inner, (2 * Math.PI * (i + 0.5)) / tips.length + rot]]) d += (d ? "L" : "M") + (60 + rr * Math.sin(a)).toFixed(1) + " " + (57 - rr * Math.cos(a)).toFixed(1);
+  });
+  return d + "z";
+}
+const EMB_STAR = ["", embRays(Array(16).fill(48), 39, 0), embRays(Array.from({ length: 24 }, (_, i) => (i % 2 ? 47 : 56)), 41, 0)];
+// a laurel sprig up the shield's left side (mirrored for the right): leaves both sides of a curved stem
+const EMB_LAUREL = (() => {
+  const at = (t) => { const u = 1 - t; return [u * u * 46 + 2 * u * t * 18 + t * t * 18, u * u * 101 + 2 * u * t * 96 + t * t * 62]; };
+  let d = '<path d="M46 101Q18 96 18 62" fill="none" stroke-width="1.7"/>';
+  for (let i = 0; i < 6; i++) {
+    const t = 0.12 + i * 0.165, [x, y] = at(t), [x2, y2] = at(Math.min(1, t + 0.01)), ang = (Math.atan2(y2 - y, x2 - x) * 180) / Math.PI;
+    for (const s of i === 5 ? [0] : [-1, 1]) d += `<path d="M0 0c2.7-2.6 7.6-2.8 10.4-.4-2.6 2.8-7.4 3-10.4.4z" transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${Math.round(ang + s * 40)})"/>`;
+  }
+  return d;
+})();
 function emblemSvg(o) {
   // o: { level, hue, glyph (24-box markup), inner (an <svg> to place instead), ribbon, metal, size }
-  const lv = o.level || 1, step = lv >= 10 ? 3 : (lv - 1) % 3;
+  const lv = Math.max(1, Math.min(10, o.level || 1)), P = embParts(lv);
   const metal = o.metal || (lv >= 10 ? "legend" : lv >= 7 ? "gold" : lv >= 4 ? "silver" : "bronze");
-  const [hi, mid, dk] = EMB_METAL[metal], id = "emb" + (++_embN), hue = o.hue || "#8b949e";
+  const M = EMB_METAL[metal], dk = M.dk, id = "emb" + (++_embN), hue = o.hue || "#8b949e", legend = metal === "legend";
   const shield = "M60 16 92 29v33c0 20-14 34-32 42-18-8-32-22-32-42V29z", inner = "M60 23 86 33.5V62c0 16.5-11.5 28-26 34.6C45.5 90 34 78.5 34 62V33.5z";
-  const wing = (k) => `<path d="${EMB_WING}" fill="url(#${id}m)" stroke="${dk}" stroke-width="1.3" stroke-linejoin="round"${k > 1 ? ` transform="translate(31 52) scale(${k === 3 ? 1.42 : 1.28}) translate(-31 -52)"` : ""}/>`;
-  const wings = step ? `<g>${step === 3 ? `<g opacity=".55" transform="translate(-3 -9)">${wing(2)}</g>` : ""}${wing(step)}</g><g transform="matrix(-1 0 0 1 120 0)">${step === 3 ? `<g opacity=".55" transform="translate(-3 -9)">${wing(2)}</g>` : ""}${wing(step)}</g>` : "";
-  const crown = step >= 2 ? `<path d="M45 21 43 8l9 5.5L60 3l8 10.5L77 8l-2 13z" fill="url(#${id}m)" stroke="${dk}" stroke-width="1.3" stroke-linejoin="round"/>` +
-    (step === 3 ? `<circle cx="60" cy="13.5" r="3.4" fill="#ff4f8b" stroke="#fff" stroke-width="1"/>` : `<circle cx="60" cy="14" r="2" fill="${hi}"/>`) : "";
-  const legend = metal === "legend";
+  const fill = `url(#${id}m)`, mirror = (s) => s + `<g transform="matrix(-1 0 0 1 120 0)">${s}</g>`;
+  const wing = (k) => `<path d="${EMB_WING}" fill="${fill}" stroke="${dk}" stroke-width="1.3" stroke-linejoin="round"${k > 0 ? ` transform="translate(31 52) scale(${[1, 1.1, 1.26, 1.42, 1.42][k]}) translate(-31 -52)"` : ""}/>`;
+  const wings = P.wings ? mirror((P.wings === 4 ? `<g opacity=".6" transform="translate(-4 -10) rotate(-8 31 52)">${wing(3)}</g>` : "") + wing(P.wings)) : "";
+  const star = P.star ? `<path d="${EMB_STAR[P.star]}" fill="${fill}" stroke="${dk}" stroke-width="1.2" stroke-linejoin="round"/><path d="${EMB_STAR[P.star]}" fill="${dk}" opacity=".32"/>` : "";
+  const halo = P.halo ? `<circle cx="60" cy="57" r="57" fill="url(#${id}g)"/>` : "";
+  const laurel = P.laurel ? mirror(`<g fill="${fill}" stroke="${dk}" stroke-width=".8" stroke-linejoin="round">${EMB_LAUREL}</g>`) : "";
+  const gem = (x, y, r, c) => `<circle cx="${x}" cy="${y}" r="${r}" fill="${c}" stroke="${dk}" stroke-width=".9"/><circle cx="${x - r * 0.35}" cy="${y - r * 0.35}" r="${r * 0.35}" fill="#fff" opacity=".85"/>`;
+  const studs = P.studs ? (P.crown === 2 ? gem(37.5, 33, 2.9, "#3fb7ff") + gem(82.5, 33, 2.9, "#3fb7ff")
+    : `<circle cx="37.5" cy="33" r="2.3" fill="${M.hi}" stroke="${dk}" stroke-width=".9"/><circle cx="82.5" cy="33" r="2.3" fill="${M.hi}" stroke="${dk}" stroke-width=".9"/>`) : "";
+  const crown = P.crown ? `<path d="M45 21 43 8l9 5.5L60 3l8 10.5L77 8l-2 13z" fill="${fill}" stroke="${dk}" stroke-width="1.3" stroke-linejoin="round"/><path d="M45.6 17.5h28.8" stroke="${dk}" stroke-width="1" opacity=".5"/>` +
+    (P.crown === 2 ? gem(60, 12.5, 3.6, "#ff4f8b") + gem(48.5, 15.4, 1.9, "#3fb7ff") + gem(71.5, 15.4, 1.9, "#3fb7ff") : `<circle cx="60" cy="13" r="2.1" fill="${M.hi}" stroke="${dk}" stroke-width=".8"/>`) : "";
+  const tails = P.tails ? mirror(`<path d="M30 93H7l5.5 7.5L7 108h23z" fill="url(#${id}r)" stroke="${dk}" stroke-width="1.2" stroke-linejoin="round"/><path d="M30 93H7l5.5 7.5L7 108h23z" fill="#000" opacity=".25"/>`) : "";
   const icon = o.inner ? o.inner.replace("<svg ", '<svg x="42" y="40" width="36" height="36" ')
     : `<g transform="translate(43 42) scale(1.42)" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${o.glyph || TRIAL_GLYPH.misc}</g>`;
-  return `<svg class="emb emb-${metal} emb-s${step}" viewBox="0 0 120 120" width="${o.size || 56}" height="${o.size || 56}" aria-hidden="true"><defs>` +
-    (legend ? `<linearGradient id="${id}m" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff2a6"/><stop offset=".35" stop-color="#ff9ad5"/><stop offset=".7" stop-color="#8fb8ff"/><stop offset="1" stop-color="#7cf0c8"/></linearGradient>`
-      : `<linearGradient id="${id}m" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${hi}"/><stop offset=".55" stop-color="${mid}"/><stop offset="1" stop-color="${dk}"/></linearGradient>`) +
+  const bands = legend ? ["#fff2a6", "#ff9ad5", "#b18cff", "#8fb8ff", "#7cf0c8"] : M.g;
+  return `<svg class="emb emb-${metal} emb-l${lv}" viewBox="0 0 120 120" width="${o.size || 56}" height="${o.size || 56}" aria-hidden="true"><defs>` +
+    `<linearGradient id="${id}m" x1="0" y1="0" x2=".55" y2="1">${bands.map((c, i) => `<stop offset="${[0, 0.3, 0.52, 0.74, 1][i]}" stop-color="${c}"/>`).join("")}</linearGradient>` +
     `<linearGradient id="${id}h" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${hue}"/><stop offset="1" stop-color="${hue}" stop-opacity=".55"/></linearGradient>` +
-    `<linearGradient id="${id}r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${legend ? "#7b3fd0" : mid}"/><stop offset="1" stop-color="${legend ? "#3a1470" : dk}"/></linearGradient>` +
+    `<linearGradient id="${id}r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${M.rib[0]}"/><stop offset="1" stop-color="${M.rib[1]}"/></linearGradient>` +
+    `<linearGradient id="${id}e" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/></linearGradient>` +
+    (P.halo ? `<radialGradient id="${id}g"><stop offset=".45" stop-color="#ffd6f4" stop-opacity=".7"/><stop offset=".75" stop-color="#9fd0ff" stop-opacity=".28"/><stop offset="1" stop-color="#9fd0ff" stop-opacity="0"/></radialGradient>` : "") +
     `<clipPath id="${id}c"><path d="${shield}"/></clipPath></defs>` +
-    wings +
-    `<path d="${shield}" fill="url(#${id}m)" stroke="${dk}" stroke-width="1.6" stroke-linejoin="round"/>` +
-    `<path d="${inner}" fill="#14111c"/><path d="${inner}" fill="url(#${id}h)"/>` +
+    halo + star + wings + laurel +
+    `<path d="${shield}" fill="${fill}" stroke="${dk}" stroke-width="1.6" stroke-linejoin="round"/>` +
+    `<path d="M60 18.6 89.6 30.6" stroke="url(#${id}e)" stroke-width="1.6" fill="none"/><path d="${shield}" fill="none" stroke="url(#${id}e)" stroke-width="1.2" transform="translate(60 60) scale(.955) translate(-60 -60)"/>` +
+    `<path d="${inner}" fill="#14111c"/><path d="${inner}" fill="url(#${id}h)"/><path d="${inner}" fill="none" stroke="${dk}" stroke-width="1.2" opacity=".7"/>` +
     `<path d="M34 33.5 60 23l26 10.5V48c-14-5-38-5-52 0z" fill="#fff" opacity=".14"/>` +
-    icon +
-    (metal !== "bronze" && metal !== "pumpkin" ? `<circle cx="37.5" cy="33" r="2.3" fill="${hi}" stroke="${dk}" stroke-width=".9"/><circle cx="82.5" cy="33" r="2.3" fill="${hi}" stroke="${dk}" stroke-width=".9"/>` : "") +
-    (legend ? `<g class="emb-spark" fill="#fff"><path d="M14 22l1.6 4 4 1.6-4 1.6-1.6 4-1.6-4-4-1.6 4-1.6z"/><path d="M104 30l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2z"/><path d="M101 80l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z"/></g>` : "") +
-    (legend || metal === "gold" ? `<g clip-path="url(#${id}c)"><path class="emb-sheen" d="M20 120 50 0h10L30 120z" fill="#fff" opacity=".28"/></g>` : "") +
-    crown +
+    icon + studs +
+    (legend ? `<g class="emb-spark" fill="#fff"><path d="M12 20l1.6 4 4 1.6-4 1.6-1.6 4-1.6-4-4-1.6 4-1.6z"/><path d="M106 26l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2z"/><path d="M104 80l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z"/><path d="M16 78l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z"/></g>` : "") +
+    (lv >= 7 ? `<g clip-path="url(#${id}c)"><path class="emb-sheen" d="M20 120 50 0h10L30 120z" fill="#fff" opacity=".28"/></g>` : "") +
+    crown + tails +
     `<path d="M24 89h72l6 9.5-6 9.5H24l-6-9.5z" fill="url(#${id}r)" stroke="${dk}" stroke-width="1.3" stroke-linejoin="round"/>` +
+    `<path d="M24.6 90.6h70.8" stroke="#fff" stroke-width="1" opacity=".3"/>` +
     `<text x="60" y="103.2" text-anchor="middle" font-size="${String(o.ribbon || "").length > 3 ? 11.5 : 13}" font-weight="800" letter-spacing=".6" fill="#fff" stroke="${dk}" stroke-width="2.4" paint-order="stroke">${escapeHtml(o.ribbon || "")}</text>` +
     `</svg>`;
 }
+// EMBLEM END
 const trialEmblem = (key, level, size) => emblemSvg({ level, hue: trialHue(key), glyph: TRIAL_GLYPH[key], ribbon: ROMAN[level] || String(level), size });
 function trialBadgesHtml(trials, extra) {
   const best = trialBadges(trials);
@@ -10481,7 +10575,7 @@ function openAchievementDetail(ach, ctx) {
       <div class="achd-body">
         <div class="achd-top${earned ? " earned" : ""}">
           <div class="achd-icon">${achievementIconHTML(ach)}</div>
-          <div class="achd-id"><div class="achd-name">${escapeHtml(name)}</div><div class="achd-desc">${escapeHtml(desc)}</div></div>
+          <div class="achd-id"><div class="achd-name">${escapeHtml(name)}</div><div class="achd-desc">${escapeHtml(desc)}</div>${earned && data.at > 0 ? `<div class="achd-when">${ic("calendar", 12)}Unlocked ${escapeHtml(new Date(data.at).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }))} at ${escapeHtml(new Date(data.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }))}</div>` : ""}</div>
           <span class="achd-state${earned ? " on" : ""}">${earned ? "Earned" : `<span class="num">${prog.toLocaleString()} / ${thr.toLocaleString()}</span>`}</span>
         </div>
         ${earned ? "" : `<div class="achievement-bar achd-bar"><div class="achievement-bar-fill" style="width:${Math.min(100, Math.round((prog / thr) * 100))}%"></div></div>`}
@@ -10631,6 +10725,62 @@ function maybeShowAchievementPopups(achData, pluginAchs, profileKey) {
   }
   _saveEarnedAchIds(all, profileKey);
   for (const a of fresh) queueAchievementPopup(a);
+  const now = Date.now(), stamp = {};
+  for (const a of fresh) if (!(achData[a.id] && achData[a.id].at)) stamp[a.id] = now;
+  achSaveDates(stamp);
+}
+
+// Achievement dates (15.25). One that pops up is dated then; older ones get theirs once from the history
+// (achUnlockTimes over /api/achievements/timeline), and so do ones the history reached that no longer count (a
+// broken streak), which stay earned. The backend keeps the earliest time for each (and syncs it).
+function achSaveDates(dates) {
+  if (!dates || !Object.keys(dates).length) return Promise.resolve(null);
+  if (_achLive.dates) Object.assign(_achLive.dates, dates);
+  return API.post("/api/achievements/dates", { dates }).then((r) => { if (r && r.dates) { if (_achLive.dates) Object.assign(_achLive.dates, r.dates); paintAchDates(r.dates); } return r; }).catch(() => null);
+}
+// your own achievement cards on screen take their dates (and an unlocked one shows as earned), counts too
+function paintAchDates(dates) {
+  const root = document.getElementById("player-container");
+  if (!root) return;
+  let changed = false;
+  root.querySelectorAll(".achievement-card[data-ach]").forEach((card) => {
+    const t = Number(dates[card.dataset.ach]);
+    if (!(t > 0) || card.querySelector(".ach-date")) return;
+    const ach = ACHIEVEMENT_LIST.find((a) => String(a.id) === card.dataset.ach);
+    if (!ach) return;
+    const was = card.classList.contains("earned");
+    const tmp = document.createElement("div");
+    tmp.innerHTML = renderAchievementCard(ach, { earned: true, progress: ach.threshold || 1, at: t }).trim();
+    card.replaceWith(tmp.firstElementChild);
+    if (!was) changed = true;
+  });
+  if (!changed) return;
+  root.querySelectorAll(".ach-group").forEach((g) => {
+    const n = g.querySelector(".ach-count"); if (!n) return;
+    n.textContent = g.querySelectorAll(".achievement-card.earned").length + "/" + g.querySelectorAll(".achievement-card").length;
+  });
+  const tot = root.querySelector(".pf-ach-n b"); if (tot) tot.textContent = root.querySelectorAll(".achievement-card.earned").length;
+}
+const ACH_SCAN_V = 1;
+let _achScan = null;
+function achBackfillDates(achData, apData, key) {
+  const dates = (apData && apData.ach_at) || {}, flag = "qb-ach-scan:" + key;
+  let done = null;
+  try { done = JSON.parse(lsGet(flag) || "null"); } catch (e) { done = null; }
+  // once per profile; again only when an earned one has no date that the last scan couldn't date either
+  const undated = ACHIEVEMENT_LIST.filter((a) => achData[a.id] && achData[a.id].earned && !(Number(dates[a.id]) > 0)).map((a) => a.id);
+  if (_achScan || (done && done.v === ACH_SCAN_V && undated.every((id) => (done.left || []).includes(id)))) return _achScan;
+  _achScan = (async () => {
+    try {
+      const tl = await API.get("/api/achievements/timeline");
+      if (!tl || !Array.isArray(tl.rows)) return;
+      const found = achUnlockTimes(ACHIEVEMENT_LIST, tl, achRecordsFrom(apData)), have = { ...dates, ...(tl.dates || {}) }, add = {};
+      for (const [id, t] of Object.entries(found)) if (!(Number(have[id]) > 0) || t < Number(have[id])) add[id] = t;
+      if (Object.keys(add).length) await achSaveDates(add);
+      lsSet(flag, JSON.stringify({ v: ACH_SCAN_V, left: undated.filter((id) => !found[id]) }));
+    } catch (e) { /* next time */ } finally { _achScan = null; }
+  })();
+  return _achScan;
 }
 
 // Unlocked achievements show as cards stacked under the top bar (three at most; more wait their turn),
@@ -12327,11 +12477,12 @@ function init() {
           API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
         ]);
         const stats = statsData.stats || {};
-        const achData = computeAchievementData(stats, apData.answer_counts || {}, apData.answer_classes || {}, achRecordsFrom(apData));
+        const achData = computeAchievementData(stats, apData.answer_counts || {}, apData.answer_classes || {}, achRecordsFrom(apData), apData.ach_at);
         const out = ACHIEVEMENT_LIST.map((a) => ({
           id: a.id, name: a.name, desc: a.desc, threshold: a.threshold,
           earned: !!(achData[a.id] && achData[a.id].earned),
           progress: (achData[a.id] && achData[a.id].progress) || 0,
+          ...(achData[a.id] && achData[a.id].at ? { unlockedAt: achData[a.id].at } : {}),
         }));
         for (const p of collectPluginAchievements(stats, apData.answer_counts || {}) || []) {
           out.push({ id: p.id, name: p.name, desc: p.desc, threshold: p.threshold, earned: !!p.earned, progress: p.progress || 0, source: p.source });
@@ -12861,7 +13012,7 @@ async function openUserProfile(handle, shownName) {
   if (d.private) achNote = `<p class="fr-empty">${ic("lock", 14)} @${escapeHtml(d.handle)} keeps their practice private.</p>`;
   else {
     const p = d.powers || {};
-    const achData = computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p));
+    const achData = computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p), p.ach_at);
     const all = Object.values(achData || {}), got = all.filter((a) => a && a.earned).length;
     achNote = `<div class="up-stats"><span><b class="num">${num(st.totalQuestions)}</b><small>questions</small></span><span><b class="num">${num(st.tossupPowers)}</b><small>powers</small></span><span><b class="num">${st.totalQuestions ? Math.round((st.tossupAccuracy || 0) * 100) + "%" : "—"}</b><small>tossup accuracy</small></span><span><b class="num">${got}</b><small>achievements</small></span></div>`;
     achHtml = `<div class="stats-section"><div class="stats-section-title">ACHIEVEMENTS</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
@@ -12871,7 +13022,7 @@ async function openUserProfile(handle, shownName) {
   el.querySelector(".up-who").insertAdjacentHTML("beforeend", trialBadgesHtml(normTrialInfo({ trials: d.trials }).trials, hwBadgeHtml(d.powers && d.powers.event)));
   wireBadges(el.querySelector(".up-who"), normTrialInfo({ trials: d.trials }).trials, false);
   try { initCollapsibles(body); } catch (e) {}
-  if (!d.private) { const p = d.powers || {}; body._achWired = false; wireAchievementCards(body, { achData: computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p)), records: achRecordsFrom(p), stats: st }); }
+  if (!d.private) { const p = d.powers || {}; body._achWired = false; wireAchievementCards(body, { achData: computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p), p.ach_at), records: achRecordsFrom(p), stats: st }); }
   body.querySelectorAll("[data-up]").forEach((b) => b.onclick = async () => {
     const k = b.dataset.up;
     if (k === "signin" || k === "handle") { close(); openAccount(k); return; }

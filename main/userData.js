@@ -11,8 +11,8 @@ import { existsSync, mkdirSync } from "node:fs";
 // halves of POST /api/sync — the app sends what changed since its last push and
 // applies what the server returns; the server does the same on the account's
 // own database. The newest mtime wins (review dismissals merge instead).
-const SYNC_KEY = /^(settings|review_dismissed|review_manual|trials|overrides|refund_note|plug):/;
-const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials|overrides|refund_note)$|^plug:[^:]+:.+$/;
+const SYNC_KEY = /^(settings|review_dismissed|review_manual|trials|overrides|refund_note|ach_at|plug):/;
+const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials|overrides|refund_note|ach_at)$|^plug:[^:]+:.+$/;
 const MAX_SYNC_VALUE = 900 * 1024;   // a bigger config value stays on its device
 const sessionKey = (r) => JSON.stringify([String(r.session_id), String(r.type), r.question_id == null ? "" : String(r.question_id), Number(r.timestamp)]);
 
@@ -45,6 +45,21 @@ export function mergeTrials(a, b) {
       if (!/^\d{10,14}$/.test(ts) || !(Number(x) >= 0)) continue;
       o.a = o.a || {};
       o.a[ts] = Math.max(o.a[ts] || 0, Math.min(Number(x), 2500));
+    }
+  }
+  return out;
+}
+
+// When each achievement was unlocked (15.25): { "<achievement id>": ms }, the earliest time wins (an unlock found
+// from the history and one seen live are the same unlock)
+export function mergeAchDates(a, b) {
+  const out = {};
+  for (const src of [a || {}, b || {}]) {
+    if (!src || typeof src !== "object" || Array.isArray(src)) continue;
+    for (const [k, v] of Object.entries(src)) {
+      const t = Math.floor(Number(v));
+      if (!k || k.length > 120 || !(t > 0) || t > 4e12) continue;
+      if (!(out[k] > 0) || t < out[k]) out[k] = t;
     }
   }
   return out;
@@ -222,7 +237,7 @@ export class UserData {
       ...this.db.prepare("SELECT question_id, type, starred_at, mtime, seq, src FROM starred WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n").all(p).map((r) => ({ k: "r", ...r })),
       ...this.db.prepare("SELECT kind, key, mtime, seq, src FROM sync_tomb WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n").all(p).map((r) => ({ k: "t", ...r })),
       ...this.db.prepare(`SELECT m.key, m.mtime, m.seq, m.src, c.value FROM sync_meta m JOIN config c ON c.key = m.key
-          WHERE m.seq > :since AND (m.key IN ('settings:' || :pid, 'review_dismissed:' || :pid, 'review_manual:' || :pid, 'trials:' || :pid, 'overrides:' || :pid) OR m.key LIKE 'plug:' || :pid || ':%')
+          WHERE m.seq > :since AND (m.key IN ('settings:' || :pid, 'review_dismissed:' || :pid, 'review_manual:' || :pid, 'trials:' || :pid, 'overrides:' || :pid, 'refund_note:' || :pid, 'ach_at:' || :pid) OR m.key LIKE 'plug:' || :pid || ':%')
           ORDER BY m.seq LIMIT :n`).all(p).map((r) => ({ k: "c", ...r })),
     ].sort((a, b) => a.seq - b.seq);
     const out = [];
@@ -350,6 +365,15 @@ export class UserData {
             value = JSON.stringify(merged);
             mtime = Math.max(mt, meta ? meta.mtime : 0);
             if (value !== JSON.stringify(theirs)) { seq = this._nextSeq(); from = null; }
+          } else if (name === "ach_at") {
+            // achievement dates merge per achievement: the earliest unlock
+            let mine = {}, theirs = {};
+            try { mine = JSON.parse(this.getConfig(key) || "{}") || {}; } catch {}
+            try { theirs = JSON.parse(value) || {}; } catch { continue; }
+            const merged = mergeAchDates(mine, theirs);
+            value = JSON.stringify(merged);
+            mtime = Math.max(mt, meta ? meta.mtime : 0);
+            if (value !== JSON.stringify(mergeAchDates(theirs))) { seq = this._nextSeq(); from = null; }
           } else if (meta && meta.mtime >= mt) continue;
           this.db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run(key, value);
           this.db.prepare("INSERT OR REPLACE INTO sync_meta (key, mtime, seq, src) VALUES (?, ?, ?, ?)").run(key, mtime, seq, from);
