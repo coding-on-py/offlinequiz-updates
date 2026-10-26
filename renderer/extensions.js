@@ -11276,7 +11276,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   const exact = !!rules.exact;
   const lenient = !!rules.lenient;
   const ctx = {
-    rules, extraBudget: (lenient ? 1 : 0) + (strictness < 10 ? 1 : 0) + (strictness < 5 ? 1 : 0),
+    rules, extraBudget: (lenient ? 1 : 0) + (strictness < 10 ? 1 : 0) + (strictness < 5 ? 1 : 0), baseBudget: lenient ? 1 : 0,
     formBudget: (strictness >= 20 ? 1 : strictness >= 15 ? 2 : strictness >= 10 ? 3 : 4) + (lenient ? 1 : 0), wordForms: false, qWords: rc.qWords || null,
     lenientSpell: !!rules.lenientSpell && !exact, freeOrder: strictness < 10 && rules.order !== "fixed" && !exact, articleOptional: strictness < 15 && !exact,
     answerProper: typeof opts.answerProper === "boolean" ? opts.answerProper : undefined,
@@ -11500,7 +11500,8 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   const rejectedText = () => F.rejects.some((r) => r.terms.concat(r.exactQ || []).some((t) => Array.isArray(t) && plainKey(t.map((x) => x.orig || x.t).join("")) === respKey0));
   for (const f of liveAccepts) {
     ctx.autoForm = false;
-    const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk: extraOk || extraOk20(f), prefixOk: !!f.specificEx }, linePool);
+    const mode = { fuzzy: !exact, extraOk: extraOk || extraOk20(f), prefixOk: !!f.specificEx };
+    const m = leftoverMatch(f, T, ctx, matchForm(f, T, ctx, mode, linePool), mode, linePool);
     if (!m || !m.full) continue;
     if (m.left.length && !extraOk && extraOk20(f) && !f.specificEx && !fromText(m.left) && !otherName(m.left)) continue;
     if (ctx.autoForm && rejectedText()) continue;
@@ -11616,7 +11617,8 @@ function containedAccept(T, F, H, ctx, x) {
     for (const f of F.accepts) {
       if (!live(f)) continue;
       ctx.autoForm = false;
-      const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk: true, prefixOk: !!f.specificEx }, linePool);
+      const mode = { fuzzy: !exact, extraOk: true, prefixOk: !!f.specificEx };
+      const m = leftoverMatch(f, T, ctx, matchForm(f, T, ctx, mode, linePool), mode, linePool);
       if (!m || !m.full || !m.left.length) continue;   // all of it the answer: the usual rules judged it
       if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
       if (otherGivenName(T, m, f)) continue;
@@ -11680,6 +11682,15 @@ function hiddenExtra(entry, T) {
     return true;
   }
   return false;
+}
+
+// Extra words and a lenient spelling never stack (15.24): with words left over, a typo gets only the strictness-10
+// budget ("shah jahan" is not Shaka at strictness 5, "shah" being two edits away and "jahan" extra)
+function leftoverMatch(f, T, ctx, m, mode, pool) {
+  if (!m || !m.full || !m.left.length || !m.cost || ctx.extraBudget <= ctx.baseBudget) return m;
+  const eb = ctx.extraBudget;
+  ctx.extraBudget = ctx.baseBudget;
+  try { return matchForm(f, T, ctx, mode, pool); } finally { ctx.extraBudget = eb; }
 }
 
 // J10 collision guard: a fuzzy match is blocked when the response is itself another known answer.
