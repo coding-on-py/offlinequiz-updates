@@ -8597,7 +8597,7 @@ async function loadStats(preserveScroll = false) {
     }
     setTimeout(() => drawCharts(true), 100);
   } catch (e) {
-    container.innerHTML = `<div class="text-muted">Failed to load stats: ${e.message}</div>`;
+    container.innerHTML = `<div class="text-muted">Couldn't load your stats. ${escapeHtml((e && e.message) || "")}</div>`;
   }
 }
 
@@ -10776,7 +10776,11 @@ function achBackfillDates(achData, apData, key) {
       if (!tl || !Array.isArray(tl.rows)) return;
       const found = achUnlockTimes(ACHIEVEMENT_LIST, tl, achRecordsFrom(apData)), have = { ...dates, ...(tl.dates || {}) }, add = {};
       for (const [id, t] of Object.entries(found)) if (!(Number(have[id]) > 0) || t < Number(have[id])) add[id] = t;
-      if (Object.keys(add).length) await achSaveDates(add);
+      if (Object.keys(add).length) {
+        const r = await achSaveDates(add);
+        // the details window reads achData: it learns the dates too (and an unlocked one is earned)
+        for (const [id, t] of Object.entries((r && r.dates) || add)) if (achData[id] && Number(t) > 0) achData[id] = { ...achData[id], earned: true, at: Number(t) };
+      }
       lsSet(flag, JSON.stringify({ v: ACH_SCAN_V, left: undated.filter((id) => !found[id]) }));
     } catch (e) { /* next time */ } finally { _achScan = null; }
   })();

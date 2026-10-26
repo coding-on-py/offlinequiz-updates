@@ -15,6 +15,7 @@ import { join, dirname, normalize, sep, extname } from "node:path";
 import { pickDbPath } from "./updater.js";
 import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { networkInterfaces } from "node:os";
 
@@ -107,6 +108,13 @@ export async function start(env) {
     };
     try { mainWindow.once("ready-to-show", fillScreen); } catch (e) {}
     setTimeout(fillScreen, 4000);   // never left hidden if ready-to-show doesn't come
+
+    // The window only ever shows the app's own pages (its preload hands any page the whole backend): a web link
+    // opens in the browser instead, and no new windows open
+    try {
+      mainWindow.webContents.setWindowOpenHandler(({ url }) => { openInBrowser(url); return { action: "deny" }; });
+      mainWindow.webContents.on("will-navigate", (e, url) => { if (!/^file:/i.test(String(url))) { e.preventDefault(); openInBrowser(url); } });
+    } catch (e) {}
 
     let indexPath = BUNDLED_INDEX;
     try { if (!isDev) indexPath = appUpdater.overlayRendererIndex(OVERLAY_DIR) || BUNDLED_INDEX; } catch { indexPath = BUNDLED_INDEX; }
@@ -548,6 +556,14 @@ export function lanAddresses() {
   return out.filter((a) => rank(a.name) < 9).sort((a, b) => rank(a.name) - rank(b.name)).map((a) => a.address);
 }
 // A WebSocket over a raw socket (RFC 6455, text messages, ping/pong): enough for the relay, no dependency.
+// a web page in the person's own browser (https only)
+function openInBrowser(url) {
+  url = String(url || "");
+  if (!/^https:\/\/[^\s"']+$/i.test(url)) return;
+  const cmd = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url.replace(/&/g, "^&")]] : ["xdg-open", [url]];
+  try { execFile(cmd[0], cmd[1], { windowsHide: true }, () => {}); } catch (e) {}
+}
+
 function wsUpgrade(req, socket, head) {
   const key = req.headers["sec-websocket-key"];
   if (!key || String(req.headers.upgrade || "").toLowerCase() !== "websocket") { socket.destroy(); return null; }
@@ -598,6 +614,7 @@ function wsUpgrade(req, socket, head) {
       if (op === 0x9) { try { socket.write(frame(0xa, data)); } catch (e) {} continue; }
       if (op === 0xa) continue;
       parts.push(data);
+      if (!fin && parts.reduce((n, x) => n + x.length, 0) > 8 * 1024 * 1024) { gone(); return; }   // (a message in pieces is capped too)
       if (fin) { const text = Buffer.concat(parts).toString("utf8"); parts = []; try { conn.onmessage && conn.onmessage(text); } catch (e) {} }
     }
   };
@@ -615,7 +632,7 @@ export function lanRoomServer(cfg = {}) {
   const FORGET_MS = 30000;
   const send = (p, obj) => p.conn.send(typeof obj === "string" ? obj : JSON.stringify(obj));
   const file = (rel) => {
-    rel = decodeURIComponent(rel.split("?")[0]).replace(/^\/+/, "") || "index.html";
+    try { rel = decodeURIComponent(rel.split("?")[0]).replace(/^\/+/, "") || "index.html"; } catch (e) { return null; }   // a malformed %-escape
     const clean = normalize(rel);
     if (clean.startsWith("..") || clean.includes(".." + sep) || /^[a-z]:/i.test(clean) || clean.startsWith(sep)) return null;
     for (const d of cfg.dirs || []) {
@@ -658,7 +675,9 @@ export function lanRoomServer(cfg = {}) {
   const onUpgrade = (req, socket, head) => {
     const u = new URL(String(req.url || "/"), "http://x");
     const m = /^\/lobby\/([^/]+)$/.exec(u.pathname);
-    if (!m || !room || decodeURIComponent(m[1]) !== lobbyName) { socket.destroy(); return; }
+    let name = "";
+    try { name = m ? decodeURIComponent(m[1]) : ""; } catch (e) { name = ""; }
+    if (!m || !room || name !== lobbyName) { socket.destroy(); return; }
     const conn = wsUpgrade(req, socket, head);
     if (!conn) return;
     const asHost = !!key && u.searchParams.get("key") === key && ![...peers.values()].some((p) => p.host);
@@ -686,8 +705,10 @@ export function lanRoomServer(cfg = {}) {
     };
   };
   const listen = (p) => new Promise((resolve) => {
-    const srv = createServer(onRequest);
-    srv.on("upgrade", onUpgrade);
+    // (anyone on the network can send anything: a bad request is answered or dropped, never thrown in the main process)
+    const srv = createServer((req, res) => { try { onRequest(req, res); } catch (e) { try { res.writeHead(400); res.end(); } catch (er) {} } });
+    srv.on("upgrade", (req, socket, head) => { try { onUpgrade(req, socket, head); } catch (e) { try { socket.destroy(); } catch (er) {} } });
+    srv.on("clientError", (e, socket) => { try { socket.destroy(); } catch (er) {} });
     srv.once("error", () => resolve(null));
     srv.listen(p, "0.0.0.0", () => resolve(srv));
   });
