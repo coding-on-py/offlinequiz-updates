@@ -123,7 +123,7 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/tag-vocab") return window.qbreader.getTagVocab ? window.qbreader.getTagVocab() : { tags: {} };
         if (path === "/api/tag-facets") return window.qbreader.getTagFacets ? window.qbreader.getTagFacets(q.type || "tossups", q.query || "", q) : { facets: [] };
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
-        if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0" });
+        if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0", power: q.power === "1" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
         if (/^\/api\/(account\/|friends$|leaderboards(\/board|\/groups)?$|users\/profile$|shop\/|clubs(\/|$)|diag(\/|$)|links\/view$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
         throw new Error("Unknown API route: " + path);
@@ -2179,6 +2179,8 @@ function fmtAge(ms) {
 }
 
 function reviewRemoveAfter() { return localStorage.getItem("qb-review-remove") === "true"; }
+// 15.27: or only once it's powered (one or the other: a correct answer already covers a power)
+function reviewRemovePower() { return localStorage.getItem("qb-review-remove-power") === "true"; }
 
 function openReviewMenu(items) {
   preloadReview(items);   // View opens with its questions already here
@@ -2204,7 +2206,8 @@ function openReviewMenu(items) {
             <input type="range" id="rv-lo" min="0" max="9" step="1" value="0" aria-label="Newest">
             <input type="range" id="rv-hi" min="0" max="9" step="1" value="9" aria-label="Oldest"></div>
           <span class="rv-range num" id="rv-rangeval"></span></div>
-        <div class="rv-f"><span class="rv-k"></span><label class="checkbox-row"><input type="checkbox" id="rv-remove"${reviewRemoveAfter() ? " checked" : ""}> Remove when correct</label></div>
+        <div class="rv-f"><span class="rv-k"></span><div class="rv-removes"><label class="checkbox-row"><input type="checkbox" id="rv-remove"${reviewRemoveAfter() ? " checked" : ""}> Remove when correct</label>` +
+          `<label class="checkbox-row"><input type="checkbox" id="rv-remove-power"${reviewRemovePower() && !reviewRemoveAfter() ? " checked" : ""}> Remove when powered</label></div></div>
       </div>
       <aside class="rv-side" aria-label="Matching questions">
         <div class="rv-total"><b class="num" id="rv-total-n">0</b><span id="rv-matchcount"></span></div>
@@ -2293,7 +2296,17 @@ function openReviewMenu(items) {
   });
   cat.ready.then(() => paint());
   paint();
-  el.querySelector("#rv-remove").addEventListener("change", (e) => localStorage.setItem("qb-review-remove", e.target.checked.toString()));
+  const rmC = el.querySelector("#rv-remove"), rmP = el.querySelector("#rv-remove-power");
+  const saveRemove = () => { localStorage.setItem("qb-review-remove", String(rmC.checked)); localStorage.setItem("qb-review-remove-power", String(rmP.checked)); };
+  // (powered or not changes what's due: the list is read again)
+  const reread = () => refreshReviewBadge().then(() => {
+    if (!document.body.contains(el)) return;
+    items = _reviewItems;
+    const due = el.querySelector(".rv-due"); if (due) due.textContent = items.length.toLocaleString() + " to review";
+    paint();
+  });
+  rmC.addEventListener("change", () => { const was = rmP.checked; if (rmC.checked) rmP.checked = false; saveRemove(); if (was !== rmP.checked) reread(); });
+  rmP.addEventListener("change", () => { if (rmP.checked) rmC.checked = false; saveRemove(); reread(); });
 
   el.querySelector("#rv-play").onclick = () => {
     const ids = matching().filter((it) => (it.type || "tossup") === "tossup").map((it) => it.id);
@@ -2445,6 +2458,7 @@ function startReviewSession(ids) {
   state.customType = "tossups";
   state.reviewIds = [...ids];
   state._reviewRemoveAfter = reviewRemoveAfter();
+  state._reviewRemovePower = !state._reviewRemoveAfter && reviewRemovePower();
   showScreen("practice-tossups");
   setMode("tossups");
   startSession();
@@ -6054,7 +6068,7 @@ async function submitTossupAnswer(answer) {
 
     displayTossupResult(result, answer);
     updateSessionStats(result);
-    if (state.reviewIds && state._reviewRemoveAfter && result.correct && state.currentQuestion?.id) {
+    if (state.reviewIds && ((state._reviewRemoveAfter && result.correct) || (state._reviewRemovePower && result.isPower)) && state.currentQuestion?.id) {
       API.post("/api/review/dismiss", { questionId: state.currentQuestion.id }).catch(() => {});
     }
   } catch (e) {
@@ -6751,7 +6765,8 @@ function openItemReviewViewer() {
 function reviewDueUrl() {
   return "/api/review/due?negs=" + (state.settings.reviewNegs ? 1 : 0) +
     "&unanswered=" + (state.settings.reviewUnans ? 1 : 0) +
-    "&wrongEnd=" + (state.settings.reviewWrongEnd ? 1 : 0);
+    "&wrongEnd=" + (state.settings.reviewWrongEnd ? 1 : 0) +
+    (reviewRemovePower() && !reviewRemoveAfter() ? "&power=1" : "");
 }
 
 const PRON_ACRONYMS = new Set(["USA", "USSR", "NATO", "DNA", "RNA", "UN", "US", "UK", "EU", "TV", "FBI", "CIA", "NASA", "WWI", "WWII", "NBA", "NFL", "MLB", "NHL", "NCAA", "GDP", "AIDS", "HIV", "BC", "AD", "BCE", "CE", "II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "MVP", "CEO", "PhD", "JFK", "FDR", "POW", "AI", "IQ", "OK"]);
@@ -10132,7 +10147,7 @@ function runTrial(t) {
   state.bonusIds = null;
   state.customType = "tossups";
   state.reviewIds = [...t.ids];
-  state._reviewRemoveAfter = false;
+  state._reviewRemoveAfter = false; state._reviewRemovePower = false;
   state.currentQuestion = null;
   showScreen("practice-tossups");
   setMode("tossups");

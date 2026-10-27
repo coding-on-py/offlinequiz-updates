@@ -770,7 +770,8 @@ export class App {
   }
 
   clearReview() {
-    const q = this.getReviewQueue({ limit: Infinity });
+    // (the powered-mode queue holds the other one: "Remove all" clears either)
+    const q = this.getReviewQueue({ limit: Infinity, power: true });
     this.userData.setReviewDismissed(q.items.map((it) => it.id));
     this.userData.setReviewManual([]);
     return { ok: true, cleared: q.items.length };
@@ -806,7 +807,11 @@ export class App {
 
 
 
+  // opts.power (15.27, Review's "Remove when powered"): a missed tossup stays until it's powered, not just until
+  // the next right answer: due while no power came after its latest miss (that miss is what it shows, and what a
+  // dismissal is weighed against). Without it, the latest attempt decides, as before.
   getReviewQueue(opts = {}) {
+    const powerMode = !!opts.power;
     const wantNegs = opts.negs !== false;
     const wantUnanswered = opts.unanswered !== false;
     const wantWrongEnd = opts.wrongEnd !== false;
@@ -814,8 +819,10 @@ export class App {
     const byQ = new Map();
     for (const e of entries) {
       if (e.type !== "tossup" || !e.question_id) continue;
-      const cur = byQ.get(e.question_id) || { last: 0, lastWrong: false, category: "", path: "", given: "", buzz: null, lastPoints: 0, lastGiven: "", difficulty: null };
+      const cur = byQ.get(e.question_id) || { last: 0, lastWrong: false, category: "", path: "", given: "", buzz: null, lastPoints: 0, lastGiven: "", difficulty: null, missAt: 0, miss: null, powerAt: 0 };
       const t = new Date(e.timestamp).getTime() || 0;
+      if (!e.correct) { if (t >= cur.missAt) { cur.missAt = t; cur.miss = { points: e.points != null ? e.points : 0, given: e.given_answer || "", buzz: e.buzz_position != null ? e.buzz_position : null }; } }
+      else if (e.points >= 15 && t > cur.powerAt) cur.powerAt = t;
       if (t >= cur.last) {
         cur.last = t; cur.lastWrong = !e.correct;
         cur.lastPoints = e.points != null ? e.points : 0;
@@ -842,8 +849,11 @@ export class App {
       try { const hit = this.getQuestionAny(m.id, typ); if (!hit) continue; typ = hit.type; cat = hit.question.category || ""; path = hit.question.category_path || [hit.question.category, hit.question.subcategory, hit.question.alternate_subcategory].filter(Boolean).join(" > "); diff = hit.question.difficulty != null ? hit.question.difficulty : null; } catch {}
       items.push({ id: m.id, type: typ, category: cat, path, difficulty: diff, given: "", buzzPosition: null, manual: true, ageMs: Math.max(0, now - (m.at || 0)) });
     }
-    for (const [qid, st] of byQ) {
-      if (manualSet.has(qid) || !st.lastWrong) continue;
+    for (const [qid, st0] of byQ) {
+      if (manualSet.has(qid)) continue;
+      if (powerMode ? !st0.miss || st0.powerAt > st0.missAt : !st0.lastWrong) continue;
+      // (powered mode: the latest miss, though a right answer may have come since)
+      const st = powerMode ? { ...st0, last: st0.missAt, lastPoints: st0.miss.points, lastGiven: st0.miss.given, given: st0.miss.given, buzz: st0.miss.buzz } : st0;
       const dAt = dismissedMap[qid];
       if (dAt != null && dAt >= st.last) continue;
       let kind;
