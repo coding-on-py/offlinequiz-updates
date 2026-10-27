@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { QuestionDatabase } from "./database.js";
-import { UserData, EVENT, eventOn, isPumpkin, mergeAchDates } from "./userData.js";
+import { UserData, EVENT, EVENTS, eventOn, eventItemNow, mergeAchDates } from "./userData.js";
 import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer, normalizeText } from "./answerChecker.js";
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
@@ -202,6 +202,9 @@ function bwGrams(words, skip, emit) {
 }
 function bwHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0) || 1; }
 
+// "a,b" or ["a","b"] -> ["a","b"]
+const listParam = (v) => (Array.isArray(v) ? v : String(v == null ? "" : v).split(",")).map((x) => String(x).trim()).filter(Boolean);
+
 export class App {
   
 
@@ -250,8 +253,8 @@ export class App {
     if (q && typeof q === "object" && q.id != null && !Object.prototype.hasOwnProperty.call(q, "_hidden")) {
       try { q._hidden = this.questionDb.getHiddenAnswers ? this.questionDb.getHiddenAnswers(q.id) : null; } catch { q._hidden = null; }
     }
-    // the event: a pumpkin tossup says so (a bonus never is one)
-    if (q && typeof q === "object" && q.id != null && q.leadin === undefined && q.parts === undefined && eventOn() && isPumpkin(q.id)) q._pumpkin = true;
+    // the event running now: its item says so (_pumpkin, by its first name; a bonus never is one)
+    if (q && typeof q === "object" && q.id != null && q.leadin === undefined && q.parts === undefined && eventItemNow(q.id)) q._pumpkin = true;
     return q;
   }
   _rowsWithHidden(r) {
@@ -390,7 +393,8 @@ export class App {
 
   getDbInfo() {
     const m = (k) => (this.questionDb.getMeta ? this.questionDb.getMeta(k) : null);
-    return { schema: this.questionDb.v2 ? 2 : 1, mode: m("source_mode") || null, tree: m("tree_spec_version") || null, built: m("built_at") || null };
+    return { schema: this.questionDb.v2 ? 2 : 1, mode: m("source_mode") || null, tree: m("tree_spec_version") || null, built: m("built_at") || null,
+      topics: !!this.questionDb.hasTopics, multiCategories: !!this.questionDb.hasMultiCats };
   }
 
   // /api/frequent-answers for both transports. Category/subcategory NAMES are
@@ -512,6 +516,92 @@ export class App {
     }
     const ids = (Array.isArray(nodeIds) ? nodeIds : String(nodeIds || nodeId || "").split(",")).map(String).filter(Boolean);
     return this.getFrequentAnswersPage({ qtype: type, nodeIds: ids, offset: parseInt(offset) || 0, limit: lim });
+  }
+
+  // ── Topic tags (the 2026-10-28 build, brief §5.1). The app shows them only with Settings → Tags → Topic tags on,
+  // and never while a question is being played (they give answers away). Aliases are for finding tags only. ──
+  topicSearch({ q, kinds, limit, offset } = {}) {
+    const db = this.questionDb;
+    if (!db.searchTopicTags) return { tags: [], total: 0 };
+    return db.searchTopicTags(String(q || "").slice(0, 120), { kinds: listParam(kinds), limit: parseInt(limit) || 30, offset: parseInt(offset) || 0 });
+  }
+  topicTag({ id } = {}) {
+    return { tag: this.questionDb.getTopicTag ? this.questionDb.getTopicTag(String(id || "")) : null };
+  }
+  topicsFor({ type, ids } = {}) {
+    return { topics: this.questionDb.topicTagsFor ? this.questionDb.topicTagsFor(type === "bonus" ? "bonus" : "tossup", listParam(ids)) : {} };
+  }
+  topicClues({ id, qtype, role, offset, limit } = {}) {
+    if (!this.questionDb.topicTagClues) return { clues: [], total: 0 };
+    return this.questionDb.topicTagClues(String(id || ""), { qtype: qtype === "bonus" ? "bonus" : "tossup", role: ["about", "mention"].includes(role) ? role : "any", offset: parseInt(offset) || 0, limit: parseInt(limit) || 25 });
+  }
+  // The tags most questions carry in some categories, paged like the answer lists (the whole list is built once,
+  // kept in memory and on disk per database build): { tags, total, max }
+  topicFrequent({ qtype, nodeIds, role, kinds, offset, limit } = {}) {
+    const db = this.questionDb;
+    if (!db.topicTagCounts) return { tags: [], total: 0, max: 0 };
+    const type = qtype === "bonus" || qtype === "both" ? qtype : "tossup";
+    const r = ["about", "answer", "theme", "mention"].includes(role) ? role : "any";
+    const ks = listParam(kinds).filter((k) => /^[a-z ]{2,20}$/.test(k)).sort();
+    const ids = [...new Set(listParam(nodeIds))].sort();
+    const name = `topics-${type}-${r}${ks.length ? "-" + ks.join("+").replace(/ /g, "_") : ""}`;
+    const key = name + "|" + ids.join(",");
+    const cache = db._topicFreqCache || (db._topicFreqCache = new Map());
+    let list = cache.get(key);
+    if (list) { cache.delete(key); cache.set(key, list); }
+    else {
+      list = this._freqDisk(name, undefined, ids);
+      if (!list) { list = db.topicTagCounts({ qtype: type, nodeIds: ids, role: r, kinds: ks.length ? ks : null, limit: 2000 }); this._freqDisk(name, list, ids); }
+      cache.set(key, list);
+      while (cache.size > 24) cache.delete(cache.keys().next().value);
+    }
+    const off = Math.max(0, parseInt(offset) || 0), lim = Math.max(1, Math.min(200, parseInt(limit) || 50));
+    return { tags: list.slice(off, off + lim), total: list.length, max: list.length ? list[0].count : 0 };
+  }
+  // This profile's tossups by topic: how it does on the answers' tags (about) and the themes, and by canon tier:
+  // { tiers: [{ tier, heard, correct, powers }], strong, weak, themesStrong, themesWeak, missedCanon }
+  topicStats() {
+    const db = this.questionDb;
+    if (!db.hasTopics) return { available: false };
+    const per = new Map();   // question id -> { heard, correct, powers, lastWrong }
+    for (const e of this._relabel(this.userData.getAllSessionEntries())) {
+      if (!e || e.type !== "tossup" || !e.question_id || e.skipped || e.given_answer === "(skipped)") continue;
+      const o = per.get(e.question_id) || { heard: 0, correct: 0, powers: 0, last: 0, lastWrong: false };
+      o.heard++; if (e.correct) o.correct++; if (e.correct && e.points >= 15) o.powers++;
+      const t = Number(e.timestamp) || 0; if (t >= o.last) { o.last = t; o.lastWrong = !e.correct; }
+      per.set(e.question_id, o);
+    }
+    const ids = [...per.keys()];
+    if (!ids.length) return { available: true, heard: 0 };
+    const tiers = new Map(), canonOf = db.topicCanonOf ? db.topicCanonOf(ids) : new Map();
+    for (const [qid, o] of per) {
+      const tier = canonOf.get(qid); if (!tier) continue;
+      const a = tiers.get(tier) || { tier, heard: 0, correct: 0, powers: 0 };
+      a.heard += o.heard; a.correct += o.correct; a.powers += o.powers; tiers.set(tier, a);
+    }
+    const tally = (role) => {
+      const acc = new Map();
+      for (const [qid, tid] of db.topicPairs("tossup", ids, role)) {
+        const o = per.get(qid); if (!o) continue;
+        const a = acc.get(tid) || { tid, heard: 0, correct: 0, powers: 0, questions: 0 };
+        a.heard += o.heard; a.correct += o.correct; a.powers += o.powers; a.questions++; acc.set(tid, a);
+      }
+      return [...acc.values()].filter((a) => a.questions >= 3);
+    };
+    const name = (list) => { const m = db._tagsByTid(list.map((a) => a.tid)); return list.map((a) => ({ ...m.get(a.tid), heard: a.heard, correct: a.correct, powers: a.powers, questions: a.questions })).filter((x) => x.id); };
+    const rate = (a) => a.correct / a.heard;
+    const about = tally("about"), themes = tally("theme");
+    // strongest: right at least two times in three; weakest: under that, and never the same tag in both
+    const best = (l) => name(l.filter((a) => rate(a) >= 2 / 3).sort((a, b) => rate(b) - rate(a) || b.heard - a.heard).slice(0, 8));
+    const worst = (l) => name(l.filter((a) => rate(a) < 2 / 3).sort((a, b) => rate(a) - rate(b) || b.heard - a.heard).slice(0, 8));
+    // canon answers still missed (last time wrong), most common answers first
+    const missedIds = ids.filter((id) => per.get(id).lastWrong && canonOf.get(id) && ["core", "common"].includes(canonOf.get(id)));
+    const missed = new Map();
+    for (const [qid, tid] of db.topicPairs("tossup", missedIds, "answer")) { const a = missed.get(tid) || { tid, misses: 0 }; a.misses++; missed.set(tid, a); }
+    const mm = db._tagsByTid([...missed.keys()]);
+    return { available: true, heard: ids.length, tiers: ["core", "common", "uncommon", "rare", "unique"].map((t) => tiers.get(t) || { tier: t, heard: 0, correct: 0, powers: 0 }),
+      strong: best(about), weak: worst(about), themesStrong: best(themes), themesWeak: worst(themes),
+      missedCanon: [...missed.values()].sort((a, b) => b.misses - a.misses).slice(0, 24).map((a) => ({ ...mm.get(a.tid), misses: a.misses })).filter((x) => x.id) };
   }
 
   // The whole merged list for (qtype, subtrees) is built once (~2 s over every
@@ -1157,7 +1247,8 @@ export class App {
       const tree = this.questionDb._loadTree().nodes || [];
       const node = this.questionDb.getCategoryNode(cat[3]) || tree.find((n) => n.path === cat[2]) || tree.find((n) => n.name === cat[2] && /^(Science and Math|Pop Culture Sports) > /.test(n.path));
       if (!node) return { ok: false, error: "This category isn't in the question database." };
-      const r = this.questionDb.queryTossups({ categoryIds: [node.id], difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN });
+      // a trial is that category alone: every category a question covers lies inside it (catMode "pure")
+      const r = this.questionDb.queryTossups({ categoryIds: [node.id], catMode: "pure", difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN });
       const ids = ((r && r.rows) || []).map((q) => q.id).filter(Boolean);
       if (ids.length < TRIAL_LEN) return { ok: false, error: "There aren't enough power-marked questions for this trial yet." };
       t.s = now; t.run = me; save();
@@ -1441,8 +1532,11 @@ export class App {
     }
     let poweredAt = {}, event = null;
     try { poweredAt = this.userData.getPowerTimes(); } catch { poweredAt = {}; }
-    try { event = { id: EVENT.id, start: EVENT.start, end: EVENT.end, goal: EVENT.goal, on: eventOn(), pumpkins: this.userData.eventPumpkins() }; } catch { event = null; }
-    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, answer_alts: alts, powered_at: poweredAt, event, ach_at: this.getAchievementDates() };
+    // event: Halloween's, by its old shape (older pages read it); events: every event begun, with its items
+    let events = [];
+    try { event = { id: EVENT.id, start: EVENT.start, end: EVENT.end, goal: EVENT.goal, on: eventOn() && Date.now() < EVENT.end, pumpkins: this.userData.eventPumpkins() }; } catch { event = null; }
+    try { const now = Date.now(); events = EVENTS.filter((ev) => now >= ev.start).map((ev) => ({ id: ev.id, key: ev.key, name: ev.name, item: ev.item, start: ev.start, end: ev.end, goal: ev.goal, on: now < ev.end, items: this.userData.eventItems(ev) })); } catch { events = []; }
+    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, answer_alts: alts, powered_at: poweredAt, event, events, ach_at: this.getAchievementDates() };
   }
 
   // ── Achievement dates (15.25): when each achievement was unlocked, kept with the profile ("ach_at", synced, the

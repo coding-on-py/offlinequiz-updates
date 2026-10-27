@@ -125,6 +125,12 @@ contextBridge.exposeInMainWorld("qbreader", {
   getDbInfo: () => ipcRenderer.invoke("get-db-info"),
   cloud: (method, path, body) => ipcRenderer.invoke("cloud", { method, path, body }),
   getTagVocab: () => ipcRenderer.invoke("get-tag-vocab"),
+  topicSearch: (a) => ipcRenderer.invoke("topic-search", a),
+  topicTag: (a) => ipcRenderer.invoke("topic-tag", a),
+  topicsFor: (a) => ipcRenderer.invoke("topics-for", a),
+  topicClues: (a) => ipcRenderer.invoke("topic-clues", a),
+  topicFrequent: (a) => ipcRenderer.invoke("topic-frequent", a),
+  topicStats: () => ipcRenderer.invoke("topic-stats"),
   getTagFacets: (type, query, filters) => ipcRenderer.invoke("get-tag-facets", { type, query, filters }),
 
   checkUpdate: () => ipcRenderer.invoke("check-update"),

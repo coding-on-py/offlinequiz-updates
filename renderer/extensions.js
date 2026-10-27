@@ -2663,7 +2663,11 @@ function __qbMain(ctx) {
       if (f.yearMin != null) p.push("yearMin=" + f.yearMin);
       if (f.yearMax != null) p.push("yearMax=" + f.yearMax);
       if (f.powermarkOnly) p.push("powermarkOnly=true");
-      if (f.tags && f.tags.length) p.push("tags=" + encodeURIComponent(JSON.stringify(f.tags.map(function (t) { return t.id ? { f: t.f, v: t.v, x: t.x ? 1 : 0, id: t.id } : { f: t.f, v: t.v, x: t.x ? 1 : 0 }; }))));
+      var oldTags = (f.tags || []).filter(function (t) { return t && t.f !== "topic"; });
+      if (oldTags.length) p.push("tags=" + encodeURIComponent(JSON.stringify(oldTags.map(function (t) { return t.id ? { f: t.f, v: t.v, x: t.x ? 1 : 0, id: t.id } : { f: t.f, v: t.v, x: t.x ? 1 : 0 }; }))));
+      // topic tags and canon tiers (15.29, the host's practice filters while topic tags are on)
+      if (f.etags && f.etags.length) p.push("etags=" + encodeURIComponent(JSON.stringify(f.etags)));
+      if (f.canon && f.canon.length) p.push("canon=" + encodeURIComponent(f.canon.join(",")));
       // (starred-only is intentionally NOT used in multiplayer)
       return p.join("&");
     }
@@ -4208,7 +4212,7 @@ function __qbMain(ctx) {
         '<header class="pg-head"><span class="lh-ico" aria-hidden="true">' + WIFI_SVG + '</span><div class="pg-title"><h2 id="lh-h">Play offline</h2><small>Set up Wi-Fi with no internet</small></div>' +
           '<button type="button" class="btn btn-ghost btn-icon btn-sm pg-x" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>' +
         '<div class="pg-scroll">' +
-          '<p class="pg-tagline">Everyone in an offline room has to be on the same Wi-Fi. With no Wi-Fi around, like on a plane, the host\u2019s computer can make one.</p>' +
+          '<p class="pg-tagline">Everyone joins on the same Wi-Fi. No Wi-Fi around? The host\u2019s computer can make one.</p>' +
           '<div class="seg lh-tabs" role="group" aria-label="Your system">' + ["mac", "win", "other"].map(function (k) { return '<button type="button" data-lh="' + k + '" aria-pressed="' + (k === tab) + '">' + LAN_HELP[k].tab + "</button>"; }).join("") + "</div>" +
           '<div class="lh-pane"></div>' +
         "</div></div>";
@@ -4434,7 +4438,7 @@ function __qbMain(ctx) {
       return '<section class="mp-shop mp-own" id="mp-shop" hidden>' +
         '<div class="mp-own-head"><div class="mp-promo-eyebrow">Your own room</div>' +
           '<h2 class="mp-own-h">A room your team <span>keeps for good</span></h2>' +
-          '<p class="mp-own-sub">Buy it once and keep it. Your name, your link, and everything saved between practices.</p></div>' +
+          '<p class="mp-own-sub">Yours to keep, with its own name and link.</p></div>' +
         '<div class="mp-own-features">' + OWN_FEATURES.map(function (f) {
           return '<div class="mp-own-feat"><span class="mp-own-ico">' + ownSvg(f[0]) + '</span><div><b>' + f[1] + "</b><p>" + f[2] + "</p></div></div>";
         }).join("") + "</div>" +
@@ -4670,7 +4674,7 @@ function __qbMain(ctx) {
           slider("mp-dx-speed", "Reading speed", "How fast this room reads, for everyone. 1 is the slowest and 50 the fastest. Past 50 the whole question shows at once.", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
           slider("mp-dx-strict", "Strictness", "How close answers must be, for everyone in this room. Higher is stricter.", 0, 20, strict, String(strict)) +
         "</div>" +
-        '<p class="mp-off-note mp-injected">This room\u2019s questions are fixed: ' + esc(filterSummary || o.name || "") + '. These two are the room\u2019s, not your own practice setup.</p>';
+        '<p class="mp-off-note mp-injected">This room always plays ' + esc(filterSummary || o.name || "") + '. These settings are the room\u2019s.</p>';
     }
     function diagSectionsHtml() {
       var s = (dxInfo && dxInfo.settings) || {};
@@ -5165,8 +5169,8 @@ function __qbMain(ctx) {
       if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
       if (p) { p.hidden = !reading || mySpec || answering; p.textContent = paused ? "Resume" : "Pause"; }
       var qc = body.querySelector("#mp-qcount");
-      // Halloween (14.90): a pumpkin tossup shows its jack-o'-lantern
-      if (qc) qc.innerHTML = qCount ? "Question " + qCount + (current && (current.pumpkin || current._pumpkin) && window.qbHwOn && window.qbHwOn() && window.qbPumpkinSvg ? '<span class="hw-pk" title="A pumpkin tossup: power it for a piece of candy">' + window.qbPumpkinSvg() + "</span>" : "") : "";
+      // a seasonal event's item tossup shows its mark (app.js seasonMarkHtml)
+      if (qc) qc.innerHTML = qCount ? "Question " + qCount + (window.qbEventMark ? window.qbEventMark(current) : "") : "";
       var hb = body.querySelector("#mp-hostbadge"); if (hb) hb.hidden = !(amHost() && !roomInfo);   // a bought room shows its role badge instead
     }
 
@@ -5732,8 +5736,8 @@ function __qbMain(ctx) {
         } catch (e) {}
         // achievements pop up with the verdict (an older app has no such hook)
         try { if (ctx.host && ctx.host.noteAchievementResult) ctx.host.noteAchievementResult({ type: "tossup", q: { id: current.id, _pumpkin: !!(current.pumpkin || current._pumpkin) }, points: d.points || 0, correct: !!d.correct, isPower: (d.points || 0) >= 15 }); } catch (e) {}
-        // a powered pumpkin: "+1 candy" on the verdict
-        if ((d.points || 0) >= 15 && (current.pumpkin || current._pumpkin) && window.qbHwOn && window.qbHwOn() && window.qbHwCandy) setTimeout(function () { window.qbHwCandy(body && body.querySelector("#mp-result .result-banner")); }, 0);
+        // a powered item tossup: "+1 candy" (or pie) on the verdict
+        if ((d.points || 0) >= 15 && (current.pumpkin || current._pumpkin) && window.qbEventFlash) setTimeout(function () { window.qbEventFlash(body && body.querySelector("#mp-result .result-banner")); }, 0);
       }
       var buzz = body && body.querySelector("#mp-buzz"); if (buzz) { buzz.className = "buzz-area hidden"; buzz.innerHTML = ""; }
       applyReveal(d.ended ? (current ? current.text.length : revealIdx) : revealIdx);
@@ -5754,6 +5758,8 @@ function __qbMain(ctx) {
         // report the question just read to the site's admins
         var rp = res.querySelector(".mp-report"), rq = current;
         if (rp) rp.onclick = function () { ctx.host.reportQuestion({ id: rq.id, category_path: rq.path || rq.category_path || "", set_name: rq.set || rq.set_name || "", set_year: rq.year || rq.set_year || null }, "tossup"); };
+        // the question's topic tags, now that it's over (topic tags on, app.js topics.js)
+        if (current && current.id && window.QBTopics) window.QBTopics.resultPanel(res, { type: "tossup", question: { id: current.id }, blocks: "#mp-qtext" });
       } else {
         res.className = "result-area hidden"; res.innerHTML = "";
       }
@@ -7468,7 +7474,11 @@ function __qbMain(ctx) {
     const dm = d.dims || {};
     // a row needs 2 or more (one question says nothing), a card 2 or more rows
     const card = (title, all) => { const rows = (all || []).filter((r) => r.n >= 2); return rows.length >= 2 ? '<div class="cl-card"><h3 class="eyebrow">' + title + "</h3>" + rows.map((r) => brow(esc(r.label), r.pct, r.got + "/" + r.n)).join("") + "</div>" : ""; };
-    const cards = [card("By era", dm.era), card("By region", dm.region), card("By kind of answer", dm.type), card("By theme", dm.theme)].filter(Boolean);
+    // topic tags on (15.29, topics.js): how common the answers were, and the topics of what was missed
+    const topicsOn = !!(window.QBTopics && window.QBTopics.enabled());
+    const study = topicsOn && (d.study || []).length >= 2 ? '<div class="cl-card rp-study"><h3 class="eyebrow">Topics to study</h3><div class="topics"><div class="trow-v">' +
+      d.study.map((t) => '<button type="button" class="tchip" data-topic="' + esc(t.id) + '" data-name="' + esc(t.name) + '" data-kind="">' + esc(t.name) + (t.n > 1 ? ' <span class="tchip-n num">×' + t.n + "</span>" : "") + "</button>").join("") + "</div></div></div>" : "";
+    const cards = [card("By era", dm.era), card("By region", dm.region), card("By kind of answer", dm.type), card("By theme", dm.theme), topicsOn ? card("By canon", dm.canon) : "", study].filter(Boolean);
     return cards.length ? '<div class="rp-dims">' + cards.join("") + "</div>" : "";
   }
   // ── the scoresheet (v3): every number the answered questions give ──
@@ -12322,4 +12332,463 @@ function scoreBonusResult(answers, b, strictness = 10, overrides = null, previou
 }
 return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupResult, evaluateBonusPart, scoreBonusResult };
 })(window.QBAnswerChecker, window.QBScoring);
+
+
+;/* ── topics.js (bundled by build-update) ── */
+// ═════════════════════════════════════════════════════════════════════════
+// TOPIC TAGS (15.29) — the question database's entity and theme tags (2026-10-28 build: tag_vocab, mentions, qtags;
+// AGENTS.md "Round 15.29"). Off by default (Settings → Tags → Topic tags); with it off nothing here shows.
+//
+// When on:
+//   - a question's topics show once it's over, never while it's read: in practice (the result area) and in
+//     multiplayer, and on the Database's cards. About first, then themes, then mentions. A tag's chip searches the
+//     database for it; hovering it lights the clues that name it. A name with no tag (one question only) is plain.
+//   - Database → Tags: find a tag by its name or another name for it, then its page: every clue that names it
+//     (study cards), the tags it comes up with, and Play (its questions on a page of their own).
+//   - Frequency lists tags too, Stats shows how you do by topic and by canon tier, and practice can keep to canon
+//     tiers (core … unique; a bonus by its parts).
+// Aliases are only for finding a tag, never for judging answers.
+//
+// Loaded before app.js (build-update folds it into extensions.js), so app.js's helpers (API, goTo, escapeHtml,
+// searchDatabase, startListSession …) are reached only from inside functions, at run time. window.QBTopics is
+// what app.js, multiplayer.js and plugins call.
+// ═════════════════════════════════════════════════════════════════════════
+(function () {
+  "use strict";
+  const KEY = "qb-topic-tags";
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const num = (n) => Number(n || 0).toLocaleString();
+  const plural = (n, one, many) => num(n) + " " + (n === 1 ? one : many || one + "s");
+
+  // the kinds, in eight families (the Tags page's filter, and each chip's colour)
+  const FAMILIES = [
+    ["people", "People", ["person", "character", "deity", "role"], "#58a6ff"],
+    ["works", "Works", ["work", "fiction", "genre"], "#bc8cff"],
+    ["places", "Places", ["place", "space"], "#56d364"],
+    ["events", "Events", ["event", "period", "date"], "#e3b341"],
+    ["groups", "Groups", ["organization", "group", "people", "religion", "language"], "#39c5cf"],
+    ["ideas", "Ideas", ["concept", "term", "method", "process", "law", "quantity", "topic", "activity"], "#f778ba"],
+    ["things", "Things", ["object", "substance", "organism", "anatomy", "disease", "food", "vehicle", "particle", "symbol", "brand", "award", "other"], "#ffa657"],
+    ["themes", "Themes", ["theme"], "#d2a8ff"],
+  ];
+  const FAM_OF = {};
+  for (const f of FAMILIES) for (const k of f[2]) if (!FAM_OF[k]) FAM_OF[k] = f;
+  const kindColor = (k) => (FAM_OF[k] ? FAM_OF[k][3] : "#8b949e");
+  const TIERS = ["core", "common", "uncommon", "rare", "unique"];
+  const TIER_NAME = { core: "Core", common: "Common", uncommon: "Uncommon", rare: "Rare", unique: "Unique" };
+
+  // ── on or off: the setting, and a database that has them ──
+  let avail = null, availP = null;
+  const listeners = [];
+  function wanted() { try { return localStorage.getItem(KEY) === "1"; } catch (e) { return false; } }
+  function enabled() { return avail === true && wanted(); }
+  function sync() { document.documentElement.classList.toggle("topics-on", enabled()); }
+  function check(force) {
+    if (force) availP = null;
+    if (!availP) availP = Promise.resolve().then(() => API.get("/api/db-info")).then((d) => { avail = !!(d && d.topics); }, () => { avail = false; })
+      .then(() => { sync(); listeners.forEach((fn) => { try { fn(enabled()); } catch (e) {} }); return avail; });
+    return availP;
+  }
+  function setWanted(on) {
+    try { localStorage.setItem(KEY, on ? "1" : "0"); } catch (e) {}
+    sync();
+    listeners.forEach((fn) => { try { fn(enabled()); } catch (e) {} });
+  }
+  function onChange(fn) { listeners.push(fn); }
+  document.addEventListener("DOMContentLoaded", () => { sync(); check(); });
+
+  // ── a question's topics (/api/topics/for), asked for in batches and kept ──
+  const cache = new Map(), waiting = new Map();
+  let flushT = 0;
+  function topicsOf(type, id) {
+    type = type === "bonus" ? "bonus" : "tossup";
+    const k = type + ":" + id;
+    if (cache.has(k)) return Promise.resolve(cache.get(k));
+    return new Promise((res) => {
+      const m = waiting.get(type) || new Map();
+      waiting.set(type, m);
+      if (!m.has(id)) m.set(id, []);
+      m.get(id).push(res);
+      clearTimeout(flushT);
+      flushT = setTimeout(flush, 25);
+    });
+  }
+  async function flush() {
+    const jobs = [...waiting]; waiting.clear();
+    for (const [type, m] of jobs) {
+      const ids = [...m.keys()];
+      for (let i = 0; i < ids.length; i += 60) {
+        const chunk = ids.slice(i, i + 60);
+        let d = null;
+        try { d = await API.get("/api/topics/for?type=" + type + "&ids=" + encodeURIComponent(chunk.join(","))); } catch (e) { d = null; }
+        const t = (d && d.topics) || {};
+        for (const id of chunk) {
+          const v = t[id] || null;
+          if (d) cache.set(type + ":" + id, v);
+          for (const r of m.get(id)) r(v);
+        }
+      }
+    }
+    while (cache.size > 4000) cache.delete(cache.keys().next().value);
+  }
+
+  // ── chips ──
+  function tierHtml(tier, part) {
+    return tier ? `<span class="ttier ttier-${tier}" title="How often this answer comes up">${part ? part + " " : ""}${TIER_NAME[tier] || tier}</span>` : "";
+  }
+  function tagChip(x, clues) {
+    const cl = clues && clues.get(x.id);
+    return `<button type="button" class="tchip" style="--c:${kindColor(x.kind)}" data-topic="${esc(x.id)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind || "")}"` +
+      `${cl && cl.length ? ` data-clues="${cl.join(",")}"` : ""} title="${esc(x.kind || "tag")}">${esc(x.name)}</button>`;
+  }
+  // t: /api/topics/for's entry. o: { type, blocks (selectors of the text a chip's clues light, by clue), max }
+  function chipsHtml(t, o) {
+    o = o || {};
+    if (!t) return "";
+    const clues = new Map();
+    for (const m of t.mentions || []) if (m.id && m.clue != null) { const c = clues.get(m.id) || []; if (!c.includes(m.clue)) c.push(m.clue); clues.set(m.id, c); }
+    const seen = new Set();
+    const chip = (x) => { if (!x || !x.id || seen.has(x.id)) return ""; seen.add(x.id); return tagChip(x, clues); };
+    const plain = (m) => {
+      const s = String(m.surface || "").trim(), k = "s:" + s.toLowerCase();
+      if (!s || seen.has(k)) return "";
+      seen.add(k);
+      return `<span class="tchip plain"${m.clue != null ? ` data-clues="${m.clue}"` : ""} title="${esc(m.type || "name")}">${esc(s)}</span>`;
+    };
+    let tiers = "";
+    if (t.answer) tiers = tierHtml(t.answer.tier);
+    else if (Array.isArray(t.parts) && t.parts.length > 1) tiers = t.parts.map((p, i) => tierHtml(p && p.tier, "ABCDEFGHI"[i])).join("");
+    else if (Array.isArray(t.parts)) tiers = tierHtml(t.parts[0] && t.parts[0].tier);
+    const about = (t.about || []).map(chip).join("");
+    const themes = (t.themes || []).map(chip).join("");
+    const ments = (t.mentions || []).map((m) => (m.id ? chip(m) : plain(m))).filter(Boolean);
+    const MAX = o.max || 16;
+    const shown = ments.slice(0, MAX).join("") + (ments.length > MAX ? `<button type="button" class="tchip more" data-tmore>+${ments.length - MAX}</button><span class="tchip-rest" hidden>${ments.slice(MAX).join("")}</span>` : "");
+    const row = (label, html) => (html ? `<div class="trow"><span class="trow-k">${label}</span><div class="trow-v">${html}</div></div>` : "");
+    const body = row("About", tiers + about) + row("Themes", themes) + row("Mentions", shown);
+    return body ? `<div class="topics" data-type="${o.type === "bonus" ? "bonus" : "tossup"}"${o.blocks ? ` data-blocks="${esc(o.blocks)}"` : ""}>${body}</div>` : "";
+  }
+
+  // [data-topics="tossup:<id>"] placeholders (app.js qcardHtml) fill in when they're added
+  function fill(root) {
+    if (!enabled()) return;
+    const els = root && root.matches && root.matches("[data-topics]") ? [root] : [...(root || document).querySelectorAll("[data-topics]:not([data-tfill])")];
+    for (const el of els) {
+      if (el.hasAttribute("data-tfill")) continue;
+      el.setAttribute("data-tfill", "1");
+      const s = el.getAttribute("data-topics") || "", i = s.indexOf(":");
+      if (i < 0) continue;
+      const type = s.slice(0, i);
+      topicsOf(type, s.slice(i + 1)).then((t) => { if (el.isConnected) el.innerHTML = chipsHtml(t, { type }); });
+    }
+  }
+  let fillT = 0;
+  new MutationObserver((muts) => {
+    if (!enabled()) return;
+    for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1 && (n.matches("[data-topics]") || n.querySelector("[data-topics]"))) { clearTimeout(fillT); fillT = setTimeout(() => fill(document), 20); return; }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
+  // once a question is over: its topics under the result (app.js renderResultPanels, multiplayer.js)
+  function resultPanel(area, ctx) {
+    if (!area) return;
+    area.querySelectorAll(":scope > .topics-result").forEach((x) => x.remove());
+    const q = ctx && ctx.question;
+    if (!enabled() || !q || q.id == null) return;
+    const type = ctx.type === "bonus" ? "bonus" : "tossup";
+    const host = document.createElement("div");
+    host.className = "topics-result";
+    area.appendChild(host);
+    topicsOf(type, q.id).then((t) => {
+      if (!host.isConnected) return;
+      const html = chipsHtml(t, { type, blocks: ctx.blocks || "", max: 12 });
+      if (html) host.innerHTML = html; else host.remove();
+    });
+  }
+
+  // ── clue highlighting: a chip's clues light up in the question's text (CSS highlights; nothing in the text moves) ──
+  // a tossup's sentences as the tagger split them (database.js cluesOf): the text's own words, spaces collapsed
+  function sentenceRanges(el, want) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let s = "", space = true;
+    const at = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const v = n.nodeValue;
+      for (let i = 0; i < v.length; i++) {
+        const sp = /\s/.test(v[i]);
+        if (sp && space) continue;
+        s += sp ? " " : v[i]; at.push([n, i]); space = sp;
+      }
+    }
+    const starts = [0];
+    for (const m of s.matchAll(/(?<=[.!?])\s+(?=[A-Z"“(])/g)) starts.push(m.index + m[0].length);
+    const out = [];
+    for (const k of want) {
+      if (k < 0 || k >= starts.length) continue;
+      let a = starts[k], b = k + 1 < starts.length ? starts[k + 1] : s.length;
+      while (b > a && s[b - 1] === " ") b--;
+      if (b <= a || !at[a] || !at[b - 1]) continue;
+      const r = document.createRange();
+      r.setStart(at[a][0], at[a][1]); r.setEnd(at[b - 1][0], at[b - 1][1] + 1);
+      out.push(r);
+    }
+    return out;
+  }
+  function blocksOf(chip) {
+    const box = chip.closest(".topics"), card = chip.closest(".qcard");
+    if (card) return [card.querySelector(".qcard-text"), ...card.querySelectorAll(".qcard-part")];
+    const sel = box && box.getAttribute("data-blocks");
+    return sel ? sel.split("|").map((x) => document.querySelector(x)) : [];
+  }
+  function lightClues(chip) {
+    if (!window.CSS || !CSS.highlights || typeof Highlight !== "function") return;
+    const want = String(chip.getAttribute("data-clues") || "").split(",").filter((x) => x !== "").map(Number);
+    const box = chip.closest(".topics");
+    if (!want.length || !box) return;
+    const blocks = blocksOf(chip), ranges = [];
+    if (box.getAttribute("data-type") === "bonus") {
+      for (const k of want) { const el = blocks[k]; if (el && el.textContent.trim()) { const r = document.createRange(); r.selectNodeContents(el); ranges.push(r); } }
+    } else if (blocks[0]) ranges.push(...sentenceRanges(blocks[0], want));
+    if (ranges.length) CSS.highlights.set("qb-clue", new Highlight(...ranges));
+  }
+  const dimClues = () => { try { CSS.highlights.delete("qb-clue"); } catch (e) {} };
+  document.addEventListener("mouseover", (e) => { const c = e.target.closest && e.target.closest(".topics .tchip[data-clues]"); if (c) lightClues(c); });
+  document.addEventListener("mouseout", (e) => { if (e.target.closest && e.target.closest(".topics .tchip[data-clues]")) dimClues(); });
+  document.addEventListener("focusin", (e) => { const c = e.target.closest && e.target.closest(".topics .tchip[data-clues]"); if (c) lightClues(c); });
+  document.addEventListener("focusout", (e) => { if (e.target.closest && e.target.closest(".topics .tchip[data-clues]")) dimClues(); });
+
+  // a chip: the database's questions with that tag (on a tag's own page: that tag's page)
+  document.addEventListener("click", (e) => {
+    const more = e.target.closest && e.target.closest(".topics [data-tmore]");
+    if (more) { e.preventDefault(); e.stopPropagation(); const rest = more.nextElementSibling; if (rest) { rest.hidden = false; rest.replaceWith(...rest.childNodes); } more.remove(); return; }
+    const c = e.target.closest && e.target.closest(".tchip[data-topic]");
+    if (!c) return;
+    e.preventDefault(); e.stopPropagation();
+    dimClues();
+    const tag = { id: c.getAttribute("data-topic"), name: c.getAttribute("data-name"), kind: c.getAttribute("data-kind") };
+    if (c.closest(".db-topic, .tg-list")) openTag(tag.id); else searchTag(tag);
+  });
+  function searchTag(tag) { searchDatabase({ query: "", tags: [{ f: "topic", v: tag.name, id: tag.id, k: tag.kind || "" }] }); }
+
+  // ── the tag field's suggestions (app.js TagField): tags by name or another name, fetched as you type ──
+  const suggCache = new Map();
+  function suggest(q) {
+    q = String(q || "").trim().toLowerCase();
+    if (!enabled() || q.length < 2) return Promise.resolve([]);
+    if (suggCache.has(q)) return Promise.resolve(suggCache.get(q));
+    return API.get("/api/topics/search?limit=20&q=" + encodeURIComponent(q)).then((d) => {
+      const list = ((d && d.tags) || []).map((t) => ({ f: "topic", v: t.name, id: t.id, k: t.kind, n: t.questions }));
+      suggCache.set(q, list);
+      while (suggCache.size > 200) suggCache.delete(suggCache.keys().next().value);
+      return list;
+    }).catch(() => []);
+  }
+
+  // ── Database → Tags ──
+  const V = { q: "", fam: "", list: [], total: 0, seq: 0, tag: null, tab: "clues", role: "any", qtype: "tossup", clues: [], cluesTotal: 0 };
+  function famKinds(f) { const x = FAMILIES.find((y) => y[0] === f); return x ? x[2] : []; }
+  function renderTab(c, path) {
+    if (!c) return;
+    const id = path && /^t[0-9a-f]{12}$/.test(path) ? path : null;
+    if (id) return openTag(id, c);
+    V.tag = null;
+    const seg = [["", "All"], ...FAMILIES.map((f) => [f[0], f[1]])].map(([k, l]) => `<button type="button" data-tfam="${k}" aria-pressed="${V.fam === k}">${l}</button>`).join("");
+    c.innerHTML = `<div class="db-page db-topics">
+      <div class="qrow tg-toolbar">
+        <div class="cfield tg-find">${ic("search", 18)}<input class="cinput" id="tg-q" type="search" autocomplete="off" spellcheck="false" placeholder="Find a person, work, place or idea" aria-label="Find a tag" value="${esc(V.q)}"></div>
+      </div>
+      <div class="seg tg-fams" id="tg-fams" role="group" aria-label="Kind">${seg}</div>
+      <div class="rhead"><span class="total num" id="tg-total"></span></div>
+      <div id="tg-results" class="search-results"></div>
+    </div>`;
+    const inp = c.querySelector("#tg-q");
+    let t = 0;
+    inp.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { V.q = inp.value; runSearch(true); }, 160); });
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { clearTimeout(t); V.q = inp.value; runSearch(true); } });
+    c.querySelector("#tg-fams").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-tfam]"); if (!b) return;
+      V.fam = b.dataset.tfam;
+      c.querySelectorAll("#tg-fams [data-tfam]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      runSearch(true);
+    });
+    runSearch(true);
+    if (!matchMedia("(pointer: coarse)").matches) setTimeout(() => inp.focus(), 0);
+  }
+  async function runSearch(fresh) {
+    const el = document.getElementById("tg-results"); if (!el) return;
+    const seq = ++V.seq;
+    if (fresh) { V.list = []; V.total = 0; }
+    const kinds = famKinds(V.fam);
+    let d = null;
+    try { d = await API.get("/api/topics/search?limit=40&offset=" + V.list.length + "&q=" + encodeURIComponent(V.q.trim()) + (kinds.length ? "&kinds=" + encodeURIComponent(kinds.join(",")) : "")); } catch (e) { d = null; }
+    if (seq !== V.seq || !document.getElementById("tg-results")) return;
+    if (!d) { el.innerHTML = '<div class="db-empty">Couldn\'t load tags.</div>'; return; }
+    V.list = V.list.concat(d.tags || []); V.total = d.total || 0;
+    const tot = document.getElementById("tg-total");
+    if (tot) tot.textContent = V.total ? plural(V.total, "tag") : "";
+    if (!V.list.length) { el.innerHTML = `<div class="db-empty">${V.q.trim() ? "No tag matches that." : "No tags here."}</div>`; return; }
+    el.innerHTML = '<div class="list tg-list">' + V.list.map((t) => {
+      const also = (t.aliases || []).filter((a) => a.toLowerCase() !== String(t.name).toLowerCase()).slice(0, 3);
+      return `<button type="button" class="list-row tg-row" data-tag="${esc(t.id)}"><span class="tg-dot" style="--c:${kindColor(t.kind)}"></span>` +
+        `<span class="tg-name"><b>${esc(t.name)}</b><small>${esc(t.kind || "")}${t.group ? " · " + esc(t.group.replace(/ > /g, " › ")) : ""}${also.length ? " · also " + esc(also.join(", ")) : ""}</small></span>` +
+        `<span class="tg-n num">${num(t.questions)}</span></button>`;
+    }).join("") + "</div>" +
+      (V.list.length < V.total ? '<div class="tg-more-wrap"><button type="button" class="btn" id="tg-more">Show more</button></div>' : "");
+    el.querySelectorAll(".tg-row").forEach((b) => b.addEventListener("click", () => openTag(b.dataset.tag)));
+    el.querySelector("#tg-more")?.addEventListener("click", () => runSearch(false));
+  }
+
+  // one tag's page
+  async function openTag(id, host) {
+    const c = host || document.getElementById("db-content");
+    if (!document.querySelector("#database-screen.active") || state.dbTab !== "topics") {
+      state.dbTab = "topics"; V.pending = id;
+      goTo("db-topics");
+      return;
+    }
+    if (!c) return;
+    V.pending = null;
+    c.innerHTML = '<div class="db-page db-topic">' + loadingBarHtml("Loading…") + "</div>";
+    let d = null;
+    try { d = await API.get("/api/topics/tag?id=" + encodeURIComponent(id)); } catch (e) { d = null; }
+    const t = d && d.tag;
+    if (!t) { c.innerHTML = '<div class="db-page db-topic"><div class="db-empty">Couldn\'t find that tag.</div></div>'; return; }
+    V.tag = t; V.tab = "clues"; V.clues = []; V.cluesTotal = 0;
+    V.qtype = (t.counts && !t.counts.tossups && t.counts.bonuses) ? "bonus" : "tossup";
+    if (IS_WEB) window.qbWebPathSync && window.qbWebPathSync();
+    const n = t.counts || {};
+    const also = (t.aliases || []).filter((a) => a.toLowerCase() !== String(t.name).toLowerCase()).slice(0, 8);
+    const stat = (v, l) => (v ? `<span><b class="num">${num(v)}</b> ${l}</span>` : "");
+    c.innerHTML = `<div class="db-page db-topic">
+      <button type="button" class="btn btn-ghost btn-sm tg-back" id="tg-back">${ic("left", 14)}All tags</button>
+      <section class="tg-hero" style="--c:${kindColor(t.kind)}">
+        <div class="tg-title"><h2>${esc(t.name)}</h2><span class="tg-kind">${esc(t.kind || "tag")}</span></div>
+        ${t.group || also.length ? `<p class="tg-sub">${t.group ? esc(t.group.replace(/ > /g, " › ")) : ""}${t.group && also.length ? " · " : ""}${also.length ? "Also " + esc(also.join(", ")) : ""}</p>` : ""}
+        <div class="tg-stats">${stat((n.tossups || 0) + (n.bonuses || 0), "questions")}${stat((n.aboutTossups || 0) + (n.aboutBonuses || 0), "about it")}${stat((n.answerTossups || 0) + (n.answerBonuses || 0), "as the answer")}</div>
+        <div class="tg-actions"><button type="button" class="btn btn-primary" id="tg-play">${ic("play", 14)}Play</button><button type="button" class="btn" id="tg-search">${ic("search", 14)}Questions</button></div>
+      </section>
+      <div class="qrow tg-tabs">
+        <div class="seg" id="tg-tab" role="group" aria-label="Show"><button type="button" data-ttab="clues" aria-pressed="true">Clues</button><button type="button" data-ttab="related" aria-pressed="false">Related</button></div>
+        <span class="spacer"></span>
+        <div class="seg tg-clue-opts" id="tg-role" role="group" aria-label="Clues"><button type="button" data-trole="any" aria-pressed="true">All clues</button><button type="button" data-trole="about" aria-pressed="false">About it</button></div>
+        <div class="seg tg-clue-opts" id="tg-qtype" role="group" aria-label="Type"><button type="button" data-tqt="tossup" aria-pressed="${V.qtype === "tossup"}">Tossups</button><button type="button" data-tqt="bonus" aria-pressed="${V.qtype === "bonus"}">Bonuses</button></div>
+      </div>
+      <div id="tg-body"></div>
+    </div>`;
+    c.querySelector("#tg-back").addEventListener("click", () => { V.tag = null; renderTab(c); if (IS_WEB) window.qbWebPathSync && window.qbWebPathSync(); });
+    c.querySelector("#tg-search").addEventListener("click", () => searchTag(t));
+    c.querySelector("#tg-play").addEventListener("click", () => playTag(t));
+    const segs = (sel, attr, fn) => c.querySelector(sel).addEventListener("click", (e) => {
+      const b = e.target.closest("[" + attr + "]"); if (!b) return;
+      c.querySelectorAll(sel + " [" + attr + "]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      fn(b.getAttribute(attr));
+    });
+    segs("#tg-tab", "data-ttab", (v) => { V.tab = v; c.querySelectorAll(".tg-clue-opts").forEach((x) => { x.hidden = v !== "clues"; }); paintBody(true); });
+    segs("#tg-role", "data-trole", (v) => { V.role = v; paintBody(true); });
+    segs("#tg-qtype", "data-tqt", (v) => { V.qtype = v; paintBody(true); });
+    V.role = "any";
+    paintBody(true);
+  }
+  async function paintBody(fresh) {
+    const el = document.getElementById("tg-body"), t = V.tag;
+    if (!el || !t) return;
+    if (V.tab === "related") {
+      const rel = t.related || [];
+      el.innerHTML = rel.length ? `<p class="tg-note">Tags that come up in the same questions.</p><div class="topics tg-related"><div class="trow-v">${rel.map((x) => tagChip(x)).join("")}</div></div>`
+        : '<div class="db-empty">Nothing comes up with it often.</div>';
+      return;
+    }
+    const seq = ++V.seq;
+    if (fresh) { V.clues = []; V.cluesTotal = 0; el.innerHTML = loadingBarHtml("Loading clues…"); }
+    let d = null;
+    try { d = await API.get("/api/topics/clues?id=" + encodeURIComponent(t.id) + "&qtype=" + V.qtype + "&role=" + (V.role === "about" ? "about" : "any") + "&limit=25&offset=" + V.clues.length); } catch (e) { d = null; }
+    if (seq !== V.seq || !document.getElementById("tg-body")) return;
+    if (!d) { el.innerHTML = '<div class="db-empty">Couldn\'t load the clues.</div>'; return; }
+    V.clues = V.clues.concat(d.clues || []); V.cluesTotal = d.total || 0;
+    if (!V.clues.length) { el.innerHTML = `<div class="db-empty">No ${V.qtype === "bonus" ? "bonus" : "tossup"} clues${V.role === "about" ? " are about it" : " name it"}.</div>`; return; }
+    el.innerHTML = `<div class="rhead"><span class="total num">${plural(V.cluesTotal, "clue")}</span></div><div class="tg-clues">` + V.clues.map(clueCard).join("") + "</div>" +
+      (V.clues.length < V.cluesTotal ? '<div class="tg-more-wrap"><button type="button" class="btn" id="tg-more-clues">Show more</button></div>' : "");
+    el.querySelector("#tg-more-clues")?.addEventListener("click", () => paintBody(false));
+  }
+  // a study card: the clue, its words for the tag marked, the answer (hidden as the Database hides answers) and its set
+  function clueCard(k) {
+    let text = esc(k.text || "");
+    const s = String(k.surface || "").trim();
+    if (s) {
+      const i = text.toLowerCase().indexOf(esc(s).toLowerCase());
+      if (i >= 0) text = text.slice(0, i) + "<mark>" + text.slice(i, i + esc(s).length) + "</mark>" + text.slice(i + esc(s).length);
+    }
+    const src = [k.set_name, k.packet_number ? "packet " + k.packet_number : ""].filter(Boolean).join(" · ");
+    const ans = typeof primaryAnswerText === "function" ? primaryAnswerText(k.answer || "") || k.answer : k.answer;
+    return `<article class="tg-clue"><p class="tg-clue-text">${text}</p>
+      <div class="tg-clue-foot"><span class="tg-ans"><span class="ra-k">Answer</span> <span class="ans-toggle"><span class="ans">${esc(ans || "?")}</span></span></span>` +
+      `${k.part != null ? `<span class="tg-part">Part ${"ABCDEFGHI"[k.part] || k.part + 1}</span>` : ""}${k.role === "about" ? '<span class="tg-about">About it</span>' : ""}${k.canon ? tierHtml(k.canon) : ""}<span class="src">${esc(src)}</span></div></article>`;
+  }
+  // Play: the tag's questions on a page of their own (15.28 practice pages)
+  async function playTag(t) {
+    const bonus = V.qtype === "bonus" && V.tab === "clues";
+    const et = encodeURIComponent(JSON.stringify([{ id: t.id, r: V.role === "about" ? "about" : "any" }]));
+    let d = null;
+    try { d = await API.get((bonus ? "/api/bonuses/query" : "/api/tossups/query") + "?random=1&limit=120&etags=" + et); } catch (e) { d = null; }
+    const ids = ((d && (d.rows || d.tossups || d.bonuses)) || []).map((r) => r.id).filter(Boolean);
+    if (!ids.length) { confirmDialog("No " + (bonus ? "bonuses" : "tossups") + " to play for this tag.", () => {}, { noCancel: true, yes: "OK" }); return; }
+    if (bonus) startBonusIdsSession(ids, { title: t.name }); else startListSession("list", "tossups", ids, { title: t.name });
+  }
+  const webPath = () => (V.tag ? "/tags/" + V.tag.id : "/tags");
+  const pendingTag = () => V.pending || null;
+
+  // ── Frequency → Tags: the tags most questions carry, paged like the answers ──
+  const F = { role: "any", seq: 0 };
+  async function runFrequency(el, o) {
+    if (!el) return null;
+    const seq = ++F.seq;
+    const url = "/api/topics/frequent?qtype=" + o.qtype + "&role=" + F.role + "&limit=" + o.limit + "&offset=" + o.page * o.limit + (o.units.length ? "&nodeIds=" + encodeURIComponent(o.units.join(",")) : "");
+    let d = null;
+    try { d = await API.get(url); } catch (e) { d = null; }
+    if (seq !== F.seq) return null;
+    if (!d) { el.innerHTML = '<div class="db-empty">Couldn\'t load tags.</div>'; return { total: 0 }; }
+    const rows = d.tags || [];
+    if (!rows.length) { el.innerHTML = '<div class="db-empty">No tags for this selection.</div>'; return { total: 0 }; }
+    const max = d.max || rows[0].count || 1, off = o.page * o.limit;
+    el.innerHTML = '<div class="list freq-list tg-freq">' + rows.map((r, i) =>
+      `<div class="list-row"><span class="lr-rank">${num(off + i + 1)}</span><button type="button" class="lr-ans tg-fname" data-tag="${esc(r.id)}" title="${esc(r.kind || "")}"><span class="tg-dot" style="--c:${kindColor(r.kind)}"></span>${esc(r.name)}</button>` +
+      `<span class="freq-bar"><span style="width:${Math.max(1, Math.round((r.count / max) * 100))}%"></span></span><span class="lr-count">${num(r.count)}</span></div>`).join("") + "</div>";
+    el.querySelectorAll(".tg-fname").forEach((b) => b.addEventListener("click", () => openTag(b.dataset.tag)));
+    return { total: d.total || rows.length };
+  }
+  function roleSegHtml() {
+    return [["any", "Anywhere"], ["about", "About"], ["answer", "Answers"], ["theme", "Themes"]].map(([v, l]) => `<button type="button" data-trole="${v}" aria-pressed="${F.role === v}">${l}</button>`).join("");
+  }
+  function setRole(v) { F.role = v; }
+
+  // ── Stats → Topics: how you do by canon tier and by what the questions are about ──
+  async function renderStats(host) {
+    if (!host) return;
+    host.innerHTML = "";
+    if (!enabled()) return;
+    let d = null;
+    try { d = await API.get("/api/topics/stats"); } catch (e) { d = null; }
+    if (!d || !d.available || !d.heard || !host.isConnected) return;
+    const pct = (a) => (a.heard ? Math.round((a.correct / a.heard) * 100) + "%" : "–");
+    const tiers = (d.tiers || []).filter((x) => x.heard);
+    const list = (title, rows) => rows && rows.length ? `<div class="tst-col"><h4>${title}</h4><div class="topics"><div class="trow-v">${rows.map((x) =>
+      `<button type="button" class="tchip" style="--c:${kindColor(x.kind)}" data-topic="${esc(x.id)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind || "")}" title="${num(x.correct)} of ${num(x.heard)}">${esc(x.name)} <span class="tchip-n num">${pct(x)}</span></button>`).join("")}</div></div></div>` : "";
+    host.innerHTML = `<div class="stats-section tst" data-coll="stats:topics"><div class="stats-section-title">TOPICS</div>
+      ${tiers.length ? `<div class="tst-tiers">${tiers.map((x) => `<div class="tst-tier"><span class="ttier ttier-${x.tier}">${TIER_NAME[x.tier]}</span><b class="num">${pct(x)}</b><small>${plural(x.heard, "tossup")}</small></div>`).join("")}</div>` : ""}
+      <div class="tst-cols">${list("Strongest", d.strong)}${list("Weakest", d.weak)}</div>
+      ${d.missedCanon && d.missedCanon.length ? `<div class="tst-col tst-missed"><h4>Canon answers to review</h4><div class="topics"><div class="trow-v">${d.missedCanon.map((x) => tagChip(x)).join("")}</div></div></div>` : ""}
+    </div>`;
+  }
+
+  // ── a plugin's view (ctx.host.topics) ──
+  const pluginApi = {
+    enabled,
+    forQuestions: (type, ids) => Promise.all((ids || []).map((id) => topicsOf(type, id))).then((l) => Object.fromEntries((ids || []).map((id, i) => [id, l[i]]))),
+    search: (q, opts) => API.get("/api/topics/search?limit=" + ((opts && opts.limit) || 20) + "&q=" + encodeURIComponent(q || "")).then((d) => (d && d.tags) || []),
+    tag: (id) => API.get("/api/topics/tag?id=" + encodeURIComponent(id || "")).then((d) => (d && d.tag) || null),
+    clues: (id, opts) => API.get("/api/topics/clues?id=" + encodeURIComponent(id || "") + "&qtype=" + ((opts && opts.qtype) || "tossup") + "&limit=" + ((opts && opts.limit) || 25)).then((d) => d || { clues: [], total: 0 }),
+  };
+
+  window.QBTopics = { enabled, wanted, setWanted, check, onChange, topicsOf, chipsHtml, fill, resultPanel, suggest, kindColor, renderTab, openTag, webPath, pendingTag,
+    runFrequency, roleSegHtml, setRole, renderStats, pluginApi, TIERS, TIER_NAME };
+})();
 

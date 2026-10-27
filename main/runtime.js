@@ -154,6 +154,9 @@ export async function start(env) {
     if (typeof data.excludeIn === "string" && data.excludeIn) f.excludeIn = data.excludeIn;
     // tags: JSON string (query-string form) or array — database.js normalizes it
     if ((typeof data.tags === "string" && data.tags) || (Array.isArray(data.tags) && data.tags.length)) f.tags = data.tags;
+    // topic tags and canon tiers (15.29): the same, normalized by database.js
+    if ((typeof data.etags === "string" && data.etags) || (Array.isArray(data.etags) && data.etags.length)) f.etags = data.etags;
+    if ((typeof data.canon === "string" && data.canon) || (Array.isArray(data.canon) && data.canon.length)) f.canon = data.canon;
     return f;
   }
 
@@ -460,6 +463,13 @@ export async function start(env) {
     // account, friends and sync: forwarded to the account server (index.js cloudRoute)
     ipcMain.handle("cloud", (_e, { method, path, body } = {}) => qbApp.cloudRoute(String(method || "GET"), String(path || ""), body || {}));
     ipcMain.handle("get-tag-vocab", () => (qbApp.getTagVocab ? qbApp.getTagVocab() : { tags: {} }));
+    // topic tags (15.29)
+    ipcMain.handle("topic-search", (_e, a) => (qbApp.topicSearch ? qbApp.topicSearch(a || {}) : { tags: [], total: 0 }));
+    ipcMain.handle("topic-tag", (_e, a) => (qbApp.topicTag ? qbApp.topicTag(a || {}) : { tag: null }));
+    ipcMain.handle("topics-for", (_e, a) => (qbApp.topicsFor ? qbApp.topicsFor(a || {}) : { topics: {} }));
+    ipcMain.handle("topic-clues", (_e, a) => (qbApp.topicClues ? qbApp.topicClues(a || {}) : { clues: [], total: 0 }));
+    ipcMain.handle("topic-frequent", (_e, a) => (qbApp.topicFrequent ? qbApp.topicFrequent(a || {}) : { tags: [], total: 0, max: 0 }));
+    ipcMain.handle("topic-stats", () => (qbApp.topicStats ? qbApp.topicStats() : { available: false }));
     ipcMain.handle("get-tag-facets", (_e, { type, query, filters } = {}) =>
       (qbApp.getTagFacets ? qbApp.getTagFacets(type || "tossups", query || "", parseFilters(filters || {})) : { facets: [] }));
 

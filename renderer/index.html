@@ -14,9 +14,10 @@
       var c = localStorage.getItem("qb-boot-bg");
       if (c) document.documentElement.style.setProperty("--boot-bg", c);
       if (localStorage.getItem("qb-scheme") === "light") document.documentElement.setAttribute("data-theme", "light");
-      // Halloween 2026 (app.js HW): its theme from the first frame, unless this viewer picked Default
-      var hwNow = Date.now();
-      if (hwNow >= Date.UTC(2026, 9, 16) && hwNow < Date.UTC(2026, 10, 2, 8) && localStorage.getItem("qb-hw-theme") !== "default") { document.documentElement.classList.add("hw"); document.documentElement.style.setProperty("--boot-bg", "#120c18"); }
+      // the running event's theme from the first frame (app.js SEASONS), unless this viewer picked Default
+      var evNow = Date.now(), evLight = localStorage.getItem("qb-scheme") === "light";
+      if (evNow >= Date.UTC(2026, 9, 16) && evNow < Date.UTC(2026, 10, 1, 7) && localStorage.getItem("qb-hw-theme") !== "default") { document.documentElement.classList.add("hw"); document.documentElement.style.setProperty("--boot-bg", "#0f0d12"); }
+      else if (evNow >= Date.UTC(2026, 10, 1, 7) && evNow < Date.UTC(2026, 11, 1, 8) && localStorage.getItem("qb-tg-theme") !== "default") { document.documentElement.classList.add("tg"); document.documentElement.style.setProperty("--boot-bg", evLight ? "#f8f3ec" : "#14110d"); }
     } catch (e) {}
   </script>
 </head>
@@ -94,11 +95,9 @@
         </div>
         <!-- website only (html.web): the desktop app's download -->
         <section class="hcard home-dl web-only" aria-labelledby="h-dl">
-          <div class="home-dl-text">
-            <h2 id="h-dl"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>OfflineQuiz</h2>
-            <p>Our free quizbowl practice app. Play 187,000 tossups and 159,000 bonuses from 700 sets with instant answer checking. Everything the website has, fully <span class="nowrap">offline.<span class="qb-info dl-info" data-tip="Multiplayer requires an internet connection.">i</span></span></p>
-          </div>
-          <button type="button" class="btn btn-lg btn-primary" data-go="download"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 20h16"/></svg>Download our app</button>
+          <h2 id="h-dl"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>OfflineQuiz</h2>
+          <p>The whole site as an app, fully offline.</p>
+          <button type="button" class="btn btn-md btn-primary" data-go="download"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 20h16"/></svg>Download</button>
         </section>
         <footer class="home-foot" aria-label="Policies and contact">
           <a class="legal-link" href="/terms">Terms of Service</a><a class="legal-link" href="/privacy">Privacy Policy</a><a class="legal-link" href="/refunds">Refund Policy</a><a href="mailto:support@onlinequiz.net">support@onlinequiz.net</a>
@@ -170,6 +169,16 @@
                 <label class="diff-row" title="Nationals college"><input type="checkbox" class="diff-checkbox" value="9"><span>9</span></label>
                 <label class="diff-row" title="Open"><input type="checkbox" class="diff-checkbox" value="10"><span>10</span></label>
               </div>
+            </div>
+          </div>
+          <div class="filter-section packet-disable topics-only" id="sec-canon">
+            <div class="filter-label">Canon <span class="qb-info" data-tip="How often the answer comes up. Core answers come up the most. None picked plays them all.">i</span></div>
+            <div class="canon-checks" id="canon-filters">
+              <label class="canon-row"><input type="checkbox" class="canon-checkbox" value="core"><span>Core</span></label>
+              <label class="canon-row"><input type="checkbox" class="canon-checkbox" value="common"><span>Common</span></label>
+              <label class="canon-row"><input type="checkbox" class="canon-checkbox" value="uncommon"><span>Uncommon</span></label>
+              <label class="canon-row"><input type="checkbox" class="canon-checkbox" value="rare"><span>Rare</span></label>
+              <label class="canon-row"><input type="checkbox" class="canon-checkbox" value="unique"><span>Unique</span></label>
             </div>
           </div>
           <div class="filter-section packet-disable" id="sec-year">
@@ -345,6 +354,7 @@
         <button class="db-tab" role="tab" data-tab="sets" data-short="Sets">Browse sets</button>
         <button class="db-tab" role="tab" data-tab="frequency">Frequency</button>
         <button class="db-tab" role="tab" data-tab="starred">Starred</button>
+        <button class="db-tab topics-only" role="tab" data-tab="topics">Tags</button>
         <div class="pop-wrap db-plugtools" id="db-plugtools" hidden>
           <button type="button" class="db-tab db-plugtools-btn" id="db-plugtools-btn" aria-haspopup="menu" aria-expanded="false" data-short="Tools">Plugin tools<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
           <div class="pop left" id="db-plugtools-menu" role="menu" hidden></div>
@@ -538,7 +548,7 @@
         <!-- first: an account (or not now) -->
         <div class="setup-step" id="setup-step-account">
           <div class="setup-title">Welcome to OfflineQuiz</div>
-          <p class="setup-sub">Sign in to keep your stats, stars and folders on this computer and on onlinequiz.net.</p>
+          <p class="setup-sub">Sign in to sync your stats, stars and folders.</p>
           <div class="setup-actions">
             <button type="button" class="btn btn-md acct-google" id="setup-google" hidden></button>
             <button type="button" class="btn btn-primary btn-md" id="setup-signin">Sign in</button>
@@ -549,7 +559,7 @@
         <!-- not now: just a name -->
         <form class="setup-step hidden" id="setup-step-name">
           <div class="setup-title">What should we call you?</div>
-          <p class="setup-sub">Your name in multiplayer rooms. You can change it in Settings.</p>
+          <p class="setup-sub">Shown to others in multiplayer rooms.</p>
           <input type="text" id="setup-username" class="mode-input" placeholder="Your name" maxlength="24" autocomplete="nickname" spellcheck="false">
           <button type="submit" class="btn btn-primary btn-md" id="btn-setup-done">Start playing</button>
         </form>
@@ -628,6 +638,11 @@
             <section class="set-pane" data-pane="tags" id="ovl-tags">
               <h3>Tags</h3>
               <div class="setting-row">
+                <span class="setting-label">Topic tags <span class="qb-info" data-tip="The people, works, places and ideas each question names. They show after a question, never during it.">i</span></span>
+                <input type="checkbox" class="switch" id="opt-topic-tags">
+              </div>
+              <div class="setting-row hidden" id="topic-tags-na"><span class="setting-label tt-na">This question database has no topic tags yet.</span></div>
+              <div class="setting-row">
                 <span class="setting-label">Show tags under questions</span>
                 <input type="checkbox" class="switch" id="opt-tags-show" checked>
               </div>
@@ -650,10 +665,10 @@
             <section class="set-pane" data-pane="appearance">
               <h3>Appearance</h3>
               <div class="stats-section" id="appearance-section">
-                <div class="setting-row hidden" id="hw-theme-row">
-                  <span class="setting-label">Theme <span class="qb-info" data-tip="Halloween is on until November 1. Pick Default to switch back.">i</span></span>
-                  <select id="hw-theme" class="mode-input">
-                    <option value="halloween">Halloween</option>
+                <div class="setting-row hidden" id="ev-theme-row">
+                  <span class="setting-label">Theme</span>
+                  <select id="ev-theme" class="mode-input">
+                    <option value="event">Event</option>
                     <option value="default">Default</option>
                   </select>
                 </div>

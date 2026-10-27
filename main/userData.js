@@ -16,19 +16,30 @@ const SYNC_NAME = /^(settings|review_dismissed|review_manual|trials|overrides|re
 const MAX_SYNC_VALUE = 900 * 1024;   // a bigger config value stays on its device
 const sessionKey = (r) => JSON.stringify([String(r.session_id), String(r.type), r.question_id == null ? "" : String(r.question_id), Number(r.timestamp)]);
 
-// The seasonal event (14.90): Halloween 2026 — through Nov 1 (08:00 UTC on Nov 2 is midnight on the U.S. west coast).
-// One tossup in `pumpkinEvery` is a pumpkin (a hash of its id, the same everywhere: the app, the website, the game
-// server, the leaderboard); powering one during the event is a piece of candy (each question once); `goal` candies
-// is the "Halloween 2026" badge. Kept here: the over-the-air update ships only the existing main files.
-export const EVENT = { id: "halloween-2026", name: "Halloween", start: Date.UTC(2026, 9, 16), end: Date.UTC(2026, 10, 2, 8), pumpkinEvery: 8, goal: 31 };
-export const eventOn = (now = Date.now()) => now >= EVENT.start && now < EVENT.end;
-export function isPumpkin(id) {
-  if (id == null || id === "") return false;
-  const s = EVENT.id + ":" + id;
+// Seasonal events (14.90 Halloween, 15.29 Thanksgiving). One tossup in `every` is the event's item (a hash of its
+// id with the event's id, the same everywhere: the app, the website, the game server, the leaderboard); powering
+// one during the event collects it (each question once), and `goal` of them is the event's badge. Halloween ends as
+// Thanksgiving starts, midnight on November 1 (U.S. Pacific: 07:00 UTC). Kept here: the over-the-air update ships
+// only the existing main files.
+export const EVENTS = [
+  { id: "halloween-2026", key: "halloween", name: "Halloween", item: "candy", start: Date.UTC(2026, 9, 16), end: Date.UTC(2026, 10, 1, 7), every: 8, goal: 31 },
+  { id: "thanksgiving-2026", key: "thanksgiving", name: "Thanksgiving", item: "pie", start: Date.UTC(2026, 10, 1, 7), end: Date.UTC(2026, 11, 1, 8), every: 8, goal: 26 },
+];
+// Halloween, by its old name (older code reads EVENT.start / .end / .goal); pumpkinEvery is its `every`
+export const EVENT = { ...EVENTS[0], pumpkinEvery: EVENTS[0].every };
+export const eventAt = (now = Date.now()) => EVENTS.find((e) => now >= e.start && now < e.end) || null;
+export const eventOn = (now = Date.now()) => !!eventAt(now);
+export function isEventItem(id, ev) {
+  if (id == null || id === "" || !ev) return false;
+  const s = ev.id + ":" + id;
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-  return h % EVENT.pumpkinEvery === 0;
+  return h % ev.every === 0;
 }
+// a Halloween pumpkin (the same hash as ever)
+export function isPumpkin(id) { return isEventItem(id, EVENTS[0]); }
+// the event this tossup is an item of right now, or null
+export function eventItemNow(id, now = Date.now()) { const ev = eventAt(now); return ev && isEventItem(id, ev) ? ev : null; }
 
 // Trials (14.88): { "<category>|<level>": { s: last start, p: first pass, l: last pass } } (ms)
 export function mergeTrials(a, b) {
@@ -390,20 +401,23 @@ export class UserData {
   // correct tossups.
   leaderboardStats(now = Date.now()) {
     const pid = this.getActiveProfileId(), DAY = 864e5;
-    const sum = (since) => {
+    const sum = (since, until = 8.64e15) => {
       const o = { q: 0, pts: 0, pw: 0, tu: 0, cor: 0 };
       // tu: the tossups answered (a skipped one isn't an attempt — leaderboards' accuracy is cor / tu)
       for (const r of this.db.prepare(`SELECT type, COUNT(*) AS n, SUM(points) AS pts, SUM(correct) AS c, SUM(CASE WHEN points >= 15 AND correct = 1 THEN 1 ELSE 0 END) AS pw,
           SUM(CASE WHEN COALESCE(given_answer, '') <> '(skipped)' THEN 1 ELSE 0 END) AS ans
-          FROM sessions WHERE profile_id = ? AND timestamp >= ? GROUP BY type`).all(pid, since)) {
+          FROM sessions WHERE profile_id = ? AND timestamp >= ? AND timestamp < ? GROUP BY type`).all(pid, since, until)) {
         o.q += r.n; o.pts += r.pts || 0;
         if (r.type === "tossup") { o.tu = r.ans || 0; o.cor = r.c || 0; o.pw = r.pw || 0; }
       }
       return o;
     };
     const all = sum(0);
-    // the event's board (the leaderboards' "Halloween" period): its practice and its candy
-    all.ev = { ...sum(EVENT.start), candy: this.eventPumpkins().length };
+    // each event's board (the leaderboards' "Halloween", "Thanksgiving" periods): its practice and its items;
+    // ev = Halloween's, by its old name
+    all.events = {};
+    for (const ev of EVENTS) if (now >= ev.start) all.events[ev.key] = { ...sum(ev.start, ev.end), items: this.eventItems(ev).length };
+    all.ev = { ...(all.events.halloween || sum(EVENT.start, EVENT.end)), candy: (all.events.halloween || {}).items || 0 };
     return { week: sum(now - 7 * DAY), month: sum(now - 30 * DAY), all };
   }
 
@@ -817,12 +831,14 @@ export class UserData {
     return this.db.prepare("SELECT * FROM sessions WHERE profile_id = ? ORDER BY timestamp").all(pid);
   }
 
-  // the event's candy: the pumpkin tossups this profile powered during it (each question once)
-  eventPumpkins() {
+  // an event's items: its tossups this profile powered during it (each question once)
+  eventItems(ev) {
     const pid = this.getActiveProfileId();
     return this.db.prepare("SELECT DISTINCT question_id FROM sessions WHERE profile_id = ? AND type = 'tossup' AND correct = 1 AND points >= 15 AND timestamp >= ? AND timestamp < ?")
-      .all(pid, EVENT.start, EVENT.end).map((r) => r.question_id).filter(isPumpkin);
+      .all(pid, ev.start, ev.end).map((r) => r.question_id).filter((id) => isEventItem(id, ev));
   }
+  // Halloween's candy (the pumpkins)
+  eventPumpkins() { return this.eventItems(EVENTS[0]); }
   // when each powered tossup was first powered (limited achievements count only their window)
   getPowerTimes() {
     const pid = this.getActiveProfileId();

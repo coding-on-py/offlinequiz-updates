@@ -121,6 +121,13 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/category-tree") return window.qbreader.getCategoryTree ? window.qbreader.getCategoryTree(q.type || "tossups") : { tree: [] };
         if (path === "/api/db-info") return window.qbreader.getDbInfo ? window.qbreader.getDbInfo() : { schema: 1 };
         if (path === "/api/tag-vocab") return window.qbreader.getTagVocab ? window.qbreader.getTagVocab() : { tags: {} };
+        // topic tags (15.29): an older app backend has none
+        if (path === "/api/topics/search") return window.qbreader.topicSearch ? window.qbreader.topicSearch(q) : { tags: [], total: 0 };
+        if (path === "/api/topics/tag") return window.qbreader.topicTag ? window.qbreader.topicTag(q) : { tag: null };
+        if (path === "/api/topics/for") return window.qbreader.topicsFor ? window.qbreader.topicsFor(q) : { topics: {} };
+        if (path === "/api/topics/clues") return window.qbreader.topicClues ? window.qbreader.topicClues(q) : { clues: [], total: 0 };
+        if (path === "/api/topics/frequent") return window.qbreader.topicFrequent ? window.qbreader.topicFrequent(q) : { tags: [], total: 0, max: 0 };
+        if (path === "/api/topics/stats") return window.qbreader.topicStats ? window.qbreader.topicStats() : { available: false };
         if (path === "/api/tag-facets") return window.qbreader.getTagFacets ? window.qbreader.getTagFacets(q.type || "tossups", q.query || "", q) : { facets: [] };
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0", power: q.power === "1" });
@@ -599,6 +606,7 @@ const TAG_FAM = {
   answer_type: { label: "answer", name: "Answer type", color: "#39c5cf" },
   format: { label: "format", name: "Format", color: "#ffa657" },
   subject: { label: "subject", name: "Subject", color: "#58a6ff" },
+  topic: { label: "topic", name: "Topic", color: "#d2a8ff" },   // a topic tag (15.29, topics.js): its kind is its label
 };
 const TAG_FAM_ORDER = ["era", "place", "theme", "form", "answer_type", "format"];
 const DIFF_FULL = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
@@ -761,12 +769,15 @@ function TagField(opts) {
     if (opts.placeholder) return typeof opts.placeholder === "function" ? opts.placeholder(self.chips) : opts.placeholder;
     return "";
   };
+  const famOf = (x) => (x.f === "topic" && window.QBTopics ? { label: x.k || "topic", color: QBTopics.kindColor(x.k) } : TAG_FAM[x.f] || TAG_FAM.subject);
   function chipHtml(c, i) {
-    const fam = TAG_FAM[c.f] || TAG_FAM.subject;
+    const fam = famOf(c);
     return `<span class="qchip${c.x ? " ex" : ""}" style="--c:${fam.color}"><button type="button" class="qchip-main" data-i="${i}" title="${c.x ? "Skipped. Click to require it" : "Required. Click to skip it"}"><span class="qchip-fam">${escapeHtml(fam.label)}${c.x ? " not" : ""}</span><span class="qchip-val">${escapeHtml(c.v)}</span></button><button type="button" class="qchip-x" data-i="${i}" aria-label="Remove ${escapeHtml(c.v)}">×</button></span>`;
   }
   function paint(focusCompose) {
-    let h = self.chips.map(chipHtml).join("");
+    // (a topic tag shows only while topic tags are on; off, it stays saved but does nothing)
+    const topicsOn = !!(window.QBTopics && QBTopics.enabled());
+    let h = self.chips.map((c, i) => (c.f === "topic" && !topicsOn ? "" : chipHtml(c, i))).join("");
     if (self.compose) h += `<span class="composer"><span aria-hidden="true">\\</span><input class="composer-in" type="text" autocomplete="off" spellcheck="false" aria-label="Tag" placeholder="tag" value="${escapeHtml(self.compose.q)}"></span>`;
     holder.innerHTML = h;
     input.placeholder = placeholder();
@@ -788,6 +799,15 @@ function TagField(opts) {
       const score = (x) => { const v = x.v.toLowerCase(); return v.startsWith(q) ? 0 : v.split(/[\s,&/()-]+/).some((w) => w.startsWith(q)) ? 1 : 2; };
       list = vocab.filter((x) => x.v.toLowerCase().includes(q)).sort((a, b) => score(a) - score(b) || b.n - a.n);
     }
+    // topic tags (15.29) by name or another name, fetched as you type and added below the families' own
+    const tq = (self.compose && self.compose.q || "").trim().toLowerCase();
+    if (tq.length >= 2 && window.QBTopics && QBTopics.enabled() && !opts.noTopics) {
+      if (self._topics && self._topics.q === tq) list = list.slice(0, 60).concat(self._topics.list);
+      else if (!self._topicsP || self._topicsP.q !== tq) {
+        const p = QBTopics.suggest(tq); p.q = tq; self._topicsP = p;
+        p.then((l) => { if (self._topicsP === p) { self._topics = { q: tq, list: l }; if (self.compose) paintSugg(); } });
+      }
+    }
     return list.filter((x) => x && !have.has(x.f + "|" + (x.id || x.v))).slice(0, 150);
   }
   function paintSugg() {
@@ -803,7 +823,7 @@ function TagField(opts) {
     const hi = Math.min(self.compose.hi || 0, Math.max(0, list.length - 1));
     sugg.hidden = false;
     sugg.innerHTML = `<div class="sugg-head"><span class="sh-l">${self.compose.q ? "Tags matching “" + escapeHtml(self.compose.q) + "”" : "Type to find a tag"}</span><span class="sh-r">↵ add · esc close</span></div>` +
-      (list.length ? '<div class="sugg-list">' + list.map((x, i) => `<button type="button" role="option" class="sugg-item${i === hi ? " hi" : ""}" data-i="${i}" style="--c:${(TAG_FAM[x.f] || TAG_FAM.subject).color}"><span class="f">${escapeHtml((TAG_FAM[x.f] || TAG_FAM.subject).label)}</span><span class="v">${escapeHtml(x.v)}</span><span class="c">${Number(x.n || 0).toLocaleString()}</span></button>`).join("") + "</div>"
+      (list.length ? '<div class="sugg-list">' + list.map((x, i) => `<button type="button" role="option" class="sugg-item${i === hi ? " hi" : ""}" data-i="${i}" style="--c:${famOf(x).color}"><span class="f">${escapeHtml(famOf(x).label)}</span><span class="v">${escapeHtml(x.v)}</span><span class="c">${Number(x.n || 0).toLocaleString()}</span></button>`).join("") + "</div>"
         : '<div class="sugg-empty">No tag matches</div>');
     sugg.querySelector(".sugg-item.hi")?.scrollIntoView({ block: "nearest" });
     if (!small) {
@@ -819,7 +839,7 @@ function TagField(opts) {
   }
   function add(x) {
     if (!x) return;
-    if (!self.chips.some((c) => c.f === x.f && (c.id || c.v) === (x.id || x.v))) self.chips.push(x.id ? { f: x.f, v: x.v, x: false, id: x.id, p: x.path || x.p || "" } : { f: x.f, v: x.v, x: false });
+    if (!self.chips.some((c) => c.f === x.f && (c.id || c.v) === (x.id || x.v))) self.chips.push(x.id ? { f: x.f, v: x.v, x: false, id: x.id, p: x.path || x.p || "", ...(x.k ? { k: x.k } : {}) } : { f: x.f, v: x.v, x: false });
     self.compose = null;
     paint(false);
     input.focus();
@@ -891,6 +911,21 @@ function TagField(opts) {
 // ═════════════════════════════════════════════════════════════════════════
 // APP SHELL — top bar, home, navigation shortcuts, setup drawer, settings.
 // ═════════════════════════════════════════════════════════════════════════
+
+// A window opened from inside another (a badge's details on someone's profile) always lands on top of it, whatever
+// its own usual layer: a new overlay is lifted above the highest one already open.
+new MutationObserver((muts) => {
+  for (const m of muts) for (const n of m.addedNodes) {
+    if (n.nodeType !== 1 || !n.classList.contains("qb-overlay")) continue;
+    let top = 0;
+    for (const o of document.querySelectorAll(".qb-overlay")) {
+      if (o === n || o.classList.contains("hidden") || o.hidden) continue;
+      const z = parseInt(getComputedStyle(o).zIndex, 10) || 0;
+      if (z > top) top = z;
+    }
+    if (top >= (parseInt(getComputedStyle(n).zIndex, 10) || 0)) n.style.zIndex = String(top + 1);
+  }
+}).observe(document.body, { childList: true });
 function goTo(target) {
   if (_dbLocked) { openSettings("updates"); return; }
   closeSetupDrawer();
@@ -903,8 +938,8 @@ function goTo(target) {
     case "multiplayer": window.QB?.showPage?.("multiplayer::lobby"); break;
     case "review": if (!accountGate("Sign in to review the questions you missed.")) openReviewMenu(_reviewItems); break;
     case "stats": showScreen("stats"); state.statsSessionId = null; loadStats(); break;
-    case "db-search": case "db-sets": case "db-frequency": case "db-starred":
-      state.dbTab = { "db-search": "search", "db-sets": "sets", "db-frequency": "frequency", "db-starred": "starred" }[target];
+    case "db-search": case "db-sets": case "db-frequency": case "db-starred": case "db-topics":
+      state.dbTab = { "db-search": "search", "db-sets": "sets", "db-frequency": "frequency", "db-starred": "starred", "db-topics": "topics" }[target];
       showScreen("database"); loadDatabase(); break;
     case "plugins": case "plugins-themes": case "plugins-manage":
       // Plugins always opens on Open (the plugin pages); Themes / Manage only when asked for.
@@ -952,6 +987,7 @@ function webPathNow() {
   const a = document.querySelector(".screen.active");
   if (!a) return null;
   const db = ["search", "sets", "frequency", "starred"];
+  if (a.id === "database-screen" && state.dbTab === "topics" && window.QBTopics) return QBTopics.webPath();   // /tags, /tags/<id>
   switch (a.id) {
     case "title-screen": return "/";
     // (15.28: a page of its own isn't Tossups: a trial is under /trials, a review or a list leaves the address be)
@@ -1028,6 +1064,9 @@ function webRoute(path) {
       goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : "admin");
     } else if ((a === "clubs" || a === "diagnostic" || a === "report" || a === "l") && window.QBClubs) {
       window.QBClubs.route(seg);
+    } else if (a === "tags" && window.QBTopics) {
+      // Database → Tags, or one tag's page (topic tags on, 15.29)
+      if (b) QBTopics.openTag(b); else goTo("db-topics");
     } else if (a && WEB_PATHS[a]) {
       goTo(WEB_PATHS[a]);
     } else if (!document.querySelector("#title-screen.active")) goHome();
@@ -1342,8 +1381,22 @@ function practiceTagFieldInit() {
 }
 function cleanTagList(list) {
   return (Array.isArray(list) ? list : []).filter((t) => t && t.f && t.v)
-    .map((t) => (t.id ? { f: t.f, v: String(t.v), x: !!t.x, id: String(t.id), p: String(t.p || "") } : { f: String(t.f), v: String(t.v), x: !!t.x }));
+    .map((t) => (t.id ? { f: t.f, v: String(t.v), x: !!t.x, id: String(t.id), p: String(t.p || ""), ...(t.k ? { k: String(t.k) } : {}) } : { f: String(t.f), v: String(t.v), x: !!t.x }));
 }
+// A tag list → the request's tags (the old families) and etags (topic tags, 15.29: only while they're on) and canon
+function tagParams(list) {
+  const all = list || [], on = !!(window.QBTopics && QBTopics.enabled());
+  const tags = all.filter((t) => t.f !== "topic").map((t) => (t.id ? { f: t.f, v: t.v, x: t.x ? 1 : 0, id: t.id } : { f: t.f, v: t.v, x: t.x ? 1 : 0 }));
+  const etags = on ? all.filter((t) => t.f === "topic" && t.id).map((t) => ({ id: t.id, r: "any", x: !!t.x })) : [];
+  return { tags, etags };
+}
+// the practice panel's canon tiers (15.29; none picked, or topic tags off: no filter)
+function practiceCanon() {
+  if (!(window.QBTopics && QBTopics.enabled())) return [];
+  return [...document.querySelectorAll("#canon-filters .canon-checkbox:checked")].map((cb) => cb.value);
+}
+function canonPicked() { return [...document.querySelectorAll("#canon-filters .canon-checkbox:checked")].map((cb) => cb.value); }
+function setCanonPicked(list) { const want = Array.isArray(list) ? list : []; document.querySelectorAll("#canon-filters .canon-checkbox").forEach((cb) => { cb.checked = want.includes(cb.value); }); }
 function practiceTags() { return cleanTagList(_practiceTagField ? _practiceTagField.chips : state._pendingPracticeTags); }
 function setPracticeTags(list) {
   const clean = cleanTagList(list);
@@ -1425,6 +1478,8 @@ function showSettingsSection(sec) {
 document.getElementById("set-nav")?.addEventListener("click", (e) => { const b = e.target.closest(".set-nav-btn"); if (b) showSettingsSection(b.dataset.sec); });
 function renderTagSettings() {
   const d = tagDisplay();
+  const T = window.QBTopics, tsw = document.getElementById("opt-topic-tags");
+  if (tsw && T) { tsw.checked = T.wanted(); T.check().then((ok) => { tsw.disabled = !ok; tsw.checked = ok && T.wanted(); document.getElementById("topic-tags-na")?.classList.toggle("hidden", !!ok); }); }
   const sw = document.getElementById("opt-tags-show"); if (sw) sw.checked = d.show;
   const chips = document.getElementById("tag-fam-chips");
   if (chips) chips.innerHTML = TAG_FAM_ORDER.map((f) => `<button type="button" class="chip${d.fams[f] ? " on" : ""}" style="--c:${TAG_FAM[f].color}" data-fam="${f}" aria-pressed="${!!d.fams[f]}"><span class="dot"></span>${escapeHtml(TAG_FAM[f].name)}</button>`).join("");
@@ -1436,6 +1491,18 @@ function refreshTagViews() {
   try { if (document.querySelector("#database-screen.active") && (state.dbTab || "search") === "search" && document.getElementById("db-results")) performDbSearch({ page: _dbPage }); } catch (e) {}
 }
 document.getElementById("opt-tags-show")?.addEventListener("change", (e) => { setTagDisplay({ show: e.target.checked }); refreshTagViews(); });
+document.getElementById("opt-topic-tags")?.addEventListener("change", (e) => window.QBTopics?.setWanted(e.target.checked));
+// topic tags on or off (15.29): every view that shows or uses them follows
+window.QBTopics?.onChange((on) => {
+  try { if (_practiceTagField) _practiceTagField.setChips(_practiceTagField.chips); if (_searchTagField && _searchTagField.field.isConnected) _searchTagField.setChips(_searchTagField.chips); } catch (e) {}
+  if (document.querySelector("#database-screen.active")) {
+    if (state.dbTab === "topics" && !on) { state.dbTab = "search"; syncDbTabActive(); }
+    if (["search", "frequency", "topics"].includes(state.dbTab || "search")) renderDbTab();
+  }
+  if (document.querySelector("#stats-screen.active")) { try { loadStats(true); } catch (e) {} }
+  try { renderHistoryPanel(); } catch (e) {}
+  debounceSaveFilters();
+});
 document.getElementById("tag-fam-chips")?.addEventListener("click", (e) => {
   const b = e.target.closest("[data-fam]"); if (!b) return;
   const d = tagDisplay();
@@ -2071,12 +2138,12 @@ function toggleScheme() {
   if (document.documentElement.classList.contains("hw") && typeof hwLightning === "function") { hwLightning(document.getElementById("tb-scheme")); return; }
   lsSet("qb-scheme", uiScheme() === "light" ? "dark" : "light");
   applyTheme();
+  applyDefaultAppearance();
+}
 // Focus rings follow the keyboard: Tab turns them on, a click or tap turns them off (ui.css html.kb-nav), so a
 // window that focuses its button as it opens from a click doesn't show one.
 document.addEventListener("keydown", (e) => { if (e.key === "Tab") document.documentElement.classList.add("kb-nav"); }, true);
 document.addEventListener("pointerdown", () => document.documentElement.classList.remove("kb-nav"), true);
-  applyDefaultAppearance();
-}
 
 applyTheme();
 
@@ -2298,7 +2365,7 @@ function openReviewMenu(items) {
       const node = t && t.byPath.get(r);
       return `<button type="button" class="rv-bar${node && picked.size === 1 && picked.has(node.id) ? " on" : ""}" data-root="${escapeHtml(r)}"${node ? "" : " disabled"}><span class="dot" style="background:${rootColorOf(r)}"></span><span class="rv-bar-n">${escapeHtml(r)}</span><span class="rv-bar-t"><i style="width:${Math.max(3, Math.round(100 * n / top))}%;background:${rootColorOf(r)}"></i></span><span class="rv-bar-c num">${n.toLocaleString()}</span></button>`;
     }).join("") : '<div class="rv-empty">Nothing matches</div>';
-    el.querySelector("#rv-play-l").textContent = tus ? "Play " + tus.toLocaleString() + (tus === 1 ? " tossup" : " tossups") : "Play";
+    el.querySelector("#rv-play").title = tus ? tus.toLocaleString() + (tus === 1 ? " tossup" : " tossups") : "";
     const pb = el.querySelector("#rv-play"); if (pb) pb.disabled = !tus;
     const cb = el.querySelector("#rv-cards"); if (cb) cb.disabled = !tus;
     const vb = el.querySelector("#rv-view"); if (vb) vb.disabled = !m.length;
@@ -2543,7 +2610,7 @@ function restoreOwnSession() {
   state.currentQuestion = null;
   state._resumeQ = p.resume && p.resume.type === state.mode ? p.resume : null;
   resetQuestionUI();
-  const ph = $("#question-placeholder"); if (ph) ph.innerHTML = '<p class="resume-note">Your practice is back. Next picks up where you left off.</p>';
+  const ph = $("#question-placeholder"); if (ph) ph.innerHTML = '<p class="resume-note">Picking up where you left off.</p>';
   const sc = $("#session-counter"); if (sc) sc.textContent = String(state.questionCount || 0);
   const sb = $("#btn-start-session"); if (sb) sb.innerHTML = state.mode === "tossups" ? keyLabelHtml("buzz", "Buzz") : keyLabelHtml("start-skip", "Skip");
   updateSessionStats(); renderHistoryPanel(); updateLiveStats(); syncDrawerStart();
@@ -2646,6 +2713,7 @@ function saveFilterState() {
     yearMin: $("#year-min")?.value,
     yearMax: $("#year-max")?.value,
     tags: practiceTags(),
+    canon: canonPicked(),
     settings: Object.fromEntries(PER_MODE_SETTING_KEYS.map((k) => [k, state.settings[k]])),
   };
   if (filterState.mode === "custom") filterState.mode = "random";   // never persist the placeholder
@@ -2682,6 +2750,7 @@ function restoreFilterState() {
     if (saved.setName !== undefined && $("#mode-set-name")) $("#mode-set-name").value = currentSetName(saved.setName);
     if (saved.packet !== undefined && $("#mode-packet")) $("#mode-packet").value = saved.packet;
     setPracticeTags(Array.isArray(saved.tags) ? saved.tags : []);
+    setCanonPicked(saved.canon);
     applyModeSettings(saved);
     updateModeFields();
     updateYearLabel();
@@ -3009,6 +3078,7 @@ function resetPracticeFiltersToDefaults() {
   if (ew && ew.checked) { ew.checked = false; ew.dispatchEvent(new Event("change", { bubbles: true })); }
   state.settings.useWeights = false; lsSet("qb-use-weights", "false");
   $$("#difficulty-filters .diff-checkbox").forEach((cb) => { cb.checked = ["2", "3", "4", "5"].includes(cb.value); });
+  setCanonPicked([]);
   setRevealSpeed(50);
   setBuzzTimer(10);
   setBuzzWindow(10);
@@ -3067,6 +3137,7 @@ function getFilterSelectionSnapshot() {
     standard: !!$("#filter-standard")?.checked,
     starredOnly: !!$("#filter-starred")?.checked,
     tags: practiceTags(),
+    canon: canonPicked(),
   };
 }
 
@@ -3130,6 +3201,7 @@ async function _applySnapshotInner(snap, gen) {
   if (snap.standard != null) { const e = $("#filter-standard"); if (e) e.checked = !!snap.standard; }
   if (snap.starredOnly != null) { const e = $("#filter-starred"); if (e) e.checked = !!snap.starredOnly; }
   if (Array.isArray(snap.tags)) setPracticeTags(snap.tags);
+  if (Array.isArray(snap.canon)) setCanonPicked(snap.canon);
   // Panel knobs apply EVENT-FREE: real change events broke multiplayer's
   // no-events invariant — every apply echoed a setConfig, chat blamed the
   // wrong player for "changed mode", saves persisted room state into the solo
@@ -3376,8 +3448,11 @@ function getActiveFilters(opts) {
     yearMax,
   };
 
-  const tags = practiceTags();
-  if (tags.length) filters.tags = tags;
+  const tags = practiceTags(), tp = tagParams(tags);
+  if (tags.length) filters.tags = tags.filter((t) => t.f !== "topic");
+  if (tp.etags.length) filters.etags = tp.etags;
+  const canon = practiceCanon();
+  if (canon.length) filters.canon = canon;
 
   // Tree node ids travel in `categories` (the server reads an id as its whole
   // subtree); categoryPaths is for client-side matching and display only.
@@ -3431,6 +3506,7 @@ function getFilters() {
 }
 
 $("#difficulty-filters")?.addEventListener("change", debounceSaveFilters);
+$("#canon-filters")?.addEventListener("change", debounceSaveFilters);
 // Weight edits never triggered a save (only the checkbox cascade did) —
 // weight values silently vanished on the next screen build.
 $("#category-filters")?.addEventListener("change", (e) => {
@@ -4539,6 +4615,7 @@ async function nextQuestion() {
   state._bonusRecorded = false; state._bonusResult = null; state._bonusOverrides = []; state._bonusJudged = []; state._bonusLastIdx = null;
   state.bonusUserAnswers = [];
   state.resultAreaVisible = false;
+  document.querySelectorAll("#result-area .topics-result").forEach((el) => el.remove());   // the last question's topics
 
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
 
@@ -4766,7 +4843,9 @@ function _randomQuestionParams(filters) {
   if (filters.starredOnly) params.set("starredOnly", "true");
   if (filters.yearMin) params.set("yearMin", filters.yearMin);
   if (filters.yearMax) params.set("yearMax", filters.yearMax);
-  if (filters.tags && filters.tags.length) params.set("tags", JSON.stringify(filters.tags.map((t) => (t.id ? { f: t.f, v: t.v, x: t.x ? 1 : 0, id: t.id } : { f: t.f, v: t.v, x: t.x ? 1 : 0 }))));
+  if (filters.tags && filters.tags.length) { const tp = tagParams(filters.tags); if (tp.tags.length) params.set("tags", JSON.stringify(tp.tags)); }
+  if (filters.etags && filters.etags.length) params.set("etags", JSON.stringify(filters.etags));
+  if (filters.canon && filters.canon.length) params.set("canon", filters.canon.join(","));
   params.set("random", "1");
   return params;
 }
@@ -5160,7 +5239,7 @@ function renderQuestion(question) {
   // result (renderResultTags) reveals them.
   $("#question-meta").classList.add("qm-reading");
   $("#question-meta").innerHTML = `
-    <span class="q-num">Question ${state.questionCount || 1}${isTossup && question._pumpkin && hwOn() ? `<span class="hw-pk" title="A pumpkin tossup: power it for a piece of candy">${PUMPKIN_SVG}</span>` : ""}</span>
+    <span class="q-num">Question ${state.questionCount || 1}${isTossup ? seasonMarkHtml(question) : ""}</span>
     <span class="qm-info">${catBadgeHtml(qPathOf(question))}${questionWarnHtml(question)}
     <span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[parseInt(diffLabel)] || diffName)}">Diff ${escapeHtml(String(diffLabel))}</span>
     ${yearBadgeHtml(question.set_year)}</span>
@@ -6353,7 +6432,7 @@ function displayTossupResult(result, userAnswer) {
 
   achNoteResult({ type: "tossup", q: state.currentQuestion, points: result.points || 0, correct: !!result.correct, isPower: !!result.isPower });
   if (_trial && !_trial.done && state.currentQuestion && state.currentQuestion.id === _trial.servedId) trialOnResult(result);
-  if (result.isPower && state.currentQuestion && state.currentQuestion._pumpkin && hwOn()) hwCandyFlash($("#result-banner"));
+  if (result.isPower && state.currentQuestion && state.currentQuestion._pumpkin) seasonFlash($("#result-banner"));
 
   if (state.settings.autoReviewNoPower && result.correct && !result.isPower && state.currentQuestion?.id) {
     const hasMark = state.prePowerEnd > 0;
@@ -6392,13 +6471,16 @@ function qcardHtml(o) {
   const year = o.year != null ? o.year : (q ? q.set_year : null);
   const diff = o.difficulty !== undefined && o.difficulty !== null && o.difficulty !== "" ? o.difficulty : (q ? q.difficulty : null);
   const tags = q ? tagChipsHtml(q, o.tagsWhere || null) : "";
+  // topic tags (15.29, topics.js): filled in once the card is on the page
+  const topics = q && q.id != null && !o.noTopics && window.QBTopics && QBTopics.enabled()
+    ? `<div class="qcard-topics" data-topics="${q.leadin != null || q.parts != null || q.leadin_sanitized != null ? "bonus" : "tossup"}:${escapeHtml(String(q.id))}"></div>` : "";
   if (o.titleHtml != null) {
     // Database cards: the answer is the title; category, year, source and tags
     // sit under the text.
     const src = o.src != null ? o.src : (q && q.set_name ? q.set_name : "");
     return `<div class="${cls}"${o.attrs || ""}>
       <div class="qcard-head"><span class="qcard-chev" aria-hidden="true"></span><div class="qcard-title"><span class="qcard-ans">${o.titleHtml}</span>${o.kindHtml ? `<span class="qcard-kind">${o.kindHtml}</span>` : ""}</div><span class="qcard-side">${o.sideHtml || ""}</span></div>
-      <div class="qcard-body">${o.bodyHtml || ""}</div>
+      <div class="qcard-body">${o.bodyHtml || ""}</div>${topics}
       <div class="qcard-tags qmeta-row">${catBadgeHtml(path)}${yearBadgeHtml(year)}${src ? `<span class="src">${escapeHtml(src)}</span>` : ""}${tags ? '<span class="vsep" aria-hidden="true"></span>' + tags : ""}</div>
     </div>`;
   }
@@ -6410,7 +6492,7 @@ function qcardHtml(o) {
       <span class="qcard-side">${o.sideHtml || ""}</span>
     </div>
     ${o.answerHtml != null ? `<div class="qcard-answer">${o.answerHtml}</div>` : ""}
-    <div class="qcard-body">${o.bodyHtml || ""}</div>
+    <div class="qcard-body">${o.bodyHtml || ""}</div>${topics}
     ${tags ? `<div class="qcard-tags qmeta-row">${tags}</div>` : ""}
   </div>`;
 }
@@ -7463,7 +7545,7 @@ function resetQuestionUI() {
   if (ph) { ph.classList.remove("hidden"); ph.innerHTML = startPromptHtml(); }
   $("#buzz-area").classList.add("hidden");
   $("#result-area").classList.add("hidden");
-  document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
+  document.querySelectorAll("#result-area .ext-result-panel, #result-area .topics-result").forEach((el) => el.remove());
   { const rt = document.getElementById("result-tags"); if (rt) rt.innerHTML = ""; }
   showResultActions(false);
   $("#bonus-parts-area").classList.add("hidden");
@@ -7835,9 +7917,11 @@ $("#btn-admin-home")?.addEventListener("click", goBack);
 ["#btn-clubs-home", "#btn-dx-home", "#btn-irl-home", "#btn-report-home", "#btn-link-home"].forEach((id) => $(id)?.addEventListener("click", goBack));
 
 function renderResultPanels(resultCtx) {
-  document.querySelectorAll("#result-area .ext-result-panel").forEach((el) => el.remove());
+  document.querySelectorAll("#result-area .ext-result-panel, #result-area .topics-result").forEach((el) => el.remove());
   const area = $("#result-area");
   if (!area) return;
+  // the question's topic tags (15.29), now that it's over; a chip's clues light up in the text above
+  try { window.QBTopics?.resultPanel(area, { ...resultCtx, blocks: resultCtx.type === "bonus" ? ["#question-text", ...[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => "#bonus-text-" + i)].join("|") : "#question-text" }); } catch (e) {}
   for (const p of (window.QB?.getResultPanels?.() || [])) {
     const host = document.createElement("div");
     host.className = "ext-result-panel";
@@ -7862,6 +7946,7 @@ function endOfQueue(msg) {
 
 function showError(msg) {
   showResultActions(false);
+  document.querySelectorAll("#result-area .topics-result").forEach((el) => el.remove());
   const banner = $("#result-banner");
   const area = $("#result-area");
   area.classList.remove("hidden");
@@ -8593,6 +8678,12 @@ async function loadStats(preserveScroll = false) {
     initCollapsibles(container);
     tipInto(container, "stats");
     limitList(container.querySelector(".stats-sessions-table"), "tbody > tr", "stats:sessions", 10, 25);
+    // topic tags on (15.29): how you do by canon tier and by topic, under the categories
+    if (!sid && window.QBTopics && QBTopics.enabled()) {
+      const tp = document.createElement("div"), cat = container.querySelector('[data-coll="stats:by-category"]');
+      if (cat) cat.after(tp); else container.appendChild(tp);
+      QBTopics.renderStats(tp).then(() => { try { initCollapsibles(container); } catch (e) {} });
+    }
 
     if (!sid) {
       for (const prov of (window.QB?.getStatsProviders?.() || [])) {
@@ -9424,13 +9515,13 @@ async function loadPlayer() {
     const tile = (n, l, cls) => `<div class="pf-tile"><b class="num${cls ? " " + cls : ""}">${Number(n).toLocaleString()}</b><span>${l}</span></div>`;
     container.innerHTML = `
       <div class="pf-page">
-        ${hwCardHtml(apData.event)}
+        ${seasonCardHtml(apData)}
         <section class="pf-card">
           <span class="pf-avatar" aria-hidden="true"${avatarStyle(myNeon())}>${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
           <div class="pf-id">
             <div class="pf-name-row"><input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false"></div>
             <small class="pf-sub">${handle ? escapeHtml(handle) : Account.user ? "Signed in" : IS_WEB ? "Not signed in" : "On this computer"}</small>
-            ${trialBadgesHtml(trialInfo && trialInfo.trials, hwBadgeHtml(apData.event))}
+            ${trialBadgesHtml(trialInfo && trialInfo.trials, seasonBadgesHtml(apData))}
           </div>
         </section>
         <div class="pf-tiles">${tile(totalQ, "questions")}${tile(powers, "powers", "pf-pwr")}${tile(negs, "negs", "pf-neg")}${tile(sessions.length, "sessions")}</div>
@@ -9444,7 +9535,7 @@ async function loadPlayer() {
     initCollapsibles(container);
     container._achWired = false;
     wireBadges(container, (trialInfo && trialInfo.trials) || {}, true);
-    wireHwCard(container);
+    wireSeasonCard(container);
     wireAchievementCards(container, { achData, records: achRecordsFrom(apData), stats, pluginAchs });
     achBackfillDates(achData, apData, (Account.user && Account.user.id ? Account.user.id + ":" : "") + profileKey);
     window.QB?.neonField?.($("#player-username-input"), myNeon());   // a bought neon name glows here too
@@ -9642,17 +9733,27 @@ function achTopicProgress(ach, records) {
   return seen.size;
 }
 // /api/answer-powers' answer_questions ({ answer: { path: [ids] } }) as records; with powered_at (first power, ms)
-// and the event's pumpkins (14.90) each record also has t and pk
-function achRecordsOf(apQuestions, poweredAt, pumpkins, alts) {
-  const out = [], pk = new Set(pumpkins || []);
+// and the events' items each record also has t, pk (Halloween's pumpkins, 14.90) and ev (the other events it was an
+// item of, by key, 15.29)
+function achRecordsOf(apQuestions, poweredAt, pumpkins, alts, evItems) {
+  const out = [], pk = new Set(pumpkins || []), evs = [];
+  for (const k in evItems || {}) if (k !== "halloween" && Array.isArray(evItems[k])) evs.push([k, new Set(evItems[k])]);
   for (const a in apQuestions || {}) for (const ck in apQuestions[a]) for (const q of apQuestions[a][ck]) {
     const r = { q, a, p: apKeyPath(ck), t: (poweredAt && poweredAt[q]) || 0, pk: pk.has(q) };
+    const ev = evs.filter(([, set]) => set.has(q)).map(([k]) => k);
+    if (ev.length) r.ev = ev;
     if (alts && Array.isArray(alts[q]) && alts[q].length) r.alts = alts[q];
     out.push(r);
   }
   return out;
 }
-const achRecordsFrom = (d) => achRecordsOf((d && d.answer_questions) || {}, d && d.powered_at, d && d.event && d.event.pumpkins, d && d.answer_alts);
+function achRecordsFrom(d) {
+  const evs = d && Array.isArray(d.events) ? d.events : [], items = {};
+  for (const e of evs) if (e && e.key && Array.isArray(e.items)) items[e.key] = e.items;
+  return achRecordsOf((d && d.answer_questions) || {}, d && d.powered_at, items.halloween || (d && d.event && d.event.pumpkins), d && d.answer_alts, items);
+}
+// a record that is one of the event's items (an achievement of type "candy"; ev names the event, Halloween's by default)
+const achItemHit = (ach, r) => (ach.ev && ach.ev !== "halloween" ? !!(r.ev && r.ev.includes(ach.ev)) : !!r.pk);
 // When each achievement was unlocked (15.25), counted as computeAchievementData counts: the profile's answers in time
 // order (tl, /api/achievements/timeline: { cats: [[category, path]], rows: [[t, flags, cat]] }, flags 1 a bonus, 2 a
 // power, 4 a neg) and its powered tossups (records, t = the first power). → { id: ms } for every achievement the
@@ -9681,14 +9782,16 @@ function achUnlockTimes(list, tl, records) {
       else t = firstReach((r) => (catOf(r) === ach.category ? 1 : null), n);
     } else if (ach.type === "daily") t = firstReach((r) => dayOf(r[0]), n);
     else if (ach.type === "streak") t = streakAt(n);
-    else if (ach.type === "answer_power" || ach.type === "candy") {
+    else if (ach.type === "candy") {
+      // the items were all powered during the event (a question powered before it too has an older first power)
+      const its = recs.filter((r) => achItemHit(ach, r)).map((r) => (ach.during ? Math.max(r.t, ach.during[0]) : r.t)).sort((a, b) => a - b);
+      if (its.length >= n) t = its[n - 1];
+    } else if (ach.type === "answer_power") {
       const mode = ach.count || "questions", seen = new Set();
       for (const r of recs) {
         if (ach.during && !(r.t >= ach.during[0] && r.t < ach.during[1])) continue;
-        let k = r.q;
-        if (ach.type === "candy") { if (!r.pk) continue; }
-        else { const g = achRecordHit(ach, r); if (g < 0) continue; k = mode === "targets" ? g : mode === "answers" ? r.a : r.q; }
-        seen.add(k);
+        const g = achRecordHit(ach, r); if (g < 0) continue;
+        seen.add(mode === "targets" ? g : mode === "answers" ? r.a : r.q);
         if (seen.size >= n) { t = r.t; break; }
       }
     }
@@ -9731,7 +9834,7 @@ function computeAchievementData(stats, apCounts, apClasses, apQuestions, dates) 
     } else if (ach.type === "answer_power") {
       progress = achTopicProgress(ach, records);
     } else if (ach.type === "candy") {
-      progress = records.filter((r) => r.pk && (!ach.during || (r.t >= ach.during[0] && r.t < ach.during[1]))).length;
+      progress = records.filter((r) => achItemHit(ach, r)).length;
     }
     const at = dates && Number(dates[ach.id]) > 0 ? Number(dates[ach.id]) : 0;
     achData[ach.id] = { earned: progress >= ach.threshold || at > 0, progress, at };
@@ -9793,7 +9896,11 @@ function achLiveApply(e) {
     const a = apNorm(head || q.answer_sanitized || q.answer || "");
     let alts = [];
     try { alts = window.QBAnswerChecker ? [...new Set((window.QBAnswerChecker.parseDirectives(q.answer || "", q.answer_sanitized || "").accept || []).map(apNorm).filter((n) => n && n !== a))].slice(0, 12) : []; } catch (er) {}
-    if (a && !_achLive.records.some((r) => r.q === q.id)) _achLive.records.push({ q: q.id, a, p: path, t: Date.now(), pk: !!q._pumpkin && hwOn(), ...(alts.length ? { alts } : {}) });
+    // an event's item: Halloween's keep pk, the others name their event
+    const sev = q._pumpkin ? seasonNow() : null, had = _achLive.records.find((r) => r.q === q.id);
+    if (a && !had) _achLive.records.push({ q: q.id, a, p: path, t: Date.now(), pk: sev === HW, ...(sev && sev !== HW ? { ev: [sev.key] } : {}), ...(alts.length ? { alts } : {}) });
+    else if (had && sev === HW) had.pk = true;
+    else if (had && sev && !(had.ev || []).includes(sev.key)) had.ev = [...(had.ev || []), sev.key];
   }
 }
 // a result: { type, q (the question, or just { id }), points, correct, isPower }
@@ -9993,6 +10100,7 @@ const EMB_METAL = {   // the metal's bands (light to dark, with a second shine),
   gold: { g: ["#fff8cf", "#ffd84f", "#c4870b", "#ffe68c", "#835200"], dk: "#663d00", hi: "#fffbe0", rib: ["#d42d38", "#7a0e18"] },
   legend: { g: null, dk: "#3d1a78", hi: "#fff6c9", rib: ["#8a4ae0", "#3a1470"] },
   pumpkin: { g: ["#ffe2bd", "#ff8d2e", "#c4480a", "#ffa04a", "#5e2200"], dk: "#4a1a00", hi: "#ffd9a8", rib: ["#ff7a1a", "#6e2600"] },
+  harvest: { g: ["#fff0d2", "#e4a04c", "#97561a", "#f1bf74", "#4a2808"], dk: "#3c2006", hi: "#fff3da", rib: ["#a8361e", "#5a170a"] },
 };
 const embParts = (lv) => ({
   laurel: lv >= 2, wings: lv >= 9 ? 4 : lv >= 7 ? 3 : lv >= 5 ? 2 : lv >= 3 ? 1 : 0, star: lv >= 7 ? 2 : lv >= 4 ? 1 : 0,
@@ -10083,10 +10191,11 @@ function openBadgeDetail(key, trials, own, extra) {
   el.className = "qb-overlay review-ovl ach-ovl";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "bd-h");
   let title, hero, body, next = "";
-  if (key === "hw") {
-    title = "Halloween 2026";
-    hero = hwEmblem(150);
-    body = `<p class="bd-sub">Event badge · ${escapeHtml(extra || String(HW.goal))} candies</p><p class="bd-text">Collected ${HW.goal} candies in the Halloween 2026 pumpkin hunt.</p>`;
+  const sev = key === "hw" ? HW : SEASONS.find((e) => "ev:" + e.key === key);
+  if (sev) {
+    title = sev.label;
+    hero = seasonEmblem(sev, 150);
+    body = `<p class="bd-sub">Event badge · ${escapeHtml(extra || String(sev.goal))} ${sev.many}</p><p class="bd-text">Collected ${sev.goal} ${sev.many} during ${escapeHtml(sev.label)}.</p>`;
   } else {
     const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
     const best = trialBadges(trials)[key] || 0, rec = (trials || {})[key + "|" + best] || {}, open = trialBest(trials)[key] || 0;
@@ -10172,18 +10281,20 @@ async function renderTrialsPage() {
     const going = state.practiceKind === "trial" && trialRunning() ? trialNow() : null;
     c.innerHTML = `<div class="pf-page tr-page">` +
       (going ? `<div class="tr-going" style="--hue:${trialHue(going.key)}">${ic("award", 16)}<span><b>${escapeHtml(trialName(going.key, going.level))}</b> is still going</span><span class="spacer"></span><button type="button" class="btn btn-primary btn-sm" id="tr-continue">${ic("play", 14)}Continue</button></div>` : "") +
-      `<p class="tr-intro">Ten power-marked tossups at one level. Power all ten to open the next level. Every power earns XP toward that category's badges.</p>` +
+      `<p class="tr-intro">Power all ten tossups at a level to unlock the next.</p>` +
       (badges ? `<section class="tr-badge-row">${badges}</section>` : "") + trialsSectionHtml(info) + `</div>`;
     c.querySelector("#tr-continue")?.addEventListener("click", resumeTrialPage);
     wireTrials(c);
     wireBadges(c, trials, true);
   };
-  // what this window already knows (a trial just finished updated it) at once, then the backend's
-  if (_trialInfo && _trialInfo.trials) paint(_trialInfo);
+  // what this window already knows (a trial just finished updated it) at once, then the backend's if it differs
+  const sig = (i) => JSON.stringify((i && i.trials) || {}) + "|" + (state.practiceKind === "trial" && trialRunning());
+  let shown = null;
+  if (_trialInfo && _trialInfo.trials) { paint(_trialInfo); shown = sig(_trialInfo); }
   else if (!c.firstElementChild) c.innerHTML = '<div class="pf-page"><div class="text-muted">Loading trials…</div></div>';
   const info = await loadTrialInfo();
   if (!document.getElementById("trials-screen")?.classList.contains("active")) return;
-  paint(info);
+  if (sig(info) !== shown) paint(info);
 }
 function wireTrials(container) {
   container.querySelectorAll(".tr-card[data-trial]").forEach((b) => { b.onclick = () => openTrialPicker(b.dataset.trial); });
@@ -10220,7 +10331,7 @@ function openTrialPicker(key) {
       <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="tp-xp num">${fmtXp(trialXpOf(info.trials, key))}</span><span class="spacer"></span>
         <button type="button" class="btn btn-ghost btn-icon" id="tp-x" aria-label="Close">${ic("x")}</button></div>
       <div class="achd-body">
-        <p class="tp-lead">Every power earns XP, and higher levels earn more. The first tossup you don't power ends the trial. <b>Power all ten</b> to pass and unlock the next level.</p>
+        <p class="tp-lead"><b>Power all ten</b> to pass. The first tossup you don't power ends the trial. Higher levels earn more XP.</p>
         ${trialProgressHtml(info.trials, key)}
         <div class="tp-levels" role="group" aria-label="Level">${levels()}</div>
         <p class="achd-fine" id="tp-note"></p>
@@ -10445,22 +10556,37 @@ function showTrialResult(t, passed, why) {
   try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 
-// ── Halloween 2026 (14.90) ─────────────────────────────────────────────────────────────────────────────────
-// The seasonal event, until November 1 (src/main/userData.js EVENT: the same window): a theme on for everyone
-// (Settings → Appearance → Theme; "Default" sticks per device), pumpkin tossups — one in eight, the same on every
-// device and in every room — whose power is a piece of candy (31 = the "Halloween 2026" badge; the leaderboards'
-// Halloween board), the Haunted House official room, and limited achievements (powers inside the window only).
-const HW = { id: "halloween-2026", start: Date.UTC(2026, 9, 16), end: Date.UTC(2026, 10, 2, 8), goal: 31, boardUntil: Date.UTC(2026, 10, 16) };
-const HW_WIN = [HW.start, HW.end];
-const hwOn = () => { const n = Date.now(); return n >= HW.start && n < HW.end; };
-function hwThemeWanted() { if (!hwOn()) return false; try { return localStorage.getItem("qb-hw-theme") !== "default"; } catch (e) { return true; } }
+// ── Seasonal events (14.90 Halloween, 15.29 Thanksgiving) ───────────────────────────────────────────────────
+// One at a time, back to back, on the windows of src/main/userData.js EVENTS. While one runs: its theme for everyone
+// (Settings → Appearance → Theme; Default sticks per device and per event), item tossups (one in eight, the same on
+// every device and in every room; the backend flags them _pumpkin) whose power collects one (Halloween's pumpkins give
+// candy, Thanksgiving's pies are pies; the goal earns the event's badge, and the event's leaderboard board ranks them
+// until two weeks after), its official room, and limited achievements (powers inside the window only).
 const PUMPKIN_SVG = '<svg class="hw-pumpkin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.2c-.4-1.9.3-3.3 1.6-3.9" fill="none" stroke="#5d9a2e" stroke-width="1.9" stroke-linecap="round"/>' +
   '<ellipse cx="7.4" cy="14" rx="5.1" ry="7" fill="#d9661a"/><ellipse cx="16.6" cy="14" rx="5.1" ry="7" fill="#d9661a"/><ellipse cx="12" cy="14" rx="5.6" ry="7.6" fill="#ff8a24"/>' +
   '<path d="M7.2 12.3 9.6 10l.7 2.9zM16.8 12.3 14.4 10l-.7 2.9z" fill="#3b1600"/><path d="M7.3 15.5c1.7 2.4 7.7 2.4 9.4 0l-1.5.3-.8 1.1-1.1-.9-1.3 1-1.3-1-1.1.9-.8-1.1z" fill="#3b1600"/></svg>';
+// a slice of pumpkin pie with cream
+const PIE_SVG = '<svg class="ev-pie" viewBox="0 0 24 24" aria-hidden="true"><path d="M1.4 13.6 22.2 8.8v6.6L1.8 19.8z" fill="#b8571a"/><path d="M1.8 19.8 22.2 15.4v2.3L2.1 22.2z" fill="#c98d47"/>' +
+  '<path d="M1.4 13.6 14.6 4.4c3.9-1.2 6.6 1 7.6 4.4z" fill="#f0913a"/><path d="M13.4 3.9c5.2-2.6 10.6.5 9.8 7.3l-.4 4.6-.6-7c-1-3.4-3.7-5.6-7.6-4.4z" fill="#e0a95e"/>' +
+  '<ellipse cx="12.4" cy="8.4" rx="3.1" ry="1.8" fill="#fff4e2"/><ellipse cx="12.8" cy="7.5" rx="1.7" ry="1.1" fill="#fffbf4"/></svg>';
 const BAT_SVG = '<svg viewBox="0 0 48 20" aria-hidden="true"><path d="M24 7c-1.3 0-2.1.8-2.6 1.8C19.6 6 15.8 4.5 8 5c3.6 1.6 5 3.8 5.4 6.4 2-.9 4-.6 5.6.7 1-1.3 2.6-1.3 3.6 0 .5-.9 1.2-1.4 1.4-1.4s.9.5 1.4 1.4c1-1.3 2.6-1.3 3.6 0 1.6-1.3 3.6-1.6 5.6-.7.4-2.6 1.8-4.8 5.4-6.4-7.8-.5-11.6 1-13.4 3.8C26.1 7.8 25.3 7 24 7z" fill="currentColor"/></svg>';
-window.qbPumpkinSvg = () => PUMPKIN_SVG;
-window.qbHwOn = hwOn;
-// the logo's first "o" becomes a jack-o'-lantern (the word stays for screen readers)
+// cls: the theme's class on <html> (index.html sets it before the first paint too); theme: where Default is kept
+const SEASONS = [
+  { key: "halloween", id: "halloween-2026", name: "Halloween", label: "Halloween 2026", cls: "hw", theme: "qb-hw-theme",
+    start: Date.UTC(2026, 9, 16), end: Date.UTC(2026, 10, 1, 7), boardUntil: Date.UTC(2026, 10, 16), ends: "November 1", goal: 31,
+    svg: PUMPKIN_SVG, one: "candy", many: "candies", unit: "candy", mark: "Pumpkin tossup. Power it for candy", how: "Power pumpkin tossups for candy",
+    room: "haunted-house", roomName: "Haunted House", metal: "pumpkin", hue: "#3a1a06" },
+  { key: "thanksgiving", id: "thanksgiving-2026", name: "Thanksgiving", label: "Thanksgiving 2026", cls: "tg", theme: "qb-tg-theme",
+    start: Date.UTC(2026, 10, 1, 7), end: Date.UTC(2026, 11, 1, 8), boardUntil: Date.UTC(2026, 11, 15), ends: "December 1", goal: 26,
+    svg: PIE_SVG, one: "pie", many: "pies", unit: "pies", mark: "Pie tossup. Power it for a pie", how: "Power pie tossups to collect pies",
+    room: "harvest-table", roomName: "Harvest Table", metal: "harvest", hue: "#3a2106" },
+];
+const HW = SEASONS[0], TG = SEASONS[1];
+const HW_WIN = [HW.start, HW.end], TG_WIN = [TG.start, TG.end];
+const seasonNow = (t = Date.now()) => SEASONS.find((e) => t >= e.start && t < e.end) || null;
+const hwOn = () => seasonNow() === HW;
+function seasonThemeOn(ev) { if (!ev) return false; try { return localStorage.getItem(ev.theme) !== "default"; } catch (e) { return true; } }
+// the logo's first "o" becomes a jack-o'-lantern during Halloween (the word stays for screen readers)
 function hwLogos(on) {
   for (const el of document.querySelectorAll("#tb-brand, .wordmark")) {
     const o = el.querySelector(":scope > .hw-o");
@@ -10478,11 +10604,8 @@ function hwLogos(on) {
     }
   }
 }
-// a few bats cross the top once a visit
-let _hwBats = false;
-function hwBats(again) {
-  if (_hwBats && !again) return;
-  _hwBats = true;
+// bats scatter when the lightning strikes
+function hwBats() {
   try { if (matchMedia("(prefers-reduced-motion: reduce)").matches) return; } catch (e) {}
   const box = document.createElement("div");
   box.className = "hw-bats"; box.setAttribute("aria-hidden", "true");
@@ -10579,111 +10702,80 @@ function hwLightning(btn) {
     else { wrap.remove(); _hwStorm = false; }
   };
   requestAnimationFrame(frame);
-  setTimeout(() => { try { hwBats(true); } catch (e) {} }, 260);
+  setTimeout(() => { try { hwBats(); } catch (e) {} }, 260);
   setTimeout(() => { flip(false); btn?.classList.remove("hw-zap"); }, reduce ? 500 : 1150);
   setTimeout(() => btn?.classList.remove("hw-spin"), reduce ? 1000 : 1700);
 }
-// Cobwebs: each box gets its own — a web drawn from a seed (the box's kind, place and text): how many threads and
-// rings, where they sag, a broken strand, now and then a spider; its corner, size and strength vary too. The big
-// boxes all get one; a few of the small cards do.
-const HW_WEB_BIG = ".pf-card, .pf-ach, .pf-trials, .hw-card, .setup-box, .hcard, .mp-plan, .fr-card, .mp-recent > .list, .stats-section";
-const HW_WEB_SMALL = ".tr-card, .achievement-card";
-function hwSeed(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
-function hwRng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-function hwWebSvg(seed) {
-  const r = hwRng(seed), n = 4 + Math.floor(r() * 4), L = [], ang = [];
-  for (let i = 0; i < n; i++) { ang.push(((i / (n - 1)) * 90 + (r() - 0.5) * 14) * Math.PI / 180); L.push(78 + r() * 26); }
-  const pt = (i, d) => [100 - d * Math.cos(ang[i]), d * Math.sin(ang[i])];
-  let d = "";
-  for (let i = 0; i < n; i++) { const [x, y] = pt(i, L[i]); d += `M100 0L${x.toFixed(1)} ${y.toFixed(1)}`; }
-  const rings = 3 + Math.floor(r() * 3);
-  for (let k = 1; k <= rings; k++) {
-    const base = (k / (rings + 0.6)) * 92;
-    for (let i = 0; i < n - 1; i++) {
-      if (r() < 0.1) continue;   // a broken strand
-      const r1 = Math.min(base * (0.9 + r() * 0.2), L[i] - 2), r2 = Math.min(base * (0.9 + r() * 0.2), L[i + 1] - 2);
-      const [x1, y1] = pt(i, r1), [x2, y2] = pt(i + 1, r2);
-      const am = (ang[i] + ang[i + 1]) / 2, rm = ((r1 + r2) / 2) * (0.8 + r() * 0.08);
-      d += `M${x1.toFixed(1)} ${y1.toFixed(1)}Q${(100 - rm * Math.cos(am)).toFixed(1)} ${(rm * Math.sin(am)).toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
-    }
-  }
-  let spider = "";
-  if (r() < 0.35) {
-    const i = Math.floor(r() * n), [x, y] = pt(i, L[i] * (0.4 + r() * 0.3)), drop = 10 + r() * 22;
-    spider = `<path d='M${x.toFixed(1)} ${y.toFixed(1)}V${(y + drop).toFixed(1)}'/><circle cx='${x.toFixed(1)}' cy='${(y + drop + 2.6).toFixed(1)}' r='2.6' fill='%23d9c8ea' stroke='none'/>`;
-  }
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><g fill='none' stroke='%23d9c8ea' stroke-width='${(0.7 + r() * 0.4).toFixed(2)}' stroke-linecap='round'><path d='${d}'/>${spider}</g></svg>`;
-  return 'url("data:image/svg+xml,' + svg.replace(/</g, "%3C").replace(/>/g, "%3E").replace(/"/g, "'") + '")';
+let _seasonShown;
+function applySeasonTheme() {
+  const ev = seasonNow(), on = seasonThemeOn(ev), root = document.documentElement;
+  _seasonShown = ev;
+  for (const e of SEASONS) root.classList.toggle(e.cls, on && e === ev);
+  hwLogos(on && ev === HW);
+  const row = document.getElementById("ev-theme-row"), sel = document.getElementById("ev-theme");
+  if (row) row.classList.toggle("hidden", !ev);
+  if (sel && ev) { sel.options[0].textContent = ev.name; sel.value = on ? "event" : "default"; try { _syncSel(sel); } catch (e) {} }
+  try { applyTheme(); syncScheme(); } catch (e) {}
 }
-function hwWebs(root) {
-  if (!document.documentElement.classList.contains("hw")) return;
-  (root || document).querySelectorAll(HW_WEB_BIG + ", " + HW_WEB_SMALL).forEach((el, idx) => {
-    if (el.dataset.hwWeb) return;
-    const big = el.matches(HW_WEB_BIG);
-    const seed = hwSeed(el.className + "|" + idx + "|" + (el.textContent || "").slice(0, 40));
-    const r = hwRng(seed ^ 0x9e3779b9);
-    if (!big && r() > 0.28) { el.dataset.hwWeb = "none"; return; }
-    const corners = big ? ["tr", "tr", "tl", "tl", "br"] : ["tr", "tl", "br", "bl"];
-    el.dataset.hwWeb = corners[Math.floor(r() * corners.length)];
-    el.style.setProperty("--hw-web", hwWebSvg(seed));
-    el.style.setProperty("--hw-web-size", Math.round(big ? 64 + r() * 52 : 34 + r() * 22) + "px");
-    el.style.setProperty("--hw-web-o", (0.13 + r() * 0.12).toFixed(2));
-    if (getComputedStyle(el).position === "static") el.style.position = "relative";
-  });
-}
-let _hwWebObs = null, _hwWebT = null;
-function hwWebsWatch(on) {
-  if (on && !_hwWebObs && window.MutationObserver) {
-    _hwWebObs = new MutationObserver(() => { clearTimeout(_hwWebT); _hwWebT = setTimeout(() => hwWebs(), 120); });
-    _hwWebObs.observe(document.body, { childList: true, subtree: true });
-  } else if (!on && _hwWebObs) { _hwWebObs.disconnect(); _hwWebObs = null; }
-  if (on) hwWebs();
-}
-function applyHwTheme() {
-  const on = hwThemeWanted();
-  document.documentElement.classList.toggle("hw", on);
-  hwLogos(on);
-  hwWebsWatch(on);
-  if (on) setTimeout(hwBats, 600);
-  const row = document.getElementById("hw-theme-row"), sel = document.getElementById("hw-theme");
-  if (row) row.classList.toggle("hidden", !hwOn());
-  if (sel) { sel.value = on ? "halloween" : "default"; try { _syncSel(sel); } catch (e) {} }
-  try { syncScheme(); } catch (e) {}
-}
-document.getElementById("hw-theme")?.addEventListener("change", (e) => {
-  try { localStorage.setItem("qb-hw-theme", e.target.value === "default" ? "default" : "halloween"); } catch (er) {}
-  applyHwTheme();
+document.getElementById("ev-theme")?.addEventListener("change", (e) => {
+  const ev = seasonNow(); if (!ev) return;
+  try { localStorage.setItem(ev.theme, e.target.value === "default" ? "default" : "on"); } catch (er) {}
+  applySeasonTheme();
   try { applyDefaultAppearance(); } catch (er) {}
 });
-// a powered pumpkin: "+1 candy" pops on the verdict
-function hwCandyFlash(host) {
-  if (!host) return;
+// one event hands over to the next while the app stays open
+setInterval(() => { if (seasonNow() !== _seasonShown) { applySeasonTheme(); try { applyDefaultAppearance(); } catch (e) {} } }, 60000);
+// an item tossup's mark beside its number, and what a power on one collects
+function seasonMarkHtml(q) {
+  const ev = seasonNow();
+  return ev && q && (q._pumpkin || q.pumpkin) ? `<span class="ev-mark" title="${escapeHtml(ev.mark)}">${ev.svg}</span>` : "";
+}
+function seasonFlash(host) {
+  const ev = seasonNow();
+  if (!host || !ev) return;
   const c = document.createElement("span");
-  c.className = "hw-candy";
-  c.innerHTML = PUMPKIN_SVG + "<b>+1 candy</b>";
+  c.className = "ev-got";
+  c.innerHTML = ev.svg + "<b>+1 " + ev.one + "</b>";
   host.appendChild(c);
 }
-window.qbHwCandy = hwCandyFlash;
-// the profile's event card: candy so far, the room, the board
-function hwCardHtml(ev) {
-  if (!hwOn()) return "";
-  const n = (ev && Array.isArray(ev.pumpkins) ? ev.pumpkins.length : 0), goal = HW.goal;
-  return `<section class="hw-card"><span class="hw-card-pk">${PUMPKIN_SVG}</span>
-    <div class="hw-card-id"><b>Halloween · Pumpkin hunt</b><small>Find a pumpkin tossup <span class="hw-pk-mini">${PUMPKIN_SVG}</span> and power it for a piece of candy. Collect ${goal} for the Halloween 2026 badge. Ends November 1.</small>
-      <div class="hw-card-bar"><div style="width:${Math.min(100, Math.round((n / goal) * 100))}%"></div></div><span class="hw-card-n"><b class="num">${n}</b> / ${goal} candies</span></div>
-    <div class="hw-card-act"><button type="button" class="btn btn-sm" id="hw-room">Haunted House</button><button type="button" class="btn btn-sm" id="hw-board">Leaderboard</button></div></section>`;
+window.qbEventMark = seasonMarkHtml;
+window.qbEventFlash = seasonFlash;
+// what an older multiplayer.js asks for
+window.qbPumpkinSvg = () => (seasonNow() || HW).svg;
+window.qbHwOn = () => !!seasonNow();
+window.qbHwCandy = seasonFlash;
+// the items a profile collected in an event (/api/answer-powers events; an older backend sends Halloween's only)
+function seasonItemsOf(powers, ev) {
+  const e = powers && Array.isArray(powers.events) ? powers.events.find((x) => x && x.key === ev.key) : null;
+  if (e && Array.isArray(e.items)) return e.items;
+  return ev === HW && powers && powers.event && Array.isArray(powers.event.pumpkins) ? powers.event.pumpkins : [];
 }
-function wireHwCard(container) {
-  container.querySelector("#hw-room")?.addEventListener("click", () => { if (window.QB && QB.mpJoin) QB.mpJoin("haunted-house"); else goTo("multiplayer"); });
-  container.querySelector("#hw-board")?.addEventListener("click", () => { try { _lb.period = "halloween"; _lb.tab = "global"; } catch (e) {} goTo("leaderboards"); });
+// the profile's card for the running event: the count, the room, the board
+function seasonCardHtml(powers) {
+  const ev = seasonNow();
+  if (!ev) return "";
+  const n = seasonItemsOf(powers, ev).length, goal = ev.goal;
+  return `<section class="ev-card" data-ev="${ev.key}"><span class="ev-card-ic">${ev.svg}</span>
+    <div class="ev-card-id"><div class="ev-card-top"><b>${ev.name}</b><span class="ev-card-n"><b class="num">${n}</b> of ${goal} ${ev.many}</span></div>
+      <div class="ev-card-bar"><div style="width:${Math.min(100, Math.round((n / goal) * 100))}%"></div></div>
+      <small>${n >= goal ? "Badge earned" : ev.how}. Ends ${ev.ends}.</small></div>
+    <div class="ev-card-act"><button type="button" class="btn btn-sm" id="ev-room">${ev.roomName}</button><button type="button" class="btn btn-sm" id="ev-board">Leaderboard</button></div></section>`;
 }
-// the badge for 31 candies (also on other players' profiles)
-function hwBadgeHtml(ev) {
-  const n = ev && Array.isArray(ev.pumpkins) ? ev.pumpkins.length : 0;
-  return n >= HW.goal ? `<button type="button" class="tr-emb hw-emb" data-badge="hw" data-extra="${n}" title="Halloween 2026, ${n} candies" aria-label="Halloween 2026 badge">${hwEmblem(62)}<span class="tr-emb-name">Halloween 2026</span></button>` : "";
+function wireSeasonCard(container) {
+  const ev = seasonNow();
+  if (!ev) return;
+  container.querySelector("#ev-room")?.addEventListener("click", () => { if (window.QB && QB.mpJoin) QB.mpJoin(ev.room); else goTo("multiplayer"); });
+  container.querySelector("#ev-board")?.addEventListener("click", () => { try { _lb.period = ev.key; _lb.tab = "global"; } catch (e) {} goTo("leaderboards"); });
 }
-const hwEmblem = (size) => emblemSvg({ level: 8, metal: "pumpkin", hue: "#3a1a06", inner: PUMPKIN_SVG, ribbon: "2026", size });
-applyHwTheme();
+// each event's badge, for its goal (also on other players' profiles)
+const seasonEmblem = (ev, size) => emblemSvg({ level: 8, metal: ev.metal, hue: ev.hue, inner: ev.svg, ribbon: "2026", size });
+function seasonBadgesHtml(powers) {
+  return SEASONS.filter((ev) => Date.now() >= ev.start).map((ev) => {
+    const n = seasonItemsOf(powers, ev).length;
+    return n >= ev.goal ? `<button type="button" class="tr-emb ev-emb" data-badge="ev:${ev.key}" data-extra="${n}" title="${ev.label}, ${n} ${ev.many}" aria-label="${ev.label} badge">${seasonEmblem(ev, 62)}<span class="tr-emb-name">${ev.label}</span></button>` : "";
+  }).join("");
+}
+applySeasonTheme();
 
 // ── Achievement details (14.88): a click on a card ─────────────────────────────────────────────────────
 // ctx = { achData, records, stats, pluginAchs } — whoever's achievements the cards show (you, or a friend)
@@ -10730,9 +10822,11 @@ function openAchievementDetail(ach, ctx) {
     const within = ach.within === "*" ? [] : achList(ach.within || achCatOf(ach));
     const counted = mode === "targets" ? `${thr} different ${thr === 1 ? "one" : "ones"} of the list` : mode === "answers" ? `${thr} different answers` : `${thr} different ${thr === 1 ? "question" : "questions"}`;
     how = `<p>Power ${counted}${topics.length && !groups.length ? " in the topic below" : ""}. Each question counts once.</p>` +
+      (ach.during ? `<p class="achd-fine">Only powers during the event count.</p>` : "") +
       (groups.length && topics.length ? `<p>${ach.either ? "Either a question in the topic or one whose answer is on the list counts." : "The question has to be in the topic and its answer on the list."}</p>` : "") +
       (groups.length ? `<p class="achd-fine">Only the main answer counts, and a surname is enough${within.length ? ` (in ${within.map((w) => escapeHtml(achPathLabel(w))).join(" or ")})` : ""}.</p>` : "");
-    const recs = (ctx.records || []).filter((r) => achRecordHit(ach, r) >= 0);
+    // (a limited one counts only powers inside its window, as its progress does)
+    const recs = (ctx.records || []).filter((r) => (!ach.during || (r.t >= ach.during[0] && r.t < ach.during[1])) && achRecordHit(ach, r) >= 0);
     if (topics.length) what += `<div class="achd-topics">${topics.map((t) => `<span class="achd-topic">${escapeHtml(achPathLabel(t))}</span>`).join("")}</div>`;
     if (groups.length) {
       const hit = new Set(recs.map((r) => achRecordHit(ach, r)));
@@ -10799,11 +10893,14 @@ function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
   };
 
   let html = "";
-  const evAchs = ACHIEVEMENT_LIST.filter((a) => a.event && achData[a.id]);
-  if (evAchs.length && (hwOn() || evAchs.some((a) => achData[a.id].earned))) {
-    const evName = evAchs[0].event;
-    html += `<div class="achievement-section-title">${escapeHtml(evName)}${hwOn() ? " · limited" : ""}</div>`;
-    html += group("ev:" + evName, hwOn() ? "Until November 1" : "Earned during the event", evAchs.filter((a) => hwOn() || achData[a.id].earned).map((a) => [a, achData[a.id]]), false);
+  // the running event's limited ones first, then what was earned in past events
+  const evNow = seasonNow();
+  for (const ev of [evNow, ...SEASONS.filter((e) => e !== evNow && Date.now() >= e.end)]) {
+    if (!ev) continue;
+    const live = ev === evNow, list = ACHIEVEMENT_LIST.filter((a) => a.event === ev.label && achData[a.id] && (live || achData[a.id].earned));
+    if (!list.length) continue;
+    html += `<div class="achievement-section-title">${escapeHtml(ev.label)}${live ? " · limited" : ""}</div>`;
+    html += group("ev:" + ev.label, live ? "Until " + ev.ends : "Earned during the event", list.map((a) => [a, achData[a.id]]), false);
   }
   html += '<div class="achievement-section-title">Global</div>';
   for (const [type, label] of globalSections) {
@@ -11048,6 +11145,14 @@ const ACHIEVEMENT_LIST = [
   {id:"hw26-witch",name:"Witching Hour",desc:"Power on a witch (Baba Yaga, Circe, Hecate, the Salem witch trials …)",type:"answer_power",threshold:1,answers:["salem witch trials","the crucible","baba yaga","circe","hecate","medea","morgan le fay","the weird sisters","witchcraft","witches","walpurgis night","witch of endor","glinda","wicked witch of the west","the witches","witch"],within:"*",during:HW_WIN,event:"Halloween 2026",icon:"魔"},
   {id:"hw26-dead",name:"Day of the Dead",desc:"Power on 3 questions about the dead and the underworld",type:"answer_power",threshold:3,answers:["day of the dead","dia de los muertos","mictlan","mictlantecuhtli","hades","anubis","osiris","hel","yama","charon","underworld","duat","book of the dead","tibetan book of the dead","persephone","orpheus","eurydice","valhalla","purgatory","inferno","ghosts","ghost","banshee","grim reaper","danse macabre","sheol","tartarus","river styx","styx","cerberus"],within:"*",during:HW_WIN,event:"Halloween 2026",icon:"骨"},
   {id:"hw26-moon",name:"Full Moon",desc:"Power on a vampire or a werewolf",type:"answer_power",threshold:1,answers:["vampire","vampires","werewolf","werewolves","lycanthropy","nosferatu","carmilla","count dracula","dracula","vlad the impaler","vlad iii","strigoi","vampire bats","vampire bat"],within:"*",during:HW_WIN,event:"Halloween 2026",icon:"月"},
+  // Thanksgiving 2026 (15.29): pies (pie tossups powered during it) and powers inside its window
+  {id:"tg26-pie13",name:"Second Helping",desc:"Collect 13 pies (power 13 pie tossups)",type:"candy",ev:"thanksgiving",threshold:13,during:TG_WIN,event:"Thanksgiving 2026",svg:PIE_SVG,icon:"派"},
+  {id:"tg26-pie26",name:"Full Table",desc:"Collect 26 pies",type:"candy",ev:"thanksgiving",threshold:26,during:TG_WIN,event:"Thanksgiving 2026",svg:PIE_SVG,icon:"饗"},
+  {id:"tg26-turkey",name:"Talking Turkey",desc:"Power on Turkey, the bird or the country",type:"answer_power",threshold:1,answers:["turkey","turkiye","republic of turkey","wild turkey","turkeys"],within:"*",during:TG_WIN,event:"Thanksgiving 2026",icon:"鳥"},
+  {id:"tg26-plymouth",name:"Plymouth Rock",desc:"Power on the Pilgrims or the Mayflower",type:"answer_power",threshold:1,answers:["mayflower","mayflower compact","plymouth colony","plymouth","plymouth rock","pilgrims","pilgrim fathers","@william bradford","squanto","tisquantum","massasoit","wampanoag","wampanoag people"],within:"*",during:TG_WIN,event:"Thanksgiving 2026",icon:"船"},
+  {id:"tg26-harvest",name:"Harvest Home",desc:"Power on 3 questions about food or farming",type:"answer_power",threshold:3,topic:["Pop Culture > Other > Pop Culture Other Any Time > Food & Drink","Pop Culture > Other > Pop Culture Other Modern > Food & Drink","Science > Other Science > Agriculture, Fisheries & Veterinary Science"],during:TG_WIN,event:"Thanksgiving 2026",icon:"穫"},
+  {id:"tg26-grain",name:"Bountiful",desc:"Power on a harvest god (Demeter, Ceres, Freyr …)",type:"answer_power",threshold:1,answers:["demeter","ceres","freyr","inari","centeotl","chicomecoatl","triptolemus","pomona","ops","renenutet","xipe totec","dagon","annapurna","shennong","kotharu"],within:"*",during:TG_WIN,event:"Thanksgiving 2026",icon:"穀"},
+  {id:"tg26-feast",name:"Cornucopia",desc:"Power on 3 of corn, potatoes, rice and bread",type:"answer_power",threshold:3,count:"targets",answers:[["maize","corn","zea mays","maize corn"],["potato","potatoes","solanum tuberosum"],["rice","oryza sativa"],["bread"]],within:"*",during:TG_WIN,event:"Thanksgiving 2026",icon:"豊"},
   // ── topic achievements (14.87): a topic of the category tree, or a list of answers (see the ACH-ENGINE) ──
   {id:"ap-lit-mobydih",name:"Moby Dih",desc:"Power on Moby-Dick or Herman Melville",type:"answer_power",threshold:1,answers:["moby dick","@herman melville"],icon:"鯨"},
   {id:"ap-lit-hope",name:"Hope is the Thing with Feathers",desc:"Power on an Emily Dickinson question",type:"answer_power",threshold:1,answers:["@emily dickinson"],icon:"羽"},
@@ -11317,6 +11422,13 @@ function renderDbTab() {
   if (renderDbTab._last !== tab) { const sc = document.getElementById("db-content"); if (sc) sc.scrollTop = 0; }
   renderDbTab._last = tab;
   if (tab.startsWith("prov:")) return renderProviderTab(tab.slice(5));
+  if (tab === "topics") {
+    // Tags (topic tags on, 15.29): once it's known the database has them; otherwise Search
+    const T = window.QBTopics, toSearch = () => { state.dbTab = "search"; syncDbTabActive(); renderSearchTab(); if (IS_WEB) window.qbWebPathSync(); };
+    if (!T || !T.wanted()) return toSearch();
+    T.check().then(() => { if (state.dbTab !== "topics") return; if (T.enabled()) T.renderTab(document.getElementById("db-content"), T.pendingTag()); else toSearch(); });
+    return;
+  }
   if (tab === "search") renderSearchTab();
   else if (tab === "sets") renderSetsTab();
   else if (tab === "frequency") renderFrequencyTab();
@@ -11371,6 +11483,8 @@ function renderSearchTab() {
           `<label class="checkbox-row" title="Match word beginnings: symphon matches symphony, symphonies"><input type="checkbox" id="db-prefix"${q.prefix ? " checked" : ""}> Word starts</label>` +
           `<label class="checkbox-row"><input type="checkbox" id="db-hide-ans"${q.hideAns ? " checked" : ""}> Hide answers</label>` +
         "</div>" +
+        // canon tiers (15.29, while topic tags are on)
+        `<div class="f f-wide topics-only"><span>Canon</span><div class="canon-checks" id="db-canon">${(window.QBTopics ? QBTopics.TIERS : []).map((t) => `<label class="canon-row"><input type="checkbox" class="canon-checkbox" value="${t}"${(q.canon || []).includes(t) ? " checked" : ""}><span>${QBTopics.TIER_NAME[t]}</span></label>`).join("")}</div></div>` +
       "</section>" +
       `<div class="rhead" id="db-rhead"><span class="total num" id="db-total"></span><select id="db-sort" title="Result order">${opt("relevance", "Best match", q.sort)}${opt("newest", "Newest first", q.sort)}${opt("oldest", "Oldest first", q.sort)}${opt("easiest", "Easiest first", q.sort)}${opt("hardest", "Hardest first", q.sort)}</select><span class="spacer"></span><span id="db-pager-top"></span></div>` +
       '<div class="results search-results" id="db-results"></div>' +
@@ -11399,6 +11513,7 @@ function renderSearchTab() {
   });
   g("db-search-type").addEventListener("change", (e) => { _dbq.field = e.target.value; dbSearchSoon(true); });
   g("db-cat-btn").addEventListener("click", openSearchCategories);
+  g("db-canon")?.addEventListener("change", () => { _dbq.canon = [...document.querySelectorAll("#db-canon .canon-checkbox:checked")].map((cb) => cb.value); dbMoreCount(); dbSearchSoon(true); });
   g("db-diffs").addEventListener("change", () => { _dbq.diffs = [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value); dbSearchSoon(true); });
   const yb = g("db-years-btn"), yp = g("db-years-pop");
   yb.addEventListener("click", (e) => { e.stopPropagation(); const open = yp.hidden; closeAllPops(); yp.hidden = !open; yb.setAttribute("aria-expanded", String(open)); if (open) { const f = g("db-year-from"); f && f.focus(); f && f.select(); } });
@@ -11509,7 +11624,7 @@ let _dbPage = 0;
 const DB_PAGE_SIZE = 25;
 // Database → Search query (the tab re-renders from it; Back restores it).
 function dbQueryDefaults() {
-  return { text: "", field: "all", qtype: "all", match: "phrase", prefix: false, exclude: "", hideAns: false, tags: [], diffs: [], yearMin: null, yearMax: null, set: "", packet: "", sort: "relevance", standard: false, powermark: false, starred: false };
+  return { text: "", field: "all", qtype: "all", match: "phrase", prefix: false, exclude: "", hideAns: false, tags: [], canon: [], diffs: [], yearMin: null, yearMax: null, set: "", packet: "", sort: "relevance", standard: false, powermark: false, starred: false };
 }
 const _dbq = dbQueryDefaults();
 let _dbMoreOpen = (() => { try { return localStorage.getItem("qb-db-more") === "1"; } catch (e) { return false; } })();
@@ -11526,6 +11641,7 @@ function dbYearsLabel() {
 function dbMoreCount() {
   const q = _dbq;
   const n = [q.set, q.packet, String(q.exclude || "").trim(), q.standard, q.powermark && q.qtype !== "bonus", q.starred, q.prefix, q.hideAns, q.match !== "phrase",
+    (q.canon || []).length && window.QBTopics && QBTopics.enabled(),
     q.field && q.field !== "all" && !!document.querySelector("#db-more #db-search-type")].filter(Boolean).length;   // (Search in sits in More on a phone)
   const el = document.getElementById("db-more-count"); if (el) el.textContent = n ? String(n) : "";
 }
@@ -11652,12 +11768,14 @@ function dbSearchPlan(q, sets, pkt) {
   const pm = !!q.powermark && qtype !== "bonus";
   const starred = !!q.starred;
   const setRaw = q.set || "";
-  const tagsQ = (q.tags || []).length ? JSON.stringify(q.tags.map((t) => (t.id ? { f: t.f, v: t.v, x: t.x ? 1 : 0, id: t.id } : { f: t.f, v: t.v, x: t.x ? 1 : 0 }))) : "";
+  const tp = tagParams(q.tags || []);
+  const tagsQ = tp.tags.length ? JSON.stringify(tp.tags) : "", etagsQ = tp.etags.length ? JSON.stringify(tp.etags) : "";
+  const canonQ = window.QBTopics && QBTopics.enabled() && (q.canon || []).length ? q.canon.join(",") : "";
   const tokens = query ? (query.match(/[\p{L}\p{N}]+/gu) || []) : [];   // phrase mode + highlighting
   const qWords = dbFtsWords(query);
   const exclRaw = String(q.exclude || "").trim();
   const excl = dbFtsWords(exclRaw);
-  const sig = JSON.stringify([query, qtype, textType, match, prefix, excl, _dbCatUnits, tagsQ, diffs, yearMin, yearMax, setRaw, pkt, sort, std, pm, starred]);
+  const sig = JSON.stringify([query, qtype, textType, match, prefix, excl, _dbCatUnits, tagsQ, etagsQ, canonQ, diffs, yearMin, yearMax, setRaw, pkt, sort, std, pm, starred]);
   const setsOn = !!setRaw && sets.n > 0;
   // Search shows every record, the unplayable ones too (marked on the card).
   const common =
@@ -11674,6 +11792,8 @@ function dbSearchPlan(q, sets, pkt) {
     (pm ? "&powermarkOnly=true" : "") +
     (starred ? "&starredOnly=true" : "") +
     (tagsQ ? `&tags=${encodeURIComponent(tagsQ)}` : "") +
+    (etagsQ ? `&etags=${encodeURIComponent(etagsQ)}` : "") +
+    (canonQ ? `&canon=${encodeURIComponent(canonQ)}` : "") +
     (sort !== "relevance" ? `&sort=${encodeURIComponent(sort)}` : "");
   // With search text the exclusion rides inside the FTS query (NOT); without it
   // FTS has nothing to NOT against, so the backend applies it as its own filter.
@@ -12079,6 +12199,9 @@ function _catSetDisabled(sel, dis) { if (!sel) return; sel.disabled = dis; sel.s
 //    selection's whole list once, so every later page is instant. ──
 const FREQ_PAGE = 50;
 let _freqUnits = [], _freqType = "tossup", _freqPage = 0, _freqSeq = 0;
+// answers, or (topic tags on, 15.29) the tags most questions carry
+let _freqWhat = (() => { try { return localStorage.getItem("qb-freq-what") === "tags" ? "tags" : "answers"; } catch (e) { return "answers"; } })();
+const freqTags = () => _freqWhat === "tags" && !!(window.QBTopics && QBTopics.enabled());
 
 // Snapshot for Back: returning from an answer's search shows the same list and page.
 function currentFrequencySelection() {
@@ -12115,17 +12238,33 @@ function renderFrequencyTab(restore) {
   setTimeout(() => tipInto(c.querySelector(".db-page"), "freq"), 0);
   const seg = [["tossup", "Tossups"], ["bonus", "Bonuses"], ["both", "Both"]]
     .map(([v, l]) => `<button type="button" data-ftype="${v}" aria-pressed="${_freqType === v}">${l}</button>`).join("");
+  const what = [["answers", "Answers"], ["tags", "Tags"]].map(([v, l]) => `<button type="button" data-fwhat="${v}" aria-pressed="${(freqTags() ? "tags" : "answers") === v}">${l}</button>`).join("");
   c.innerHTML =
     '<div class="db-page db-freq">' +
       '<div class="qrow freq-toolbar">' +
+        `<div class="seg topics-only" id="freq-what-seg" role="group" aria-label="List">${what}</div>` +
         `<button type="button" class="btn" id="freq-cat-btn">Categories <span class="accent-val" id="freq-cat-val">${escapeHtml(unitsSummary(_freqUnits))}</span>${ic("down", 14)}</button>` +
         `<div class="seg" id="freq-type-seg" role="group" aria-label="Question type">${seg}</div>` +
+        `<div class="seg" id="freq-role-seg" role="group" aria-label="Where"${freqTags() ? "" : " hidden"}>${window.QBTopics ? QBTopics.roleSegHtml() : ""}</div>` +
       "</div>" +
       '<div class="rhead" id="freq-rhead"><span class="total num" id="freq-total"></span><span class="spacer"></span><span id="freq-pager-top"></span></div>' +
       '<div id="freq-results" class="search-results"></div>' +
       '<div class="rfoot" id="freq-pager-bottom"></div>' +
     "</div>";
   document.getElementById("freq-cat-btn").addEventListener("click", openFreqCategories);
+  document.getElementById("freq-what-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-fwhat]"); if (!b) return;
+    _freqWhat = b.dataset.fwhat; _freqPage = 0; lsSet("qb-freq-what", _freqWhat);
+    document.querySelectorAll("#freq-what-seg [data-fwhat]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    const rs = document.getElementById("freq-role-seg"); if (rs) rs.hidden = !freqTags();
+    runFrequency();
+  });
+  document.getElementById("freq-role-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-trole]"); if (!b || !window.QBTopics) return;
+    QBTopics.setRole(b.dataset.trole); _freqPage = 0;
+    document.querySelectorAll("#freq-role-seg [data-trole]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    runFrequency();
+  });
   document.getElementById("freq-type-seg").addEventListener("click", (e) => {
     const b = e.target.closest("[data-ftype]"); if (!b || b.dataset.ftype === _freqType) return;
     _freqType = b.dataset.ftype; _freqPage = 0;
@@ -12159,6 +12298,20 @@ async function runFrequency(page) {
   const el = document.getElementById("freq-results"); if (!el) return;
   const seq = ++_freqSeq;
   const qtype = _freqType;
+  if (freqTags()) {
+    // the tags most questions carry (topics.js), paged like the answers
+    const bar = setTimeout(() => { if (seq === _freqSeq) el.innerHTML = loadingBarHtml(_freqPage ? "Loading…" : "Counting tags…"); }, 90);
+    const r = await QBTopics.runFrequency(el, { qtype, units: _freqUnits.slice(), page: _freqPage, limit: FREQ_PAGE });
+    clearTimeout(bar);
+    if (!r || seq !== _freqSeq) return;
+    const pages = Math.max(1, Math.ceil((r.total || 0) / FREQ_PAGE));
+    const t = document.getElementById("freq-total"); if (t) t.textContent = r.total ? (r.total >= 2000 ? "Top " : "") + r.total.toLocaleString() + (r.total === 1 ? " tag" : " tags") : "";
+    const pt = document.getElementById("freq-pager-top"), pb = document.getElementById("freq-pager-bottom");
+    if (pt) pt.innerHTML = r.total ? dbPagerHtml("top", _freqPage, pages) : "";
+    if (pb) pb.innerHTML = r.total > 10 ? dbPagerHtml("bottom", _freqPage, pages) : "";
+    positionPagerStrips();
+    return;
+  }
   const bar = setTimeout(() => { if (seq === _freqSeq) el.innerHTML = loadingBarHtml(_freqPage ? "Loading…" : "Building frequency list…"); }, 90);
   try {
     const units = _freqUnits.slice();
@@ -12342,7 +12495,7 @@ async function renderStarredTab() {
   c.innerHTML =
     '<div class="db-page">' +
       '<div class="db-toolbar">' +
-        `<button class="btn btn-primary" id="db-practice-starred"${hasTossups ? "" : " disabled"}>${ic("play", 14)}Practice starred tossups</button>` +
+        `<button class="btn btn-primary" id="db-practice-starred" title="Your starred tossups"${hasTossups ? "" : " disabled"}>${ic("play", 14)}Play</button>` +
         actionBtns +
         `<span class="spacer"></span><span class="tile-n">${items.length.toLocaleString()} starred</span>` +
       "</div>" +
@@ -12591,6 +12744,9 @@ function init() {
       judgeTossup: (q, answer, o) => hostJudgeTossup(q, answer, o || {}),
       judgeBonusPart: (q, part, answer, o) => hostJudgeBonusPart(q, part, answer, o || {}),
       judgeAnswerLine: (answerline, sanitized, answer, o) => hostJudgeLine(answerline, sanitized, answer, o || {}),
+      // topic tags (15.29, topics.js): { enabled(), forQuestions(type, ids), search(q), tag(id), clues(id, opts) }; enabled()
+      // is false while the player has them off (then show nothing of them)
+      topics: window.QBTopics ? QBTopics.pluginApi : null,
       addUserMenuItems: (fn) => { if (typeof fn !== "function") return () => {}; _userMenuExtras.add(fn); return () => _userMenuExtras.delete(fn); },
       animateRemove: (el) => animateRemove(el),
       updateTopbar: () => updateTopbar(),
@@ -13200,7 +13356,7 @@ async function openUserProfile(handle, shownName) {
   }
   body.innerHTML = `<div class="up-actions">${friendBtn}</div>${achNote}${achHtml}`;
   el.querySelector(".up-who .tr-badges")?.remove();
-  el.querySelector(".up-who").insertAdjacentHTML("beforeend", trialBadgesHtml(normTrialInfo({ trials: d.trials }).trials, hwBadgeHtml(d.powers && d.powers.event)));
+  el.querySelector(".up-who").insertAdjacentHTML("beforeend", trialBadgesHtml(normTrialInfo({ trials: d.trials }).trials, seasonBadgesHtml(d.powers)));
   wireBadges(el.querySelector(".up-who"), normTrialInfo({ trials: d.trials }).trials, false);
   try { initCollapsibles(body); } catch (e) {}
   if (!d.private) { const p = d.powers || {}; body._achWired = false; wireAchievementCards(body, { achData: computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p), p.ach_at), records: achRecordsFrom(p), stats: st }); }
@@ -13532,8 +13688,8 @@ function wireLbKinds(c) {
 // Preloaded while you're on the home page (preloadLeaderboards): the page paints
 // those numbers at once, then fetches fresh ones and repaints only if they changed.
 const _lbCache = new Map();   // url → response
-// the periods; while the event runs (and two weeks after) its board, ranked by candy
-const lbPeriods = () => [["week", "This week"], ["month", "This month"], ["all", "All time"], ...(Date.now() >= HW.start && Date.now() < HW.boardUntil ? [["halloween", "Halloween"]] : [])];
+// the periods; while an event runs (and two weeks after) its board, ranked by its items
+const lbPeriods = () => [["week", "This week"], ["month", "This month"], ["all", "All time"], ...SEASONS.filter((e) => Date.now() >= e.start && Date.now() < e.boardUntil).map((e) => [e.key, e.name])];
 const _lbUrl = (period) => "/api/leaderboards?period=" + period;
 const _lbBoardUrl = (id, period) => "/api/leaderboards/board?id=" + encodeURIComponent(id) + "&period=" + period;
 let _lbPreloadAt = 0;
@@ -13814,11 +13970,14 @@ async function storeNeon(k, btn) {
 
 async function renderLeaderboards(note) {
   const c = document.getElementById("lb-container"); if (!c) return;
+  if (!lbPeriods().some(([k]) => k === _lb.period)) _lb.period = "week";   // an event's board that has closed
   // the account check runs alongside (it's a round trip) once the account is known
   if (!note) { const af = accountFresh(); if (!Account.known) await af; }
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need onlinequiz accounts, which aren't open yet.</p></div>`; return; }
   if (_lb.kind !== "individuals" && window.QBClubs) {
-    const periods = lbPeriods().map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
+    // teams and organizations rank by points only (an event's board is for players)
+    if (!["week", "month", "all"].includes(_lb.period)) _lb.period = "week";
+    const periods = lbPeriods().slice(0, 3).map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
     c.innerHTML = `<div class="lb-page"><div class="lb-bar">${lbKindSeg()}<div class="seg lb-periods" role="group" aria-label="Period">${periods}</div></div><div id="lb-groups"></div></div>`;
     wireLbKinds(c);
     c.querySelectorAll("[data-lb-period]").forEach((b) => b.onclick = () => { _lb.period = b.dataset.lbPeriod; renderLeaderboards(); });
@@ -13852,7 +14011,7 @@ async function paintLeaderboards(c, d, board, note) {
   const avN = (h, n) => `<span class="fr-av"${avatarStyle(n)}>${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${avN(r.displayName || r.handle, r.neon)}` +
     `<span class="fr-name"><b>${neonName(r.displayName || r.handle, r.neon)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
-    `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>${_lb.period === "halloween" ? "candy" : "points"}</small></span>` +
+    `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>${(SEASONS.find((e) => e.key === _lb.period) || { unit: "points" }).unit}</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.questions || 0).toLocaleString()}</b><small>questions</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small>powers</small></span>` +
     `<span class="fr-stat"><b class="num">${r.accuracy == null ? "—" : r.accuracy + "%"}</b><small>accuracy</small></span>` +

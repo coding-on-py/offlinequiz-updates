@@ -27,6 +27,42 @@ export function normalizeTagFilters(raw) {
   return out;
 }
 
+// ── Topic tags (the 2026-10-28 build, brief §5.1) ──
+// Canon tiers as stored (tossups.canon, bonuses.part_canon / canon_mask): 1 core … 5 unique.
+export const CANON_TIERS = ["core", "common", "uncommon", "rare", "unique"];
+// qtags.src bits (scripts/build-db.py): mentioned in a clue, named in an "about" clue, about_tags, themes, the answer
+const SRC = { mention: 1, aboutClue: 2, about: 4, theme: 8, answer: 16 };
+// a topic-tag filter's role -> the src bits that count
+const ROLE_MASK = { any: 31, about: SRC.aboutClue | SRC.about | SRC.answer, answer: SRC.answer, theme: SRC.theme, mention: SRC.mention | SRC.aboutClue };
+export const isTopicTagId = (v) => typeof v === "string" && /^t[0-9a-f]{12}$/.test(v);
+// A topic-tag filter list (query string JSON or IPC array): at most 8 of { id, r: any|about|answer|theme|mention, x }.
+export function normalizeTopicFilters(raw) {
+  let list = raw;
+  if (typeof list === "string") { try { list = JSON.parse(list); } catch { return []; } }
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const t of list.slice(0, 8)) {
+    if (!t || typeof t !== "object" || !isTopicTagId(t.id)) continue;
+    out.push({ id: t.id, r: Object.hasOwn(ROLE_MASK, t.r) ? t.r : "any", x: !!t.x });
+  }
+  return out;
+}
+// canon tiers from a list or "core,common": the tier names, known ones only
+export function normalizeCanon(raw) {
+  const list = Array.isArray(raw) ? raw : String(raw || "").split(",");
+  return [...new Set(list.map((x) => String(x).trim().toLowerCase()).filter((x) => CANON_TIERS.includes(x)))];
+}
+// A question's clues as the tagger numbered them (taxonomy_work/tags2/prompts.py clues_of): a tossup's plain text
+// split into sentences; a bonus's lead-in, then each part.
+const plainOf = (h) => String(h || "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+export function cluesOf(row, isBonus) {
+  if (!row) return [];
+  if (!isBonus) return plainOf(row.question).split(/(?<=[.!?])\s+(?=[A-Z"\u201c(])/).map((c) => c.trim()).filter(Boolean);
+  let parts = [];
+  try { parts = JSON.parse(row.parts || "[]"); } catch { parts = []; }
+  return [plainOf(row.leadin), ...parts.map(plainOf)];
+}
+
 // Whitelisted ORDER BY for Database browse/search. `sort` is user input: never
 // interpolate it, and Object.hasOwn keeps "constructor"/"__proto__" from
 // reaching Object.prototype (that would yield a bare "ORDER BY " -> 500).
@@ -80,9 +116,17 @@ export class QuestionDatabase {
     // category / subcategory / alternate_subcategory names (ids "v1:…").
     this.v2 = this._hasColumn("tossups", "category_ord");
     this.hasTags = this._hasColumn("tossups", "tags") && this._hasColumn("bonuses", "tags");
+    // the 2026-10-28 build: every category a question covers, and the topic tags
+    this.hasMultiCats = this._hasTable("qcats") && this._hasColumn("tossups", "cats_lo");
+    this.hasTopics = this._hasTable("tag_vocab") && this._hasTable("qtags") && this._hasColumn("tossups", "canon") && this._hasColumn("tossups", "m_lo");
     this._vocab = null;
     this._tree = null;
     this._treeCounts = {};
+  }
+
+  _hasTable(name) {
+    try { return !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name); }
+    catch { return false; }
   }
 
   _hasColumn(table, column) {
@@ -278,21 +322,30 @@ export class QuestionDatabase {
     }
 
     // Tree nodes (any depth): each id = its whole subtree. Unknown ids (a tree
-    // version change) are ignored rather than matching nothing.
+    // version change) are ignored rather than matching nothing. Since the 2026-10-28
+    // build a question matches when ANY of its categories is in the subtree (brief §4.4:
+    // the qcats table); catMode "pure" wants every one of them inside (cats_lo / cats_hi, a
+    // trial), "home" only its main category (a team diagnostic's quotas).
     if (filters.categoryIds && filters.categoryIds.length > 0) {
       const ors = [];
       const names = ["category", "subcategory", "alternate_subcategory"];
+      const mode = filters.catMode === "pure" || filters.catMode === "home" ? filters.catMode : "any";
+      const anyRanges = [];
       this.expandCategoryIds(filters.categoryIds).forEach((id, i) => {
         const n = this.getCategoryNode(id);
         if (!n) return;
         if (this.v2) {
-          ors.push(`${col("category_ord")} BETWEEN :cord${i} AND :cend${i}`);
           params[`cord${i}`] = n.ord; params[`cend${i}`] = n.ord_end;
+          if (mode === "any" && this.hasMultiCats) anyRanges.push(`ord BETWEEN :cord${i} AND :cend${i}`);
+          else if (mode === "pure" && this.hasMultiCats) ors.push(`(${col("cats_lo")} >= :cord${i} AND ${col("cats_hi")} <= :cend${i})`);
+          else if (mode === "pure") ors.push(`(${col("category_ord")} BETWEEN :cord${i} AND :cend${i} AND COALESCE(${col("composition")}, '') != 'Hybrid - Cross Category')`);
+          else ors.push(`${col("category_ord")} BETWEEN :cord${i} AND :cend${i}`);
         } else {
           const parts = n.path.split(" > ");
           ors.push("(" + parts.map((p, k) => { params[`cv${i}_${k}`] = p; return `${col(names[k])} = :cv${i}_${k}`; }).join(" AND ") + ")");
         }
       });
+      if (anyRanges.length) ors.push(`${col("rowid")} IN (SELECT rid FROM qcats WHERE qt = ${opts.isBonus ? 1 : 0} AND (${anyRanges.join(" OR ")}))`);
       if (ors.length) clauses.push(ors.length > 1 ? `(${ors.join(" OR ")})` : ors[0]);
     }
 
@@ -425,7 +478,9 @@ export class QuestionDatabase {
         if (t.f === "subject") {
           const n = this.v2 ? this.getCategoryNode(t.id) : null;
           if (!n) return;
-          clauses.push(`${t.x ? "NOT " : ""}(${col("category_ord")} BETWEEN :tso${i} AND :tse${i})`);
+          clauses.push(this.hasMultiCats
+            ? `${col("rowid")} ${t.x ? "NOT " : ""}IN (SELECT rid FROM qcats WHERE qt = ${opts.isBonus ? 1 : 0} AND ord BETWEEN :tso${i} AND :tse${i})`
+            : `${t.x ? "NOT " : ""}(${col("category_ord")} BETWEEN :tso${i} AND :tse${i})`);
           params[`tso${i}`] = n.ord; params[`tse${i}`] = n.ord_end;
           return;
         }
@@ -438,7 +493,208 @@ export class QuestionDatabase {
       });
     }
 
+    // Canon tiers (brief §5.1): a tossup's answer tier; a bonus with any part of those tiers
+    if (this.hasTopics && filters.canon && filters.canon.length) {
+      const tiers = normalizeCanon(filters.canon).map((t) => CANON_TIERS.indexOf(t) + 1);
+      if (tiers.length && tiers.length < CANON_TIERS.length) {
+        if (opts.isBonus) { clauses.push(`(COALESCE(${col("canon_mask")}, 0) & :canonMask) != 0`); params.canonMask = tiers.reduce((m, t) => m | (1 << (t - 1)), 0); }
+        else clauses.push(`${col("canon")} IN (${tiers.join(",")})`);
+      }
+    }
+
+    // Topic tags: every listed tag is required (x = must not have it), as mentioned, about, the answer or a theme
+    if (this.hasTopics && filters.etags && filters.etags.length) {
+      normalizeTopicFilters(filters.etags).forEach((t, i) => {
+        const tid = this._tidOf(t.id);
+        if (!tid) { if (!t.x) clauses.push("0"); return; }
+        const mask = ROLE_MASK[t.r];
+        clauses.push(`${col("rowid")} ${t.x ? "NOT " : ""}IN (SELECT rid FROM qtags WHERE tid = :et${i} AND qt = ${opts.isBonus ? 1 : 0}${mask !== 31 ? ` AND (src & ${mask}) != 0` : ""})`);
+        params[`et${i}`] = tid;
+      });
+    }
+
     return { where: clauses.length > 0 ? "WHERE " + clauses.join(" AND ") : "", params };
+  }
+
+  // ── Topic tags (brief §5.1): names come from tag_vocab; records hold only ids ──
+  _tidOf(id) {
+    if (!this.hasTopics || !isTopicTagId(id)) return 0;
+    const c = this._tidCache || (this._tidCache = new Map());
+    if (c.has(id)) return c.get(id);
+    let tid = 0;
+    try { const r = this.db.prepare("SELECT tid FROM tag_vocab WHERE id = ?").get(id); tid = r ? r.tid : 0; } catch { tid = 0; }
+    if (c.size > 20000) c.clear();
+    c.set(id, tid);
+    return tid;
+  }
+  // tids -> { id, name, kind, group } (one query per batch)
+  _tagsByTid(tids) {
+    const out = new Map(), list = [...new Set(tids)].filter((x) => Number.isInteger(x) && x > 0);
+    for (let i = 0; i < list.length; i += 500) {
+      const chunk = list.slice(i, i + 500);
+      for (const r of this.db.prepare(`SELECT tid, id, name, kind, grp FROM tag_vocab WHERE tid IN (${chunk.join(",")})`).all()) out.set(r.tid, { id: r.id, name: r.name, kind: r.kind, group: r.grp });
+    }
+    return out;
+  }
+  _tagsById(ids) {
+    const out = new Map(), list = [...new Set(ids)].filter(isTopicTagId);
+    for (let i = 0; i < list.length; i += 500) {
+      const chunk = list.slice(i, i + 500);
+      for (const r of this.db.prepare(`SELECT tid, id, name, kind, grp FROM tag_vocab WHERE id IN (${chunk.map(() => "?").join(",")})`).all(...chunk)) out.set(r.id, { id: r.id, name: r.name, kind: r.kind, group: r.grp, tid: r.tid });
+    }
+    return out;
+  }
+
+  // Tags whose name or alias starts with the typed words (aliases are for finding, never for judging):
+  // most-used first, a whole-name match on top. kinds: a list of kind values to keep.
+  searchTopicTags(query, { kinds = null, limit = 30, offset = 0 } = {}) {
+    if (!this.hasTopics) return { tags: [], total: 0 };
+    const lim = Math.max(1, Math.min(100, limit | 0 || 30)), off = Math.max(0, offset | 0);
+    const words = (String(query || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).slice(0, 8);
+    const kindList = Array.isArray(kinds) ? kinds.filter((k) => /^[a-z ]{2,20}$/.test(k)).slice(0, 12) : [];
+    const kindSql = kindList.length ? ` AND v.kind IN (${kindList.map((k) => `'${k}'`).join(",")})` : "";
+    const cols = "v.id, v.name, v.kind, v.grp AS \"group\", v.aliases, v.qn, v.mn, v.an, v.ansn";
+    let rows, total;
+    if (!words.length) {
+      total = this.db.prepare(`SELECT COUNT(*) AS n FROM tag_vocab v WHERE 1${kindSql}`).get().n;
+      rows = this.db.prepare(`SELECT ${cols} FROM tag_vocab v WHERE 1${kindSql} ORDER BY v.qn DESC LIMIT ${lim} OFFSET ${off}`).all();
+    } else {
+      const match = words.map((w) => `"${w}"*`).join(" ");
+      const exact = words.join(" ");
+      total = this.db.prepare(`SELECT COUNT(*) AS n FROM tag_fts f JOIN tag_vocab v ON v.tid = f.rowid WHERE tag_fts MATCH ?${kindSql}`).get(match).n;
+      rows = this.db.prepare(`SELECT ${cols} FROM tag_fts f JOIN tag_vocab v ON v.tid = f.rowid WHERE tag_fts MATCH ?${kindSql}
+        ORDER BY (lower(v.name) = ?) DESC, v.qn DESC LIMIT ${lim} OFFSET ${off}`).all(match, exact);
+    }
+    return { total, tags: rows.map((r) => {
+      let aliases = []; try { aliases = JSON.parse(r.aliases || "[]"); } catch { aliases = []; }
+      return { id: r.id, name: r.name, kind: r.kind, group: r.group, aliases: aliases.slice(0, 6), questions: r.qn, mentions: r.mn, about: r.an, answers: r.ansn };
+    }) };
+  }
+
+  // One tag in full: its names, where it appears, its counts, and the tags most often in the same questions.
+  getTopicTag(id) {
+    const tid = this._tidOf(id); if (!tid) return null;
+    const v = this.db.prepare("SELECT * FROM tag_vocab WHERE tid = ?").get(tid);
+    const parse = (x) => { try { return JSON.parse(x || "[]"); } catch { return []; } };
+    const count = (qt, mask) => this.db.prepare(`SELECT COUNT(*) AS n FROM qtags g JOIN ${qt ? "bonuses" : "tossups"} q ON q.rowid = g.rid WHERE g.tid = ? AND g.qt = ? AND q.playable = 1${mask ? ` AND (g.src & ${mask}) != 0` : ""}`).get(tid, qt).n;
+    const counts = { tossups: count(0), bonuses: count(1), aboutTossups: count(0, ROLE_MASK.about), aboutBonuses: count(1, ROLE_MASK.about), answerTossups: count(0, SRC.answer), answerBonuses: count(1, SRC.answer), themeQuestions: count(0, SRC.theme) + count(1, SRC.theme) };
+    // the same questions' other tags (a big tag's first 3,000 questions are enough to rank them)
+    const rel = this.db.prepare(`WITH q AS (SELECT qt, rid FROM qtags WHERE tid = ? LIMIT 3000)
+      SELECT g.tid, COUNT(*) AS n FROM q JOIN qtags g ON g.qt = q.qt AND g.rid = q.rid WHERE g.tid != ? GROUP BY g.tid ORDER BY n DESC LIMIT 24`).all(tid, tid);
+    const names = this._tagsByTid(rel.map((r) => r.tid));
+    return { id: v.id, name: v.name, kind: v.kind, group: v.grp, aliases: parse(v.aliases), categories: parse(v.cats),
+      questions: v.qn, mentions: v.mn, about: v.an, answers: v.ansn, counts,
+      related: rel.map((r) => ({ ...names.get(r.tid), shared: r.n })).filter((x) => x.id) };
+  }
+
+  // Questions' topics, for display once a question is over: { [id]: { about, themes, answer | parts, mentions,
+  // categories } }; a mention without a tag (a name in only one question) keeps its words only.
+  topicTagsFor(type, ids) {
+    const isBonus = type === "bonus" || type === "bonuses", table = isBonus ? "bonuses" : "tossups";
+    const out = {};
+    if (!this.hasTopics) return out;
+    const list = [...new Set((ids || []).map(String))].slice(0, 200);
+    if (!list.length) return out;
+    const cols = isBonus ? "rowid AS rid, id, cats, about_tags, themes, m_lo, m_hi, part_answer_entities AS ents, part_answer_frequencies AS freqs, part_canon AS tiers"
+      : "rowid AS rid, id, cats, about_tags, themes, m_lo, m_hi, answer_entity AS ent, answer_frequency AS freq, canon AS tier";
+    const rows = this.db.prepare(`SELECT ${cols} FROM ${table} WHERE id IN (${list.map(() => "?").join(",")})`).all(...list);
+    if (!rows.length) return out;
+    const parse = (x) => { try { return JSON.parse(x || "[]") || []; } catch { return []; } };
+    const byRid = new Map(rows.map((r) => [r.rid, r]));
+    // a record's mentions are one rowid range (m_lo..m_hi, scripts/build-db.py): one range lookup each
+    const byRange = this.db.prepare("SELECT rid, tid, role, clue, part, surface, type FROM mentions WHERE rowid BETWEEN ? AND ? ORDER BY rowid");
+    const ments = rows.filter((r) => r.m_lo != null).flatMap((r) => byRange.all(r.m_lo, r.m_hi));
+    const idsNeeded = [];
+    for (const r of rows) { idsNeeded.push(...parse(r.about_tags), ...parse(r.themes)); if (isBonus) idsNeeded.push(...parse(r.ents).filter(Boolean)); else if (r.ent) idsNeeded.push(r.ent); }
+    const byId = this._tagsById(idsNeeded), byTid = this._tagsByTid(ments.map((m) => m.tid).filter(Boolean));
+    const tag = (id) => { const t = byId.get(id); return t ? { id: t.id, name: t.name, kind: t.kind, group: t.group } : null; };
+    const tier = (n) => (n >= 1 && n <= 5 ? CANON_TIERS[n - 1] : null);
+    for (const r of rows) {
+      const o = { about: parse(r.about_tags).map(tag).filter(Boolean), themes: parse(r.themes).map(tag).filter(Boolean), mentions: [], categories: parse(r.cats) };
+      if (isBonus) {
+        const ents = parse(r.ents), freqs = parse(r.freqs), tiers = parse(r.tiers);
+        o.parts = ents.map((e, i) => ({ answer: e ? tag(e) : null, frequency: freqs[i] ?? null, tier: tier(tiers[i]) }));
+      } else o.answer = { tag: r.ent ? tag(r.ent) : null, frequency: r.freq ?? null, tier: tier(r.tier) };
+      out[r.id] = o;
+    }
+    for (const m of ments) {
+      const r = byRid.get(m.rid); if (!r) continue;
+      const t = m.tid ? byTid.get(m.tid) : null;
+      out[r.id].mentions.push({ ...(t ? { id: t.id, name: t.name, kind: t.kind } : { type: m.type || null }), surface: m.surface, role: m.role ? "about" : "mentioned", clue: m.clue, part: m.part });
+    }
+    return out;
+  }
+
+  // "Every clue about X": the clues that name a tag, each with its question (newest sets first).
+  topicTagClues(id, { qtype = "tossup", role = "any", offset = 0, limit = 25 } = {}) {
+    const tid = this._tidOf(id); if (!tid) return { clues: [], total: 0 };
+    const isBonus = qtype === "bonus", table = isBonus ? "bonuses" : "tossups";
+    const roleSql = role === "about" ? " AND m.role = 1" : role === "mention" ? " AND m.role = 0" : "";
+    const where = `m.tid = ? AND m.qt = ${isBonus ? 1 : 0} AND q.playable = 1${roleSql}`;
+    const total = this.db.prepare(`SELECT COUNT(*) AS n FROM mentions m JOIN ${table} q ON q.rowid = m.rid WHERE ${where}`).get(tid).n;
+    const cols = isBonus ? "q.id, q.leadin, q.parts, q.answers_sanitized AS ans, q.set_name, q.set_year, q.packet_number, q.question_number, q.category_path, q.difficulty"
+      : "q.id, q.question, q.answer_sanitized AS ans, q.set_name, q.set_year, q.packet_number, q.question_number, q.category_path, q.difficulty, q.canon";
+    const rows = this.db.prepare(`SELECT m.clue, m.part, m.role, m.surface, ${cols} FROM mentions m JOIN ${table} q ON q.rowid = m.rid WHERE ${where}
+      ORDER BY q.set_year DESC, q.set_name, q.question_number, m.clue LIMIT ? OFFSET ?`).all(tid, Math.max(1, Math.min(100, limit | 0 || 25)), Math.max(0, offset | 0));
+    return { total, clues: rows.map((r) => {
+      const clues = cluesOf(r, isBonus);
+      let answer = r.ans || "";
+      if (isBonus) { try { const a = JSON.parse(r.ans || "[]"); answer = r.part != null ? a[r.part] || "" : a.join(" / "); } catch { answer = ""; } }
+      return { id: r.id, type: isBonus ? "bonus" : "tossup", clue: r.clue, part: r.part, role: r.role ? "about" : "mentioned", surface: r.surface,
+        text: clues[r.clue] || "", answer, set_name: r.set_name, set_year: r.set_year, packet_number: r.packet_number, question_number: r.question_number,
+        category_path: r.category_path, difficulty: r.difficulty, ...(isBonus ? {} : { canon: r.canon ? CANON_TIERS[r.canon - 1] : null }) };
+    }) };
+  }
+
+  // The tags most questions carry inside some categories (any of a question's categories, like every filter):
+  // [{ id, name, kind, group, count }], most first. role: any / about / answer / theme / mention; kinds: keep only these.
+  topicTagCounts({ qtype = "tossup", nodeIds = [], role = "any", kinds = null, limit = 2000 } = {}) {
+    if (!this.hasTopics) return [];
+    if (qtype === "both") {
+      // tossups and bonuses together: each tag's two counts summed
+      const sum = new Map();
+      for (const t of ["tossup", "bonus"]) for (const r of this.topicTagCounts({ qtype: t, nodeIds, role, kinds, limit })) { const o = sum.get(r.id); if (o) o.count += r.count; else sum.set(r.id, { ...r }); }
+      return [...sum.values()].sort((a, b) => b.count - a.count).slice(0, Math.max(1, Math.min(5000, limit | 0 || 2000)));
+    }
+    const qt = qtype === "bonus" ? 1 : 0, table = qt ? "bonuses" : "tossups";
+    const mask = ROLE_MASK[role] || 31;
+    const nodes = this.expandCategoryIds((nodeIds || []).filter(Boolean)).map((id) => this.getCategoryNode(id)).filter(Boolean);
+    const params = [];
+    let inCats = "";
+    if (nodes.length && this.hasMultiCats) {
+      inCats = ` AND g.rid IN (SELECT rid FROM qcats WHERE qt = ${qt} AND (${nodes.map(() => "ord BETWEEN ? AND ?").join(" OR ")}))`;
+      for (const n of nodes) params.push(n.ord, n.ord_end);
+    }
+    const kindList = Array.isArray(kinds) ? kinds.filter((k) => /^[a-z ]{2,20}$/.test(k)).slice(0, 12) : [];
+    const rows = this.db.prepare(`SELECT g.tid, COUNT(*) AS n FROM qtags g JOIN ${table} q ON q.rowid = g.rid
+      WHERE g.qt = ${qt} AND q.playable = 1${mask !== 31 ? ` AND (g.src & ${mask}) != 0` : ""}${inCats}
+      ${kindList.length ? ` AND g.tid IN (SELECT tid FROM tag_vocab WHERE kind IN (${kindList.map((k) => `'${k}'`).join(",")}))` : ""}
+      GROUP BY g.tid ORDER BY n DESC LIMIT ${Math.max(1, Math.min(5000, limit | 0 || 2000))}`).all(...params);
+    const names = this._tagsByTid(rows.map((r) => r.tid));
+    return rows.map((r) => ({ ...names.get(r.tid), count: r.n })).filter((x) => x.id);
+  }
+
+  // tossup id -> its answer's canon tier name
+  topicCanonOf(ids) {
+    const out = new Map(), list = [...new Set((ids || []).map(String))];
+    if (!this.hasTopics) return out;
+    for (let i = 0; i < list.length; i += 500) {
+      const chunk = list.slice(i, i + 500);
+      for (const r of this.db.prepare(`SELECT id, canon FROM tossups WHERE id IN (${chunk.map(() => "?").join(",")}) AND canon IS NOT NULL`).all(...chunk)) out.set(r.id, CANON_TIERS[r.canon - 1]);
+    }
+    return out;
+  }
+
+  // (tossup or bonus id) pairs -> the tags of the given roles each carries: for a player's stats
+  topicPairs(type, ids, role = "about") {
+    if (!this.hasTopics) return [];
+    const isBonus = type === "bonus", table = isBonus ? "bonuses" : "tossups", mask = ROLE_MASK[role] || 31;
+    const out = [], list = [...new Set((ids || []).map(String))];
+    for (let i = 0; i < list.length; i += 500) {
+      const chunk = list.slice(i, i + 500);
+      for (const r of this.db.prepare(`SELECT q.id, g.tid FROM ${table} q JOIN qtags g ON g.qt = ${isBonus ? 1 : 0} AND g.rid = q.rowid WHERE q.id IN (${chunk.map(() => "?").join(",")}) AND (g.src & ${mask}) != 0`).all(...chunk)) out.push([r.id, r.tid]);
+    }
+    return out;
   }
 
   // Every matching tossup's text and answer, one row at a time (Buzzwords' scan, index.js
@@ -680,12 +936,14 @@ export class QuestionDatabase {
 
   // nodeId (any tree depth) wins over the three level names.
   // One node id or several (comma list / array): the union of their subtrees.
-  _freqNode(where, params, nodeIds) {
+  _freqNode(where, params, nodeIds, qt = 0) {
     const ids = Array.isArray(nodeIds) ? nodeIds : String(nodeIds || "").split(",");
     const nodes = this.expandCategoryIds(ids.filter(Boolean)).map((id) => this.getCategoryNode(id)).filter(Boolean);
     if (!nodes.length) return where;
     if (this.v2) {
-      const parts = nodes.map((n, i) => { params["co" + i] = n.ord; params["ce" + i] = n.ord_end; return `category_ord BETWEEN :co${i} AND :ce${i}`; });
+      const parts = nodes.map((n, i) => { params["co" + i] = n.ord; params["ce" + i] = n.ord_end; return `${this.hasMultiCats ? "ord" : "category_ord"} BETWEEN :co${i} AND :ce${i}`; });
+      // (any of a question's categories, like every other filter; the caller says which table via qt)
+      if (this.hasMultiCats) return where + ` AND rowid IN (SELECT rid FROM qcats WHERE qt = ${qt} AND (${parts.join(" OR ")}))`;
       return where + " AND (" + parts.join(" OR ") + ")";
     }
     const cols = ["category", "subcategory", "alternate_subcategory"];
@@ -708,7 +966,7 @@ export class QuestionDatabase {
     const params = {};
     let where = "WHERE answers_sanitized != '' AND answers_sanitized != '[]'";
     if (this.v2) where += " AND playable = 1";
-    where = this._freqNode(where, params, nodeId);
+    where = this._freqNode(where, params, nodeId, 1);
     if (category) { where += " AND category = :cat"; params.cat = category; }
     if (subcategory) { where += " AND subcategory = :sub"; params.sub = subcategory; }
     if (alternateSubcategory) { where += " AND alternate_subcategory = :alt"; params.alt = alternateSubcategory; }
