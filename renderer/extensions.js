@@ -892,7 +892,8 @@
         } catch (e) {}
       },
       playSound(name) { try { QB._host.playSound && QB._host.playSound(name); } catch (e) {} },
-      launchQuestions(target, ids) { try { return QB._host.launchQuestions ? QB._host.launchQuestions(target, ids) : false; } catch (e) { return false; } },
+      // (opts.title, 15.28: what the list's own practice page is called)
+      launchQuestions(target, ids, opts) { try { return QB._host.launchQuestions ? QB._host.launchQuestions(target, ids, opts) : false; } catch (e) { return false; } },
       goHome() { if (QB._host.goHome) QB._host.goHome(); },
       speak(text, opts) { try { const s = window.speechSynthesis; s.cancel(); const u = new SpeechSynthesisUtterance(text); Object.assign(u, opts || {}); s.speak(u); } catch {} },
       cancelSpeech() { try { window.speechSynthesis.cancel(); } catch {} },

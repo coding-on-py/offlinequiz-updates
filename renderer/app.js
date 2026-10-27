@@ -343,6 +343,7 @@ function migrateStrictness(settings, filtersJson) {
 
 const state = {
   mode: null,
+  practiceKind: "own",   // whose session the reader holds: "own" (Tossups / Bonuses) or a page of its own (15.28)
   sessionActive: false,
   sessionId: null,
   questionCount: 0,
@@ -530,7 +531,7 @@ function updateKeyLabels() {
   if (startBtn && !state.sessionActive) startBtn.innerHTML = keyLabelHtml("start-skip", "Start Session");
   const endBtn = $("#btn-end-session");
   if (endBtn) { endBtn.textContent = "End"; endBtn.title = "End session (" + keyDisplay("end-session") + ")"; }
-  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-store-home"], ["#btn-streaks-home"], ["#btn-admin-home"], ["#btn-clubs-home"], ["#btn-dx-home"], ["#btn-irl-home"], ["#btn-report-home"], ["#btn-link-home"]]
+  [["#btn-home"], ["#btn-stats-home"], ["#btn-settings-home"], ["#btn-player-home"], ["#btn-db-home"], ["#btn-ext-home"], ["#btn-download-home"], ["#btn-friends-home"], ["#btn-leaderboards-home"], ["#btn-store-home"], ["#btn-streaks-home"], ["#btn-trials-home"], ["#btn-admin-home"], ["#btn-clubs-home"], ["#btn-dx-home"], ["#btn-irl-home"], ["#btn-report-home"], ["#btn-link-home"]]
     .forEach(([sel]) => { const el = $(sel); if (el) { el.innerHTML = ic("left", 16) + "Back"; el.title = "Back (" + keyDisplay("home") + ")"; } });
   const psk = $("#placeholder-start-key"); if (psk) psk.textContent = keyDisplay("start-skip");
 }
@@ -894,6 +895,7 @@ function goTo(target) {
   if (_dbLocked) { openSettings("updates"); return; }
   closeSetupDrawer();
   closeAllPops();
+  if ((target === "practice-tossups" || target === "practice-bonuses") && leaveTrialFirst(() => goTo(target))) return;
   switch (target) {
     case "home": goHome(); break;
     case "practice-tossups": showScreen("practice-tossups"); setMode("tossups"); break;
@@ -910,6 +912,7 @@ function goTo(target) {
       showScreen("extensions"); window.QB?.renderScreen(); break;
     case "settings": toggleSettings(); break;
     case "player": showScreen("player"); loadPlayer(); break;
+    case "trials": showScreen("trials"); renderTrialsPage(); break;
     case "download": showScreen("download"); renderDownload(); break;
     case "friends": showScreen("friends"); renderFriends(); break;
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
@@ -942,7 +945,7 @@ document.addEventListener("click", (e) => {
 // move between pages, and the tab title names the page. server.js answers these
 // paths with the app's page (WEB_PAGE_PATHS). The desktop app (file://) has none.
 const WEB_PATHS = { tossups: "practice-tossups", bonuses: "practice-bonuses", multiplayer: "multiplayer", search: "db-search", sets: "db-sets",
-  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin", store: "store" };   // (clubs, diagnostic, report: clubs.js route / webPath)
+  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", trials: "trials", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin", store: "store" };   // (clubs, diagnostic, report: clubs.js route / webPath)
 let _webRouting = false;
 // the address of what is on screen now (null: leave the address alone)
 function webPathNow() {
@@ -951,10 +954,12 @@ function webPathNow() {
   const db = ["search", "sets", "frequency", "starred"];
   switch (a.id) {
     case "title-screen": return "/";
-    case "practice-screen": return state.mode === "bonuses" ? "/bonuses" : "/tossups";
+    // (15.28: a page of its own isn't Tossups: a trial is under /trials, a review or a list leaves the address be)
+    case "practice-screen": return state.practiceKind === "trial" ? "/trials" : state.practiceKind && state.practiceKind !== "own" ? null : state.mode === "bonuses" ? "/bonuses" : "/tossups";
     case "database-screen": return "/" + (db.includes(state.dbTab) ? state.dbTab : "search");
     case "stats-screen": return "/stats";
     case "player-screen": return "/profile";
+    case "trials-screen": return "/trials";
     case "friends-screen": return "/friends";
     case "leaderboards-screen": return "/leaderboards";
     case "store-screen": return "/store";
@@ -1076,8 +1081,9 @@ function updateTopbar() {
     }
   }
   // the top bar's link for the page on screen reads as current
-  const here = { "clubs-screen": "tb-clubs", "diagnostic-screen": "tb-clubs", "irl-screen": "tb-clubs", "report-screen": "tb-clubs", "store-screen": "tb-store", "leaderboards-screen": "tb-leaderboards", "extensions-screen": "tb-plugins" }[active && active.id];
-  ["tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
+  let here = { "trials-screen": "tb-trials", "clubs-screen": "tb-clubs", "diagnostic-screen": "tb-clubs", "irl-screen": "tb-clubs", "report-screen": "tb-clubs", "store-screen": "tb-store", "leaderboards-screen": "tb-leaderboards", "extensions-screen": "tb-plugins" }[active && active.id];
+  if (active && active.id === "practice-screen" && state.practiceKind === "trial") here = "tb-trials";
+  ["tb-trials", "tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
   renderTopbarProfile();
 }
 function renderTopbarProfile() {
@@ -1688,10 +1694,12 @@ function resetEndedPracticeView() {
 function buildScreen(name) {
   if (name === "practice-tossups") { setMode("tossups"); resetEndedPracticeView(); }
   else if (name === "practice-bonuses") { setMode("bonuses"); resetEndedPracticeView(); }
+  else if (isPracticePage(name)) revivePracticePage();
   else if (name === "stats") loadStats();
   else if (name === "database") loadDatabase();
   else if (name === "settings") initSettings();
   else if (name === "player") loadPlayer();
+  else if (name === "trials") renderTrialsPage();
   else if (name === "extensions") window.QB?.renderScreen();
   else if (name === "friends") renderFriends();
   else if (name === "leaderboards") renderLeaderboards();
@@ -1707,18 +1715,31 @@ function reviveScreen(name) {
     renderDbProviderTabs();
     syncDbTabActive();
   } else if (name === "extensions") window.QB?.renderScreen();
+  else if (name === "trials") renderTrialsPage();   // (levels and cooldowns move on while away)
   else if (name === "practice-tossups" || name === "practice-bonuses") {
     // Keep the mode pinned without re-running the filter restore.
     state.mode = name === "practice-tossups" ? "tossups" : "bonuses";
     state._practiceBase = state.mode;
     resetEndedPracticeView();
-  }
+  } else if (isPracticePage(name)) revivePracticePage();
+}
+// back on a page of its own (its session still going): its mode and title, nothing rebuilt
+function revivePracticePage() {
+  state.mode = state._pageType || "tossups";
+  state._practiceBase = state.mode;
+  const t = $("#practice-title"); if (t) t.textContent = practicePageTitle(state.mode);
+  updateTopbar();
 }
 function navigateTo(name, opts) {
   const back = opts ? !!opts.back : _navBack;
   if (name.includes("::")) {
     if (window.QB?.showPage?.(name, { back })) return;
     name = "title";
+  }
+  const pk = practiceKindOf(name);
+  if (pk && pk !== "own" && !(state.practiceKind === pk && (state.sessionActive || trialNow()))) {
+    if (pk === "trial") { goTo("trials"); return; }
+    name = pk === "starred" ? "database" : "title";
   }
   showScreen(name, { back });
   // On Back, re-show an already-built screen instead of rebuilding it.
@@ -1743,7 +1764,7 @@ function showScreen(name, opts) {
   // Settings is a modal over whatever is showing, not a screen of its own.
   if (name === "settings") { openSettings(); return; }
   if (_dbLocked) return;   // locked on Settings → Updates until the new database is open
-  if (name !== "practice-tossups" && trialPending()) { _trial = null; try { paintTrialBar(); } catch (e) {} }
+  if (name !== "practice-trial" && trialPending()) { _trial = null; try { paintTrialBar(); } catch (e) {} }
   // A settings modal left open would float its click-eating backdrop over the
   // next screen (the "Back did nothing / buttons stopped working" bug).
   try { closeSettingsOverlays(); } catch (e) {}
@@ -1755,11 +1776,13 @@ function showScreen(name, opts) {
   recordNav(name);
   crtFlash();
   $$(".screen").forEach((s) => s.classList.remove("active"));
-  const mapped = name === "practice-tossups" || name === "practice-bonuses" ? "practice"
-    : name === "starred" ? "database" : name;
+  const pk = practiceKindOf(name);
+  const mapped = pk ? "practice" : name === "starred" ? "database" : name;
   const screen = $(`#${mapped}-screen`);
   if (screen) screen.classList.add("active");
-  state.mode = name === "practice-tossups" ? "tossups" : name === "practice-bonuses" ? "bonuses" : null;
+  state.mode = name === "practice-tossups" ? "tossups" : name === "practice-bonuses" ? "bonuses" : pk ? (state._pageType || "tossups") : null;
+  // Tossups / Bonuses after a page of its own: that page's session ends and yours comes back
+  if (pk && pk !== (state.practiceKind || "own")) enterPracticeKind(pk);
   // Pin the practice base to the screen being opened — a stale base from an
   // earlier tossup+bonus interleave must never make bonus practice serve tossups.
   if (state.mode) state._practiceBase = state.mode;
@@ -1977,7 +2000,8 @@ document.addEventListener("keydown", (e) => {
     if (matchesHotkey(e, "start-skip") && !isInput) {
       e.preventDefault();
       if (!state.sessionActive) startSession();
-      else if (trialShown()) trialDismiss();
+      else if (trialShown()) { trialDismiss(); goTo("trials"); }
+      else if (listPageDone()) leaveListPage();
       else if (practiceStalled()) nextQuestion();   // nothing to play (no match / list done): try again with the settings as they are now
       else if (advanceBonusPart()) { /* revealed the next bonus part */ }
       else if (state.resultAreaVisible) nextQuestion();
@@ -2452,26 +2476,134 @@ async function openReviewViewer(items) {
     el.querySelectorAll(".qcard").forEach((c) => { c.classList.remove("compact"); c.classList.add("expanded"); });
 }
 
-function startReviewSession(ids) {
-  if (!ids.length) return;
-  state.bonusIds = null;          // a stale list of the other type must not resume later
-  state.customType = "tossups";
-  state.reviewIds = [...ids];
-  state._reviewRemoveAfter = reviewRemoveAfter();
-  state._reviewRemovePower = !state._reviewRemoveAfter && reviewRemovePower();
-  showScreen("practice-tossups");
-  setMode("tossups");
-  startSession();
+// ── Practice pages (15.28) ───────────────────────────────────────────────────────────────────────────────
+// Tossups and Bonuses are your own practice. A review, a trial, a list a plugin plays (a folder, Canon Tracker…) and
+// your starred tossups each open a page of their own on the same reader, titled for what it is, and never touch
+// your own: starting one parks your own session (score, history, and the question you were on), and going back to
+// Tossups or Bonuses brings it back, that question first if it wasn't answered. Leaving one of those pages for your
+// own practice (or for another of them) ends its session; a running trial asks first.
+// (function declarations: showScreen runs at boot, before this part of the file)
+function practiceKindOf(name) {
+  if (name === "practice-tossups" || name === "practice-bonuses") return "own";
+  return { "practice-review": "review", "practice-trial": "trial", "practice-list": "list", "practice-starred": "starred" }[name] || null;
 }
-function startBonusIdsSession(ids) {
+function isPracticePage(name) { const k = practiceKindOf(name); return !!k && k !== "own"; }
+const PRACTICE_TITLES = { review: "Review", trial: "Trial", list: "Question list", starred: "Starred tossups" };
+function isListPage() { return ["review", "list", "starred"].includes(state.practiceKind); }
+function trialNow() { try { return _trial; } catch (e) { return null; } }   // (safe before _trial exists)
+// what a session is made of: parked and brought back together
+const PRACTICE_SESSION_KEYS = ["sessionActive", "sessionId", "questionCount", "totalPoints", "powers", "negs", "correct", "skips",
+  "celerityHistory", "correctCelerityHistory", "incorrectCelerityHistory", "lastResult", "resultOverridden", "histories",
+  "_gameSig", "_gameQueue", "_gamePaired", "_gameIdx", "_wantBonus", "_pendingPairedBonus", "_currentPaired", "_bonusFromQ",
+  "_starredQueue", "_starredSig", "_starredIdx"];
+let _parkedOwn = null;
+function practicePageTitle(mode) {
+  const k = state.practiceKind || "own";
+  if (k === "own") return mode === "bonuses" ? "Bonuses" : "Tossups";
+  const t = trialNow();
+  if (k === "trial") return t ? trialName(t.key, t.level) + " trial" : PRACTICE_TITLES.trial;
+  return state._pageTitle || PRACTICE_TITLES[k];
+}
+// the reader with no session on it: nothing recorded, nothing announced (a park, not an end)
+function freeReader() {
+  if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+  stopBuzzTimer(); stopEventTimer();
+  removeCustomView();
+  state.sessionActive = false; state.currentQuestion = null; state.isBuzzed = false; state._resumeQ = null;
+  state.customType = null; state.reviewIds = null; state.bonusIds = null;
+  state._reviewRemoveAfter = false; state._reviewRemovePower = false;
+  state.questionCount = 0; state.totalPoints = 0; state.powers = 0; state.negs = 0; state.correct = 0; state.skips = 0;
+  state.celerityHistory = []; state.correctCelerityHistory = []; state.incorrectCelerityHistory = [];
+  state.histories = { tossups: [], bonuses: [] }; state.lastResult = null; state.resultOverridden = false;
+  state._gameSig = null; state._gameQueue = null; state._gamePaired = null; state._gameIdx = 0;
+  state._wantBonus = false; state._pendingPairedBonus = null; state._currentPaired = null; state._bonusFromQ = null;
+  state._starredQueue = null; state._starredSig = null; state._starredIdx = 0;
+  clearPrefetch();
+  resetQuestionUI();
+  const sc = $("#session-counter"); if (sc) sc.textContent = "0";
+  const sb = $("#btn-start-session"); if (sb) sb.innerHTML = keyLabelHtml("start-skip", "Start Session");
+  updateSessionStats(); renderHistoryPanel(); updateLiveStats(); syncDrawerStart();
+}
+function parkOwnSession() {
+  _parkedOwn = null;
+  if (!state.sessionActive) { freeReader(); return; }
+  suspendSession();
+  const snap = {};
+  for (const k of PRACTICE_SESSION_KEYS) snap[k] = state[k];
+  // the question on screen, unless it was answered: read again first when the session comes back
+  const q = state.currentQuestion, answered = state.resultAreaVisible || (state.mode === "bonuses" && state._bonusRecorded);
+  if (q && !answered) { snap.resume = { q, type: state.mode }; snap.questionCount = Math.max(0, (snap.questionCount || 1) - 1); }
+  _parkedOwn = snap;
+  freeReader();
+}
+function restoreOwnSession() {
+  const p = _parkedOwn; _parkedOwn = null;
+  if (!p) return;
+  for (const k of PRACTICE_SESSION_KEYS) state[k] = p[k];
+  state.currentQuestion = null;
+  state._resumeQ = p.resume && p.resume.type === state.mode ? p.resume : null;
+  resetQuestionUI();
+  const ph = $("#question-placeholder"); if (ph) ph.innerHTML = '<p class="resume-note">Your practice is back. Next picks up where you left off.</p>';
+  const sc = $("#session-counter"); if (sc) sc.textContent = String(state.questionCount || 0);
+  const sb = $("#btn-start-session"); if (sb) sb.innerHTML = state.mode === "tossups" ? keyLabelHtml("buzz", "Buzz") : keyLabelHtml("start-skip", "Skip");
+  updateSessionStats(); renderHistoryPanel(); updateLiveStats(); syncDrawerStart();
+}
+// a page of its own is done with: its session ends (a running trial is left, quietly: the caller asked first)
+function endSpecialPractice() {
+  if ((state.practiceKind || "own") === "own") return;
+  const t = trialNow();
+  if (t) {
+    document.getElementById("trial-done")?.remove();
+    if (!t.done && !t.pending) trialEnd("left", true);
+    _trial = null; paintTrialBar();
+  }
+  if (state.sessionActive) endSession(); else endCustom();
+  freeReader();
+  state._pageTitle = null;
+}
+// Put a kind of practice on the reader. fresh: start that page anew even if it's the one showing (a new review).
+function enterPracticeKind(kind, fresh) {
+  const cur = state.practiceKind || "own";
+  if (kind === cur && !fresh) return;
+  if (cur === "own") { if (kind !== "own") parkOwnSession(); }
+  else endSpecialPractice();
+  state.practiceKind = kind;
+  if (kind === "own" && cur !== "own") restoreOwnSession();
+}
+// a list on a page of its own: the Review queue, a plugin's list, your starred tossups
+// A running trial is never left without asking (it ends, with the XP so far): true = asked, go() runs on Leave
+function leaveTrialFirst(go) {
+  if (state.practiceKind !== "trial" || !trialRunning()) return false;
+  confirmDialog("Leave the trial? You keep the XP you've earned.", () => { endSpecialPractice(); go(); }, { yes: "Leave" });
+  return true;
+}
+// back to a trial that's still going (the Trials page's Continue)
+function resumeTrialPage() {
+  if (state.practiceKind !== "trial" || !trialNow()) return;
+  showScreen("practice-trial");
+  revivePracticePage();
+}
+function startListSession(kind, type, ids, opts) {
   if (!ids || !ids.length) return;
-  state.reviewIds = null;
-  state.customType = "bonuses";
-  state.bonusIds = [...ids];
-  showScreen("practice-bonuses");
-  setMode("bonuses");
+  if (leaveTrialFirst(() => startListSession(kind, type, ids, opts))) return;
+  enterPracticeKind(kind, true);
+  state._pageType = type;
+  state._pageTitle = (opts && opts.title) || null;
+  state.customType = type;
+  state.reviewIds = type === "tossups" ? [...ids] : null;
+  state.bonusIds = type === "bonuses" ? [...ids] : null;
+  state._reviewRemoveAfter = kind === "review" && reviewRemoveAfter();
+  state._reviewRemovePower = kind === "review" && !state._reviewRemoveAfter && reviewRemovePower();
+  showScreen("practice-" + kind);
+  setMode(type);
   startSession();
 }
+function startReviewSession(ids) { startListSession("review", "tossups", ids); }
+function startBonusIdsSession(ids, opts) { startListSession("list", "bonuses", ids, opts); }
+// what a finished list says, and its Done (back to where it was started from)
+const listDoneText = () => (state.practiceKind === "starred" ? "That's all your starred tossups." : state.practiceKind === "list" ? "That's the whole list." : "Review complete");
+const listPageDone = () => isListPage() && practiceStalled() && !state.reviewIds && !state.bonusIds;
+function leaveListPage() { if (state.sessionActive) endSession(); goBack(); }
 
 // (The home buttons navigate through the [data-go] handler in the app shell.)
 
@@ -4245,7 +4377,7 @@ function setMode(mode) {
   state.mode = mode;
   state._practiceBase = mode;
   const type = mode === "tossups" ? "tossups" : "bonuses";
-  $("#practice-title").textContent = mode === "bonuses" ? "Bonuses" : "Tossups";
+  $("#practice-title").textContent = practicePageTitle(mode);
   updateTopbar();
   // Two async chains both call restoreFilterState; apply a pending packet-play
   // only after BOTH settle, or the later restore clobbers the selection.
@@ -4420,10 +4552,15 @@ async function nextQuestion() {
 
   if (trialRunning() && _trial.servedId && _trial.answeredId !== _trial.servedId) return;   // no skipping in a trial
   if (trialComplete()) { trialEnd(); return; }
+  // your own session back on its page (15.28): the question it left unanswered comes first, read from the start
+  if (state._resumeQ) {
+    const r = state._resumeQ; state._resumeQ = null;
+    if (r.q && r.type === state.mode) { state.currentQuestion = r.q; renderQuestion(r.q); $("#session-counter").textContent = `${state.questionCount}`; return; }
+  }
   if (state.reviewIds && state.mode === "tossups") {
     if (!state.reviewIds.length) {
       state.reviewIds = null;
-      endOfQueue("Review complete");
+      endOfQueue(listDoneText());
       return;
     }
     const id = state.reviewIds.shift();
@@ -4442,7 +4579,7 @@ async function nextQuestion() {
   }
 
   if (state.bonusIds && state.mode === "bonuses") {
-    if (!state.bonusIds.length) { state.bonusIds = null; endOfQueue("Done. Press Esc to leave."); return; }
+    if (!state.bonusIds.length) { state.bonusIds = null; endOfQueue(listDoneText()); return; }
     const id = state.bonusIds.shift();
     _prefetchById("bonuses", state.bonusIds);
     try {
@@ -4451,6 +4588,8 @@ async function nextQuestion() {
     } catch {}
     return nextQuestion();
   }
+
+  if (isListPage()) { endOfQueue(listDoneText()); return; }   // a finished list's page plays nothing else
 
   if (state._wantBonus) {
     state._wantBonus = false;
@@ -5266,7 +5405,8 @@ function practiceStalled() {
 }
 function practiceMain() {
   if (!state.sessionActive) return { label: "Start", key: "start-skip", run: () => startSession() };
-  if (trialShown()) return { label: "Done", key: "start-skip", run: () => trialDismiss() };
+  if (trialShown()) return { label: "Done", key: "start-skip", run: () => { trialDismiss(); goTo("trials"); } };
+  if (listPageDone()) return { label: "Done", key: "start-skip", run: () => leaveListPage() };
   if (practiceStalled()) return { label: "Next", key: "next-question", next: true, run: () => nextQuestion() };
   if (state.mode === "bonuses" && state.bonusAwait != null) return { label: "Next part", key: "next-question", run: () => advanceBonusPart() };
   if (!state.resultAreaVisible && skipsOk() && state.currentQuestion && !state.isBuzzed && !state._loadingQuestion) return { label: "Skip", key: "start-skip", run: () => skipQuestion() };
@@ -7690,6 +7830,7 @@ $("#btn-friends-home")?.addEventListener("click", goBack);
 $("#btn-leaderboards-home")?.addEventListener("click", goBack);
 $("#btn-store-home")?.addEventListener("click", goBack);
 $("#btn-streaks-home")?.addEventListener("click", goBack);
+$("#btn-trials-home")?.addEventListener("click", goBack);
 $("#btn-admin-home")?.addEventListener("click", goBack);
 ["#btn-clubs-home", "#btn-dx-home", "#btn-irl-home", "#btn-report-home", "#btn-link-home"].forEach((id) => $(id)?.addEventListener("click", goBack));
 
@@ -9293,7 +9434,6 @@ async function loadPlayer() {
           </div>
         </section>
         <div class="pf-tiles">${tile(totalQ, "questions")}${tile(powers, "powers", "pf-pwr")}${tile(negs, "negs", "pf-neg")}${tile(sessions.length, "sessions")}</div>
-        ${trialsSectionHtml(trialInfo)}
         <section class="pf-ach">
           <div class="pf-ach-head"><h2 class="eyebrow">Achievements</h2><span class="pf-ach-n"><b class="num">${earnedN}</b> of ${totalN} earned</span></div>
           <div class="achievements-grid">${achievementsHtml}</div>
@@ -9303,7 +9443,6 @@ async function loadPlayer() {
 
     initCollapsibles(container);
     container._achWired = false;
-    wireTrials(container);
     wireBadges(container, (trialInfo && trialInfo.trials) || {}, true);
     wireHwCard(container);
     wireAchievementCards(container, { achData, records: achRecordsFrom(apData), stats, pluginAchs });
@@ -10021,6 +10160,31 @@ async function loadTrialInfo() {
   try { const d = await API.get("/api/trials"); _trialInfo = normTrialInfo(d); if (d && Number(d.now)) _trialSkew = Number(d.now) - Date.now(); } catch (e) { _trialInfo = normTrialInfo(_trialInfo); }
   return _trialInfo;
 }
+// The Trials page (15.28, the top bar's Trials): your badges and XP, and every category's card (its levels open
+// from it). It used to sit on Profile, which keeps the badges.
+async function renderTrialsPage() {
+  const c = document.getElementById("trials-container"); if (!c) return;
+  _screenBuilt.add("trials");
+  if (needsAccount()) { c.innerHTML = accountPanelHtml("Sign in to play trials."); return; }
+  const paint = (info) => {
+    const trials = (info && info.trials) || {};
+    const badges = trialBadgesHtml(trials, "");
+    const going = state.practiceKind === "trial" && trialRunning() ? trialNow() : null;
+    c.innerHTML = `<div class="pf-page tr-page">` +
+      (going ? `<div class="tr-going" style="--hue:${trialHue(going.key)}">${ic("award", 16)}<span><b>${escapeHtml(trialName(going.key, going.level))}</b> is still going</span><span class="spacer"></span><button type="button" class="btn btn-primary btn-sm" id="tr-continue">${ic("play", 14)}Continue</button></div>` : "") +
+      `<p class="tr-intro">Ten power-marked tossups at one level. Power all ten to open the next level. Every power earns XP toward that category's badges.</p>` +
+      (badges ? `<section class="tr-badge-row">${badges}</section>` : "") + trialsSectionHtml(info) + `</div>`;
+    c.querySelector("#tr-continue")?.addEventListener("click", resumeTrialPage);
+    wireTrials(c);
+    wireBadges(c, trials, true);
+  };
+  // what this window already knows (a trial just finished updated it) at once, then the backend's
+  if (_trialInfo && _trialInfo.trials) paint(_trialInfo);
+  else if (!c.firstElementChild) c.innerHTML = '<div class="pf-page"><div class="text-muted">Loading trials…</div></div>';
+  const info = await loadTrialInfo();
+  if (!document.getElementById("trials-screen")?.classList.contains("active")) return;
+  paint(info);
+}
 function wireTrials(container) {
   container.querySelectorAll(".tr-card[data-trial]").forEach((b) => { b.onclick = () => openTrialPicker(b.dataset.trial); });
 }
@@ -10090,11 +10254,12 @@ function trialInstance() {
 }
 function trialPending() { try { return !!(_trial && _trial.pending && !_trial.done); } catch (e) { return false; } }   // safe before _trial exists (showScreen at boot)
 function prepTrial(t) {
-  if (_trial && _trial.pending) _trial = null;
-  if (state.sessionActive) endSession();
+  if (leaveTrialFirst(() => prepTrial(t))) return;
+  enterPracticeKind("trial", true);   // your own practice is parked, any other page's session ends
   _trial = { ...t, ids: null, pending: true, n: 0, powered: 0, res: [], servedId: null, answeredId: null, done: false };
   state.bonusIds = null; state.reviewIds = null; state.currentQuestion = null;
-  showScreen("practice-tossups");
+  state._pageType = "tossups";
+  showScreen("practice-trial");
   setMode("tossups");
   paintTrialBar();
   openSetupDrawer();
@@ -10149,7 +10314,8 @@ function runTrial(t) {
   state.reviewIds = [...t.ids];
   state._reviewRemoveAfter = false; state._reviewRemovePower = false;
   state.currentQuestion = null;
-  showScreen("practice-tossups");
+  state._pageType = "tossups";
+  showScreen("practice-trial");
   setMode("tossups");
   startSession();
   paintTrialBar();
@@ -10258,7 +10424,7 @@ function showTrialResult(t, passed, why) {
   // offers Result / Done. Trials, Try next and Again clear the trial first.
   t.shown = { passed, why };
   const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); paintTrialBar(); };
-  const finish = (toTrials) => { close(); trialDismiss(); if (toTrials) goTo("player"); };
+  const finish = (toTrials) => { close(); trialDismiss(); if (toTrials) goTo("trials"); };
   // the result owns the keyboard: Esc closes, Enter is its main button, nothing reaches practice (no N, Space, S …)
   const onKey = (e) => {
     if (e.key === "Tab") return;
@@ -12182,17 +12348,11 @@ async function renderStarredTab() {
       "</div>" +
       '<div class="results search-results" id="db-results"></div>' +
     "</div>";
+  // your starred tossups, shuffled, on a page of their own (15.28: the Tossups filters are left alone)
   document.getElementById("db-practice-starred")?.addEventListener("click", () => {
-    if (state.customType && state.sessionActive) endSession();   // a suspended list would be served first
-    try {
-      const b = loadFilterBlob();
-      b.tossups = b.tossups || {};
-      b.tossups.starredOnly = true;
-      lsSet("qb-filters", JSON.stringify(b));
-    } catch {}
-    const cb = $("#filter-starred"); if (cb) cb.checked = true;
-    showScreen("practice-tossups");
-    setMode("tossups");
+    const ids = items.filter((it) => (it.type || "tossup") === "tossup" && it.question_id).map((it) => String(it.question_id));
+    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+    startListSession("starred", "tossups", ids);
   });
   c.querySelectorAll("[data-star-action]").forEach((b) => {
     b.addEventListener("click", () => {
@@ -12457,10 +12617,12 @@ function init() {
       refreshArt: () => { try { loadTitleArt(); loadSettingsArt(); } catch (e) {} },
       addAppearanceOptions: (opts) => { try { return addAppearanceOptions(opts); } catch (e) { return () => {}; } },
       playSound: (name) => { try { if (Sound && typeof Sound[name] === "function") Sound[name](); } catch (e) {} },
-      launchQuestions: (target, ids) => {
+      // tossups / bonuses play on a page of their own; opts.title names it ("Folder: Shakespeare")
+      launchQuestions: (target, ids, opts) => {
         if (!Array.isArray(ids) || !ids.length) return false;
-        if (target === "tossups") { startReviewSession(ids); return true; }
-        if (target === "bonuses") { startBonusIdsSession(ids); return true; }
+        const title = opts && typeof opts.title === "string" && opts.title.trim() ? opts.title.trim().slice(0, 60) : null;
+        if (target === "tossups") { startListSession("list", "tossups", ids, { title }); return true; }
+        if (target === "bonuses") { startListSession("list", "bonuses", ids, { title }); return true; }
         const map = {
           flashcards: { page: "flashcards::cards", key: "qb-flashcards-handoff", name: "Flashcards" },
           coach: { page: "coach-mode::coach", key: "qb-coach-handoff", name: "Coach Mode" },

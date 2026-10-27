@@ -5763,6 +5763,15 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .tr-badge.tier3 { border-width: 1.5px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--tier) 14%, transparent); }
 .tr-badge.tier4 { border-width: 1.5px; background: color-mix(in srgb, var(--tier) 22%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tier) 18%, transparent); }
 .pf-trials { padding: 20px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+/* the Trials page (15.28): an intro line, your badges, a trial still going, then the categories */
+.tr-page .tr-intro { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.tr-badge-row { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.tr-badge-row .tr-badges { margin: 0; }
+.tr-going { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--hue) 45%, var(--line)); border-radius: var(--r-lg); background: color-mix(in srgb, var(--hue) 10%, var(--surface)); }
+.tr-going > svg { color: var(--hue); flex: none; }
+.tr-going .spacer { flex: 1; }
+/* your own practice back on its page (15.28) */
+.question-placeholder .resume-note { margin: 0; color: var(--muted); font-size: 14px; }
 .tr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 10px; }
 .tr-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px 14px; text-align: left; cursor: pointer;
