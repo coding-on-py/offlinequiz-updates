@@ -12337,7 +12337,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
 ;/* ── topics.js (bundled by build-update) ── */
 // ═════════════════════════════════════════════════════════════════════════
 // TOPIC TAGS (15.29) — the question database's entity and theme tags (2026-10-28 build: tag_vocab, mentions, qtags;
-// AGENTS.md "Round 15.29"). Off by default (Settings → Tags → Topic tags); with it off nothing here shows.
+// AGENTS.md "Round 15.29"). On for everyone unless turned off (Settings → Tags → Topic tags); off, nothing here shows.
 //
 // When on:
 //   - a question's topics show once it's over, never while it's read: in practice (the result area) and in
@@ -12380,7 +12380,8 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
   // ── on or off: the setting, and a database that has them ──
   let avail = null, availP = null;
   const listeners = [];
-  function wanted() { try { return localStorage.getItem(KEY) === "1"; } catch (e) { return false; } }
+  // on unless this player turned them off (15.30: on for everyone by default)
+  function wanted() { try { return localStorage.getItem(KEY) !== "0"; } catch (e) { return true; } }
   function enabled() { return avail === true && wanted(); }
   function sync() { document.documentElement.classList.toggle("topics-on", enabled()); }
   function check(force) {
