@@ -12429,6 +12429,8 @@ async function prefetchDefaults() {
     () => search(1), () => freq("tossup", 1), () => freq("bonus", 1), () => freq("both", 1)];
   for (const step of steps) { await calm(); await settle(step()); }
   window.__qbPrefetched = true;   // (tests wait for it)
+  // topic tags on: the Tags tab's first list and Frequency → Tags' (counted once per question database)
+  if (window.QBTopics) { await calm(); await settle(QBTopics.check().then(() => QBTopics.prefetch())); }
 }
 
 // Jump to Database → Search pre-filled and run it. Usable from anywhere in the

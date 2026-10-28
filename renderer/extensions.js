@@ -12398,6 +12398,22 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
   function onChange(fn) { listeners.push(fn); }
   document.addEventListener("DOMContentLoaded", () => { sync(); check(); });
 
+  // the read-only routes' answers, kept by address (the question database doesn't change under them): a page seen
+  // before, or fetched ahead, paints at once
+  const kept = new Map();
+  function cget(url) {
+    let p = kept.get(url);
+    if (p) { kept.delete(url); kept.set(url, p); return p; }
+    p = API.get(url);
+    kept.set(url, p);
+    p.then((d) => { if (!d || d.error) kept.delete(url); }, () => kept.delete(url));
+    while (kept.size > 120) kept.delete(kept.keys().next().value);
+    return p;
+  }
+  // what's likely next, fetched while nothing else is asked for (one at a time)
+  let ahead = Promise.resolve();
+  const fetchAhead = (url) => { if (!kept.has(url)) ahead = ahead.then(() => new Promise((r) => setTimeout(r, 120))).then(() => cget(url)).catch(() => {}); };
+
   // ── a question's topics (/api/topics/for), asked for in batches and kept ──
   const cache = new Map(), waiting = new Map();
   let flushT = 0;
@@ -12620,7 +12636,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     if (fresh) { V.list = []; V.total = 0; }
     const kinds = famKinds(V.fam);
     let d = null;
-    try { d = await API.get("/api/topics/search?limit=40&offset=" + V.list.length + "&q=" + encodeURIComponent(V.q.trim()) + (kinds.length ? "&kinds=" + encodeURIComponent(kinds.join(",")) : "")); } catch (e) { d = null; }
+    try { d = await cget("/api/topics/search?limit=40&offset=" + V.list.length + "&q=" + encodeURIComponent(V.q.trim()) + (kinds.length ? "&kinds=" + encodeURIComponent(kinds.join(",")) : "")); } catch (e) { d = null; }
     if (seq !== V.seq || !document.getElementById("tg-results")) return;
     if (!d) { el.innerHTML = '<div class="db-empty">Couldn\'t load tags.</div>'; return; }
     V.list = V.list.concat(d.tags || []); V.total = d.total || 0;
@@ -12634,7 +12650,12 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
         `<span class="tg-n num">${num(t.questions)}</span></button>`;
     }).join("") + "</div>" +
       (V.list.length < V.total ? '<div class="tg-more-wrap"><button type="button" class="btn" id="tg-more">Show more</button></div>' : "");
-    el.querySelectorAll(".tg-row").forEach((b) => b.addEventListener("click", () => openTag(b.dataset.tag)));
+    el.querySelectorAll(".tg-row").forEach((b) => {
+      b.addEventListener("click", () => openTag(b.dataset.tag));
+      // a tag's page starts loading as the pointer reaches its row
+      const pre = () => { fetchAhead(tagUrl(b.dataset.tag)); fetchAhead(cluesUrl(b.dataset.tag, "tossup", "any", 0)); };
+      b.addEventListener("pointerenter", pre, { once: true }); b.addEventListener("focus", pre, { once: true });
+    });
     el.querySelector("#tg-more")?.addEventListener("click", () => runSearch(false));
   }
 
@@ -12650,7 +12671,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     V.pending = null;
     c.innerHTML = '<div class="db-page db-topic">' + loadingBarHtml("Loading…") + "</div>";
     let d = null;
-    try { d = await API.get("/api/topics/tag?id=" + encodeURIComponent(id)); } catch (e) { d = null; }
+    try { d = await cget(tagUrl(id)); } catch (e) { d = null; }
     const t = d && d.tag;
     if (!t) { c.innerHTML = '<div class="db-page db-topic"><div class="db-empty">Couldn\'t find that tag.</div></div>'; return; }
     V.tag = t; V.tab = "clues"; V.clues = []; V.cluesTotal = 0;
@@ -12701,7 +12722,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     const seq = ++V.seq;
     if (fresh) { V.clues = []; V.cluesTotal = 0; el.innerHTML = loadingBarHtml("Loading clues…"); }
     let d = null;
-    try { d = await API.get("/api/topics/clues?id=" + encodeURIComponent(t.id) + "&qtype=" + V.qtype + "&role=" + (V.role === "about" ? "about" : "any") + "&limit=25&offset=" + V.clues.length); } catch (e) { d = null; }
+    try { d = await cget(cluesUrl(t.id, V.qtype, V.role, V.clues.length)); } catch (e) { d = null; }
     if (seq !== V.seq || !document.getElementById("tg-body")) return;
     if (!d) { el.innerHTML = '<div class="db-empty">Couldn\'t load the clues.</div>'; return; }
     V.clues = V.clues.concat(d.clues || []); V.cluesTotal = d.total || 0;
@@ -12724,6 +12745,8 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
       <div class="tg-clue-foot"><span class="tg-ans"><span class="ra-k">Answer</span> <span class="ans-toggle"><span class="ans">${esc(ans || "?")}</span></span></span>` +
       `${k.part != null ? `<span class="tg-part">Part ${"ABCDEFGHI"[k.part] || k.part + 1}</span>` : ""}${k.role === "about" ? '<span class="tg-about">About it</span>' : ""}${k.canon ? tierHtml(k.canon) : ""}<span class="src">${esc(src)}</span></div></article>`;
   }
+  const tagUrl = (id) => "/api/topics/tag?id=" + encodeURIComponent(id);
+  const cluesUrl = (id, qtype, role, offset) => "/api/topics/clues?id=" + encodeURIComponent(id) + "&qtype=" + qtype + "&role=" + (role === "about" ? "about" : "any") + "&limit=25&offset=" + offset;
   // Play: the tag's questions on a page of their own (15.28 practice pages)
   async function playTag(t) {
     const bonus = V.qtype === "bonus" && V.tab === "clues";
@@ -12742,9 +12765,10 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
   async function runFrequency(el, o) {
     if (!el) return null;
     const seq = ++F.seq;
-    const url = "/api/topics/frequent?qtype=" + o.qtype + "&role=" + F.role + "&limit=" + o.limit + "&offset=" + o.page * o.limit + (o.units.length ? "&nodeIds=" + encodeURIComponent(o.units.join(",")) : "");
+    const url = freqUrl(o.qtype, F.role, o.units, o.page, o.limit);
     let d = null;
-    try { d = await API.get(url); } catch (e) { d = null; }
+    try { d = await cget(url); } catch (e) { d = null; }
+    if (d && d.total > (o.page + 1) * o.limit) fetchAhead(freqUrl(o.qtype, F.role, o.units, o.page + 1, o.limit));   // the next page
     if (seq !== F.seq) return null;
     if (!d) { el.innerHTML = '<div class="db-empty">Couldn\'t load tags.</div>'; return { total: 0 }; }
     const rows = d.tags || [];
@@ -12755,6 +12779,15 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
       `<span class="freq-bar"><span style="width:${Math.max(1, Math.round((r.count / max) * 100))}%"></span></span><span class="lr-count">${num(r.count)}</span></div>`).join("") + "</div>";
     el.querySelectorAll(".tg-fname").forEach((b) => b.addEventListener("click", () => openTag(b.dataset.tag)));
     return { total: d.total || rows.length };
+  }
+  const freqUrl = (qtype, role, units, page, limit) => "/api/topics/frequent?qtype=" + qtype + "&role=" + role + "&limit=" + limit + "&offset=" + page * limit + (units.length ? "&nodeIds=" + encodeURIComponent(units.join(",")) : "");
+  // the lists people open first, fetched ahead once things are quiet (Frequency → Tags, the Tags tab): the backend
+  // keeps what it counts, so this is paid once per question database
+  function prefetch() {
+    if (!enabled()) return;
+    fetchAhead(freqUrl("tossup", "any", [], 0, 50));
+    fetchAhead("/api/topics/search?limit=40&offset=0&q=");
+    return ahead;
   }
   function roleSegHtml() {
     return [["any", "Anywhere"], ["about", "About"], ["answer", "Answers"], ["theme", "Themes"]].map(([v, l]) => `<button type="button" data-trole="${v}" aria-pressed="${F.role === v}">${l}</button>`).join("");
@@ -12790,6 +12823,6 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
   };
 
   window.QBTopics = { enabled, wanted, setWanted, check, onChange, topicsOf, chipsHtml, fill, resultPanel, suggest, kindColor, renderTab, openTag, webPath, pendingTag,
-    runFrequency, roleSegHtml, setRole, renderStats, pluginApi, TIERS, TIER_NAME };
+    runFrequency, roleSegHtml, setRole, renderStats, prefetch, pluginApi, TIERS, TIER_NAME };
 })();
 

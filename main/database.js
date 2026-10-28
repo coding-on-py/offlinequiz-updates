@@ -576,8 +576,11 @@ export class QuestionDatabase {
     const tid = this._tidOf(id); if (!tid) return null;
     const v = this.db.prepare("SELECT * FROM tag_vocab WHERE tid = ?").get(tid);
     const parse = (x) => { try { return JSON.parse(x || "[]"); } catch { return []; } };
-    const count = (qt, mask) => this.db.prepare(`SELECT COUNT(*) AS n FROM qtags g JOIN ${qt ? "bonuses" : "tossups"} q ON q.rowid = g.rid WHERE g.tid = ? AND g.qt = ? AND q.playable = 1${mask ? ` AND (g.src & ${mask}) != 0` : ""}`).get(tid, qt).n;
-    const counts = { tossups: count(0), bonuses: count(1), aboutTossups: count(0, ROLE_MASK.about), aboutBonuses: count(1, ROLE_MASK.about), answerTossups: count(0, SRC.answer), answerBonuses: count(1, SRC.answer), themeQuestions: count(0, SRC.theme) + count(1, SRC.theme) };
+    // every count of one type in one pass over the tag's own links (the unplayable few left out by rowid)
+    const per = (qt) => this.db.prepare(`SELECT COUNT(*) AS n, SUM((src & ${ROLE_MASK.about}) != 0) AS ab, SUM((src & ${SRC.answer}) != 0) AS an, SUM((src & ${SRC.theme}) != 0) AS th
+      FROM qtags WHERE tid = ? AND qt = ${qt} AND rid NOT IN (SELECT rowid FROM ${qt ? "bonuses" : "tossups"} WHERE playable = 0)`).get(tid);
+    const t = per(0), b = per(1);
+    const counts = { tossups: t.n || 0, bonuses: b.n || 0, aboutTossups: t.ab || 0, aboutBonuses: b.ab || 0, answerTossups: t.an || 0, answerBonuses: b.an || 0, themeQuestions: (t.th || 0) + (b.th || 0) };
     // the same questions' other tags (a big tag's first 3,000 questions are enough to rank them)
     const rel = this.db.prepare(`WITH q AS (SELECT qt, rid FROM qtags WHERE tid = ? LIMIT 3000)
       SELECT g.tid, COUNT(*) AS n FROM q JOIN qtags g ON g.qt = q.qt AND g.rid = q.rid WHERE g.tid != ? GROUP BY g.tid ORDER BY n DESC LIMIT 24`).all(tid, tid);
@@ -650,28 +653,40 @@ export class QuestionDatabase {
   // [{ id, name, kind, group, count }], most first. role: any / about / answer / theme / mention; kinds: keep only these.
   topicTagCounts({ qtype = "tossup", nodeIds = [], role = "any", kinds = null, limit = 2000 } = {}) {
     if (!this.hasTopics) return [];
+    const lim = Math.max(1, Math.min(5000, limit | 0 || 2000));
     if (qtype === "both") {
       // tossups and bonuses together: each tag's two counts summed
       const sum = new Map();
-      for (const t of ["tossup", "bonus"]) for (const r of this.topicTagCounts({ qtype: t, nodeIds, role, kinds, limit })) { const o = sum.get(r.id); if (o) o.count += r.count; else sum.set(r.id, { ...r }); }
-      return [...sum.values()].sort((a, b) => b.count - a.count).slice(0, Math.max(1, Math.min(5000, limit | 0 || 2000)));
+      for (const t of ["tossup", "bonus"]) for (const r of this.topicTagCounts({ qtype: t, nodeIds, role, kinds, limit: 5000 })) { const o = sum.get(r.id); if (o) o.count += r.count; else sum.set(r.id, { ...r }); }
+      return [...sum.values()].sort((a, b) => b.count - a.count).slice(0, lim);
     }
     const qt = qtype === "bonus" ? 1 : 0, table = qt ? "bonuses" : "tossups";
     const mask = ROLE_MASK[role] || 31;
     const nodes = this.expandCategoryIds((nodeIds || []).filter(Boolean)).map((id) => this.getCategoryNode(id)).filter(Boolean);
+    const kindList = Array.isArray(kinds) ? kinds.filter((k) => /^[a-z ]{2,20}$/.test(k)).slice(0, 12) : [];
+    const named = (rows) => { const names = this._tagsByTid(rows.map((r) => r.tid)); return rows.map((r) => ({ ...names.get(r.tid), count: r.n })).filter((x) => x.id); };
+    // counted from the tag links alone (no lookup of each question's row; the few unplayable ones left out by rowid),
+    // inside some categories when asked (any of a question's categories, like every filter)
+    // kept for the open database (Both reuses each type's list; a page back is instant)
+    const memo = this._topicCounts || (this._topicCounts = new Map()), key = [qt, role, nodes.map((n) => n.id).sort().join(","), kindList.join(",")].join("|");
+    if (memo.has(key)) return memo.get(key).slice(0, lim);
     const params = [];
     let inCats = "";
     if (nodes.length && this.hasMultiCats) {
       inCats = ` AND g.rid IN (SELECT rid FROM qcats WHERE qt = ${qt} AND (${nodes.map(() => "ord BETWEEN ? AND ?").join(" OR ")}))`;
       for (const n of nodes) params.push(n.ord, n.ord_end);
+    } else if (nodes.length) {
+      inCats = ` AND g.rid IN (SELECT rowid FROM ${table} WHERE ${nodes.map(() => "category_ord BETWEEN ? AND ?").join(" OR ")})`;
+      for (const n of nodes) params.push(n.ord, n.ord_end);
     }
-    const kindList = Array.isArray(kinds) ? kinds.filter((k) => /^[a-z ]{2,20}$/.test(k)).slice(0, 12) : [];
-    const rows = this.db.prepare(`SELECT g.tid, COUNT(*) AS n FROM qtags g JOIN ${table} q ON q.rowid = g.rid
-      WHERE g.qt = ${qt} AND q.playable = 1${mask !== 31 ? ` AND (g.src & ${mask}) != 0` : ""}${inCats}
+    const rows = this.db.prepare(`SELECT g.tid, COUNT(*) AS n FROM qtags g
+      WHERE g.qt = ${qt} AND g.rid NOT IN (SELECT rowid FROM ${table} WHERE playable = 0)${mask !== 31 ? ` AND (g.src & ${mask}) != 0` : ""}${inCats}
       ${kindList.length ? ` AND g.tid IN (SELECT tid FROM tag_vocab WHERE kind IN (${kindList.map((k) => `'${k}'`).join(",")}))` : ""}
-      GROUP BY g.tid ORDER BY n DESC LIMIT ${Math.max(1, Math.min(5000, limit | 0 || 2000))}`).all(...params);
-    const names = this._tagsByTid(rows.map((r) => r.tid));
-    return rows.map((r) => ({ ...names.get(r.tid), count: r.n })).filter((x) => x.id);
+      GROUP BY g.tid ORDER BY n DESC LIMIT 5000`).all(...params);
+    const out = named(rows);
+    memo.set(key, out);
+    while (memo.size > 32) memo.delete(memo.keys().next().value);
+    return out.slice(0, lim);
   }
 
   // tossup id -> its answer's canon tier name
