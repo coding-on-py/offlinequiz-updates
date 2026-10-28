@@ -1247,9 +1247,15 @@ export class App {
       const tree = this.questionDb._loadTree().nodes || [];
       const node = this.questionDb.getCategoryNode(cat[3]) || tree.find((n) => n.path === cat[2]) || tree.find((n) => n.name === cat[2] && /^(Science and Math|Pop Culture Sports) > /.test(n.path));
       if (!node) return { ok: false, error: "This category isn't in the question database." };
-      // a trial is that category alone: every category a question covers lies inside it (catMode "pure")
-      const r = this.questionDb.queryTossups({ categoryIds: [node.id], catMode: "pure", difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN });
-      const ids = ((r && r.rows) || []).map((q) => q.id).filter(Boolean);
+      // a trial is that category alone: every category a question covers lies inside it (catMode "pure"). Where
+      // that's short (Miscellaneous II: most Misc questions also carry a second category), questions whose main
+      // category is this one fill the rest, shuffled in
+      const pick = (catMode) => ((this.questionDb.queryTossups({ categoryIds: [node.id], catMode, difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN }) || {}).rows || []).map((q) => q.id).filter(Boolean);
+      let ids = pick("pure");
+      if (ids.length < TRIAL_LEN) {
+        ids = [...new Set([...ids, ...pick("home")])].slice(0, TRIAL_LEN);
+        for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+      }
       if (ids.length < TRIAL_LEN) return { ok: false, error: "There aren't enough power-marked questions for this trial yet." };
       t.s = now; t.run = me; save();
       return { ok: true, ids, startedAt: now };

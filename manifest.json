@@ -1,5 +1,5 @@
 {
-  "version": "15.31",
+  "version": "15.32",
   "renderer": [
     "index.html",
     "style.css",
@@ -55,7 +55,7 @@
     }
   ],
   "main": true,
-  "notes": "faster loading",
+  "notes": "bug fixes",
   "files": {
     "renderer/index.html": "585b092ee44139fcd28d848260c9690968aff9f7d40af7ca1cddf9f4031a2f71",
     "renderer/style.css": "d59154ac129103a8c9c82654effe2ef0708d57c866ffeae97bde9e5d1ff91d67",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/packet-builder.zip": "c9f68e95cb536ed51d1c5bb5e1a30fe603a94320737a78b9bd991b38789a4bc3"
   },
-  "signature": "+ssg+H6bqihbAJUxyuSEv9wpRmOw+Psuq5ZAJPi7/EraBb/vC67zYiQ4/2wzikkQULSABshB7O0Z9cjFnsg1Bw=="
+  "signature": "FvxUaDR+n+UvlUat/FNHGxRgVDiAkPJETd/c3Cw89UOz4eBmutrt0PGCwxxXH5GMtmW80BGMRq8Kl3oqdeGcAQ=="
 }
