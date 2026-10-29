@@ -5602,7 +5602,7 @@ function __qbMain(ctx) {
         buzz.className = "buzz-area";
         buzz.innerHTML =
           '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span>' +
-          '<input type="text" id="mp-ans-input" placeholder="type answer and press Enter..." autocomplete="off" autocorrect="off" spellcheck="false"></div>' +
+          '<input type="text" id="mp-ans-input" placeholder="type answer and press Enter..." autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>' +
           '<div class="buzz-hints">You buzzed · <span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         var inp = buzz.querySelector("#mp-ans-input");
@@ -5632,7 +5632,7 @@ function __qbMain(ctx) {
         buzz.className = "buzz-area";
         buzz.innerHTML =
           '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span>' +
-          '<input type="text" id="mp-ans-input" placeholder="answer again…" autocomplete="off" autocorrect="off" spellcheck="false"></div>' +
+          '<input type="text" id="mp-ans-input" placeholder="answer again…" autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>' +
           '<div class="buzz-hints"><span style="color:var(--yellow);font-weight:700">PROMPT' + (ask ? "</span> " + esc(ask) : "</span>") + ' · <span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         var inp = buzz.querySelector("#mp-ans-input"); inp.focus();
@@ -5811,7 +5811,7 @@ function __qbMain(ctx) {
             (r.given ? "\u201c" + esc(r.given) + "\u201d · " : "") + 'ANSWER: <span class="ans">' + ansHtml(r.answerRaw, r.answer) + "</span></div>";
         } else if (k === bonusView.k && !bonusView.done) {
           html += mine
-            ? '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span><input type="text" class="mp-binput" placeholder="your answer\u2026 (Enter)" autocomplete="off" autocorrect="off" spellcheck="false"></div>'
+            ? '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span><input type="text" class="mp-binput" placeholder="your answer\u2026 (Enter)" autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>'
             : '<div class="text-muted" style="font-size:12px"><em id="mp-live-ph">' + neonNameHtml(bonusView.name, players[bonusView.winner]) + " is answering\u2026</em><span id=\"mp-live\" class=\"mp-live\"></span></div>";
           html += '<div class="buzz-hints"><span id="mp-timer"></span></div><div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         }

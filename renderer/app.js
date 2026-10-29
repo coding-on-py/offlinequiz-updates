@@ -1124,7 +1124,30 @@ function updateTopbar() {
   if (active && active.id === "practice-screen" && state.practiceKind === "trial") here = "tb-trials";
   ["tb-trials", "tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
   renderTopbarProfile();
+  fitTopbar();
 }
+// The top bar fits what it holds (a streak, the Store, Clubs' count, an admin's links): when its buttons run past the
+// edge, they go to icons alone, then Leaderboards, Store and Plugins move into the avatar's menu (ui.css tb-compact /
+// tb-tight). On every resize, and whenever a button shows or hides.
+function fitTopbar() {
+  const bar = document.getElementById("app-topbar"), right = bar && bar.querySelector(".tb-right");
+  if (!bar || !right) return;
+  const html = document.documentElement;
+  const over = () => right.getBoundingClientRect().right > bar.getBoundingClientRect().right - (parseFloat(getComputedStyle(bar).paddingRight) || 0) + 1;
+  html.classList.remove("tb-compact", "tb-tight");
+  if (!over()) return;
+  html.classList.add("tb-compact");
+  if (over()) html.classList.add("tb-tight");
+}
+(() => {
+  let raf = 0;
+  const soon = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(fitTopbar); };
+  window.addEventListener("resize", soon);
+  const right = document.querySelector("#app-topbar .tb-right");
+  if (right) new MutationObserver(soon).observe(right, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["hidden", "class"] });
+  try { document.fonts?.ready?.then(soon); } catch (e) {}
+  soon();
+})();
 function renderTopbarProfile() {
   const initial = (String(state.username || "").trim()[0] || "?").toUpperCase();
   ["tb-avatar", "tbm-avatar"].forEach((id) => { const av = document.getElementById(id); if (av) { av.textContent = initial; paintAvatar(av, myNeon()); } });
@@ -4386,7 +4409,17 @@ const _MODE_SETTING_IDS = new Set(["opt-allow-rebuzzes", "opt-stop-on-power", "o
 let _modeSettingTimer = null;
 function scheduleModeSettingSave() {
   clearTimeout(_modeSettingTimer);
-  _modeSettingTimer = setTimeout(() => { _modeSettingTimer = null; if ($("#category-filters .category-group")) saveFilterState(); }, 250);
+  _modeSettingTimer = setTimeout(() => { _modeSettingTimer = null; if ($("#category-filters .category-group")) saveFilterState(); else saveModeSettingsOnly(); }, 250);
+}
+// The category tree not drawn yet (practice just opened, a slow connection): only the settings go into the mode's saved
+// setup. Skipped, the tree's restore put the old ones back once it came (a strictness or speed moved in that moment
+// was lost); the whole panel can't be saved yet (it would empty the saved categories).
+function saveModeSettingsOnly() {
+  if (_applyingSnapshot || _panelLent || _customView) return;
+  const bucket = filtersMode(), blob = loadFilterBlob(), prev = bucket && blob[bucket];
+  if (!prev || typeof prev !== "object") return;   // nothing saved for this mode yet: nothing to put back either
+  prev.settings = { ...(prev.settings && typeof prev.settings === "object" ? prev.settings : {}), ...Object.fromEntries(PER_MODE_SETTING_KEYS.map((k) => [k, state.settings[k]])) };
+  lsSet("qb-filters", JSON.stringify(blob));
 }
 document.addEventListener("change", (e) => { if (e.target && _MODE_SETTING_IDS.has(e.target.id)) scheduleModeSettingSave(); });
 document.addEventListener("input", (e) => { if (e.target && (e.target.id === "strictness-slider" || e.target.id === "panel-speed-slider" || e.target.id === "speed-slider")) scheduleModeSettingSave(); });
@@ -6043,6 +6076,8 @@ function buzz() {
   // focused now, so the first letters typed after the buzz key land in it (a 50 ms wait lost them)
   try { $("#buzz-input")?.focus({ preventScroll: true }); } catch (e) {}
   setTimeout(() => { const bi = $("#buzz-input"); if (bi && document.activeElement !== bi && !bi.disabled) bi.focus(); }, 50);
+  // a short screen (a phone on its side): the answer box can sit below the fold, so bring it into view
+  requestAnimationFrame(() => { const ba = $("#buzz-area"); if (!ba || ba.classList.contains("hidden")) return; const r = ba.getBoundingClientRect(); if (r.bottom > window.innerHeight - 8 || r.top < 60) ba.scrollIntoView({ block: "nearest" }); });
 
   startBuzzTimer();
 
@@ -8616,7 +8651,7 @@ async function loadStats(preserveScroll = false) {
         <div class="stats-section-title">SESSIONS (${sessionList.length})</div>
         <table class="stats-table stats-sessions-table">
           <thead><tr>
-            <th>Session</th><th>Questions</th><th>Points</th><th>Started</th><th></th>
+            <th>Session</th><th><span class="th-long">Questions</span><span class="th-short" aria-hidden="true">Qs</span></th><th>Points</th><th>Started</th><th></th>
           </tr></thead>
           <tbody>
             ${sessionList
@@ -10315,7 +10350,7 @@ function openTrialPicker(key) {
     const lv = i + 1, st = lvState(lv);
     const off = st.wait || st.locked;
     return `<button type="button" class="tp-lv${st.passed ? " passed" : ""}${st.wait ? " wait" : ""}${st.locked ? " locked" : ""}${pick === lv ? " sel" : ""}" data-lv="${lv}" aria-pressed="${pick === lv}"${off ? " disabled" : ""}${st.locked ? ` title="Pass ${escapeHtml(trialName(key, lv - 1))} first"` : ""}>` +
-      `<b>${ROMAN[lv]}</b><small>${st.wait ? waitHtml(st.wait) : st.passed ? ic("check", 12) + "Passed" : st.locked ? ic("lock", 12) + "Locked" : "Level " + lv}</small></button>`;
+      `<b>${ROMAN[lv]}</b><small>${st.wait ? waitHtml(st.wait) : st.passed ? ic("check", 12) + '<span class="tp-w">Passed</span>' : st.locked ? ic("lock", 12) + '<span class="tp-w">Locked</span>' : "Level " + lv}</small></button>`;
   }).join("");
   const paint = () => {
     try {
@@ -12925,6 +12960,7 @@ function renderAccountMenu() {
   const admU = document.getElementById("tbm-admin-users"); if (admU) admU.hidden = !(IS_WEB && Account.user && Account.user.admin);
   const admR = document.getElementById("tbm-admin-reports"); if (admR) admR.hidden = !(IS_WEB && Account.user && Account.user.admin);
   const lbBtn = document.getElementById("tb-leaderboards"); if (lbBtn) lbBtn.hidden = false;
+  const lbItem = document.getElementById("tbm-leaderboards"); if (lbItem) lbItem.hidden = false;
   const clBtn = document.getElementById("tb-clubs"); if (clBtn) clBtn.hidden = false;
   const head = document.querySelector("#tb-profile-menu .tbm-who");
   if (head) {
@@ -13748,6 +13784,7 @@ function loadShopInfo() {
     _shop.info = d;
     // the top bar's Store shows only while the shop is open (ui.css html.shop-on)
     document.documentElement.classList.toggle("shop-on", !!d.on);
+    fitTopbar();
     if (window.QB) {
       window.QB._shopInfo = d;
       Object.entries(d.products || {}).forEach(([sku, p]) => { if (p && p.price) window.QB._prices[sku] = p.price; });

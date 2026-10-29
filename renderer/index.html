@@ -50,6 +50,11 @@
             <div class="tbm-head"><span class="avatar" id="tbm-avatar">?</span><span class="tbm-who"><b id="tbm-name">Player</b></span></div>
             <button type="button" class="pop-item" role="menuitem" id="tbm-profile" data-go="player"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="6"/><path d="M8.6 13.9L7 22l5-3 5 3-1.6-8.1"/></svg>Profile</button>
             <button type="button" class="pop-item" role="menuitem" id="tbm-streaks" data-go="streaks"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>Streaks</button>
+            <button type="button" class="pop-item" role="menuitem" id="tbm-stats" data-go="stats"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 6-7"/></svg>Statistics</button>
+            <!-- phones: the top bar's Leaderboards, Store and Plugins move in here (ui.css .tbm-narrow) -->
+            <button type="button" class="pop-item tbm-narrow" role="menuitem" id="tbm-leaderboards" data-go="leaderboards" hidden><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 6h3v1a3 3 0 0 1-3 3M7 6H4v1a3 3 0 0 0 3 3"/></svg>Leaderboards</button>
+            <button type="button" class="pop-item tbm-narrow" role="menuitem" id="tbm-store" data-go="store"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>Store</button>
+            <button type="button" class="pop-item tbm-narrow" role="menuitem" id="tbm-plugins" data-go="plugins"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="14" y="3" width="7" height="7" rx="1.5"/><path d="M10 21V9a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/></svg>Plugins</button>
             <button type="button" class="pop-item" role="menuitem" id="tbm-admin" data-go="admin" hidden><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Site stats</button>
             <button type="button" class="pop-item" role="menuitem" id="tbm-admin-users" data-go="admin-users" hidden><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 010 7M18 15c2 .7 3.2 2.3 3.8 5"/></svg>Users</button>
             <button type="button" class="pop-item" role="menuitem" id="tbm-admin-reports" data-go="admin-reports" hidden><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h12l-2.5 4.5L17 13H5"/></svg>Reports</button>
@@ -274,7 +279,7 @@
           <div class="buzz-area hidden" id="buzz-area">
             <div class="buzz-prompt">
               <span class="prompt-symbol">&gt;</span>
-              <input type="text" id="buzz-input" placeholder="type answer and press Enter..." autocomplete="off" autocorrect="off" spellcheck="false">
+              <input type="text" id="buzz-input" placeholder="type answer and press Enter..." autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false">
             </div>
           </div>
 
@@ -831,7 +836,7 @@
         <div class="bonus-part-header">PART A</div>
         <div class="bonus-part-text" id="bonus-text-0"></div>
         <div class="buzz-prompt bonus-input">
-          <input type="text" class="bonus-answer-input" id="bonus-input-0" placeholder="answer for part A..." autocomplete="off" autocorrect="off" spellcheck="false">
+          <input type="text" class="bonus-answer-input" id="bonus-input-0" placeholder="answer for part A..." autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false">
         </div>
         <div class="bonus-part-answer hidden" id="bonus-answer-0"></div>
       </div>
@@ -839,7 +844,7 @@
         <div class="bonus-part-header">PART B</div>
         <div class="bonus-part-text" id="bonus-text-1"></div>
         <div class="buzz-prompt bonus-input">
-          <input type="text" class="bonus-answer-input" id="bonus-input-1" placeholder="answer for part B..." autocomplete="off" autocorrect="off" spellcheck="false">
+          <input type="text" class="bonus-answer-input" id="bonus-input-1" placeholder="answer for part B..." autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false">
         </div>
         <div class="bonus-part-answer hidden" id="bonus-answer-1"></div>
       </div>
@@ -847,7 +852,7 @@
         <div class="bonus-part-header">PART C</div>
         <div class="bonus-part-text" id="bonus-text-2"></div>
         <div class="buzz-prompt bonus-input">
-          <input type="text" class="bonus-answer-input" id="bonus-input-2" placeholder="answer for part C..." autocomplete="off" autocorrect="off" spellcheck="false">
+          <input type="text" class="bonus-answer-input" id="bonus-input-2" placeholder="answer for part C..." autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false">
         </div>
         <div class="bonus-part-answer hidden" id="bonus-answer-2"></div>
       </div>
