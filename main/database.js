@@ -9,6 +9,8 @@ const TAG_FAMILY_SET = new Set(TAG_FAMILIES);
 // children kept their ids. An old id saved somewhere (a filter, a preset, a plugin, a room) means both halves.
 export const SPLIT_ROOTS = { n5c3932cefa: ["nc7da6ff213", "nf9d9ab0a2a"], n2bf00654e4: ["n9b8235c01e", "nc647c3608a"] };
 const TAG_FAMILY_SQL = "(" + TAG_FAMILIES.map((f) => `'${f}'`).join(",") + ")";
+// composition values (brief §4.3): which of a question's other categories a category filter takes it by (_catRidsSql)
+const CROSS = "Hybrid - Cross Category", SAME = "Hybrid - Same Category";
 // Normalize a tag filter list (from the query string or IPC): at most 12
 // entries of { f, v, x, id }.
 export function normalizeTagFilters(raw) {
@@ -185,11 +187,13 @@ export class QuestionDatabase {
 
   // Nested tree with question counts (playable questions; subtree totals) for
   // the category GUI. Counts are cached per type: the file is read-only.
-  getCategoryTree(type = "tossups") {
+  getCategoryTree(type = "tossups", cacheFile = null) {
     const table = type === "bonuses" ? "bonuses" : "tossups";
     const { nodes } = this._loadTree();
     if (!this._treeCounts[table]) {
-      if (this.v2 && nodes.length && nodes[0].n_tossups !== undefined) {
+      if (this.hasMultiCats) {
+        this._treeCounts[table] = this._ruleCounts(table, cacheFile);
+      } else if (this.v2 && nodes.length && nodes[0].n_tossups !== undefined) {
         // precomputed at build time (subtree totals of playable questions)
         this._treeCounts[table] = nodes.map((n) => (table === "bonuses" ? n.n_bonuses : n.n_tossups) || 0);
       } else {
@@ -244,6 +248,60 @@ export class QuestionDatabase {
   expandCategoryIds(ids) {
     const byId = this._loadTree().byId;
     return (ids || []).flatMap((id) => (!byId.has(id) && SPLIT_ROOTS[id] ? SPLIT_ROOTS[id].filter((k) => byId.has(k)) : [id]));
+  }
+  // The rowids (of qt's table) that some category ranges ("ord BETWEEN …") hold: a question's home, and the other
+  // categories it really mixes (brief §4.3): every one of a "Hybrid - Cross Category" question's, a "Same Category"
+  // one's inside its home's top category. The rest are incidental (the answer's own subject, a setting, a clue or two:
+  // a myth tossup on stars, a novel set in Russia), so a Pure question stays in its home alone (15.35).
+  _catRidsSql(qt, ranges) {
+    const table = qt ? "bonuses" : "tossups";
+    return `SELECT rid FROM qcats WHERE qt = ${qt} AND (${ranges.join(" OR ")}) AND (main = 1 OR EXISTS (SELECT 1 FROM ${table} h WHERE h.rowid = qcats.rid AND (h.composition = '${CROSS}' OR (h.composition = '${SAME}' AND ${this._rootSql("h.category_ord")} = ${this._rootSql("qcats.ord")}))))`;
+  }
+  // the top category an ord sits under, as SQL (a CASE over the roots' ranges) and as a lookup
+  _rootSql(x) {
+    const roots = this._loadTree().nodes.filter((n) => n.depth === 1);
+    return `(CASE ${roots.map((r, i) => `WHEN ${x} BETWEEN ${r.ord} AND ${r.ord_end} THEN ${i}`).join(" ")} END)`;
+  }
+  // Subtree totals of playable questions by that rule: the file's own when it counted that way (meta cat_counts "3"),
+  // else counted here (~0.3 s; homes by one grouped count, then each hybrid's other categories, a node once per
+  // question) and kept in cacheFile for this build.
+  _ruleCounts(table, cacheFile) {
+    const { nodes, byId } = this._loadTree();
+    if (this.getMeta("cat_counts") === "3" && nodes[0] && nodes[0].n_tossups !== undefined) return nodes.map((n) => (table === "bonuses" ? n.n_bonuses : n.n_tossups) || 0);
+    const built = String(this.getMeta("built_at") || "0");
+    if (cacheFile) {
+      try {
+        const c = existsSync(cacheFile) && JSON.parse(readFileSync(cacheFile, "utf8"));
+        if (c && c.built === built && c.rule === 3 && Array.isArray(c[table]) && c[table].length === nodes.length) return c[table];
+      } catch { /* count again */ }
+    }
+    const out = this._countByRule(table, nodes, byId);
+    if (cacheFile) {
+      let c = null;
+      try { c = existsSync(cacheFile) && JSON.parse(readFileSync(cacheFile, "utf8")); } catch { c = null; }
+      if (!c || c.built !== built || c.rule !== 3) c = { built, rule: 3 };
+      c[table] = out;
+      try { writeFileSync(cacheFile, JSON.stringify(c)); } catch { /* read-only location */ }
+    }
+    return out;
+  }
+  _countByRule(table, nodes, byId) {
+    const qt = table === "bonuses" ? 1 : 0;
+    const per = new Map(this.db.prepare(`SELECT category_ord AS o, COUNT(*) AS n FROM ${table} WHERE playable = 1 AND category_ord IS NOT NULL GROUP BY category_ord`).all().map((r) => [r.o, r.n]));
+    const pre = [0];
+    for (let i = 0; i < nodes.length; i++) pre.push(pre[i] + (per.get(i) || 0));
+    const out = nodes.map((n) => pre[n.ord_end + 1] - pre[n.ord]);
+    const up = nodes.map((n) => { const p = n.parent_id && byId.get(n.parent_id); return p ? p.ord : -1; });
+    const root = nodes.map((n) => n.ord);
+    for (let i = 0; i < nodes.length; i++) if (up[i] >= 0) root[i] = root[up[i]];   // preorder: a parent comes first
+    let rid = null, seen = null;
+    for (const r of this.db.prepare(`SELECT q.rid AS rid, q.ord AS ord, t.category_ord AS home, t.composition AS comp FROM qcats q JOIN ${table} t ON t.rowid = q.rid
+      WHERE q.qt = ${qt} AND q.main = 0 AND t.playable = 1 AND t.composition IN ('${CROSS}', '${SAME}') ORDER BY q.rid`).all()) {
+      if (r.comp === SAME && (r.home == null || root[r.ord] !== root[r.home])) continue;
+      if (r.rid !== rid) { rid = r.rid; seen = new Set(); for (let o = r.home; o != null && o >= 0; o = up[o]) seen.add(o); }
+      for (let o = r.ord; o != null && o >= 0 && !seen.has(o); o = up[o]) { seen.add(o); out[o]++; }
+    }
+    return out;
   }
 
   // Judge-only: never route this to display code, IPC payloads for display,
@@ -324,8 +382,9 @@ export class QuestionDatabase {
     // Tree nodes (any depth): each id = its whole subtree. Unknown ids (a tree
     // version change) are ignored rather than matching nothing. Since the 2026-10-28
     // build a question matches when ANY of its categories is in the subtree (brief §4.4:
-    // the qcats table); catMode "pure" wants every one of them inside (cats_lo / cats_hi, a
-    // trial), "home" only its main category (a team diagnostic's quotas).
+    // the qcats table; a Pure question only by its home, see _catRidsSql); catMode "pure" wants
+    // every one of them inside (cats_lo / cats_hi, a trial), "home" only its main category (a
+    // team diagnostic's quotas).
     if (filters.categoryIds && filters.categoryIds.length > 0) {
       const ors = [];
       const names = ["category", "subcategory", "alternate_subcategory"];
@@ -345,7 +404,7 @@ export class QuestionDatabase {
           ors.push("(" + parts.map((p, k) => { params[`cv${i}_${k}`] = p; return `${col(names[k])} = :cv${i}_${k}`; }).join(" AND ") + ")");
         }
       });
-      if (anyRanges.length) ors.push(`${col("rowid")} IN (SELECT rid FROM qcats WHERE qt = ${opts.isBonus ? 1 : 0} AND (${anyRanges.join(" OR ")}))`);
+      if (anyRanges.length) ors.push(`${col("rowid")} IN (${this._catRidsSql(opts.isBonus ? 1 : 0, anyRanges)})`);
       if (ors.length) clauses.push(ors.length > 1 ? `(${ors.join(" OR ")})` : ors[0]);
     }
 
@@ -673,7 +732,7 @@ export class QuestionDatabase {
     const params = [];
     let inCats = "";
     if (nodes.length && this.hasMultiCats) {
-      inCats = ` AND g.rid IN (SELECT rid FROM qcats WHERE qt = ${qt} AND (${nodes.map(() => "ord BETWEEN ? AND ?").join(" OR ")}))`;
+      inCats = ` AND g.rid IN (${this._catRidsSql(qt, nodes.map(() => "ord BETWEEN ? AND ?"))})`;
       for (const n of nodes) params.push(n.ord, n.ord_end);
     } else if (nodes.length) {
       inCats = ` AND g.rid IN (SELECT rowid FROM ${table} WHERE ${nodes.map(() => "category_ord BETWEEN ? AND ?").join(" OR ")})`;
@@ -958,7 +1017,7 @@ export class QuestionDatabase {
     if (this.v2) {
       const parts = nodes.map((n, i) => { params["co" + i] = n.ord; params["ce" + i] = n.ord_end; return `${this.hasMultiCats ? "ord" : "category_ord"} BETWEEN :co${i} AND :ce${i}`; });
       // (any of a question's categories, like every other filter; the caller says which table via qt)
-      if (this.hasMultiCats) return where + ` AND rowid IN (SELECT rid FROM qcats WHERE qt = ${qt} AND (${parts.join(" OR ")}))`;
+      if (this.hasMultiCats) return where + ` AND rowid IN (${this._catRidsSql(qt, parts)})`;
       return where + " AND (" + parts.join(" OR ") + ")";
     }
     const cols = ["category", "subcategory", "alternate_subcategory"];

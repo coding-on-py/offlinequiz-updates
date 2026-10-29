@@ -2762,6 +2762,7 @@ function restoreFilterState() {
   try {
     const saved = getModeFilters();
     if (!saved) return false;
+    if (_filtersEarly) return saved;   // the panel already shows this, plus a change of the player's
     if (saved.standard !== undefined && $("#filter-standard"))
       $("#filter-standard").checked = saved.standard;
     if (saved.starredOnly !== undefined && $("#filter-starred"))
@@ -3563,9 +3564,19 @@ document.addEventListener("mousemove", (e) => {
 function clampYearDual() { updateYearLabel(); }
 
 let _debounceTimer = null;
+// A Setup change made before the category tree is drawn (practice just opened on a slow connection) can't be saved
+// yet, and the restore that follows the tree used to put the saved value back. setMode shows the saved Setup at
+// once instead, such a change stays, and it's saved when the tree is there (settleEarlyFilters).
+let _filtersEarly = false;
 function debounceSaveFilters() {
+  if (!_applyingSnapshot && !_panelLent && !document.querySelector("#category-filters .category-group")) _filtersEarly = true;
   clearTimeout(_debounceTimer);
   _debounceTimer = setTimeout(() => { _debounceTimer = null; saveFilterState(); }, 300);
+}
+function settleEarlyFilters() {
+  if (!_filtersEarly || !document.querySelector("#category-filters .category-group")) return;
+  _filtersEarly = false;
+  debounceSaveFilters();
 }
 // Run a pending debounced save NOW. showScreen calls this before it reassigns
 // state.mode: a timer firing afterwards resolved filtersMode() to the NEW screen
@@ -4414,6 +4425,7 @@ function initGameplayControls() {
 const _MODE_SETTING_IDS = new Set(["opt-allow-rebuzzes", "opt-stop-on-power", "opt-allow-skips", "strictness-slider", "enable-cat-weights", "panel-buzz-timer", "panel-buzz-window", "panel-bonus-timer", "panel-speed-slider", "speed-slider", "opt-bonus-after", "opt-hide-pron", "opt-show-qmeta", "filter-hide-pron", "auto-reveal"]);
 let _modeSettingTimer = null;
 function scheduleModeSettingSave() {
+  if (!_applyingSnapshot && !_panelLent && !$("#category-filters .category-group")) _filtersEarly = true;   // the tree's restore leaves it alone
   clearTimeout(_modeSettingTimer);
   _modeSettingTimer = setTimeout(() => { _modeSettingTimer = null; if ($("#category-filters .category-group")) saveFilterState(); else saveModeSettingsOnly(); }, 250);
 }
@@ -4494,6 +4506,9 @@ function setMode(mode) {
   const type = mode === "tossups" ? "tossups" : "bonuses";
   $("#practice-title").textContent = practicePageTitle(mode);
   updateTopbar();
+  // the saved Setup at once (it's local), not only after the tree and the sets have loaded
+  _filtersEarly = false;
+  restoreFilterState();
   // Two async chains both call restoreFilterState; apply a pending packet-play
   // only after BOTH settle, or the later restore clobbers the selection.
   Promise.all([
@@ -4504,7 +4519,7 @@ function setMode(mode) {
       $("#category-filters")?.classList.toggle("weights-on", !!state.settings.useWeights);
       refreshCategorySummary();
     }),
-  ]).then(() => { restoreFilterState(); applyPendingPacketPlay(); applyCustomView(); clearPrefetch(); warmOrdered(); });   // preload for the restored Setup
+  ]).then(() => { restoreFilterState(); settleEarlyFilters(); applyPendingPacketPlay(); applyCustomView(); clearPrefetch(); warmOrdered(); });   // preload for the restored Setup
   updateModeFields();
   initGameplayControls();
   updateKeyLabels();
@@ -7322,7 +7337,9 @@ function renderHistoryPanel() {
             ? '<span class="pill pill-red">' + pts + '</span>'
             : '<span class="pill">' + pts + '</span>'))
       : '<span class="pill pill-green">' + pts + '</span>';
-    const celMarker = isTossup ? `<span class="qcard-note">cel ${celPct}%</span>` : "";
+    // celerity only for a buzz (a skip, a dead tossup or a room's no-buzz has none)
+    const buzzed = isTossup && e.buzzPosition != null && e.userAnswer !== "(skipped)" && e.userAnswer !== "(no buzz)";
+    const celMarker = buzzed ? `<span class="qcard-note">cel ${celPct}%</span>` : "";
     const answer = answerLineHtml(
       e.question?.answer || (() => { try { return JSON.parse(e.question?.answers || "[]").join(" / "); } catch { return ""; } })(),
       e.answer || (e.answers ? e.answers.join(" / ") : "") || e.question?.answer_sanitized || ""
@@ -12518,8 +12535,12 @@ function searchDatabase(opts) {
   syncDbTabActive();
 }
 // The primary part of a rendered answer line ("Ibsen, Henrik [or …]" → "Ibsen, Henrik").
+// the answer up to its first bracket, but one it opens with stays ("(pseudo-)random number (generation)" →
+// "(pseudo-)random number", where cutting there left nothing)
 function primaryAnswerText(s) {
-  return String(s || "").replace(/^answer:\s*/i, "").split(/[\[(]/)[0].trim().replace(/[;:,.]+$/, "");
+  const t = String(s || "").replace(/^answer:\s*/i, "").trim();
+  const i = t.search(/.[\[(]/);
+  return (i < 0 ? t : t.slice(0, i + 1)).trim().replace(/[;:,.]+$/, "");
 }
 
 function searchFromFrequency(answer, qtype) {

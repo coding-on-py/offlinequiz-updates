@@ -84,6 +84,8 @@ function apFold(s) {
 // out) is lifted from the renderer's app.js — like mpserver/qtext.mjs — then the plugin kit's
 // note / guide stripping, tokens and n-grams, ported as they are.
 const BW_VERSION = 1;
+// a scan or list scoped to categories also carries the category rule it was made by (database.js _catRidsSql, 15.35)
+const CAT_RULE = 3;
 const BW_APP_FNS = ["_ENT", "decodeEntities", "htmlStyleRuns", "NOTE_RUN_LABEL", "noteRunsFromHtml", "foldLikeSanitized", "cutNotesUsingHtml",
   "NOTE_AUDIENCE", "noteMentionsPlayers", "stripModeratorNotes", "applyNoteFilter", "PRON_ACRONYMS", "PRON_KEEP_WORDS", "stripPronunciations", "questionPlainText"];
 const _bwLifted = new Map();
@@ -388,7 +390,8 @@ export class App {
   }
 
   getCategoryTree(type) {
-    return this.questionDb.getCategoryTree(type === "bonuses" ? "bonuses" : "tossups");
+    // the subtree counts, when counted here, kept beside the frequency lists for this build
+    return this.questionDb.getCategoryTree(type === "bonuses" ? "bonuses" : "tossups", this.freqCacheDir ? join(this.freqCacheDir, "cat-counts.json") : null);
   }
 
   getDbInfo() {
@@ -411,7 +414,8 @@ export class App {
     if (isNaN(cv.hi)) cv.hi = 100;
     if (cv.lo > cv.hi) [cv.lo, cv.hi] = [cv.hi, cv.lo];
     const f = { ...filters }; delete f.limit; delete f.offset; delete f.random; delete f.sort;
-    const key = JSON.stringify([BW_VERSION, f, cv]);
+    const scoped = !!((f.categoryIds && f.categoryIds.length) || (f.categories && f.categories.length));
+    const key = JSON.stringify([BW_VERSION, f, cv, ...(scoped ? [CAT_RULE] : [])]);
     this._bwCache = this._bwCache || new Map();
     const hit = this._bwCache.get(key);
     if (hit) { this._bwCache.delete(key); this._bwCache.set(key, hit); return hit; }
@@ -636,7 +640,7 @@ export class App {
     const dir = join(this.freqCacheDir, "freq-cache");
     const build = String(this.getDbInfo().built || "v1").replace(/[^A-Za-z0-9_.-]/g, "_");
     const prefix = `${FREQ_VERSION}-${build}-`;
-    const pick = ids && ids.length ? "-" + createHash("sha1").update(ids.join(",")).digest("hex").slice(0, 16) : "";
+    const pick = ids && ids.length ? "-" + createHash("sha1").update(ids.join(",") + "|" + CAT_RULE).digest("hex").slice(0, 16) : "";
     const name = `${prefix}${qtype}${pick}.json`;
     try {
       if (!list) { const l = JSON.parse(readFileSync(join(dir, name), "utf8")); return Array.isArray(l) ? l : null; }
