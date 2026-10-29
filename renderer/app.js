@@ -245,11 +245,16 @@ function cmpVer(a, b) {
 // Peek at the app update WITHOUT downloading: read the currently-installed
 // overlay version via IPC, then fetch the remote manifest and compare.
 async function peekAppUpdate() {
+  // only the desktop app has an app to update (the website, an offline room's page and the dev server never do)
+  if (!isElectron) return { dev: true };
   let info = null;
   try { info = await API.get("/api/app-update-info"); } catch (e) {}
   if (info && info.dev) return { dev: true };
   if (info && info.configured === false) return { configured: false };
-  const have = info && info.version != null ? info.version : 0;
+  // no answer about the installed version (an error, a server restarting): say nothing. Counting it as 0 offered
+  // every release as new.
+  if (!info || info.error || info.version == null) return { error: "no installed version" };
+  const have = info.version;
   let manifest;
   try {
     const res = await fetch(APP_UPDATE_MANIFEST_URL, { cache: "no-store" });
@@ -2225,6 +2230,7 @@ let _lastActive = Date.now(), _idleReminded = false;
 );
 const IDLE_REMIND_MS = 30 * 60 * 1000;
 async function _maybeIdleUpdateReminder() {
+  if (!isElectron) return;   // the website has no app to update
   if (_idleReminded || Date.now() - _lastActive < IDLE_REMIND_MS) return;
   if (document.getElementById("update-dialog")) return;   // one is already up
   _idleReminded = true;   // one attempt per idle stretch, even on errors
@@ -9263,9 +9269,10 @@ $("#btn-app-update")?.addEventListener("click", async () => {
 
 async function syncAppUpdateUI() {
   try {
-    const info = await API.get("/api/app-update-info");
     const sec = $("#app-update-section"); if (!sec) return;
-    if (info.dev) { sec.style.display = "none"; return; }
+    if (!isElectron) { sec.style.display = "none"; return; }   // the website has no app to update
+    const info = await API.get("/api/app-update-info");
+    if (!info || info.dev) { sec.style.display = "none"; return; }
     const auto = $("#opt-app-autoupdate"); if (auto) auto.checked = localStorage.getItem("qb-app-autoupdate") !== "false";
     const crit = $("#opt-app-critical-auto"); if (crit) crit.checked = localStorage.getItem("qb-app-critical-auto") !== "false";
     const status = $("#app-update-status");
@@ -14737,6 +14744,7 @@ async function maybeAutoCheckAppUpdate() {
 }
 
 function showUpdateDialog(info, opts) {
+  if (!isElectron) return;   // never on the website (it updates by itself)
   document.getElementById("update-dialog")?.remove();
   const el = document.createElement("div");
   el.id = "update-dialog";
