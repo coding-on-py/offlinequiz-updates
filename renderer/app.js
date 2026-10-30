@@ -9869,13 +9869,27 @@ function apClassCount(classMap, lock) {
 const ACH_ART = /^(?:the|a|an) /;
 const ACH_GENERIC = new Set(["ocean", "sea", "river", "dynasty", "empire", "war", "lake", "mount", "mountains", "national", "park", "desert", "island", "islands", "peninsula", "kingdom"]);
 const achSing = (w) => (w.length > 4 && /[^s]s$/.test(w) ? w.slice(0, -1) : w);
+// a name's words (article off, each singular), worked out once: achAnsHit runs for every achievement × powered
+// question × name (1.2 s of the Profile page's 3.5 on 100,000 answers, splitting the same strings again and again)
+const _achWords = new Map();
+function achWordsOf(s) {
+  let w = _achWords.get(s);
+  if (!w) {
+    const n = s.replace(ACH_ART, ""), ws = n.split(" ").map(achSing);
+    w = { n, ws, j: ws.join(" ") };
+    if (_achWords.size > 50000) _achWords.clear();
+    _achWords.set(s, w);
+  }
+  return w;
+}
 function achAnsHit(ans, target, person) {
   if (!ans || !target) return false;
   if (ans === target) return true;
-  const a = ans.replace(ACH_ART, ""), t = target.replace(ACH_ART, "");
+  const A = achWordsOf(ans), T = achWordsOf(target);
+  const a = A.n, t = T.n;
   if (a === t) return true;
-  const aw = a.split(" ").map(achSing), tw = t.split(" ").map(achSing);
-  if (aw.join(" ") === tw.join(" ")) return true;
+  const aw = A.ws, tw = T.ws;
+  if (A.j === T.j) return true;
   // more of the same name ("emily elizabeth dickinson"), never a different thing that shares a word
   if (tw.length >= 2 && aw.length <= tw.length + 2 && tw.every((w) => aw.includes(w))) return true;
   // the main answer is the line's required part: a person's surname ("poe" for "edgar allan poe"), or the name
@@ -9898,7 +9912,9 @@ function achRecordHit(ach, rec) {
   const topics = achList(ach.topic), groups = achGroups(ach);
   const inTopic = topics.length > 0 && achPathIn(rec.p, topics);
   if (!groups.length) return inTopic ? 0 : -1;
-  const within = ach.within === "*" ? [] : achList(ach.within || achCatOf(ach));
+  // (kept on the achievement, as achGroups does: worked out per record it was a prefix scan per powered question)
+  if (ach._within === undefined) ach._within = ach.within === "*" ? [] : achList(ach.within || achCatOf(ach));
+  const within = ach._within;
   // the main answer, or another name the line gives for it (15.5: "Gaussian distribution" on a normal distribution line)
   const hit = (x) => achAnsHit(rec.a, x.t, x.person) || (rec.alts ? rec.alts.some((n) => achAnsHit(n, x.t, x.person)) : false);
   const g = within.length && !achPathIn(rec.p, within) ? -1 : groups.findIndex((gr) => gr.some(hit));
@@ -13732,16 +13748,20 @@ function tipInto(container, id, text, ref) {
   if (!container || !(id in TIPS || text) || tipSeen(id)) return null;
   const dock = tipDock();
   let el = dock.querySelector(`.qb-tip[data-tip-id="${id}"]`);
-  if (el) { el._owner = container; tipSync(); return el; }   // re-rendered: the same tip follows the new element
+  if (el) { el._owner = container; tipSyncSoon(); return el; }   // re-rendered: the same tip follows the new element
   el = document.createElement("div");
   el.className = "qb-tip"; el.dataset.tipId = id; el.setAttribute("role", "note"); el.hidden = true;
   el.innerHTML = `<span class="qb-tip-ico">${ic("bulb", 18)}</span><div class="qb-tip-body"><b>Tip</b><p>${escapeHtml(text || TIPS[id])}</p></div><button type="button" class="qb-tip-x" aria-label="Close tip" title="Close">×</button>`;
   el.querySelector(".qb-tip-x").addEventListener("click", (e) => { e.stopPropagation(); tipDone(id); animateRemove(el); setTimeout(tipSync, 200); });
   el._owner = container;
   dock.appendChild(el);
-  tipSync();
+  tipSyncSoon();
   return el;
 }
+// tipSync measures what's on screen: called while a page is being drawn, it laid the half-drawn page out (136 ms
+// on a big Statistics page, every time it asked for its tip). Once per frame, after the drawing
+let _tipSyncRaf = 0;
+function tipSyncSoon() { if (!_tipSyncRaf) _tipSyncRaf = requestAnimationFrame(() => { _tipSyncRaf = 0; tipSync(); }); }
 const tipOwnerShown = (o) => {
   if (!o || !o.isConnected || !o.getClientRects().length) return false;
   const st = getComputedStyle(o); if (st.visibility === "hidden") return false;
