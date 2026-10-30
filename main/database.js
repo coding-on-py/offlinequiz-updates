@@ -783,6 +783,23 @@ export class QuestionDatabase {
     return out;
   }
 
+  // topicPairs for several roles from one read of the questions' tags ({ role: [[id, tid], …] }): topicStats asked
+  // for three roles of the same questions, three reads (0.7 s of its 1.5 on 16,000 questions)
+  topicPairsRoles(type, ids, roles) {
+    const out = {};
+    for (const r of roles) out[r] = [];
+    if (!this.hasTopics) return out;
+    const isBonus = type === "bonus", table = isBonus ? "bonuses" : "tossups", masks = roles.map((r) => [r, ROLE_MASK[r] || 31]);
+    const list = [...new Set((ids || []).map(String))];
+    for (let i = 0; i < list.length; i += 500) {
+      const chunk = list.slice(i, i + 500);
+      for (const r of this.db.prepare(`SELECT q.id, g.tid, g.src FROM ${table} q JOIN qtags g ON g.qt = ${isBonus ? 1 : 0} AND g.rid = q.rowid WHERE q.id IN (${chunk.map(() => "?").join(",")})`).all(...chunk)) {
+        for (const [role, m] of masks) if ((r.src & m) !== 0) out[role].push([r.id, r.tid]);
+      }
+    }
+    return out;
+  }
+
   // Every matching tossup's text and answer, one row at a time (Buzzwords' scan, index.js
   // buzzwordsApi): just the columns it reads, no sorting.
   iterateTossupText(filters = {}) {

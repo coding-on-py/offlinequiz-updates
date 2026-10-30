@@ -207,6 +207,12 @@ function bwHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h = 
 // "a,b" or ["a","b"] -> ["a","b"]
 const listParam = (v) => (Array.isArray(v) ? v : String(v == null ? "" : v).split(",")).map((x) => String(x).trim()).filter(Boolean);
 
+
+// A powered question's main answer (folded), its other names and its category path never change for one question
+// database: getAnswerPowers works them out once per question for the process (every visitor's on the website), not
+// on every request (12,000 powers: 0.5 s of reading questions each time, 1.4 s the first)
+const _apQ = new Map();
+let _apQDb = null;
 export class App {
   
 
@@ -583,9 +589,10 @@ export class App {
       const a = tiers.get(tier) || { tier, heard: 0, correct: 0, powers: 0 };
       a.heard += o.heard; a.correct += o.correct; a.powers += o.powers; tiers.set(tier, a);
     }
+    const pairs = db.topicPairsRoles ? db.topicPairsRoles("tossup", ids, ["about", "theme", "answer"]) : null;
     const tally = (role) => {
       const acc = new Map();
-      for (const [qid, tid] of db.topicPairs("tossup", ids, role)) {
+      for (const [qid, tid] of pairs ? pairs[role] : db.topicPairs("tossup", ids, role)) {
         const o = per.get(qid); if (!o) continue;
         const a = acc.get(tid) || { tid, heard: 0, correct: 0, powers: 0, questions: 0 };
         a.heard += o.heard; a.correct += o.correct; a.powers += o.powers; a.questions++; acc.set(tid, a);
@@ -601,7 +608,8 @@ export class App {
     // canon answers still missed (last time wrong), most common answers first
     const missedIds = ids.filter((id) => per.get(id).lastWrong && canonOf.get(id) && ["core", "common"].includes(canonOf.get(id)));
     const missed = new Map();
-    for (const [qid, tid] of db.topicPairs("tossup", missedIds, "answer")) { const a = missed.get(tid) || { tid, misses: 0 }; a.misses++; missed.set(tid, a); }
+    const missedSet = new Set(missedIds);
+    for (const [qid, tid] of pairs ? pairs.answer.filter((p) => missedSet.has(p[0])) : db.topicPairs("tossup", missedIds, "answer")) { const a = missed.get(tid) || { tid, misses: 0 }; a.misses++; missed.set(tid, a); }
     const mm = db._tagsByTid([...missed.keys()]);
     return { available: true, heard: ids.length, tiers: ["core", "common", "uncommon", "rare", "unique"].map((t) => tiers.get(t) || { tier: t, heard: 0, correct: 0, powers: 0 }),
       strong: best(about), weak: worst(about), themesStrong: best(themes), themesWeak: worst(themes),
@@ -1522,26 +1530,31 @@ export class App {
     // 15.5: every other name the answer line gives ("normal distribution [Gaussian distribution; accept bell curve]"):
     // an answer power counts when the line names its target, not only by its required part ("normal")
     const alts = {};
+    if (_apQDb !== this.questionDb) { _apQ.clear(); _apQDb = this.questionDb; }
     for (const qid of ids) {
-      let t;
-      try { t = this.questionDb.getTossup(qid); } catch (e) { t = null; }
-      if (!t) continue;
-      let head;
-      try { head = primaryAnswer(t.answer || "", t.answer_sanitized || ""); } catch (e) { head = ""; }
-      const norm = apFold(head || t.answer_sanitized || t.answer || "");
-      if (!norm) continue;
-      // (a question's names never change: worked out once per question, kept for the process)
-      const ac = this._apAltCache || (this._apAltCache = new Map());
-      let names = ac.get(qid);
-      if (names === undefined) {
-        try { names = [...new Set((parseDirectives(t.answer || "", t.answer_sanitized || "").accept || []).map(apFold).filter((n) => n && n !== norm))].slice(0, 12); } catch (e) { names = []; }
-        if (ac.size > 50000) ac.clear();
-        ac.set(qid, names);
+      let q = _apQ.get(qid);
+      if (q === undefined) {
+        q = null;
+        let t;
+        try { t = this.questionDb.getTossup(qid); } catch (e) { t = null; }
+        if (t) {
+          let head;
+          try { head = primaryAnswer(t.answer || "", t.answer_sanitized || ""); } catch (e) { head = ""; }
+          const norm = apFold(head || t.answer_sanitized || t.answer || "");
+          if (norm) {
+            let names;
+            try { names = [...new Set((parseDirectives(t.answer || "", t.answer_sanitized || "").accept || []).map(apFold).filter((n) => n && n !== norm))].slice(0, 12); } catch (e) { names = []; }
+            // class = the question's category PATH (achievements match by prefix)
+            q = { norm, names, ck: t.category_path || [t.category, t.subcategory, t.alternate_subcategory].filter(Boolean).join(" > ") };
+          }
+        }
+        if (_apQ.size > 60000) _apQ.clear();
+        _apQ.set(qid, q);
       }
+      if (!q) continue;
+      const { norm, names, ck } = q;
       if (names.length) alts[qid] = names;
       counts[norm] = (counts[norm] || 0) + 1;
-      // class = the question's category PATH (achievements match by prefix)
-      const ck = t.category_path || [t.category, t.subcategory, t.alternate_subcategory].filter(Boolean).join(" > ");
       const cm = classes[norm] || (classes[norm] = {});
       cm[ck] = (cm[ck] || 0) + 1;
       const qm = questions[norm] || (questions[norm] = {});
