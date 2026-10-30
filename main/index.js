@@ -574,7 +574,7 @@ export class App {
     const db = this.questionDb;
     if (!db.hasTopics) return { available: false };
     const per = new Map();   // question id -> { heard, correct, powers, lastWrong }
-    for (const e of this._relabel(this.userData.getAllSessionEntries())) {
+    for (const e of this._historyAll()) {
       if (!e || e.type !== "tossup" || !e.question_id || e.skipped || e.given_answer === "(skipped)") continue;
       const o = per.get(e.question_id) || { heard: 0, correct: 0, powers: 0, last: 0, lastWrong: false };
       o.heard++; if (e.correct) o.correct++; if (e.correct && e.points >= 15) o.powers++;
@@ -917,7 +917,7 @@ export class App {
     const wantNegs = opts.negs !== false;
     const wantUnanswered = opts.unanswered !== false;
     const wantWrongEnd = opts.wrongEnd !== false;
-    const entries = this._relabel(this.userData.getAllSessionEntries());
+    const entries = this._historyAll();
     const byQ = new Map();
     for (const e of entries) {
       if (e.type !== "tossup" || !e.question_id) continue;
@@ -1102,7 +1102,7 @@ export class App {
   getAllSessionEntries(opts = {}) {
     const fields = opts && opts.fields ? (Array.isArray(opts.fields) ? opts.fields : String(opts.fields).split(",")).map((f) => String(f).trim()).filter(Boolean) : null;
     const pick = (list) => (fields && fields.length ? list.map((e) => { const o = {}; for (const f of fields) if (e[f] !== undefined) o[f] = e[f]; return o; }) : list);
-    const entries = this._relabel(this.userData.getAllSessionEntries());
+    const entries = this._historyAll();
     if (!opts || !opts.answers) return pick(entries);
 
     const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -1155,7 +1155,7 @@ export class App {
     const list = this.userData.getSessionList();
     try {
       const bySession = new Map();
-      for (const e of this._relabel(this.userData.getAllSessionEntries())) {
+      for (const e of this._historyAll()) {
         if (!e.session_id) continue;
         const set = bySession.get(e.session_id) || new Set();
         if (e.category) set.add(e.category);
@@ -1174,9 +1174,26 @@ export class App {
   }
 
   getOverallStats(since, categoryIds) {
-    let entries = this.userData.getAllSessionEntries();
+    let entries = this._historyAll();
     if (since) entries = entries.filter((e) => (e.timestamp || 0) >= since);
-    return computeStats(this._inCategories(this._relabel(entries), categoryIds));
+    return computeStats(this._inCategories(entries, categoryIds));
+  }
+
+  // Every answer of the active profile, relabeled. Statistics' requests (stats, sessions, breakdown, topics, review)
+  // each read all of it: 0.6 s apiece on 100,000 answers. The desktop app keeps it 20 s, until anything is written
+  // (the connection's total_changes, another's data_version) or the question database changes; the website (many
+  // profiles, one memory budget) doesn't (server.js: historyCache false). Readers never change the entries
+  _historyAll() {
+    const ud = this.userData;
+    if (this.historyCache === false) return this._relabel(ud.getAllSessionEntries());
+    let key = null;
+    try { key = ud.getActiveProfileId() + "|" + ud.db.prepare("SELECT total_changes() AS n").get().n + "|" + ud.db.prepare("PRAGMA data_version").get().data_version; } catch { key = null; }
+    const c = this._histCache;
+    if (key && c && c.key === key && c.ud === ud && c.qdb === this.questionDb && Date.now() - c.at < 20e3) return c.entries;
+    const entries = this._relabel(ud.getAllSessionEntries());
+    this._histCache = key ? { key, ud, qdb: this.questionDb, at: Date.now(), entries } : null;
+    if (this._histCache) { clearTimeout(this._histT); this._histT = setTimeout(() => { this._histCache = null; }, 21e3); if (this._histT.unref) this._histT.unref(); }
+    return entries;
   }
 
   // Relabeled entries inside the picked category subtrees (node ids, array or
@@ -1585,7 +1602,7 @@ export class App {
   // cat index]] }, flags 1 a bonus, 2 a power, 4 a neg
   getAchievementTimeline() {
     const cats = [], idx = new Map(), rows = [];
-    for (const e of this._relabel(this.userData.getAllSessionEntries())) {
+    for (const e of this._historyAll()) {
       if (!e || !(Number(e.timestamp) > 0)) continue;
       const k = (e.category || "") + "\u0001" + (e.category_path || "");
       let i = idx.get(k);
@@ -1599,7 +1616,7 @@ export class App {
 
   getSessionBreakdown(category, difficulty, categoryIds) {
     const sessions = this.userData.getSessionList();
-    const allEntries = this._inCategories(this._relabel(this.userData.getAllSessionEntries()), categoryIds);
+    const allEntries = this._inCategories(this._historyAll(), categoryIds);
     return computeSessionBreakdown(sessions, allEntries, { category, difficulty });
   }
 
