@@ -1254,7 +1254,11 @@ export class App {
       // a trial is that category alone: every category a question covers lies inside it (catMode "pure"). Where
       // that's short (Miscellaneous II: most Misc questions also carry a second category), questions whose main
       // category is this one fill the rest, shuffled in
-      const pick = (catMode) => ((this.questionDb.queryTossups({ categoryIds: [node.id], catMode, difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN }) || {}).rows || []).map((q) => q.id).filter(Boolean);
+      // ten different answers (a level's ten had Jason twice and Poseidon twice): a few more drawn, one of each answer kept
+      const seen = new Set();
+      const answerKey = (q) => { let a = ""; try { a = primaryAnswer(q.answer || "", q.answer_sanitized || ""); } catch {} return frequencyKey(a || String(q.answer_sanitized || "").split(/[\[(]/)[0]) || String(q.id); };
+      const pick = (catMode) => ((this.questionDb.queryTossups({ categoryIds: [node.id], catMode, difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN * 3 }) || {}).rows || [])
+        .filter((q) => { if (!q.id) return false; const k = answerKey(q); if (seen.has(k)) return false; seen.add(k); return true; }).map((q) => q.id).slice(0, TRIAL_LEN);
       let ids = pick("pure");
       if (ids.length < TRIAL_LEN) {
         ids = [...new Set([...ids, ...pick("home")])].slice(0, TRIAL_LEN);
