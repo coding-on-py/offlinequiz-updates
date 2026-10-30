@@ -2601,6 +2601,7 @@ function __qbMain(ctx) {
     // this player can't buzz again on this question (their wrong answer, or their team's, with rebuzzes
     // off): the question it happened on — a new question frees them
     var lockedOn = null;
+    var outIds = {}, outTeams = {};   // this question: other players out after a wrong answer (rivalCanBuzz)
     function lockedOut() {
       if (!current) return false;
       if (lockedOn && lockedOn === current) return true;
@@ -2685,8 +2686,10 @@ function __qbMain(ctx) {
     // every other "<…>" is text, and entities are decoded once then escaped
     // (so "&lt;" shows as "<", never as "&lt;").
     function ansHtml(raw, fallback) {
+      // the app's own (notes hidden as this player has it, <sub> kept: "CrO<sub>4</sub>" showed its tags)
+      if (typeof answerLineHtml === "function") return answerLineHtml(raw, fallback);
       var src = (raw && String(raw).trim()) ? String(raw) : String(fallback || "");
-      var html = src.split(/(<\/?(?:b|u|i|em|strong|sup)>)/i).map(function (part, i) {
+      var html = src.split(/(<\/?(?:b|u|i|em|strong|sup|sub)>)/i).map(function (part, i) {
         return i % 2 ? part.toLowerCase() : esc(decodeEntities(part));
       }).join("");
       // auto-close unbalanced tags so a stray <u> can't underline the page
@@ -3791,15 +3794,15 @@ function __qbMain(ctx) {
       else if (d.t === "more") { if (current && typeof d.text === "string") current.text += d.text; }
       else if (d.t === "status") { setStatus(d.text || ""); }
       else if (d.t === "needConfig") { sendRoomConfig(true); }
-      else if (d.t === "question") { clearOptBuzz(); stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
+      else if (d.t === "question") { clearOptBuzz(); outIds = {}; outTeams = {}; stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
       else if (d.t === "read") { if (d.speed) pendingBuzzer = null; clientStartRead(d.from, d.speed); }
       else if (d.t === "reveal") { revealIdx = d.index; applyReveal(d.index); }  // legacy hosts
       else if (d.t === "buzz") {
         var early = optBuzz; clearOptBuzz(); pendingBuzzer = d.id || null;
         stopClientRead(); if (typeof d.index === "number") { revealIdx = d.index; applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyBuzz(d.id, d.name, d.index, answerDeadline);
         if (early && d.id === myId) {   // typed (or entered) before the room said it was ours
-          var inp0 = body && body.querySelector("#mp-ans-input"), typed = early.answer != null ? early.answer : early.typed.replace(/^\s+/, "");
-          if (inp0 && typed) { inp0.value = typed; sendTyping(typed); }
+          var inp0 = body && body.querySelector("#mp-ans-input"), typed = early.answer != null ? early.answer : early.typed.replace(/^\s+/, "") || (early.boxed && inp0 ? inp0.value : "");
+          if (inp0 && typed) { inp0.value = typed; resetTyping(); sendTyping(typed); }
           if (early.answer != null) { stopAutoSub(); if (inp0) inp0.disabled = true; submitAnswer(early.answer); }
         }
       }
@@ -3810,7 +3813,7 @@ function __qbMain(ctx) {
         stopClientRead(); clearOptBuzz(); pendingBuzzer = null;
         if (current && d.qid) current.id = d.qid;   // a server room names the question only now
         // a wrong answer with rebuzzes off locks its player (and their team) out of this question
-        if (!d.correct && !d.noBuzz && d.id && !settings.rebuzz && current) { var bz = players[d.id], me0 = players[myId]; if (d.id === myId || (bz && me0 && bz.team && bz.team === me0.team)) lockedOn = current; }
+        if (!d.correct && !d.noBuzz && d.id && !settings.rebuzz && current) { var bz = players[d.id], me0 = players[myId]; if (d.id === myId || (bz && me0 && bz.team && bz.team === me0.team)) lockedOn = current; outIds[d.id] = 1; if (bz && bz.team) outTeams[bz.team] = 1; }
         if (current && d.fullText && d.fullText.length > current.text.length) current.text = d.fullText; if (typeof d.index === "number" && !d.ended) revealIdx = d.index; buzzHistory = d.history || buzzHistory; if (d.ended) ended = true; applyResult(d); renderBuzzes(); }
       else if (d.t === "reading") { /* the host's "read" message restarts the local ticker */ }
       else if (d.t === "pause") { paused = d.paused; if (typeof d.idx === "number") { revealIdx = d.idx; applyReveal(revealIdx); } applyPause(d.paused); }
@@ -3848,7 +3851,7 @@ function __qbMain(ctx) {
 
     // ── local actions (sent to host or handled if host) ──
     function requestBuzz() {
-      if (!current || ended || lockedOut() || pendingBuzzer) return;   // locked out / someone answering: no buzz (and no answer box flashing open)
+      if (!current || ended || lockedOut() || pendingBuzzer || paused) return;   // locked out / someone answering / paused (the room takes no buzz): no buzz (and no answer box flashing open)
       if (inDiag() && players[myId] && players[myId].spec) return;   // a diagnostic's host who isn't playing
       if (players[myId] && players[myId].spec) { ctx.toast("Spectators can't buzz", "error"); return; }
       if (settings.tournament && !(players[myId] && players[myId].team)) { setStatus("Join a team to play"); return; }
@@ -3863,12 +3866,22 @@ function __qbMain(ctx) {
         stopClientRead();
         optBuzz = { idx: revealIdx, at: Date.now(), speed: lastReadSpeed, typed: "", answer: null };
         clearTimeout(optBuzzT); optBuzzT = setTimeout(undoOptBuzz, 2500);
+        // nobody else can buzz (alone, or the others out, watching or away): no race to lose, so the box opens now
+        if (!paused && !bonusView && !rivalCanBuzz()) { optBuzz.boxed = true; applyBuzz(myId, myName, revealIdx, Date.now() + (settings.answerSeconds || 10) * 1000, true); }
         syncActions();
       }
+    }
+    // someone else who could still buzz this question: here, playing (on a team in a tournament), not out after a wrong answer
+    function rivalCanBuzz() {
+      return order.some(function (id) {
+        var p = players[id];
+        return id !== myId && !!p && !p.spec && !p.off && !outIds[id] && !(p.team && outTeams[p.team]) && !(settings.tournament && !p.team);
+      });
     }
     function clearOptBuzz() { clearTimeout(optBuzzT); optBuzzT = null; optBuzz = null; }
     function undoOptBuzz() {
       var o = optBuzz; clearOptBuzz();
+      if (o && o.boxed && !pendingBuzzer) { var bz0 = body && body.querySelector("#mp-buzz"); if (bz0) { bz0.className = "buzz-area hidden"; bz0.innerHTML = ""; } stopTick(); }   // the box opened at the press closes
       if (!o || pendingBuzzer || !current || ended) { syncActions(); return; }
       if (o.speed) clientStartRead(Math.min(current.text.length, o.idx + Math.floor((Date.now() - o.at) / o.speed)), o.speed);
       syncActions();
@@ -5609,7 +5622,7 @@ function __qbMain(ctx) {
         var grab = function () { try { inp.focus({ preventScroll: true }); } catch (e2) { inp.focus(); } };
         grab(); requestAnimationFrame(grab); setTimeout(grab, 120);
         resetTyping();
-        inp.addEventListener("input", function () { sendTyping(inp.value); });
+        inp.addEventListener("input", function () { if (!optBuzz) sendTyping(inp.value); });
         inp.addEventListener("keydown", function (e) {
           if (e.key !== "Enter") return;
           stopAutoSub(); inp.disabled = true;
@@ -5716,7 +5729,7 @@ function __qbMain(ctx) {
         _endedCategory = d.category || "";
         endedPowerEnd = d.powerEnd != null ? d.powerEnd : (isHost ? curPowerEnd : 0);
         var meta = body && body.querySelector("#mp-meta");
-        if (meta && _endedCategory) meta.textContent = _endedCategory;
+        if (meta && _endedCategory) { meta.textContent = _endedCategory; meta.title = _endedCategory; }
       }
       if (typeof d.index === "number" && !d.noBuzz && d.id && !buzzCharMarks.some(function (m) { return m.pos === d.index && m.by === d.id; })) buzzCharMarks.push({ pos: d.index, by: d.id });
       // Each client records ITS OWN buzz to local stats — every ATTEMPT counts
@@ -5751,9 +5764,9 @@ function __qbMain(ctx) {
             : '<div class="result-banner incorrect">Nobody got it</div>';
         var canReport = !!(current && current.id && ctx.host && ctx.host.reportQuestion);
         res.innerHTML =
-          banner +
-          '<div class="result-answer">ANSWER: <span class="actual">' + ansHtml(d.answerRaw, d.answer || "") + "</span>" +
-          (canReport ? '<button type="button" class="mp-report" title="Report this question">Report</button>' : "") + "</div>";
+          banner + '<div class="result-answer">' + triesHtml() +
+          '<div class="ra-row"><span class="ra-k">Answer</span><span class="actual">' + ansHtml(d.answerRaw, d.answer || "") + "</span>" +
+          (canReport ? '<button type="button" class="mp-report" title="Report this question">Report</button>' : "") + "</div></div>";
         var n2 = res.querySelector("#mp-next2"); if (n2) n2.onclick = function () { requestNext(); };
         // report the question just read to the site's admins
         var rp = res.querySelector(".mp-report"), rq = current;
@@ -5761,9 +5774,21 @@ function __qbMain(ctx) {
         // the question's topic tags, now that it's over (topic tags on, app.js topics.js)
         if (current && current.id && window.QBTopics) window.QBTopics.resultPanel(res, { type: "tossup", question: { id: current.id }, blocks: "#mp-qtext" });
       } else {
-        res.className = "result-area hidden"; res.innerHTML = "";
+        // a wrong answer and the reading goes on: everyone sees what was said (and it stays there)
+        var tries = triesHtml();
+        res.className = tries ? "result-area" : "result-area hidden"; res.innerHTML = tries ? '<div class="result-answer">' + tries + "</div>" : "";
       }
       renderBuzzes();
+    }
+    // every answer given on this question, what each player said and what it scored ("Your answer" for this player's)
+    function triesHtml() {
+      var me = players[myId];
+      return buzzHistory.map(function (b) {
+        var pts = b.points || 0;
+        return '<div class="ra-row mp-try"><span class="ra-k">' + (me && b.name === me.name ? "Your answer" : esc(b.name || "")) + '</span>' +
+          '<strong class="ra-you ' + (b.correct ? "ok" : "bad") + '">' + (b.given ? esc(b.given) : '<span class="text-muted">(no answer)</span>') + '</strong>' +
+          '<span class="mp-try-pts">' + (pts > 0 ? "+" + pts : pts < 0 ? "\u2212" + -pts : "0") + "</span></div>";
+      }).join("");
     }
 
     // ── bonus phase (everyone): rendered under the tossup result. Parts are
@@ -5819,6 +5844,10 @@ function __qbMain(ctx) {
       }
       if (bonusView.done) html += '<div class="result-banner ' + (bonusView.got > 0 ? "correct" : "incorrect") + '" style="margin-top:2px">BONUS: ' + (bonusView.pts || 0) + "/" + (bonusView.max || bonusView.parts.length * 10) + "</div>";
       el.innerHTML = html;
+      // the part being played (then the bonus's total) comes on screen for everyone, above the bottom bar: below
+      // the tossup's topic tags it started out of sight
+      var curPart = bonusView.done ? el.lastElementChild : el.querySelectorAll(".mp-bpart")[bonusView.k];
+      if (curPart && window.qbFollowReading) setTimeout(function () { window.qbFollowReading(curPart, "mp-bonus", true); }, 30);   // after syncActions puts Next in the bar
       var inp = el.querySelector(".mp-binput");
       var myK = bonusView.k;   // pinned: a late submit must carry the part it answered
       if (inp) {

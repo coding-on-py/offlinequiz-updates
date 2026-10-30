@@ -3603,7 +3603,7 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
   .practice-actions .btn { flex: 1 1 0; height: 52px; padding: 0 10px; font-size: 15px; justify-content: center; }
   #practice-screen .question-area > .practice-actions { order: 99; margin-top: auto; }   /* below the bonus parts too */
-  #practice-screen :is(.result-area, .bonus-part) { scroll-margin: 12px 0 96px; }   /* clear of the bottom bar when scrolled to */
+  #practice-screen :is(.result-area, .bonus-part, #result-answer) { scroll-margin: 12px 0 96px; }   /* clear of the bottom bar when scrolled to */
   .mp-actions { position: sticky; bottom: 0; z-index: 6; margin: 8px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line-soft); flex-wrap: nowrap; }
   .mp-actions .btn { flex: 1 1 0; height: 52px; padding: 0 10px; font-size: 15px; justify-content: center; }
@@ -4299,9 +4299,27 @@ button.acct-row:hover { background: var(--raised); }
 .mp-room .question-area > #mp-buzz { order: 2; }
 .mp-room .question-area > #mp-result { order: 3; }
 .mp-room .question-area > .mp-history { order: 4; }
-.mp-room #mp-content:not(.hidden) #mp-meta { min-height: 19px; }
+.mp-room #mp-content:not(.hidden) #mp-meta { min-height: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* one line: a long category wrapped on a phone and pushed the question down at the end */
 .mp-room .question-content { flex: 0 0 auto; }   /* it stretched to fill the room's height, so anything appearing below (the buzz countdown, the result) shrank it and pulled the buttons up */
 @media (max-width: 760px) { .mp-room .question-area > .mp-actions { order: 98; } .mp-room .question-area > .mp-history { order: 99; } }
+/* practice and a room keep their scrollbar's room: the topic tags (or a long answer) made the page scroll, the
+   scrollbar took 10px and the question wrapped narrower */
+#practice-screen, .ext-page-body.mp-flush { scrollbar-gutter: stable; }
+/* practice bonuses: nothing above a part moves when its answer shows. The parts come right under the question and the
+   result (banner, set, tags) under them (it went in between and pushed the part just answered down past the bar), and
+   the "[N] Reveal Part B" hint (above the parts, in and out each part) goes: the bar's "Next part N" says it */
+#practice-screen .question-area > #bonus-parts-area { order: 1; }
+#practice-screen .question-area:has(> #bonus-parts-area:not(.hidden)) > #result-area { order: 2; }
+#bonus-next-hint { display: none !important; }
+/* the info above a practice question (category, difficulty, year) fills in when the question is over: on a phone it
+   wrapped onto new lines and pushed the question down, so there it stays empty and the result's row has it (.qm-dup) */
+.qmeta-row .qm-dup { display: contents; }
+@media (min-width: 761px) { .qmeta-row .qm-dup { display: none; } }
+@media (max-width: 760px) { #practice-screen .question-meta .qm-info { display: none !important; } }
+/* a room's answers on the question (multiplayer.js triesHtml): name, what they said in red or green, the points */
+.mp-try > .ra-k { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-try .mp-try-pts { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ra-row > .mp-report { margin-left: 0; align-self: center; }
 
 /* Players tab: your name and team edit in place; another team's row has Join */
 .mp-player .nm .mp-edit { all: unset; box-sizing: border-box; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; border-radius: 4px; }

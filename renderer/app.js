@@ -669,7 +669,11 @@ function questionMetaRowHtml(q, where, opts) {
   const o = opts || {};
   const src = o.src != null ? o.src : (q.set_name || "");
   const tags = tagChipsHtml(q, where);
-  const lead = (o.noCat ? "" : catBadgeHtml(qPathOf(q)) + yearBadgeHtml(q.set_year)) + (src ? `<span class="src">${escapeHtml(src)}</span>` : "");
+  // noCat: a phone still shows them here (.qm-dup, with the difficulty): its row above the question never fills in,
+  // as that pushed the question down at the end of every question (ui.css)
+  const d = parseInt(q.difficulty);
+  const dup = o.noCat ? `<span class="qm-dup">${catBadgeHtml(qPathOf(q))}${q.difficulty != null ? `<span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[d] || "")}">Diff ${escapeHtml(String(q.difficulty))}</span>` : ""}${yearBadgeHtml(q.set_year)}</span>` : "";
+  const lead = (o.noCat ? dup : catBadgeHtml(qPathOf(q)) + yearBadgeHtml(q.set_year)) + (src ? `<span class="src">${escapeHtml(src)}</span>` : "");
   return `<div class="qmeta-row">${lead}${tags ? (lead ? '<span class="vsep" aria-hidden="true"></span>' : "") + tags : ""}</div>`;
 }
 // Clicking any tag chip opens Database → Search with just that tag.
@@ -5599,7 +5603,9 @@ function syncPracticeActions() {
   const ra = document.getElementById("result-area"), shown = !!(state.resultAreaVisible && ra && !ra.classList.contains("hidden"));
   if (shown && !syncPracticeActions._shown && matchMedia("(max-width: 760px)").matches) {
     const qa = document.getElementById("question-area"); if (qa) qa.style.minHeight = "";
-    ra.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    // the verdict and the answer lines (not the whole result: taller than the screen with the tags, it scrolled the
+    // bonus part just answered out of sight)
+    (document.getElementById("result-answer") || ra).scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
   syncPracticeActions._shown = shown;
 }
