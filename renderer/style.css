@@ -6149,7 +6149,7 @@ button.adm-rwho:hover { background: var(--surface-2); border-color: var(--line);
 .ln-act .btn { display: inline-flex; align-items: center; gap: 6px; }
 .ln-err { margin: 0; color: var(--red); font-size: 12.5px; }
 .ln-err:empty { display: none; }
-@media (max-width: 600px) { .ln-page { padding-inline: 16px; } .ln-card { padding: 18px; } .share-row { flex-direction: column; } }
+@media (max-width: 600px) { .ln-page { padding-inline: 0; } .ln-card { padding: 18px; } .share-row { flex-direction: column; } }   /* (the container has the gutter: the card sat 16px inside the title) */
 
 /* the policies (web/legal.mjs): the home screen's footer, the sign-up line (15.10) */
 .home-foot { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; width: fit-content; max-width: 100%; margin: 22px auto 0; padding: 8px 18px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--bg) 82%, transparent); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); font-size: 12px; }

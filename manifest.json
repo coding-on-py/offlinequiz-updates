@@ -1,5 +1,5 @@
 {
-  "version": "15.44",
+  "version": "15.45",
   "renderer": [
     "index.html",
     "style.css",
@@ -58,7 +58,7 @@
   "notes": "bug fixes",
   "files": {
     "renderer/index.html": "dea3491306afc6036fa317488becf52172778911fd2a4c24b4b3e68ca4ab52a5",
-    "renderer/style.css": "da96499823196d42478f663175bbd4ec251a76594f2f2c10a4c6e1b7085a2da2",
+    "renderer/style.css": "90f90c02b218162836e53fcca6aaca175f18d3f57feb257730adbb9614348617",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "0e375116991a5c1cec37738fdee5b8be22c1e07cd0eb4b3624d62cea98679c0e",
     "renderer/app.js": "71830db796906d247f85b75c39061687b0335a16e731623415c02b982e0e5689",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/packet-builder.zip": "1932c45fc046b949267be9e7960939222ba0b9929ba6716fbe7626c5a7f7a9c6"
   },
-  "signature": "uxzzeNeFABkcGiVntGRK4thHpv8w+amSBGTMU/yxYtsaP7jf54rcv4LPA9X8RtCzsGRwBRlO2jnBaghygtsGAQ=="
+  "signature": "f5KVx8VkgfXN2Mkecc78bLToa5Vwgbt8umzkYaMKlGKcZQnGzseHbo7cy8OZpsejhDlRZsVNelZYFpkW3liuDw=="
 }
