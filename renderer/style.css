@@ -6559,6 +6559,7 @@ html.tb-tight:not(.shop-on) #tbm-store, html.lan .tbm-narrow { display: none !im
 /* the admins' pages line up with their title like every other page (they were narrower, the tabs indented further) */
 .adm-page { max-width: none; }
 .adm-page > .adm-tabs { padding-left: 0; padding-right: 0; max-width: none; }
+@media (max-width: 600px) { .adm-rpage { padding-inline: 0; } }   /* the container has the gutter (Reports had both: 40px) */
 /* phones: two events' boards at once (Halloween's stays to Nov 16, Thanksgiving's starts Nov 1) ran the periods past
    the screen ("Than…"): they wrap onto a second row */
 @media (max-width: 600px) { .lb-periods { flex-wrap: wrap; } }
@@ -6591,3 +6592,11 @@ html.tb-tight:not(.shop-on) #tbm-store, html.lan .tbm-narrow { display: none !im
   .qcard-head { flex-wrap: wrap; row-gap: 6px; }
   .qcard-head > .qcard-meta { flex: 1 1 calc(100% - 30px); }
 }
+/* phones: an account's head in the admins' Users gives the name the row (it stood three words to a column between
+   the avatar and Verified); the badges go under it */
+@media (max-width: 600px) {
+  .adm-uhead { flex-wrap: wrap; align-items: flex-start; }
+  .adm-uhead-txt { flex: 1 1 calc(100% - 62px); }
+  .adm-uhead > :not(.fr-av):not(.adm-uhead-txt) { margin-left: 62px; }
+}
+html.tb-nocrumb .tb-crumb { display: none; }

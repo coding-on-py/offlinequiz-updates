@@ -671,8 +671,8 @@
               <h3>Appearance</h3>
               <div class="stats-section" id="appearance-section">
                 <div class="setting-row hidden" id="ev-theme-row">
-                  <span class="setting-label">Theme</span>
-                  <select id="ev-theme" class="mode-input">
+                  <span class="setting-label">Event theme</span>
+                  <select id="ev-theme" class="mode-input" aria-label="Event theme">
                     <option value="event">Event</option>
                     <option value="default">Default</option>
                   </select>
@@ -861,7 +861,8 @@
   </div>
 
   <div id="layer-root"></div>
-  <script src="art_data.js"></script>
+  <!-- art_data.js (the old title-screen ASCII art) isn't loaded: the redesign never shows it (ui.css hides #title-art),
+       and it was 440 KB parsed on every visit. The file stays: it's one of the five files an app update carries. -->
   <script src="extensions.js"></script>
   <script src="app.js"></script>
 </body>

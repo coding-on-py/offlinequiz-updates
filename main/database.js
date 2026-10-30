@@ -622,17 +622,19 @@ export class QuestionDatabase {
     const words = (String(query || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).slice(0, 8);
     const kindList = Array.isArray(kinds) ? kinds.filter((k) => /^[a-z ]{2,20}$/.test(k)).slice(0, 12) : [];
     const kindSql = kindList.length ? ` AND v.kind IN (${kindList.map((k) => `'${k}'`).join(",")})` : "";
-    const cols = "v.id, v.name, v.kind, v.grp AS \"group\", v.aliases, v.qn, v.mn, v.an, v.ansn";
+    // a tag that is only ever the answer has question_count 0 in the release (44,598 of them): its answers are its questions
+    const QN = "(CASE WHEN v.qn > 0 THEN v.qn ELSE v.ansn END)";
+    const cols = `v.id, v.name, v.kind, v.grp AS "group", v.aliases, ${QN} AS qn, v.mn, v.an, v.ansn`;
     let rows, total;
     if (!words.length) {
       total = this.db.prepare(`SELECT COUNT(*) AS n FROM tag_vocab v WHERE 1${kindSql}`).get().n;
-      rows = this.db.prepare(`SELECT ${cols} FROM tag_vocab v WHERE 1${kindSql} ORDER BY v.qn DESC LIMIT ${lim} OFFSET ${off}`).all();
+      rows = this.db.prepare(`SELECT ${cols} FROM tag_vocab v WHERE 1${kindSql} ORDER BY ${QN} DESC LIMIT ${lim} OFFSET ${off}`).all();
     } else {
       const match = words.map((w) => `"${w}"*`).join(" ");
       const exact = words.join(" ");
       total = this.db.prepare(`SELECT COUNT(*) AS n FROM tag_fts f JOIN tag_vocab v ON v.tid = f.rowid WHERE tag_fts MATCH ?${kindSql}`).get(match).n;
       rows = this.db.prepare(`SELECT ${cols} FROM tag_fts f JOIN tag_vocab v ON v.tid = f.rowid WHERE tag_fts MATCH ?${kindSql}
-        ORDER BY (lower(v.name) = ?) DESC, v.qn DESC LIMIT ${lim} OFFSET ${off}`).all(match, exact);
+        ORDER BY (lower(v.name) = ?) DESC, ${QN} DESC LIMIT ${lim} OFFSET ${off}`).all(match, exact);
     }
     return { total, tags: rows.map((r) => {
       let aliases = []; try { aliases = JSON.parse(r.aliases || "[]"); } catch { aliases = []; }
@@ -655,7 +657,7 @@ export class QuestionDatabase {
       SELECT g.tid, COUNT(*) AS n FROM q JOIN qtags g ON g.qt = q.qt AND g.rid = q.rid WHERE g.tid != ? GROUP BY g.tid ORDER BY n DESC LIMIT 24`).all(tid, tid);
     const names = this._tagsByTid(rel.map((r) => r.tid));
     return { id: v.id, name: v.name, kind: v.kind, group: v.grp, aliases: parse(v.aliases), categories: parse(v.cats),
-      questions: v.qn, mentions: v.mn, about: v.an, answers: v.ansn, counts,
+      questions: v.qn > 0 ? v.qn : v.ansn, mentions: v.mn, about: v.an, answers: v.ansn, counts,   // (an answer-only tag: searchTopicTags)
       related: rel.map((r) => ({ ...names.get(r.tid), shared: r.n })).filter((x) => x.id) };
   }
 

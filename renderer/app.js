@@ -1128,6 +1128,7 @@ function updateTopbar() {
       txt.textContent = niceTitle(t ? t.textContent : "");
       crumb.hidden = !txt.textContent;
     }
+    requestAnimationFrame(fitTopbar);   // a longer name may not fit (tb-nocrumb)
   }
   // the top bar's link for the page on screen reads as current
   let here = { "trials-screen": "tb-trials", "clubs-screen": "tb-clubs", "diagnostic-screen": "tb-clubs", "irl-screen": "tb-clubs", "report-screen": "tb-clubs", "store-screen": "tb-store", "leaderboards-screen": "tb-leaderboards", "extensions-screen": "tb-plugins" }[active && active.id];
@@ -1144,7 +1145,11 @@ function fitTopbar() {
   if (!bar || !right) return;
   const html = document.documentElement;
   const over = () => right.getBoundingClientRect().right > bar.getBoundingClientRect().right - (parseFloat(getComputedStyle(bar).paddingRight) || 0) + 1;
-  html.classList.remove("tb-compact", "tb-tight");
+  html.classList.remove("tb-compact", "tb-tight", "tb-nocrumb");
+  // the page's name beside the logo, squeezed by the links ("/ T" on a tablet): gone rather than cut (the page's
+  // own title says it)
+  const crumb = document.getElementById("tb-crumb-text");
+  if (crumb && crumb.offsetParent && crumb.scrollWidth > crumb.clientWidth + 1) html.classList.add("tb-nocrumb");
   if (!over()) return;
   html.classList.add("tb-compact");
   if (over()) html.classList.add("tb-tight");
@@ -5624,6 +5629,12 @@ function syncPracticeActions() {
     // the verdict and the answer lines (not the whole result: taller than the screen with the tags, it scrolled the
     // bonus part just answered out of sight)
     (document.getElementById("result-answer") || ra).scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } else if (shown && !syncPracticeActions._shown && state.mode === "tossups") {
+    // a short window (the app's smallest is 600 tall): a long question left the verdict under the bar; it comes up
+    // above it (nothing moves when it's in sight already). Not a bonus: each part's answer shows in place, and the
+    // parts stay put (15.37)
+    const v = document.getElementById("result-answer") || ra;   // the verdict above it comes along
+    if (v) setTimeout(() => { if (v.isConnected) followReading(v, "result", true); }, 30);
   }
   syncPracticeActions._shown = shown;
 }
