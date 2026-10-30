@@ -6603,3 +6603,5 @@ html.tb-nocrumb .tb-crumb { display: none; }
 /* the save menu's items are buttons now: they look as the rows did */
 .save-menu-item { display: block; width: 100%; border: 0; background: transparent; font-family: var(--font); text-align: left; }
 .save-menu-item:focus-visible { background: var(--accent-dim); color: var(--accent); outline: none; }
+/* text for screen readers only */
+.sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

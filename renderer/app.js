@@ -8191,18 +8191,26 @@ function chartFrame(ctx, W, H, t, opts, yMin, yMax, fmt) {
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     ctx.fillText(opts.title.toUpperCase(), pad.left, 17);
   }
+  // round steps (1, 2, 2.5 or 5 × a power of ten), at most six: the axis read −5.0, 1.3, 7.5, 13.8, 20.0
+  let step = 1, n = 4;
+  if (isFinite(yMin) && isFinite(yMax) && yMax > yMin) {
+    const span = yMax - yMin, base = Math.pow(10, Math.floor(Math.log10(span / 6)));
+    for (const m of [1, 2, 2.5, 5, 10, 20]) { step = m * base; if (Math.ceil(yMax / step - 1e-9) - Math.floor(yMin / step + 1e-9) <= 6) break; }
+    yMin = Math.floor(yMin / step + 1e-9) * step; yMax = Math.ceil(yMax / step - 1e-9) * step;
+    n = Math.max(1, Math.round((yMax - yMin) / step));
+  }
   const range = (yMax - yMin) || 1;
   ctx.font = "10px " + t.font; ctx.textBaseline = "middle";
-  for (let i = 0; i <= 4; i++) {
-    const val = yMin + (i / 4) * range;
-    const y = pad.top + plotH - (i / 4) * plotH;
+  for (let i = 0; i <= n; i++) {
+    const val = yMin + (i / n) * range;
+    const y = pad.top + plotH - (i / n) * plotH;
     ctx.fillStyle = t.muted; ctx.textAlign = "right"; ctx.fillText(fmt(val), pad.left - 7, y);
     ctx.strokeStyle = t.border; ctx.globalAlpha = 0.35; ctx.setLineDash([3, 5]);
     ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
     ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
   ctx.textBaseline = "alphabetic";
-  return { pad, plotW, plotH, yOf: (v) => pad.top + plotH - ((v - yMin) / range) * plotH };
+  return { pad, plotW, plotH, yMin, yMax, yOf: (v) => pad.top + plotH - ((v - yMin) / range) * plotH };
 }
 
 function xLabel(ctx, t, text, cx, y, maxW) {
@@ -8251,9 +8259,8 @@ function stackedChart(canvas, groups, opts = {}) {
   if (!groups || !groups.length) return emptyChart(canvas, opts.empty);
   const { ctx, W, H } = setupCanvas(canvas); const t = chartTheme(); ctx.clearRect(0, 0, W, H);
   const totals = groups.map((g) => g.segments.reduce((s, x) => s + Math.max(0, x.value), 0));
-  const yMax = opts.yMax != null ? opts.yMax : niceAxisMax(Math.max(...totals, 1));
   const fmt = (v) => String(Math.round(v));
-  const { pad, plotW, plotH } = chartFrame(ctx, W, H, t, { ...opts, _reserve: 14 }, 0, yMax, fmt);
+  const { pad, plotW, plotH, yMax } = chartFrame(ctx, W, H, t, { ...opts, _reserve: 14 }, 0, opts.yMax != null ? opts.yMax : niceAxisMax(Math.max(...totals, 1)), fmt);
   if (opts.legend && opts.legend.length) {
     ctx.font = "10px " + t.font;
     const lw = opts.legend.reduce((a, l) => a + ctx.measureText(l.label).width + 26, 0);
@@ -8454,10 +8461,19 @@ function statsPeriodCutoff() {
   return days ? Date.now() - days * 86400e3 : 0;
 }
 
+// a session's label under its bar: the day, or the time when the sessions shown share that day ("10/31" eight times)
+function sessionLabels(slice) {
+  const days = slice.map((s) => shortDate(s.startedAt));
+  return slice.map((s, i) => {
+    if (days.filter((d) => d === days[i]).length < 2) return days[i];
+    try { return new Date(s.startedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }).replace(/\s?([AP])M$/i, (m, a) => a.toLowerCase()); } catch { return days[i]; }
+  });
+}
 function drawSessionOutcomes(canvas, breakdown) {
   const t = chartTheme();
   windowedChart(canvas, breakdown || [], (slice) => {
-    const groups = slice.map((s) => ({ label: shortDate(s.startedAt), segments: [ { value: s.powers, color: t.accent }, { value: s.tens, color: t.green }, { value: s.deads, color: t.muted }, { value: s.negs, color: t.red } ] }));
+    const lab = sessionLabels(slice);
+    const groups = slice.map((s, i) => ({ label: lab[i], segments: [ { value: s.powers, color: t.accent }, { value: s.tens, color: t.green }, { value: s.deads, color: t.muted }, { value: s.negs, color: t.red } ] }));
     stackedChart(canvas, groups, { title: "Outcomes per Session", empty: "No sessions yet", legend: [ { label: "Power", color: t.accent }, { label: "+10", color: t.green }, { label: "Dead", color: t.muted }, { label: "Neg", color: t.red } ] });
   });
 }
@@ -8465,7 +8481,8 @@ function drawPointsPerTU(canvas, breakdown) {
   const t = chartTheme();
   const all = (breakdown || []).filter((s) => s.totalTU > 0);
   windowedChart(canvas, all, (slice) => {
-    const bars = slice.map((s) => ({ label: shortDate(s.startedAt), value: Math.round(s.pointsPerTU * 10) / 10, color: s.pointsPerTU >= 0 ? t.green : t.red }));
+    const lab = sessionLabels(slice);
+    const bars = slice.map((s, i) => ({ label: lab[i], value: Math.round(s.pointsPerTU * 10) / 10, color: s.pointsPerTU >= 0 ? t.green : t.red }));
     barChart(canvas, bars, { title: "Points per Tossup (by session)", fmt: (v) => v.toFixed(1), empty: "No tossup sessions yet" });
   });
 }
@@ -8473,14 +8490,16 @@ function drawRatesGraph(canvas, breakdown) {
   const t = chartTheme();
   const all = (breakdown || []).filter((s) => s.totalTU > 0);
   windowedChart(canvas, all, (slice) => {
-    const groups = slice.map((s) => ({ label: shortDate(s.startedAt), segments: [ { value: Math.round(s.powerRate * 100), color: t.accent }, { value: Math.round(s.negRate * 100), color: t.red } ] }));
+    const lab = sessionLabels(slice);
+    const groups = slice.map((s, i) => ({ label: lab[i], segments: [ { value: Math.round(s.powerRate * 100), color: t.accent }, { value: Math.round(s.negRate * 100), color: t.red } ] }));
     stackedChart(canvas, groups, { title: "Power vs Neg Rate (by session)", yMax: 100, empty: "No tossup sessions yet", legend: [ { label: "Power %", color: t.accent }, { label: "Neg %", color: t.red } ] });
   });
 }
 function drawCelerityDetail(canvas, breakdown) {
   const all = (breakdown || []).filter((s) => s.totalTU > 0);
   windowedChart(canvas, all, (slice) => {
-    const points = slice.map((s) => ({ x: shortDate(s.startedAt), y: Math.round((s.avgCorrectCelerity || 0) * 100) }));
+    const lab = sessionLabels(slice);
+    const points = slice.map((s, i) => ({ x: lab[i], y: Math.round((s.avgCorrectCelerity || 0) * 100) }));
     lineChart(canvas, points, { title: "Avg Buzz Celerity per Session", fmt: (v) => v + "%", empty: "No tossup sessions yet" });
   });
 }

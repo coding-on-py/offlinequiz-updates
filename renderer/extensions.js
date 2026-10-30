@@ -4746,7 +4746,7 @@ function __qbMain(ctx) {
                 '<button type="button" class="btn mp-pause-btn" id="mp-pause-btn" hidden>Pause</button>' +
                 (inDiag() ? '<button type="button" class="btn btn-primary" id="mp-dx-report" hidden>See the report</button><button type="button" class="btn btn-primary" id="mp-dx-clubs" hidden>Back to Clubs</button>' : "") +
               "</div>" +
-              '<div class="result-area hidden" id="mp-result"></div>' +
+              '<div class="result-area hidden" id="mp-result"></div><div class="sr-only" id="mp-live" aria-live="polite"></div>' +
               '<div class="history-panel mp-history" id="mp-history-panel" style="display:none">' +
                 '<button class="btn" id="mp-history-open">Session history (<span id="mp-history-count">0</span>)</button>' +
               "</div>" +
@@ -5764,6 +5764,7 @@ function __qbMain(ctx) {
             ? '<div class="result-banner incorrect">Time! Nobody buzzed.</div>'
             : '<div class="result-banner incorrect">Nobody got it</div>';
         var canReport = !!(current && current.id && ctx.host && ctx.host.reportQuestion);
+        srSay((d.correct ? (d.name || "") + " got it, " + d.points + " points." : d.noBuzz ? "Time. Nobody buzzed." : "Nobody got it.") + " The answer was " + String(d.answer || "").replace(/\s*[\[(].*$/, "") + ".");
         res.innerHTML =
           banner + '<div class="result-answer">' + triesHtml() +
           '<div class="ra-row"><span class="ra-k">Answer</span><span class="actual">' + ansHtml(d.answerRaw, d.answer || "") + "</span>" +
@@ -5782,9 +5783,13 @@ function __qbMain(ctx) {
         // a wrong answer and the reading goes on: everyone sees what was said (and it stays there)
         var tries = triesHtml();
         res.className = tries ? "result-area" : "result-area hidden"; res.innerHTML = tries ? '<div class="result-answer">' + tries + "</div>" : "";
+        var lastTry = buzzHistory[buzzHistory.length - 1];
+        if (lastTry) srSay((lastTry.name || "") + " said " + (lastTry.given || "nothing") + (lastTry.correct ? ", right." : ", wrong."));
       }
       renderBuzzes();
     }
+    // a screen reader hears how a question went (the room's hidden live region)
+    function srSay(text) { var el = body && body.querySelector("#mp-live"); if (el) { el.textContent = ""; setTimeout(function () { el.textContent = text; }, 30); } }
     // every answer given on this question, what each player said and what it scored ("Your answer" for this player's)
     function triesHtml() {
       var me = players[myId];
