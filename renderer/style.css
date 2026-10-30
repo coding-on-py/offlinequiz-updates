@@ -3577,7 +3577,7 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .mp-layout .question-area { padding: 0; overflow: visible; gap: 18px; min-height: 360px; }
 .room-q { font-size: 17px; line-height: 1.85; color: var(--strong); }
 .mp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
-.mp-actions:not(:has(> :not([hidden]))) { display: none; }
+.mp-actions:not(:has(> :not([hidden], .mp-reconnecting))) { display: none; }
 /* ── Phones and small windows ──
    style.css still carries pre-redesign phone rules (a 140 px filter strip, a
    sideways stats row, 11 px buttons); these undo them for the current layout. */
@@ -3746,6 +3746,8 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .mp-bpart { display: flex; flex-direction: column; gap: 6px; }
 /* a dropped room connection: a small note while it rejoins by itself; a card only if that fails */
 .mp-reconnecting { position: absolute; top: 12px; left: 50%; z-index: 20; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); box-shadow: var(--shadow); color: var(--muted); font-size: 12.5px; }
+/* in the bar (sticky): just above it, where a question seldom reaches (at the area's top it covered the first line) */
+.mp-actions > .mp-reconnecting { top: auto; bottom: calc(100% + 8px); white-space: nowrap; }
 .mp-recon-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); animation: mp-recon 1s ease-in-out infinite; }
 @keyframes mp-recon { 50% { opacity: 0.3; } }
 .mp-disconnect { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 16px; background: color-mix(in srgb, var(--bg) 55%, transparent); }

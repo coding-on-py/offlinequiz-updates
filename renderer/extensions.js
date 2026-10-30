@@ -2859,7 +2859,8 @@ function __qbMain(ctx) {
       el = document.createElement("div");
       el.id = "mp-reconnecting"; el.className = "mp-reconnecting"; el.setAttribute("role", "status");
       el.innerHTML = '<span class="mp-recon-dot" aria-hidden="true"></span>Reconnecting\u2026';
-      area.appendChild(el);
+      // above the bar along the bottom (ui.css), not over the question's first line
+      (area.querySelector(":scope > .mp-actions") || area).appendChild(el);
     }
     function reconnected() { reconnectN = 0; rejoining = false; reconnectWait = false; clearTimeout(reconnectT); reconnectNote(false); var dc = body && body.querySelector("#mp-disconnect"); if (dc) dc.remove(); }
     // The network back (Wi-Fi returning) or the page shown again (a phone unlocked, a laptop opened): a room
