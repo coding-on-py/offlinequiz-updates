@@ -606,15 +606,15 @@
               </div>
               <div class="setting-row">
                 <span class="setting-label">Auto-reveal past power<span class="qb-info" data-tip="Shows the rest of the question at once after the power mark.">i</span></span>
-                <input type="checkbox" class="switch" id="auto-reveal" checked>
+                <input type="checkbox" class="switch" id="auto-reveal" aria-label="Auto-reveal past power" checked>
               </div>
               <div class="setting-row">
                 <span class="setting-label">Question info bar<span class="qb-info" data-tip="Shows the category, difficulty and set name above each question.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-show-qmeta" checked>
+                <input type="checkbox" class="switch" id="opt-show-qmeta" aria-label="Question info bar" checked>
               </div>
               <div class="setting-row">
                 <span class="setting-label">Hide pronunciation guides<span class="qb-info" data-tip="Removes hints like (&quot;KAH-fka&quot;) from questions.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-hide-pron">
+                <input type="checkbox" class="switch" id="opt-hide-pron" aria-label="Hide pronunciation guides">
               </div>
             </section>
 
@@ -623,20 +623,20 @@
               <div class="setting-subhead">Add wrong tossups automatically</div>
               <div class="setting-row">
                 <span class="setting-label">Negs<span class="qb-info" data-tip="A wrong buzz before the question finishes (−5).">i</span></span>
-                <input type="checkbox" class="switch" id="opt-review-negs" checked>
+                <input type="checkbox" class="switch" aria-label="Negs" id="opt-review-negs" checked>
               </div>
               <div class="setting-row">
                 <span class="setting-label">Wrong at the end<span class="qb-info" data-tip="Answered wrong after the question was fully read (0 points).">i</span></span>
-                <input type="checkbox" class="switch" id="opt-review-wrongend" checked>
+                <input type="checkbox" class="switch" aria-label="Wrong at the end" id="opt-review-wrongend" checked>
               </div>
               <div class="setting-row">
                 <span class="setting-label">Unanswered<span class="qb-info" data-tip="The question ended without you buzzing at all.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-review-unans" checked>
+                <input type="checkbox" class="switch" aria-label="Unanswered" id="opt-review-unans" checked>
               </div>
               <div class="setting-subhead">Add correct tossups automatically</div>
               <div class="setting-row">
                 <span class="setting-label">No power<span class="qb-info" data-tip="Correct, but after the power mark. Review these to buzz faster.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-review-nopower">
+                <input type="checkbox" class="switch" aria-label="No power" id="opt-review-nopower">
               </div>
             </section>
 
@@ -644,12 +644,12 @@
               <h3>Tags</h3>
               <div class="setting-row">
                 <span class="setting-label">Topic tags <span class="qb-info" data-tip="The people, works, places and ideas each question names. They show after a question, never during it.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-topic-tags">
+                <input type="checkbox" class="switch" aria-label="Topic tags" id="opt-topic-tags">
               </div>
               <div class="setting-row hidden" id="topic-tags-na"><span class="setting-label tt-na">This question database has no topic tags yet.</span></div>
               <div class="setting-row">
                 <span class="setting-label">Show tags under questions</span>
-                <input type="checkbox" class="switch" id="opt-tags-show" checked>
+                <input type="checkbox" class="switch" aria-label="Show tags under questions" id="opt-tags-show" checked>
               </div>
               <div class="setting-row setting-row-wrap">
                 <span class="setting-label">Families to show</span>
@@ -736,7 +736,7 @@
               </div>
               <div class="setting-row" id="row-light-mode">
                 <span class="setting-label">Light mode<span class="qb-info" data-tip="The same switch as the sun / moon in the top bar.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-light-mode">
+                <input type="checkbox" class="switch" aria-label="Light mode" id="opt-light-mode">
               </div>
               <div class="setting-row set-theme-row">
                 <span class="setting-label">Theme</span>
@@ -749,7 +749,7 @@
               <h3>Sound</h3>
               <div class="setting-row">
                 <span class="setting-label">Sound effects<span class="qb-info" data-tip="Short beeps for buzzes, answers, powers, stars and achievements.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-sound">
+                <input type="checkbox" class="switch" aria-label="Sound effects" id="opt-sound">
               </div>
               <div class="setting-row sound-sub">
                 <span class="setting-label">Volume</span>
@@ -757,7 +757,7 @@
               </div>
               <div class="setting-row sound-sub">
                 <span class="setting-label">Button clicks<span class="qb-info" data-tip="A soft tick whenever you press a button.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-sound-clicks" checked>
+                <input type="checkbox" class="switch" aria-label="Button clicks" id="opt-sound-clicks" checked>
               </div>
             </section>
             <section class="set-pane" data-pane="hotkeys" id="ovl-hotkeys">
@@ -799,11 +799,11 @@
                 </div>
                 <div class="setting-row">
                   <span class="setting-label">Check on launch</span>
-                  <input type="checkbox" class="switch" id="opt-app-autoupdate" checked>
+                  <input type="checkbox" class="switch" aria-label="Check on launch" id="opt-app-autoupdate" checked>
                 </div>
                 <div class="setting-row">
                   <span class="setting-label">Auto-install critical fixes<span class="qb-info" data-tip="Critical fixes install on their own. Other updates ask first.">i</span></span>
-                  <input type="checkbox" class="switch" id="opt-app-critical-auto" checked>
+                  <input type="checkbox" class="switch" aria-label="Auto-install critical fixes" id="opt-app-critical-auto" checked>
                 </div>
                 <div id="app-update-status" class="set-status"></div>
               </div>
@@ -817,7 +817,7 @@
               </div>
               <div class="setting-row" id="row-lb-public" hidden>
                 <span class="setting-label">Show me on the global leaderboard<span class="qb-info" data-tip="Shows your name and stats on the Global leaderboard. When off, only friends and your own leaderboards see them.">i</span></span>
-                <input type="checkbox" class="switch" id="opt-lb-public">
+                <input type="checkbox" class="switch" aria-label="Show me on the global leaderboard" id="opt-lb-public">
               </div>
               <div class="setting-row">
                 <span class="setting-label">Profile and achievements</span>

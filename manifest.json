@@ -1,5 +1,5 @@
 {
-  "version": "15.37",
+  "version": "15.38",
   "renderer": [
     "index.html",
     "style.css",
@@ -57,20 +57,20 @@
   "main": true,
   "notes": "bug fixes",
   "files": {
-    "renderer/index.html": "45d8bead33638281544dc86bcb5ad08ce1e0e6b77fb9a9855155a5697151769e",
-    "renderer/style.css": "c8a491fe5ec6070af51df17b877f0ed6fda27ab17afbdafa0e45ac445c70da91",
+    "renderer/index.html": "431eb84cefd28e190691cac0a37728517dae9d0609e24d0de211741d783c87c1",
+    "renderer/style.css": "fecfc0e85ef69833367f7c326261ac4b23d2b7f4183f122f2185698c3a61697a",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "374ddf7446e7dd39f52c73b84d0cd1f56d25d55b66b8dd04f2a0fafb6c42ca71",
-    "renderer/app.js": "c4e76a4008eb228ee082528c6adf9d58a31ff082bb1cd6f8406f8f4f43cc7ab8",
+    "renderer/extensions.js": "3ac5e5ff956acbef8d3c5d0fec936c002e20310b8715d62f6c1e1b016b13739d",
+    "renderer/app.js": "37f017caf011cacd84ccc96cfe052d48dfa7fe771fee3d652feca680abd3d538",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
     "plugins/canon-tracker.zip": "61700802d7421b309f884be764a6733dade6942dfa209ef93b8efa74985cd7a0",
     "plugins/coach-mode.zip": "e23183227fe3dec730e3f37e43906ee5e1d6c0e74b063c9a4e8a2da77a623fad",
-    "plugins/fact-sheet.zip": "92fc11ea847559264937e96a7279cdd38c59554854fcd1bf6ef631e73fa5646f",
+    "plugins/fact-sheet.zip": "e317174cc88cda1b451b6ed006cf6a6e295fe2e087689ff44d634edc2309b74e",
     "plugins/flashcards.zip": "b7d9c887a1d181db2511ccd595d63a013c2f0e15694a889b2b7499d7219b8bdc",
     "plugins/folders.zip": "c6b3b1c2a9723af244dae0913eb8847178ae767cbfcfbb4a8ffad7276979faf6",
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/packet-builder.zip": "c9f68e95cb536ed51d1c5bb5e1a30fe603a94320737a78b9bd991b38789a4bc3"
   },
-  "signature": "qWCdU3kqfjVtzbZTnz2V5UvvnX0KElF58txzyIzN7CqLkPKBExu1WSPUMx2gqIQJOd1ycZtHH28kRJfdeW3yAA=="
+  "signature": "6prAuU9VynHIuQLTOKxZ36JXeZU51z6ysuDPX8V/1hTgAKT5+/BikMGTvdkbcIzLR8XsCrkCbEIbd6Wz1vC7Cw=="
 }

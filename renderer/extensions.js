@@ -1782,7 +1782,7 @@ QB.registerTheme({
               '<div><div class="dls-h">Effects</div><label class="dls-toggle"><input type="checkbox" id="dls-shadow"' + (shadow ? " checked" : "") + "> Card shadows</label></div>" +
             "</div>" +
             '<details class="dls-more" id="dls-more"' + (moreOpen ? " open" : "") + '>' +
-              '<summary><span class="dls-h" style="margin:0">More settings — colors</span></summary>' +
+              '<summary><span class="dls-h" style="margin:0">More colors</span></summary>' +
               '<div class="dls-grid">' + rows + "</div>" +
               '<button class="dls-btn" id="dls-clearall">Reset all custom colors</button>' +
             "</details>" +
@@ -2247,7 +2247,7 @@ QB.registerTheme({
           : verNewer(item.version, have.version) ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '">Update</button>'
           : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
         return '<div class="store-card" data-guide="' + esc(item.id) + '" tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it">' + piconHtml(item, GROUP_COLOR[g]) +
-          '<span class="store-main"><b>' + esc(item.name) + '</b><small>v' + esc(item.version) + (item.author ? " · " + esc(item.author) : "") + "</small></span>" +
+          '<span class="store-main"><b>' + esc(item.name) + '</b><small>v' + esc(item.version) + " · " + esc(item.author || "OfflineQuiz") + "</small></span>" +
           btn + "</div>";
       }).join("") + "</div></section>").join("");
   }
@@ -5560,7 +5560,8 @@ function __qbMain(ctx) {
     // (themeable) color, everyone else's use another.
     function renderWithMarks(text, upTo, marks, powerEnd) {
       var list = (marks || []).filter(function (m) { return m.pos >= 0 && m.pos <= upTo; })
-        .map(function (m) { return { pos: m.pos, html: '<span class="buzz-mark ' + (m.by === myId ? "buzz-self" : "buzz-other") + '">(#)</span>' }; });
+        // a buzz between two words keeps a space on both sides ("Chapman (#) estimator", not "(#)estimator")
+        .map(function (m) { return { pos: m.pos, html: '<span class="buzz-mark ' + (m.by === myId ? "buzz-self" : "buzz-other") + '">(#)</span>' + (/\s/.test(text.charAt(m.pos - 1)) && /\S/.test(text.charAt(m.pos)) ? " " : "") }; });
       // Once the question is over, the power mark shows at its real spot.
       if (powerEnd != null && powerEnd > 0 && powerEnd <= upTo) list.push({ pos: powerEnd, rank: 2, html: '<span class="mp-power-mark">(*)</span>' });
       // Question over: everything before the power mark reads in bold, exactly
@@ -5773,6 +5774,10 @@ function __qbMain(ctx) {
         if (rp) rp.onclick = function () { ctx.host.reportQuestion({ id: rq.id, category_path: rq.path || rq.category_path || "", set_name: rq.set || rq.set_name || "", set_year: rq.year || rq.set_year || null }, "tossup"); };
         // the question's topic tags, now that it's over (topic tags on, app.js topics.js)
         if (current && current.id && window.QBTopics) window.QBTopics.resultPanel(res, { type: "tossup", question: { id: current.id }, blocks: "#mp-qtext" });
+        // the verdict and the answer come into view above the bar, as in practice (a phone stayed at the question's
+        // start when it ended early, the whole text shown and the answer far below)
+        var ansBlock = res.querySelector(".result-answer");
+        if (ansBlock && window.qbFollowReading) setTimeout(function () { if (ansBlock.isConnected) window.qbFollowReading(ansBlock, "mp-result", true); }, 30);
       } else {
         // a wrong answer and the reading goes on: everyone sees what was said (and it stays there)
         var tries = triesHtml();
@@ -5785,7 +5790,8 @@ function __qbMain(ctx) {
       var me = players[myId];
       return buzzHistory.map(function (b) {
         var pts = b.points || 0;
-        return '<div class="ra-row mp-try"><span class="ra-k">' + (me && b.name === me.name ? "Your answer" : esc(b.name || "")) + '</span>' +
+        var mine = me && b.name === me.name;
+        return '<div class="ra-row mp-try"><span class="ra-k' + (mine ? "" : " ra-who") + '"' + (mine ? "" : ' title="' + esc(b.name || "") + '"') + ">" + (mine ? "Your answer" : esc(b.name || "")) + '</span>' +
           '<strong class="ra-you ' + (b.correct ? "ok" : "bad") + '">' + (b.given ? esc(b.given) : '<span class="text-muted">(no answer)</span>') + '</strong>' +
           '<span class="mp-try-pts">' + (pts > 0 ? "+" + pts : pts < 0 ? "\u2212" + -pts : "0") + "</span></div>";
       }).join("");
@@ -12559,6 +12565,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
 
   // ── clue highlighting: a chip's clues light up in the question's text (CSS highlights; nothing in the text moves) ──
   // a tossup's sentences as the tagger split them (database.js cluesOf): the text's own words, spaces collapsed
+  const SENT_ABBR = /(?:\b(?:St|Ste|Mt|Mts|Dr|Mr|Mrs|Ms|Messrs|Mme|Mlle|Prof|Sr|Jr|Rev|Fr|Gen|Col|Capt|Lt|Sgt|Maj|Adm|Hon|Pres|Gov|Sen|Rep|Supt|Msgr|vs|etc|cf|ca|al|Inc|Co|Corp|Ltd|Bros|approx|No|Nos|Op|op|no|Vol|vol|Ch|ch|Fig|fig|Ft|Pt|pt|Rte|Ave|Blvd|[A-Za-z])\.["\u201d\u2019']?)$/;
   function sentenceRanges(el, want) {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let s = "", space = true;
@@ -12574,9 +12581,14 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     const starts = [0];
     for (const m of s.matchAll(/(?<=[.!?])\s+(?=[A-Z"“(])/g)) starts.push(m.index + m[0].length);
     const out = [];
+    // (a sentence the tagger cut at an abbreviation or initial, "Edwin J." | "Cohn…", lights up whole: database.js wholeClue)
+    const sent = (j) => s.slice(starts[j], j + 1 < starts.length ? starts[j + 1] : s.length).trim();
     for (const k of want) {
       if (k < 0 || k >= starts.length) continue;
-      let a = starts[k], b = k + 1 < starts.length ? starts[k + 1] : s.length;
+      let ka = k, kb = k;
+      while (ka > 0 && SENT_ABBR.test(sent(ka - 1))) ka--;
+      while (kb + 1 < starts.length && SENT_ABBR.test(sent(kb))) kb++;
+      let a = starts[ka], b = kb + 1 < starts.length ? starts[kb + 1] : s.length;
       while (b > a && s[b - 1] === " ") b--;
       if (b <= a || !at[a] || !at[b - 1]) continue;
       const r = document.createRange();

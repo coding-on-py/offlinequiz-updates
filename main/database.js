@@ -64,6 +64,16 @@ export function cluesOf(row, isBonus) {
   try { parts = JSON.parse(row.parts || "[]"); } catch { parts = []; }
   return [plainOf(row.leadin), ...parts.map(plainOf)];
 }
+// The tagger's split cuts at an abbreviation or an initial ("During World War II, Edwin J." | "Cohn fractionated…"):
+// clue k as shown runs from the sentence's start to its real end (its numbering stays the tagger's).
+const SENT_ABBR = /(?:\b(?:St|Ste|Mt|Mts|Dr|Mr|Mrs|Ms|Messrs|Mme|Mlle|Prof|Sr|Jr|Rev|Fr|Gen|Col|Capt|Lt|Sgt|Maj|Adm|Hon|Pres|Gov|Sen|Rep|Supt|Msgr|vs|etc|cf|ca|al|Inc|Co|Corp|Ltd|Bros|approx|No|Nos|Op|op|no|Vol|vol|Ch|ch|Fig|fig|Ft|Pt|pt|Rte|Ave|Blvd|[A-Za-z])\.["\u201d\u2019']?)$/;
+export function wholeClue(clues, k) {
+  if (!clues[k]) return "";
+  let a = k, b = k;
+  while (a > 0 && SENT_ABBR.test(clues[a - 1])) a--;
+  while (b + 1 < clues.length && SENT_ABBR.test(clues[b])) b++;
+  return clues.slice(a, b + 1).join(" ");
+}
 
 // Whitelisted ORDER BY for Database browse/search. `sort` is user input: never
 // interpolate it, and Object.hasOwn keeps "constructor"/"__proto__" from
@@ -703,7 +713,7 @@ export class QuestionDatabase {
       let answer = r.ans || "";
       if (isBonus) { try { const a = JSON.parse(r.ans || "[]"); answer = r.part != null ? a[r.part] || "" : a.join(" / "); } catch { answer = ""; } }
       return { id: r.id, type: isBonus ? "bonus" : "tossup", clue: r.clue, part: r.part, role: r.role ? "about" : "mentioned", surface: r.surface,
-        text: clues[r.clue] || "", answer, set_name: r.set_name, set_year: r.set_year, packet_number: r.packet_number, question_number: r.question_number,
+        text: isBonus ? clues[r.clue] || "" : wholeClue(clues, r.clue), answer, set_name: r.set_name, set_year: r.set_year, packet_number: r.packet_number, question_number: r.question_number,
         category_path: r.category_path, difficulty: r.difficulty, ...(isBonus ? {} : { canon: r.canon ? CANON_TIERS[r.canon - 1] : null }) };
     }) };
   }

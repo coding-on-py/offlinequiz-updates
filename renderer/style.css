@@ -6533,3 +6533,61 @@ html.tb-tight:not(.shop-on) #tbm-store, html.lan .tbm-narrow { display: none !im
 /* the category picker opens inside the Setup panel (position:fixed, under the top bar's layer): while it's open the
    panel rises over the top bar, or the picker's head and close button sat under it (phones, short windows) */
 :is(#practice-screen, .mp-room) .filters-panel:has(#cat-ovl:not(.hidden)) { z-index: 9500; }
+/* ── 15.38 ── */
+/* official rooms have names, not codes: no code spacing ("H a u n t e d  H o u s e") */
+.mp-official .mp-rcode { letter-spacing: normal; }
+/* phones: who's there and when always go under the room and its Join (a short name let "empty" trail Join) */
+@media (max-width: 560px) {
+  .mp-recent-row { row-gap: 2px; }
+  .mp-recent-row::after { content: ""; order: 3; flex: 0 0 100%; height: 0; margin-top: -2px; }
+  .mp-recent-row .mp-rwho { order: 4; }
+  .mp-recent-row .mp-rwhen { order: 5; }
+}
+/* a room's answers: another player's name keeps its own letters (the column's capitals made "wrn2" WRN2) */
+.mp-try > .ra-k.ra-who { text-transform: none; letter-spacing: 0.02em; font-size: 12px; }
+/* Statistics → a session's question history: the row's chevron and result badge on one line, centred */
+.qh-res { display: inline-flex; align-items: center; gap: 6px; }
+.qh-res > .qh-chev { vertical-align: 0; }
+/* Wide windows: a page that scrolls by itself (Statistics, Profile, every plugin page, Multiplayer) spans the window
+   and pads its content to the page's centred width, so the scrollbar is at the window's edge (it hung in mid-screen
+   beside the content). The same content box as before; a narrow window keeps its gutter. */
+:is(.stats-container, .player-container, .ext-page-body, .ext-page-body.mp-flush, .adm-container) {
+  max-width: none; margin-left: 0; margin-right: 0;
+  padding-left: max(var(--gutter), calc((100% - var(--page-w)) / 2 + var(--gutter)));
+  padding-right: max(var(--gutter), calc((100% - var(--page-w)) / 2 + var(--gutter)));
+}
+/* the admins' pages line up with their title like every other page (they were narrower, the tabs indented further) */
+.adm-page { max-width: none; }
+.adm-page > .adm-tabs { padding-left: 0; padding-right: 0; max-width: none; }
+/* phones: two events' boards at once (Halloween's stays to Nov 16, Thanksgiving's starts Nov 1) ran the periods past
+   the screen ("Than…"): they wrap onto a second row */
+@media (max-width: 600px) { .lb-periods { flex-wrap: wrap; } }
+/* Download: the cards sit in the middle of the page (they hugged its left edge), and on a phone every platform's
+   buttons take the card's width (Windows' one button stayed 240 px wide under the Mac's full-width ones) */
+.dl-page { margin: 0 auto; }
+@media (max-width: 640px) { .dl-btns { flex: 1 1 100%; } }
+/* Account window: a name wraps between its words (break-all cut "Bartholome|w"); only a word too long for the row, an
+   email say, breaks inside */
+.acct-v, .acct-email { word-break: normal; overflow-wrap: anywhere; }
+/* Clubs' labels (No account, Captain, an invite, a team) share .tchip with the topic chips (15.29), whose later rule
+   made them look clickable (a border, a hover, the pointer) and cut them with an ellipsis ("No accoun" beside a long
+   name): whole labels again. The report's study topics (buttons with data-topic) stay topic chips. */
+:is(.cl-roster, .mem-row, .pchip) .tchip:not([data-topic]) {
+  flex: none; max-width: none; height: 22px; gap: 4px; border: 0; font-size: 11.5px; line-height: normal;
+  overflow: visible; text-overflow: clip; cursor: default;
+}
+:is(.cl-roster, .mem-row, .pchip) .tchip:not([data-topic]):not(.na):not(.cap):not(.pend) { background: var(--raised); }
+:is(.cl-roster, .mem-row, .pchip) .tchip:not([data-topic]):hover { color: var(--text); }
+:is(.cl-roster, .mem-row, .pchip) .tchip.na:hover { color: var(--muted); }
+:is(.cl-roster, .mem-row, .pchip) .tchip:is(.cap, .pend):hover { color: var(--accent); }
+.pchip .tchip:not([data-topic]) { height: 18px; padding: 0 7px; font-size: 10.5px; }
+/* a roster row's labels shrink no narrower than the widest one (more wrap under it): at min-width 0 they spilled
+   left over the name, being right-aligned */
+.cl-roster .rchips { min-width: auto; }
+@media (max-width: 600px) { .cl-roster :is(.rn-wrap, .rn) { min-width: min(4.5em, 100%); } }   /* (7em ran a row with a label 9px past its card) */
+/* phones: a question card's head gives its badges the row and puts the verdict and buttons under them (the category
+   was cut to "Fine …" and the year and Diff stood one per line beside "cel 96% PWR +15 + ☆") */
+@media (max-width: 600px) {
+  .qcard-head { flex-wrap: wrap; row-gap: 6px; }
+  .qcard-head > .qcard-meta { flex: 1 1 calc(100% - 30px); }
+}

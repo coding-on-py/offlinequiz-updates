@@ -655,7 +655,8 @@ function tagChipsHtml(q, where) {
   const out = [];
   for (const f of TAG_FAM_ORDER) {
     if (!d.fams[f]) continue;
-    for (const v of (Array.isArray(t[f]) ? t[f] : [])) {
+    // a bonus lists one answer type per part ("Concept or Theory" twice): each chip once
+    for (const v of new Set(Array.isArray(t[f]) ? t[f] : [])) {
       if (typeof v !== "string" || !v) continue;
       out.push(`<button type="button" class="qtag" style="--c:${TAG_FAM[f].color}" data-tag-fam="${f}" data-tag-val="${escapeHtml(v)}" title="Search ${escapeHtml(TAG_FAM[f].name.toLowerCase())}: ${escapeHtml(v)}"><span class="dot"></span><span class="t">${escapeHtml(v)}</span></button>`);
     }
@@ -2032,7 +2033,8 @@ document.addEventListener("keydown", (e) => {
 
   {
     const tag = e.target.tagName;
-    if (e.key === "?" && tag !== "INPUT" && tag !== "TEXTAREA") {
+    // (not over a question being asked: the sheet opened under "Leave the trial?")
+    if (e.key === "?" && tag !== "INPUT" && tag !== "TEXTAREA" && !document.querySelector("#confirm-dialog:not(.qb-leaving)")) {
       e.preventDefault();
       toggleHotkeySheet();
       return;
@@ -2166,6 +2168,20 @@ function applyTheme() {
   const row = document.getElementById("row-light-mode"), sw = document.getElementById("opt-light-mode");
   if (row) row.hidden = themed;
   if (sw) sw.checked = uiScheme() === "light" && !document.documentElement.classList.contains("hw");
+  syncThemeColor();
+}
+// a phone's browser bar takes the page's background (meta theme-color), whatever the theme, event or light mode
+function syncThemeColor() {
+  clearTimeout(syncThemeColor._t);
+  syncThemeColor._t = setTimeout(() => {
+    try {
+      const bg = getComputedStyle(document.body).backgroundColor;
+      if (!bg || bg === "rgba(0, 0, 0, 0)") return;
+      let m = document.querySelector('meta[name="theme-color"]');
+      if (!m) { m = document.createElement("meta"); m.name = "theme-color"; document.head.appendChild(m); }
+      if (m.content !== bg) m.content = bg;
+    } catch (e) {}
+  }, 400);   // after a theme's colours have settled (some fade)
 }
 function toggleScheme() {
   // Halloween stays dark: the switch calls down lightning instead, then flips back
@@ -4543,8 +4559,6 @@ function setMode(mode) {
   } else {
     bonusArea.classList.add("hidden");
   }
-  const pwrItem = $("#stat-pwr")?.closest(".stat-item");
-  if (pwrItem) pwrItem.style.display = mode === "bonuses" ? "none" : "";
   applyModeVisibility(mode);
   renderHistoryPanel();
 }
@@ -4565,8 +4579,13 @@ function applyModeVisibility(mode) {
   hide("#opt-stop-on-power", ".checkbox-row", tossup);
   hide("#opt-bonus-after", ".checkbox-row", tossup);
   hide("#filter-powermark", ".checkbox-row", tossup);
-  hide("#stat-cel", ".stat-item", tossup);
-  hide("#stat-neg", ".stat-item", tossup);
+  applyStatLabels(mode);
+}
+// the session's tiles: a tossup session's bonus (bonus after a correct tossup) keeps the tossup tiles, as its numbers
+// are the whole session's (they read "PPB 15.0" off the tossup's 15)
+function applyStatLabels(mode) {
+  const tossup = mode === "tossups";
+  for (const id of ["#stat-cel", "#stat-neg", "#stat-pwr"]) { const row = $(id)?.closest(".stat-item"); if (row) row.style.display = tossup ? "" : "none"; }
   const ppqLabel = $("#stat-ppq")?.closest(".stat-item")?.querySelector(".stat-label");
   if (ppqLabel) ppqLabel.textContent = tossup ? "PTS/Q" : "PPB";
 }
@@ -4796,7 +4815,7 @@ async function nextQuestion() {
       console.error(e);
       endOfQueue(e.name === "AbortError"
         ? "Request timed out. The database may be too large."
-        : "Couldn't load question: " + (e.message || e));
+        : "Couldn't load the question. " + errSentence(e));
       return;
     }
     question = state.mode === "tossups" ? data.tossup : data.bonus;
@@ -5254,9 +5273,8 @@ function switchPracticeType(type, label) {
   } else {
     bonusArea.classList.add("hidden");
   }
-  const pwrItem = $("#stat-pwr")?.closest(".stat-item");
-  if (pwrItem) pwrItem.style.display = type === "bonuses" ? "none" : "";
   applyModeVisibility(type);
+  if (state._practiceBase && state._practiceBase !== type) applyStatLabels(state._practiceBase);
 }
 
 
@@ -6056,7 +6074,8 @@ function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) 
   function withMarks(segEnd) {
     const inserts = buzzMarks
       .filter((i) => i >= 0 && i <= segEnd)
-      .map((i) => ({ i, rank: 1, html: '<span class="buzz-mark">(#)</span>' }));
+      // a buzz between two words keeps a space on both sides ("Chapman (#) estimator", not "(#)estimator")
+      .map((i) => ({ i, rank: 1, html: '<span class="buzz-mark">(#)</span>' + (/\s/.test(text[i - 1] || "") && /\S/.test(text[i] || "") ? " " : "") }));
     if (showPower && _prePowerEnd > 0 && _prePowerEnd <= segEnd) {
       inserts.push({ i: _prePowerEnd, rank: 2, html: '<span class="power-mark-inline">(*)</span>' });
     }
@@ -6640,7 +6659,7 @@ function syncAppearanceSection() {
 }
 // Every appearance change (theme on/off, accent, boot) re-derives
 // html[data-scheme] and --on-accent from what is now on screen.
-function applyDefaultAppearance() { applyDefaultAppearanceVars(); syncScheme(); }
+function applyDefaultAppearance() { applyDefaultAppearanceVars(); syncScheme(); syncThemeColor(); }
 function applyDefaultAppearanceVars() {
   const theme = activeTheme();
   if (window.QB?.hasAppearancePanel?.()) {
@@ -7252,7 +7271,7 @@ function historyQuestionHtml(e) {
   const marks = [];
   const pos = isTossup ? strippedBuzzPos(raw, e.buzzPosition || 0) : 0;
   if (powerIdx >= 0 && powerIdx <= text.length) marks.push({ i: powerIdx, rank: 2, html: '<span class="power-mark-inline">(*)</span>' });
-  if (pos > 0 && pos <= text.length) marks.push({ i: pos, rank: 1, html: '<span class="buzz-mark">(#)</span>' });
+  if (pos > 0 && pos <= text.length) marks.push({ i: pos, rank: 1, html: '<span class="buzz-mark">(#)</span>' + (/\s/.test(text[pos - 1] || "") && /\S/.test(text[pos] || "") ? " " : "") });
   // A finished question shows its pre-power text in bold here too (history and
   // review cards). No power mark means no bold.
   if (powerIdx >= 0 && powerIdx <= text.length) {
@@ -8501,19 +8520,19 @@ async function loadStats(preserveScroll = false) {
           <div class="stat-card-label">Total Points</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card-value">${view.averagePointsPerQuestion.toFixed(1)}</div>
+          <div class="stat-card-value">${view.totalQuestions ? view.averagePointsPerQuestion.toFixed(1) : "\u2014"}</div>
           <div class="stat-card-label">Avg Pts/Q</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card-value">${(view.tossupAccuracy * 100).toFixed(1)}%</div>
+          <div class="stat-card-value">${view.tossupsAttempted ? (view.tossupAccuracy * 100).toFixed(1) + "%" : "\u2014"}</div>
           <div class="stat-card-label">Tossup Accuracy</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card-value">${view.bonusConversion.toFixed(1)}</div>
+          <div class="stat-card-value">${view.bonusesAttempted ? view.bonusConversion.toFixed(1) : "\u2014"}</div>
           <div class="stat-card-label">Bonus Conv</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card-value">${(view.powerRate * 100).toFixed(1)}%</div>
+          <div class="stat-card-value">${view.tossupsAttempted ? (view.powerRate * 100).toFixed(1) + "%" : "\u2014"}</div>
           <div class="stat-card-label">Power Rate</div>
         </div>
       </div>
@@ -8542,7 +8561,7 @@ async function loadStats(preserveScroll = false) {
           <div class="stat-card-label">Negs (-5)</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card-value">${(view.tossupAvgCelerity * 100).toFixed(1)}%</div>
+          <div class="stat-card-value">${view.tossupsCorrect ? (view.tossupAvgCelerity * 100).toFixed(1) + "%" : "\u2014"}</div>
           <div class="stat-card-label">Avg Celerity</div>
         </div>
       </div>
@@ -8613,10 +8632,11 @@ async function loadStats(preserveScroll = false) {
         const buzzBar = isBonus ? "" :
           '<div class="qh-buzzbar" title="Buzzed ' + Math.round(cel * 100) + '% into the question">' +
             '<div class="qh-buzzmark" style="left:' + (cel * 100).toFixed(1) + '%"></div></div>';
-        const ans = en.given_answer ? escapeHtml(en.given_answer) : '<span class="text-muted">(no answer)</span>';
+        // a bonus keeps no answers of its own (its parts' aren't stored): a dash, not "(no answer)"
+        const ans = en.given_answer ? escapeHtml(en.given_answer) : isBonus ? '<span class="text-muted">\u2014</span>' : '<span class="text-muted">(no answer)</span>';
         const res = isBonus ? ((en.bonus_parts_correct || 0) >= (en.part_count || 3) ? "correct" : en.points > 0 ? "partial" : "miss") : (en.points >= 15 ? "power" : en.correct ? "correct" : en.points < 0 ? "neg" : "miss");
         return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" data-res="' + res + '" data-path="' + escapeHtml(en.category_path || en.category || "") + '" data-ans="' + escapeHtml((en.given_answer || "").toLowerCase()) + '" style="cursor:pointer" title="Show the question & answer">' +
-          '<td><span class="qh-chev">▸</span> <span class="qh-badge ' + cls + '">' + label + "</span></td>" +
+          '<td><span class="qh-res"><span class="qh-chev">▸</span><span class="qh-badge ' + cls + '">' + label + "</span></span></td>" +
           "<td>" + escapeHtml(en.category || "") + (en.difficulty != null ? ' <span class="text-muted">d' + en.difficulty + "</span>" : "") + "</td>" +
           "<td>" + ans + "</td>" +
           "<td>" + buzzBar + "</td>" +
@@ -8625,7 +8645,7 @@ async function loadStats(preserveScroll = false) {
         '<tr class="qh-detail hidden" data-qhd="' + i + '"><td colspan="5"><div class="text-muted">Loading…</div></td></tr>';
       }).join("");
       html += '<div class="stats-section" data-coll="stats:question-history">' +
-        '<div class="stats-section-title">QUESTION HISTORY (<span id="qh-count">' + sessionEntries.length + "</span>)</div>" +
+        '<div class="stats-section-title"><span>QUESTION HISTORY (<span id="qh-count">' + sessionEntries.length + "</span>)</span></div>" +
         '<div class="db-toolbar" style="border:none;background:none;padding:8px 0">' +
           '<select id="qh-fres" class="db-input db-input-sm"><option value="">All results</option><option value="power">Powers</option><option value="correct">Correct</option><option value="neg">Negs</option><option value="miss">Misses</option><option value="partial">Partial bonuses</option></select>' +
           '<select id="qh-ftype" class="db-input db-input-sm"><option value="">Tossups + Bonuses</option><option value="tossup">Tossups</option><option value="bonus">Bonuses</option></select>' +
@@ -8910,7 +8930,7 @@ async function loadStats(preserveScroll = false) {
     }
     setTimeout(() => drawCharts(true), 100);
   } catch (e) {
-    container.innerHTML = `<div class="text-muted">Couldn't load your stats. ${escapeHtml((e && e.message) || "")}</div>`;
+    container.innerHTML = `<div class="text-muted">Couldn't load your stats. ${escapeHtml(errSentence(e))}</div>`;
   }
 }
 
@@ -9232,6 +9252,12 @@ document.addEventListener("keydown", (e) => {
 }, true);
 
 $("#opt-app-critical-auto")?.addEventListener("change", (e) => lsSet("qb-app-critical-auto", e.target.checked.toString()));
+// an error's message as a sentence of its own ("couldn't reach the server. Check your connection" → "Couldn't reach the
+// server. Check your connection."), to follow "Couldn't load your stats." and the like
+function errSentence(e, fallback) {
+  const m = String((e && e.message) || (typeof e === "string" ? e : "") || fallback || "Something went wrong").trim();
+  return (m[0].toUpperCase() + m.slice(1)).replace(/[^.!?]$/, "$&.");
+}
 function isNetworkErr(msg) {
   return /failed to fetch|fetch failed|network|err_|enotfound|getaddrinfo|timed ?out|econn|\bdns\b/i.test(String(msg || ""));
 }
@@ -9584,7 +9610,7 @@ async function loadPlayer() {
       <div class="pf-page">
         ${seasonCardHtml(apData)}
         <section class="pf-card">
-          <span class="pf-avatar" aria-hidden="true"${avatarStyle(myNeon())}>${escapeHtml(((state.username || "Player").trim()[0] || "P").toUpperCase())}</span>
+          <span class="pf-avatar" aria-hidden="true"${avatarStyle(myNeon())}>${escapeHtml((String(state.username || "").trim()[0] || "?").toUpperCase())}</span>
           <div class="pf-id">
             <div class="pf-name-row"><input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false"></div>
             <small class="pf-sub">${handle ? escapeHtml(handle) : Account.user ? "Signed in" : IS_WEB ? "Not signed in" : "On this computer"}</small>
@@ -9611,7 +9637,7 @@ async function loadPlayer() {
     $("#player-username-input")?.addEventListener("input", (e) => {
       state.username = e.target.value.trim();
       lsSet("qb-username", state.username);
-      const av = container.querySelector(".pf-avatar"); if (av) av.textContent = ((state.username || "Player")[0] || "P").toUpperCase();
+      const av = container.querySelector(".pf-avatar"); if (av) av.textContent = (state.username[0] || "?").toUpperCase();
       renderGreeting(); renderTopbarProfile();
       pushAccountName(state.username, e.target);
     });
@@ -9698,7 +9724,8 @@ function apPrimary(raw, sanitized) {
       while (a > 0 && WORD_CHAR.test(vis[a - 1])) a--;
       while (b < vis.length && WORD_CHAR.test(vis[b])) b++;
       const w = vis.slice(a, b).trim();
-      if (w) fulls.push(w);
+      // a bracket that only restates the name ("Vladimir Putin [Vladimir Vladimirovich Putin]") gave "Putin Putin"
+      if (w && !fulls.some((f) => f.toLowerCase() === w.toLowerCase())) fulls.push(w);
     }
     const joined = fulls.join(" ").trim();
     if (joined) return joined;
@@ -10450,7 +10477,7 @@ async function beginTrial() {
   let r = null;
   // signed in on the app: the account's state first (a run started on the website), and it hears of this one soon
   if (typeof _cloudOn !== "undefined" && _cloudOn) { try { await Promise.race([cloudSyncNow(), new Promise((res) => setTimeout(res, 4000))]); } catch (e) {} }
-  try { r = await API.post("/api/trials", { action: "start", category: t.key, level: t.level, instance: trialInstance() }); } catch (e) { r = { ok: false, error: (e && e.message) || "Couldn't start the trial." }; }
+  try { r = await API.post("/api/trials", { action: "start", category: t.key, level: t.level, instance: trialInstance() }); } catch (e) { r = { ok: false, error: errSentence(e, "Couldn't start the trial.") }; }
   if (r && r.ok && typeof _cloudOn !== "undefined" && _cloudOn) cloudSyncSoon(1500);
   t.starting = false; if (b) b.disabled = false;
   if (_trial !== t) return;   // left meanwhile
@@ -11977,7 +12004,7 @@ async function performDbSearch(opts) {
   } catch (e) {
     clearTimeout(barT);
     early = null;
-    if (seq === _dbSearchSeq) { container.classList.remove("db-loading"); container.innerHTML = '<div class="db-empty">Search failed: ' + escapeHtml(e.message || "something went wrong") + ' <button type="button" class="acct-link" data-db-retry>Try again</button></div>'; container.querySelector("[data-db-retry]")?.addEventListener("click", () => performDbSearch({ page: _dbPage })); if (pt) pt.innerHTML = ""; if (pb) pb.innerHTML = ""; }
+    if (seq === _dbSearchSeq) { container.classList.remove("db-loading"); container.innerHTML = '<div class="db-empty">Search failed. ' + escapeHtml(errSentence(e)) + ' <button type="button" class="acct-link" data-db-retry>Try again</button></div>'; container.querySelector("[data-db-retry]")?.addEventListener("click", () => performDbSearch({ page: _dbPage })); if (pt) pt.innerHTML = ""; if (pb) pb.innerHTML = ""; }
   }
 }
 
@@ -12404,7 +12431,7 @@ async function runFrequency(page) {
     el.querySelectorAll(".freq-answer").forEach((td) => td.addEventListener("click", () => searchFromFrequency(td.dataset.answer, qtype)));
   } catch (e) {
     clearTimeout(bar);
-    if (seq === _freqSeq) el.innerHTML = '<div class="db-empty">Failed to load: ' + escapeHtml(e.message || String(e)) + "</div>";
+    if (seq === _freqSeq) el.innerHTML = '<div class="db-empty">Couldn\'t load the list. ' + escapeHtml(errSentence(e)) + "</div>";
   }
 }
 
@@ -14654,6 +14681,10 @@ function renderDbUpdateStatus(s) {
     status.appendChild(b);
   } else if (s.state === "error" && _dbManual) {
     status.textContent = "Update failed: " + friendlyUpdateErr(s.error || "");
+  } else if (document.getElementById("db-upd-fill")) {
+    // the launch check ended with nothing to download: its bar said "Checking…" for good
+    status.textContent = s.state === "error" ? "Update check failed. " + friendlyUpdateErr(s.error || "")
+      : s.needsAppUpdate ? "A newer question database needs an app update first." : "Your question database is up to date.";
   }
 }
 async function pollDbUpdate() {
