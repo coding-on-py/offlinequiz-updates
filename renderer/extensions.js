@@ -2850,7 +2850,7 @@ function __qbMain(ctx) {
     // A dropped connection (the server restarting, Wi-Fi blinking): the page stays on the room and
     // quietly rejoins — the seat and score are kept — with a small "Reconnecting…" note. Only when
     // that keeps failing does a card offer Rejoin / Leave.
-    var reconnectN = 0, reconnectT = null, rejoining = false;
+    var reconnectN = 0, reconnectT = null, rejoining = false, reconnectWait = false;
     var RECONNECT_MS = [600, 1500, 3000, 6000, 10000];
     function reconnectNote(on) {
       var area = body && body.querySelector(".question-area"), el = body && body.querySelector("#mp-reconnecting");
@@ -2861,14 +2861,31 @@ function __qbMain(ctx) {
       el.innerHTML = '<span class="mp-recon-dot" aria-hidden="true"></span>Reconnecting\u2026';
       area.appendChild(el);
     }
-    function reconnected() { reconnectN = 0; rejoining = false; clearTimeout(reconnectT); reconnectNote(false); var dc = body && body.querySelector("#mp-disconnect"); if (dc) dc.remove(); }
+    function reconnected() { reconnectN = 0; rejoining = false; reconnectWait = false; clearTimeout(reconnectT); reconnectNote(false); var dc = body && body.querySelector("#mp-disconnect"); if (dc) dc.remove(); }
+    // The network back (Wi-Fi returning) or the page shown again (a phone unlocked, a laptop opened): a room
+    // waiting out its back-off tries now, from the first step, and one behind the Rejoin card rejoins by itself
+    // (after ~20 s of failed tries it used to stay there until Rejoin was pressed)
+    function retryNow() {
+      if (!lobby || leftIntentionally || navigator.onLine === false) return;
+      var card = body && body.querySelector("#mp-disconnect");
+      if (!reconnectWait && !card) return;
+      clearTimeout(reconnectT); reconnectWait = false;
+      if (card) card.remove();
+      reconnectN = 0; rejoining = true; isHost = false; reconnectNote(true); join();
+    }
+    window.qbMpRetryNow = retryNow;
+    if (!window.__qbMpRetryHooked) {
+      window.__qbMpRetryHooked = true;
+      window.addEventListener("online", function () { if (window.qbMpRetryNow) window.qbMpRetryNow(); });
+      document.addEventListener("visibilitychange", function () { if (!document.hidden && window.qbMpRetryNow) window.qbMpRetryNow(); });
+    }
     function showDisconnected() {
       var area = body && body.querySelector(".question-area");
       if (!area) { setStatus("Disconnected from the room."); return; }
       if (reconnectN < RECONNECT_MS.length) {
         reconnectNote(true);
-        clearTimeout(reconnectT);
-        reconnectT = setTimeout(function () { reconnectN++; rejoining = true; isHost = false; join(); }, RECONNECT_MS[reconnectN]);
+        clearTimeout(reconnectT); reconnectWait = true;
+        reconnectT = setTimeout(function () { reconnectWait = false; reconnectN++; rejoining = true; isHost = false; join(); }, RECONNECT_MS[reconnectN]);
         return;
       }
       rejoining = false; reconnectNote(false);
@@ -3785,6 +3802,9 @@ function __qbMain(ctx) {
           if (sj !== _lastSelJson && borrowedPanel) { _lastSelJson = sj; applyRemoteSel(d.roomSel); }
         } else if (d.roomFilters && borrowedPanel) applyRoomFiltersToPanel(d.roomFilters);
         if (officialRoom) syncDiagDrawer();
+        // the room has no question in play (the game server restarted under it): a question this page still
+        // showed mid-read, or a bonus, is gone, and Next comes back. A question that ended keeps its result
+        if (d.live === false && ((current && !ended) || bonusView)) { clearOptBuzz(); stopClientRead(); stopAutoSub(); current = null; ended = false; pendingBuzzer = null; bonusView = null; paused = false; restHeld = false; if (active()) render(); }
         renderScores(); renderSettings(); renderFilterSummary(); updateTopBar();
         if (inDiag()) renderDiag();   // who's here (the waiting view)
       }
@@ -3881,7 +3901,7 @@ function __qbMain(ctx) {
     function clearOptBuzz() { clearTimeout(optBuzzT); optBuzzT = null; optBuzz = null; }
     function undoOptBuzz() {
       var o = optBuzz; clearOptBuzz();
-      if (o && o.boxed && !pendingBuzzer) { var bz0 = body && body.querySelector("#mp-buzz"); if (bz0) { bz0.className = "buzz-area hidden"; bz0.innerHTML = ""; } stopTick(); }   // the box opened at the press closes
+      if (o && o.boxed && !pendingBuzzer) { var bz0 = body && body.querySelector("#mp-buzz"); if (bz0) { bz0.className = "buzz-area hidden"; bz0.innerHTML = ""; } stopTick(); if (restHeld) { restHeld = false; applyReveal(revealIdx); } }   // the box opened at the press closes
       if (!o || pendingBuzzer || !current || ended) { syncActions(); return; }
       if (o.speed) clientStartRead(Math.min(current.text.length, o.idx + Math.floor((Date.now() - o.at) / o.speed)), o.speed);
       syncActions();
@@ -5550,6 +5570,7 @@ function __qbMain(ctx) {
       // a new question starts at the top, without the room a long one before it added (app.js followReading)
       var qa = body && body.querySelector(".question-area"); if (qa) { qa.style.minHeight = ""; qa._followKey = null; }
       if (body && matchMedia("(max-width: 760px)").matches) body.scrollTop = 0;
+      restHeld = false;
       applyReveal(revealIdx);
       var buzz = body && body.querySelector("#mp-buzz"); if (buzz) { buzz.className = "buzz-area hidden"; buzz.innerHTML = ""; }
       var res = body && body.querySelector("#mp-result"); if (res) { res.className = "result-area hidden"; res.innerHTML = ""; }
@@ -5600,7 +5621,19 @@ function __qbMain(ctx) {
       }
       var rest = esc(tail);
       qt.innerHTML = '<span class="revealed">' + out + "</span>" + (rest ? '<span class="unrevealed" aria-hidden="true">' + rest + "</span>" : "");
+      if (restHeld && !ended) { var ur = qt.querySelector(".unrevealed"); if (ur) ur.style.display = "none"; }
       if (!ended && window.qbFollowReading) window.qbFollowReading(qt.querySelector(".revealed"));   // long questions scroll along
+    }
+    // A long question (or a short window): the unread rest's invisible shape put the answer box below the screen, a
+    // long way under the words heard. While someone answers it isn't laid out then, so the box comes up under them
+    // (practice does this every time; a room only when it's needed, so the box and the tries below don't jump)
+    var restHeld = false;
+    function holdRestIfLow() {
+      var qt = body && body.querySelector("#mp-qtext"), ur = qt && qt.querySelector(".unrevealed"), bz = body && body.querySelector("#mp-buzz");
+      if (!ur || !bz || bz.classList.contains("hidden") || ended) return;
+      var limit = window.innerHeight, bar = body.querySelector(".mp-actions");
+      if (bar) { var br = bar.getBoundingClientRect(); if (br.height && br.top < limit) limit = br.top; }
+      if (bz.getBoundingClientRect().bottom > limit - 8) { restHeld = true; ur.style.display = "none"; }
     }
 
     function applyBuzz(id, name, idx, deadline, provisional) {
@@ -5638,6 +5671,7 @@ function __qbMain(ctx) {
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
       }
       startTick(deadline);
+      holdRestIfLow();
     }
 
     function applyPrompt(id, name, ask, deadline) {
@@ -5661,6 +5695,7 @@ function __qbMain(ctx) {
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
       }
       startTick(deadline || answerDeadline);
+      holdRestIfLow();
     }
 
     // ── live typing: everyone watches the answerer type ──
@@ -5754,6 +5789,7 @@ function __qbMain(ctx) {
         if ((d.points || 0) >= 15 && (current.pumpkin || current._pumpkin) && window.qbEventFlash) setTimeout(function () { window.qbEventFlash(body && body.querySelector("#mp-result .result-banner")); }, 0);
       }
       var buzz = body && body.querySelector("#mp-buzz"); if (buzz) { buzz.className = "buzz-area hidden"; buzz.innerHTML = ""; }
+      restHeld = false;
       applyReveal(d.ended ? (current ? current.text.length : revealIdx) : revealIdx);
       var res = body && body.querySelector("#mp-result"); if (!res) { renderBuzzes(); return; }
       if (d.ended) {

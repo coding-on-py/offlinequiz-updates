@@ -98,7 +98,7 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/starred") return window.qbreader.getStarred(q.type);
         if (path === "/api/starred/check") return window.qbreader.checkStarred(q.questionId, q.type);
         if (path === "/api/stats") return window.qbreader.getStats(q.sessionId, q.since, q.categoryIds || null);
-        if (path === "/api/activity") return window.qbreader.getActivity ? window.qbreader.getActivity(Number(q.tz) || 0) : Promise.reject(new Error("update the app"));
+        if (path === "/api/activity") return window.qbreader.getActivity ? window.qbreader.getActivity(Number(q.tz) || 0, q.zone || "") : Promise.reject(new Error("update the app"));
         if (path === "/api/sessions") return window.qbreader.getSessions();
         if (path === "/api/sessions/breakdown") return window.qbreader.getSessionBreakdown(q.category, q.difficulty, q.categoryIds || null);
         if (path === "/api/sessions/entries") return window.qbreader.getSessionEntries(q.sessionId);
@@ -4642,7 +4642,7 @@ function applyStatLabels(mode) {
 
 function startSession() {
   if (trialPending()) { beginTrial(); return; }
-  setTimeout(() => tipInto(document.getElementById("question-area"), "practice-keys", null, document.getElementById("question-content")), 0);
+  setTimeout(() => tipInto(document.getElementById("question-area"), "practice-keys", practiceKeysTip(), document.getElementById("question-content")), 0);
   if (state.customType && !state.reviewIds && !state.bonusIds) endCustom();   // defensive
   state.sessionActive = true;
   state.sessionId = "session-" + Date.now();
@@ -6169,6 +6169,10 @@ function buzz() {
   const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
   $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
 
+  // the unread rest isn't laid out while answering (as on a phone): the marker and the answer box come right under
+  // the words heard. Its invisible shape put them below it, a screen down on a long question with what was read
+  // scrolled out of sight. Reading on (a rebuzz) or the result paints the text again, rest and all
+  const ur = $("#question-text .unrevealed"); if (ur) ur.style.display = "none";
   const marker = document.createElement("div");
   marker.className = "buzz-marker";
   marker.textContent = "▼ BUZZED ▼";
@@ -7979,8 +7983,9 @@ function exportSessionHistory() {
   const a = document.createElement("a");
   a.href = url;
   a.download = `session-${state.mode || "practice"}-${Date.now()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  // in the page and let go a moment later (Safari dropped a download whose link was revoked straight away)
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 
 // opts.entries renders the overlay over a supplied list instead of the live solo
@@ -13045,6 +13050,8 @@ let _accountKnownDone = null;
 const accountKnownP = new Promise((r) => { _accountKnownDone = r; });
 const needsAccount = () => IS_WEB && Account.required && !Account.user;
 const myTz = () => -new Date().getTimezoneOffset();
+// the IANA zone ("America/New_York"): days are dated by the offset in force at the time (userData.js dayCounter)
+const myZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; } };
 function accountGate(reason) {
   if (!needsAccount()) return false;
   openAccount("signin", { reason });
@@ -13084,7 +13091,9 @@ async function refreshAccount(opts) {
   syncLbPublicRow();
   friendPoll();
   // the account's time zone dates its day streak for friends
-  if (Account.user && !Account.offline && Account.user.tz !== myTz()) API.post("/api/account/profile", { tz: myTz() }).then((r) => { if (r && r.user) Account.user = r.user; }).catch(() => {});
+  // (zone: an older server sends none, and isn't asked again and again)
+  if (Account.user && !Account.offline && (Account.user.tz !== myTz() || (Account.user.zone !== undefined && (Account.user.zone || "") !== myZone())))
+    API.post("/api/account/profile", { tz: myTz(), zone: myZone() }).then((r) => { if (r && r.user) Account.user = r.user; }).catch(() => {});
   if (_cloudOn) cloudSyncSoon(1500);
   // screens drawn before we knew: redraw the gated ones
   if (needsAccount()) {
@@ -13247,7 +13256,7 @@ function openAccount(mode, opts) {
     const started = Date.now();
     const tick = async () => {
       if (mode !== "browser" || !el.isConnected) return;
-      const r = await API.post("/api/account/app-link/poll", { tz: myTz() }).catch(() => null);
+      const r = await API.post("/api/account/app-link/poll", { tz: myTz(), zone: myZone() }).catch(() => null);
       if (mode !== "browser" || !el.isConnected) return;
       if (r && r.ok) { render("syncing", {}); _cloudOn = true; await API.post("/api/cloud/sync", {}, 600000).catch(() => {}); location.reload(); return; }
       if ((r && r.expired) || Date.now() - started > 10 * 60e3) { render("signin", { error: "That sign-in expired. Try again." }); return; }
@@ -13305,7 +13314,7 @@ function openAccount(mode, opts) {
     btn.disabled = true;
     let r;
     if (mode === "signin") {
-      r = await post("/api/account/login", { email, password: v("acct-pass"), tz: myTz(), avatar: state.avatar || null });
+      r = await post("/api/account/login", { email, password: v("acct-pass"), tz: myTz(), zone: myZone(), avatar: state.avatar || null });
       if (r && r.ok) {
         if (Account.app) {   // merge this profile into the account before showing it
           render("syncing", {});
@@ -13691,6 +13700,19 @@ const TIPS = {
   "streaks": "Each square is a day, and brighter means more practice. Tap one to see that day.",
   "cat-presets": "Save your picks as a preset to switch back in one click.",
 };
+// the practice keys as they're bound now (Settings changes them), for what's played: a bonus has nothing to buzz
+function practiceKeysTip() {
+  const bonus = (state._practiceBase || state.mode) === "bonuses";
+  if (TOUCH) return bonus ? "Use the buttons along the bottom to read the next part and to pause." : TIPS["practice-keys"];
+  const k = (a) => { const b = getHotkey(a); return b && b !== "Not Set" ? bindingGlyphs(b) : ""; };
+  const said = (bonus
+    ? [[k("next-question"), "reads the next part, then the next question"], [k("pause-reveal"), "pauses"]]
+    : [[k("buzz"), "buzzes"], [k("start-skip"), "skips"], [k("pause-reveal"), "pauses"], [k("next-question"), "goes to the next question"]])
+    .filter((p) => p[0]).map((p) => p[0] + " " + p[1]);
+  if (bonus) return said.join(". ") + ".";
+  if (!said.length) return TIPS["practice-keys"];
+  return (said.length > 1 ? said.slice(0, -1).join(", ") + " and " + said[said.length - 1] : said[0]) + ".";
+}
 const _TIPS_LS = "qb-tips";
 function _tipsMap() { try { return JSON.parse(localStorage.getItem(_TIPS_LS) || "{}") || {}; } catch (e) { return {}; } }
 function tipSeen(id) { return !!_tipsMap()[id]; }
@@ -13763,7 +13785,7 @@ const stkIso = (t) => new Date(t).toISOString().slice(0, 10);
 const STK_FLAME = '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>';
 const stkFlame = (n) => `<svg viewBox="0 0 24 24" width="${n}" height="${n}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STK_FLAME}</svg>`;
 async function fetchActivity() {
-  return API.get("/api/activity?tz=" + (-new Date().getTimezoneOffset()));
+  return API.get("/api/activity?tz=" + (-new Date().getTimezoneOffset()) + "&zone=" + encodeURIComponent(myZone()));
 }
 // the top bar's day streak: the viewer's own days; an older backend falls back to the stats count
 async function streakNow() {

@@ -28,6 +28,33 @@ export const EVENTS = [
 // Halloween, by its old name (older code reads EVENT.start / .end / .goal); pumpkinEvery is its `every`
 export const EVENT = { ...EVENTS[0], pumpkinEvery: EVENTS[0].every };
 export const eventAt = (now = Date.now()) => EVENTS.find((e) => now >= e.start && now < e.end) || null;
+
+// The day a practice time falls on for its player, as a count of days. zone (an IANA name, "America/New_York")
+// dates each time by the offset in force then, so a summer session just after midnight stays on its day once the
+// clocks go back (by today's offset it slid to the day before and could break a streak). Without a zone (an older
+// app), tz (minutes east of UTC, today's offset) dates them all.
+const _zoneFmt = new Map();
+export function dayCounter(tz, zone) {
+  const DAY = 864e5, fixed = (Number(tz) || 0) * 60000;
+  let f = zone ? _zoneFmt.get(zone) : null;
+  if (zone && f === undefined) {
+    try { f = typeof zone === "string" && zone.length <= 64 ? new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" }) : null; } catch { f = null; }
+    if (_zoneFmt.size > 500) _zoneFmt.clear();
+    _zoneFmt.set(zone, f);
+  }
+  if (!f) return (t) => Math.floor((t + fixed) / DAY);
+  const hours = new Map();   // offsets change on the hour: one look-up per hour played in
+  return (t) => {
+    const h = Math.floor(t / 36e5);
+    let off = hours.get(h);
+    if (off === undefined) {
+      const m = /GMT([+-])(\d{1,2}):?(\d{2})?/.exec(f.format(new Date(h * 36e5)));
+      off = m ? (m[1] === "-" ? -1 : 1) * (+m[2] * 60 + +(m[3] || 0)) * 60000 : 0;
+      hours.set(h, off);
+    }
+    return Math.floor((t + off) / DAY);
+  };
+}
 export const eventOn = (now = Date.now()) => !!eventAt(now);
 export function isEventItem(id, ev) {
   if (id == null || id === "" || !ev) return false;
@@ -421,15 +448,23 @@ export class UserData {
     return { week: sum(now - 7 * DAY), month: sum(now - 30 * DAY), all };
   }
 
+  // dayCounter for these queries, and as SQL's qb_day(timestamp) on this database (set again each time: one
+  // database serves one player's queries at a time)
+  _dayFn(tz, zone) {
+    const f = dayCounter(tz, zone);
+    this.db.function("qb_day", { deterministic: true }, (t) => f(Number(t)));
+    return f;
+  }
+
   // A friend-list summary of the active profile's practice: today, the last 7
-  // days, the day streak (in the owner's time zone, tz = minutes east of UTC).
-  activitySummary(tz = 0, now = Date.now()) {
-    const pid = this.getActiveProfileId();
-    const off = (Number(tz) || 0) * 60000, DAY = 864e5;
-    const dayOf = (t) => Math.floor((t + off) / DAY);
+  // days, the day streak (in the owner's time zone, tz = minutes east of UTC,
+  // zone its IANA name: dayCounter).
+  activitySummary(tz = 0, now = Date.now(), zone = "") {
+    const pid = this.getActiveProfileId(), DAY = 864e5;
+    const dayOf = this._dayFn(tz, zone);
     const today = dayOf(now);
     const all = this.db.prepare("SELECT COUNT(*) AS n, MAX(timestamp) AS last FROM sessions WHERE profile_id = ?").get(pid);
-    const todayN = this.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE profile_id = ? AND timestamp >= ?").get(pid, today * DAY - off).n;
+    const todayN = this.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE profile_id = ? AND timestamp >= ? AND qb_day(timestamp) >= ?").get(pid, now - 2 * DAY, today).n;
     const wk = { questions: 0, tossups: 0, correct: 0, points: 0, powers: 0 };
     let wkAnswered = 0;
     for (const r of this.db.prepare(`SELECT type, COUNT(*) AS n, SUM(correct) AS c, SUM(points) AS pts, SUM(CASE WHEN points >= 15 AND correct = 1 THEN 1 ELSE 0 END) AS pw,
@@ -439,7 +474,7 @@ export class UserData {
       if (r.type === "tossup") { wk.tossups = r.n; wk.correct = r.c || 0; wk.powers = r.pw || 0; wkAnswered = r.ans || 0; }
     }
     wk.accuracy = wkAnswered ? Math.round((100 * wk.correct) / wkAnswered) : null;   // skipped tossups left out
-    const days = this.db.prepare("SELECT DISTINCT CAST((timestamp + ?) / 86400000 AS INTEGER) AS d FROM sessions WHERE profile_id = ? ORDER BY d DESC LIMIT 400").all(off, pid).map((r) => r.d);
+    const days = this.db.prepare("SELECT DISTINCT qb_day(timestamp) AS d FROM sessions WHERE profile_id = ? ORDER BY d DESC LIMIT 400").all(pid).map((r) => r.d);
     let streak = 0;
     if (days.length && days[0] >= today - 1) { let want = days[0]; for (const d of days) { if (d !== want) break; streak++; want--; } }
     return { total: all.n, today: todayN, week: wk, streak, lastActive: all.last || null };
@@ -448,18 +483,17 @@ export class UserData {
   // The Streaks page: the active profile's practice per day (tz = minutes east of
   // UTC, the viewer's own days), the current day streak (today or yesterday back)
   // and the longest one.
-  activityDays(tz = 0, now = Date.now()) {
-    const pid = this.getActiveProfileId();
-    const off = (Number(tz) || 0) * 60000, DAY = 864e5;
-    const today = Math.floor((now + off) / DAY);
-    const rows = this.db.prepare(`SELECT CAST((timestamp + ?) / 86400000 AS INTEGER) AS d, COUNT(*) AS q,
+  activityDays(tz = 0, now = Date.now(), zone = "") {
+    const pid = this.getActiveProfileId(), DAY = 864e5;
+    const today = this._dayFn(tz, zone)(now);
+    const rows = this.db.prepare(`SELECT qb_day(timestamp) AS d, COUNT(*) AS q,
         SUM(CASE WHEN type = 'tossup' THEN 1 ELSE 0 END) AS tu, SUM(CASE WHEN type = 'bonus' THEN 1 ELSE 0 END) AS bo,
         SUM(points) AS pts, SUM(CASE WHEN type = 'tossup' AND correct = 1 THEN 1 ELSE 0 END) AS cor,
         SUM(CASE WHEN type = 'tossup' AND correct = 1 AND points >= 15 THEN 1 ELSE 0 END) AS pw,
         SUM(CASE WHEN type = 'tossup' AND points < 0 THEN 1 ELSE 0 END) AS neg,
         SUM(CASE WHEN type = 'bonus' THEN COALESCE(bonus_parts_correct, 0) ELSE 0 END) AS bpc,
         SUM(CASE WHEN type = 'tossup' AND COALESCE(given_answer, '') <> '(skipped)' THEN 1 ELSE 0 END) AS tans
-      FROM sessions WHERE profile_id = ? GROUP BY d ORDER BY d`).all(off, pid);
+      FROM sessions WHERE profile_id = ? GROUP BY d ORDER BY d`).all(pid);
     const iso = (d) => new Date(d * DAY).toISOString().slice(0, 10);
     let best = 0, run = 0, prev = null;
     for (const r of rows) { run = prev != null && r.d === prev + 1 ? run + 1 : 1; best = Math.max(best, run); prev = r.d; }
@@ -572,6 +606,7 @@ export class UserData {
 
   createProfile(name) {
     const id = "prof-" + Date.now();
+    name = String(name == null ? "" : name).trim().slice(0, 40) || "Player";
     this.db.prepare("INSERT INTO profiles (id, name, created_at) VALUES (?, ?, ?)").run(id, name, Date.now());
     return { id, name };
   }

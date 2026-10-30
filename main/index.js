@@ -973,7 +973,7 @@ export class App {
   }
 
   parseAnswerline(answerline, sanitized) {
-    return parseDirectives(answerline || "", sanitized || "");
+    return parseDirectives(typeof answerline === "string" ? answerline : "", typeof sanitized === "string" ? sanitized : "");
   }
 
   scoreTossupResult(userAnswer, tossup, buzzCharIndex, fullyRead, strictness, previous = null) {
@@ -1135,8 +1135,8 @@ export class App {
 
   // categories per session in the CURRENT tree (rows store the old labels)
   // the Streaks page: practice per day in the viewer's time zone, the streaks
-  getActivity(tz) {
-    return this.userData.activityDays(Number(tz) || 0);
+  getActivity(tz, zone) {
+    return this.userData.activityDays(Number(tz) || 0, Date.now(), typeof zone === "string" ? zone : "");
   }
 
   getSessionList() {
@@ -1710,7 +1710,7 @@ export class App {
       // another account on this profile before: start its sync from scratch
       const same = c && c.user && r.user && c.user.email === r.user.email;
       this._setCloud({ token: r.token, user: r.user, pulled: same ? c.pulled || 0 : 0, pushed: same ? c.pushed || 0 : 0, lastSync: same ? c.lastSync || null : null });
-      this._cloudFetch("POST", "/api/account/profile", { tz: body.tz, avatar: body.avatar }, r.token).catch(() => {});
+      this._cloudFetch("POST", "/api/account/profile", { tz: body.tz, zone: body.zone, avatar: body.avatar }, r.token).catch(() => {});
       return { ok: true, user: r.user };
     }
     if (key === "POST /api/account/logout") {
@@ -1738,7 +1738,7 @@ export class App {
       this._appLink = null;
       const same = c && c.user && r.user && c.user.email === r.user.email;
       this._setCloud({ token: r.token, user: r.user, pulled: same ? c.pulled || 0 : 0, pushed: same ? c.pushed || 0 : 0, lastSync: same ? c.lastSync || null : null });
-      this._cloudFetch("POST", "/api/account/profile", { tz: body.tz }, r.token).catch(() => {});
+      this._cloudFetch("POST", "/api/account/profile", { tz: body.tz, zone: body.zone }, r.token).catch(() => {});
       return { ok: true, user: r.user };
     }
     if (key === "POST /api/cloud/open") { this._openExternal(String(body.url || "")); return { ok: true }; }

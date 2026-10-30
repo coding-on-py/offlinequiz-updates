@@ -386,7 +386,7 @@ export async function start(env) {
       return { ok: true };
     });
 
-    ipcMain.handle("get-activity", (_e, { tz }) => qbApp.getActivity(tz));
+    ipcMain.handle("get-activity", (_e, { tz, zone }) => qbApp.getActivity(tz, zone));
 
     ipcMain.handle("get-stats", (_e, { sessionId, since, categoryIds }) => {
       if (sessionId) {
