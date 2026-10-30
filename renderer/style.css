@@ -6411,6 +6411,7 @@ html:not(.topics-on) .topics-only { display: none !important; }
   background: color-mix(in srgb, var(--c, var(--muted)) 9%, transparent); color: var(--text); font-family: var(--font); font-size: 12px; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .tchip:hover, .tchip:focus-visible { border-color: var(--c, var(--muted)); color: var(--strong); }
 .tchip.plain { border-style: dashed; border-color: var(--line); background: transparent; color: var(--muted); cursor: default; }
+.tchip.tcat .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--c, var(--muted)); }   /* a category: its top category's color */
 .tchip.more { border-color: var(--line); background: transparent; color: var(--muted); }
 .tchip-rest { display: contents; }
 .tchip-n { color: var(--muted); font-size: 11px; }

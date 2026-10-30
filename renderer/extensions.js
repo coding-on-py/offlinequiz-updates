@@ -12481,8 +12481,14 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     const ments = (t.mentions || []).map((m) => (m.id ? chip(m) : plain(m))).filter(Boolean);
     const MAX = o.max || 16;
     const shown = ments.slice(0, MAX).join("") + (ments.length > MAX ? `<button type="button" class="tchip more" data-tmore>+${ments.length - MAX}</button><span class="tchip-rest" hidden>${ments.slice(MAX).join("")}</span>` : "");
+    // its other categories (the first is its home, already on the card): "Science › Stars & Stellar Evolution"
+    const home = Array.isArray(t.categories) ? t.categories[0] : null;
+    const cats = (Array.isArray(t.categories) ? t.categories : []).filter((p, i, a) => typeof p === "string" && p && p !== home && a.indexOf(p) === i).map((p) => {
+      const parts = p.split(" > "), color = typeof rootColorOf === "function" ? rootColorOf(p) : "";
+      return `<button type="button" class="tchip tcat" style="--c:${esc(color)}" data-cat-path="${esc(p)}" title="${esc(parts.join(" › "))}"><span class="dot"></span>${esc(parts.length > 1 ? parts[0] + " › " + parts[parts.length - 1] : parts[0])}</button>`;
+    }).join("");
     const row = (label, html) => (html ? `<div class="trow"><span class="trow-k">${label}</span><div class="trow-v">${html}</div></div>` : "");
-    const body = row("About", tiers + about) + row("Themes", themes) + row("Mentions", shown);
+    const body = row("About", tiers + about) + row("Themes", themes) + row("Also in", cats) + row("Mentions", shown);
     return body ? `<div class="topics" data-type="${o.type === "bonus" ? "bonus" : "tossup"}"${o.blocks ? ` data-blocks="${esc(o.blocks)}"` : ""}>${body}</div>` : "";
   }
 
@@ -12577,6 +12583,8 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
   document.addEventListener("click", (e) => {
     const more = e.target.closest && e.target.closest(".topics [data-tmore]");
     if (more) { e.preventDefault(); e.stopPropagation(); const rest = more.nextElementSibling; if (rest) { rest.hidden = false; rest.replaceWith(...rest.childNodes); } more.remove(); return; }
+    const cat = e.target.closest && e.target.closest(".tchip[data-cat-path]");
+    if (cat) { e.preventDefault(); e.stopPropagation(); dimClues(); searchCategory(cat.getAttribute("data-cat-path")); return; }
     const c = e.target.closest && e.target.closest(".tchip[data-topic]");
     if (!c) return;
     e.preventDefault(); e.stopPropagation();
@@ -12585,6 +12593,12 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     if (c.closest(".db-topic, .tg-list")) openTag(tag.id); else searchTag(tag);
   });
   function searchTag(tag) { searchDatabase({ query: "", tags: [{ f: "topic", v: tag.name, id: tag.id, k: tag.kind || "" }] }); }
+  // a category chip: the database's questions in that category, by any of their categories (the "subject" tag)
+  async function searchCategory(path) {
+    let node = null;
+    try { node = typeof fetchCatTree === "function" ? (await fetchCatTree("tossups")).byPath.get(path) : null; } catch (e) { node = null; }
+    if (node) searchDatabase({ query: "", tags: [{ f: "subject", v: node.name, id: node.id, p: node.path }] });
+  }
 
   // ── the tag field's suggestions (app.js TagField): tags by name or another name, fetched as you type ──
   const suggCache = new Map();

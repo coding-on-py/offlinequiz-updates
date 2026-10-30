@@ -1863,6 +1863,8 @@ function showScreen(name, opts) {
   // A settings modal left open would float its click-eating backdrop over the
   // next screen (the "Back did nothing / buttons stopped working" bug).
   try { closeSettingsOverlays(); } catch (e) {}
+  // and the windows over a screen (a tag chip in the session history opens Database → Search, which then sat under it)
+  document.querySelectorAll("#history-overlay, #review-viewer, #review-menu, #save-menu").forEach((x) => { if (x.id === "history-overlay") _histEntries = null; x.remove(); });
   document.getElementById("plugin-guide")?.remove();   // a plugin's guide belongs to the Plugins page
   try { closeSetupDrawer(); } catch (e) {}
   try { flushPendingFilterSave(); } catch (e) {}   // while state.mode still names the outgoing tab
