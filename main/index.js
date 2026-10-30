@@ -58,7 +58,7 @@ const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3;
 export const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
 // 15.12 regrades: bump when a checker fix (or a corrected database) should look at old wrong answers again. A run is
 // keyed by this and the question database's build, so a new database re-runs it too (only answers still wrong).
-export const REGRADE_V = "15.20";   // 15.20: "accept either nickname or number" (the answer checker)
+export const REGRADE_V = "15.41";   // 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME)
 // two refund summaries as one window (an admin's refund and a regrade, or two refunds): their sums, their trials
 export function mergeRegrade(a, b) {
   const n = (x) => Number(x) || 0;

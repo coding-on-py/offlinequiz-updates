@@ -1958,8 +1958,19 @@ function corpusCount(t) {
   }
   return CONFUSABLE.get(t) || 0;
 }
+// Spellings of one name that are each frequent answer words, so the guard took them for rival answers ("Dostoyevsky"
+// for Dostoevsky was wrong): never a collision with each other. Hand-kept, only the same person or place (not
+// Mithra / Mithras, which scholars keep apart).
+const SAME_NAME = new Map();
+for (const g of ["dostoevsky dostoyevsky", "nanjing nanking", "habsburg hapsburg", "moctezuma montezuma", "ashoka asoka",
+  "baldr baldur balder", "cusco cuzco", "freya freyja", "mehmed mehmet", "rachmaninoff rachmaninov", "vergil virgil",
+  "petrarch petrarca", "sassanid sassanian", "ganesh ganesha", "arjun arjuna", "kirchhoff kirchoff", "akhenaten akhnaten"]) {
+  const ws = g.split(" ");
+  for (const w of ws) SAME_NAME.set(w, ws);
+}
 // is the fuzzy reading of token t (for form word w) blocked by the collision guard?
 function knownCollision(t, w) {
+  if (SAME_NAME.has(t) && SAME_NAME.get(t).includes(w.t)) return false;
   const nt = corpusCount(t);
   if (nt < 10) return false;
   const base = w.kind === "O" ? w.t : w.segs.filter((x) => x[0]).map((x) => x[1]).join("");
@@ -3566,7 +3577,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   // answer: "Virginia" inside a West Virginia accept doesn't count). Not on a line that wants exactly its answer or no
   // other; a response that is exactly one of the line's prompt targets still gets that prompt.
   if (strictness <= 10 && !exact && !rules.closed) {
-    const v = containedAccept(T, F, H, ctx, { live, linePool, exact, lenient, rules, opts, out, plain });
+    const v = containedAccept(T, F, H, ctx, { live, linePool, exact, lenient, rules, opts, out, plain, lineText: P.text });
     if (v) return v;
   }
   // ---- J6 / J7 named prompt and anti-prompt
@@ -3698,7 +3709,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     if (m.left.length && !extraOk && extraOk20(f) && !f.specificEx && !fromText(m.left) && !otherName(m.left)) continue;
     if (ctx.autoForm && rejectedText()) continue;
     if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
-    if (m.left.length && !extraWordsOk(T, m, opts, f)) continue;
+    if (m.left.length && !extraWordsOk(T, m, opts, f, P.text)) continue;
     ctx.wordForms = false;
     if (m.left.length) {   // the extra words never carry an answer the line rejects ("birth control abortion")
       const left = new Set(m.left), inside = new Set();
@@ -3720,7 +3731,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
       const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk }, F.promptPool);
       if (!m || !m.full) continue;
       if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
-      if (m.left.length && !extraWordsOk(T, m, opts, f)) continue;
+      if (m.left.length && !extraWordsOk(T, m, opts, f, P.text)) continue;
       const anti = F.antis.includes(f);
       const v = out("prompt", f, "J11", anti ? { antiprompt: true } : {});
       if (anti) v.prompt.ask = f.ask || "Can you be less specific?";
@@ -3813,7 +3824,7 @@ function containedAccept(T, F, H, ctx, x) {
       const m = leftoverMatch(f, T, ctx, matchForm(f, T, ctx, mode, linePool), mode, linePool);
       if (!m || !m.full || !m.left.length) continue;   // all of it the answer: the usual rules judged it
       if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
-      if (otherGivenName(T, m, f)) continue;
+      if (otherGivenName(T, m, f) || otherNumeral(T, m, f, x.lineText)) continue;
       const left = new Set(m.left), inside = new Set();
       for (let k = 0; k < T.length; k++) if (!left.has(k)) inside.add(k);
       if (!inside.size || negated(inside)) continue;
@@ -3908,10 +3919,31 @@ function collides(form, T, m, F, opts) {
 }
 
 // Extra unaccounted words (J10 below strictness 20): never a negation or a hedge, never a known different answer.
-function extraWordsOk(T, m, opts, form) {
+function extraWordsOk(T, m, opts, form, lineText) {
   for (const k of m.left) if (NEVER_ACCOUNTED.has(T[k].t)) return false;
-  if (otherGivenName(T, m, form)) return false;
+  if (otherGivenName(T, m, form) || otherNumeral(T, m, form, lineText)) return false;
   return !(opts.isKnownAnswer && opts.isKnownAnswer(T.map((x) => x.t).join(" ")));
+}
+// a regnal number the form doesn't have, right after a name it matched: someone else ("Napoleon III" for Napoleon
+// Bonaparte, "Henry the Second" for a Henry the line names by no number). A Roman numeral there, or "the" + an
+// ordinal; one ("Napoleon I") is the same person, and a form with a number of its own judges numbers itself.
+function otherNumeral(T, m, form, lineText) {
+  if (!form || form.words.some((w) => w.num)) return false;
+  const left = new Set(m.left);
+  let line = null;
+  for (const k of m.left) {
+    // "the" before an ordinal may count as accounted for; the word before the number is part of the answer, a name
+    const viaThe = k >= 2 && T[k - 1].t === "the";
+    const p = viaThe ? k - 2 : k - 1;
+    if (p < 0 || left.has(p) || !/^\p{L}+$/u.test(T[p].t)) continue;
+    const n = respNum(T[k], T[k - 1]);
+    if (!(n && n.v >= 2 && n.v <= 30 && (n.kind === "roman" || n.kind === "digit" || (viaThe && n.kind === "ord")))) continue;
+    // the line names that one somewhere ("accept … Harald III … where appropriate", prose the forms don't hold)
+    if (line === null) line = " " + String(lineText || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ") + " ";
+    if (line.includes(" " + T[p].t + " " + (viaThe ? "the " : "") + T[k].t + " ")) continue;
+    return true;
+  }
+  return false;
 }
 // a word said where the form has a given name, before its surname: someone else of that name ("Mary Boleyn" for Anne
 // Boleyn, "John Adams" for John Quincy Adams; NAQT 8.3)
