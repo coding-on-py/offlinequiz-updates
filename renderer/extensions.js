@@ -4746,7 +4746,7 @@ function __qbMain(ctx) {
                 '<button type="button" class="btn mp-pause-btn" id="mp-pause-btn" hidden>Pause</button>' +
                 (inDiag() ? '<button type="button" class="btn btn-primary" id="mp-dx-report" hidden>See the report</button><button type="button" class="btn btn-primary" id="mp-dx-clubs" hidden>Back to Clubs</button>' : "") +
               "</div>" +
-              '<div class="result-area hidden" id="mp-result"></div><div class="sr-only" id="mp-live" aria-live="polite"></div>' +
+              '<div class="result-area hidden" id="mp-result"></div><div class="sr-only" id="mp-sr" aria-live="polite"></div>' +
               '<div class="history-panel mp-history" id="mp-history-panel" style="display:none">' +
                 '<button class="btn" id="mp-history-open">Session history (<span id="mp-history-count">0</span>)</button>' +
               "</div>" +
@@ -5789,7 +5789,7 @@ function __qbMain(ctx) {
       renderBuzzes();
     }
     // a screen reader hears how a question went (the room's hidden live region)
-    function srSay(text) { var el = body && body.querySelector("#mp-live"); if (el) { el.textContent = ""; setTimeout(function () { el.textContent = text; }, 30); } }
+    function srSay(text) { var el = body && body.querySelector("#mp-sr"); if (el) { el.textContent = ""; setTimeout(function () { el.textContent = text; }, 30); } }
     // every answer given on this question, what each player said and what it scored ("Your answer" for this player's)
     function triesHtml() {
       var me = players[myId];

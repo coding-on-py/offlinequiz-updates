@@ -6,6 +6,17 @@
   <title>OfflineQuiz</title>
   <link rel="stylesheet" href="style.css">
   <script>
+    // iPhone / iPad: tapping a text box under 16px zoomed the whole page in (Search, Sign in, the tag box). With
+    // maximum-scale=1 iOS doesn't, and still lets people pinch to zoom (it ignores the limit for that). iOS only:
+    // elsewhere the limit would stop pinch zoom.
+    try {
+      if (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) {
+        var vp = document.querySelector('meta[name="viewport"]');
+        if (vp) vp.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1");
+      }
+    } catch (e) {}
+  </script>
+  <script>
     // Paint the boot cover in the background colour this profile last used, so
     // a light theme does not flash the stylesheet's dark default before the
     // theme has loaded. Inline and synchronous on purpose: it must run before
