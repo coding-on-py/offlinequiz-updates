@@ -6600,3 +6600,6 @@ html.tb-tight:not(.shop-on) #tbm-store, html.lan .tbm-narrow { display: none !im
   .adm-uhead > :not(.fr-av):not(.adm-uhead-txt) { margin-left: 62px; }
 }
 html.tb-nocrumb .tb-crumb { display: none; }
+/* the save menu's items are buttons now: they look as the rows did */
+.save-menu-item { display: block; width: 100%; border: 0; background: transparent; font-family: var(--font); text-align: left; }
+.save-menu-item:focus-visible { background: var(--accent-dim); color: var(--accent); outline: none; }

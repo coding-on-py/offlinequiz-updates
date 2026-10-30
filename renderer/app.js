@@ -1976,6 +1976,7 @@ function toggleHotkeySheet() {
   el = document.createElement("div");
   el.id = "hotkey-sheet";
   el.className = "hotkey-sheet";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Keyboard shortcuts");
   const rows = allHotkeyActions()
     .map((a) => `<div class="hk-row"><span>${escapeHtml(a.label)}</span><kbd>${escapeHtml(keyDisplay(a.action))}</kbd></div>`)
     .join("");
@@ -2198,6 +2199,49 @@ function toggleScheme() {
 // Focus rings follow the keyboard: Tab turns them on, a click or tap turns them off (ui.css html.kb-nav), so a
 // window that focuses its button as it opens from a click doesn't show one.
 document.addEventListener("keydown", (e) => { if (e.key === "Tab") document.documentElement.classList.add("kb-nav"); }, true);
+// The icon "buttons" drawn as spans (the star, the save "+", a history card's star, Search's +): reachable with Tab,
+// named for a screen reader, and Enter presses them (not Space: Space buzzes)
+const ICON_BTN = ".star-btn, .star-toggle";
+function iconButtons(root) {
+  const list = root.matches?.(ICON_BTN) ? [root] : [...(root.querySelectorAll?.(ICON_BTN) || [])];
+  for (const el of list) {
+    if (el.tagName === "BUTTON" || el.hasAttribute("role")) continue;
+    el.setAttribute("role", "button"); el.tabIndex = 0;
+    if (!el.getAttribute("aria-label")) el.setAttribute("aria-label", el.title || (el.classList.contains("save-plus") ? "Save to review or folders" : "Star"));
+  }
+}
+new MutationObserver((muts) => { for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) iconButtons(n); }).observe(document.body, { childList: true, subtree: true });
+iconButtons(document.body);
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.defaultPrevented) return;
+  const el = e.target;
+  if (el && el.getAttribute?.("role") === "button" && !/^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) { e.preventDefault(); el.click(); }
+});
+// Tab stays inside the window on top (Settings, a confirm, Review, Sign in, a plugin's window…): it walked out to the
+// page behind, where Enter pressed buttons nobody could see
+const MODAL_SEL = '.qb-overlay, .settings-ovl, .fo-overlay, .ar-overlay, #review-menu, #review-viewer, #history-overlay, #hotkey-sheet, [aria-modal="true"]';
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+function topModal() {
+  let top = null, topZ = -Infinity;
+  for (const o of document.querySelectorAll(MODAL_SEL)) {
+    if (o.hidden || o.classList.contains("hidden") || o.classList.contains("qb-leaving") || !o.getClientRects().length) continue;
+    const cs = getComputedStyle(o);
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const z = parseInt(cs.zIndex, 10) || 0;
+    if (z >= topZ) { top = o; topZ = z; }   // (the same layer: the later one is on top)
+  }
+  return top;
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab" || e.defaultPrevented) return;
+  const box = topModal(); if (!box) return;
+  const a = document.activeElement;
+  if (a && !box.contains(a) && a.closest?.(".qb-select-popup, .pop, .tf-pop")) return;   // a menu opened from the window keeps its own keys
+  const list = [...box.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length && getComputedStyle(el).visibility !== "hidden" && !el.closest("[inert], .hidden"));
+  if (!list.length) { e.preventDefault(); return; }
+  const i = list.indexOf(a);
+  if (i < 0 || (e.shiftKey && i === 0) || (!e.shiftKey && i === list.length - 1)) { e.preventDefault(); (e.shiftKey ? list[list.length - 1] : list[0]).focus(); }
+}, true);
 document.addEventListener("pointerdown", () => document.documentElement.classList.remove("kb-nav"), true);
 
 applyTheme();
@@ -6752,8 +6796,10 @@ function confirmDialog(message, onYes, opts) {
   el.id = "confirm-dialog";
   el.className = "qb-overlay confirm-overlay";
   el.setAttribute("role", "alertdialog"); el.setAttribute("aria-modal", "true");
-  el.innerHTML = `<div class="confirm-box">${opts.title ? `<div class="confirm-title">${escapeHtml(opts.title)}</div>` : ""}<div class="confirm-msg">${escapeHtml(message)}</div>` +
-    (opts.detail ? `<div class="confirm-detail">${escapeHtml(opts.detail)}</div>` : "") +
+  el.setAttribute("aria-labelledby", opts.title ? "cf-title" : "cf-msg");   // (a screen reader read an unnamed alert)
+  if (opts.title || opts.detail) el.setAttribute("aria-describedby", opts.title ? "cf-msg" : "cf-detail");
+  el.innerHTML = `<div class="confirm-box">${opts.title ? `<div class="confirm-title" id="cf-title">${escapeHtml(opts.title)}</div>` : ""}<div class="confirm-msg" id="cf-msg">${escapeHtml(message)}</div>` +
+    (opts.detail ? `<div class="confirm-detail" id="cf-detail">${escapeHtml(opts.detail)}</div>` : "") +
     `<div class="confirm-actions${opts.alt ? " confirm-stack" : ""}">` +
     (opts.alt
       ? `<button class="btn ${opts.danger ? "btn-danger" : "btn-primary"}" id="cf-yes">${escapeHtml(opts.yes || "Delete")}</button>` +
@@ -6885,8 +6931,15 @@ function _renderSaveMenu(items, anchor) {
   const menu = document.createElement("div");
   menu.className = "save-menu";
   menu.id = "save-menu";
-  menu.innerHTML = items.map((it, i) => `<div class="save-menu-item" data-i="${i}">${escapeHtml(it.label)}</div>`).join("");
+  menu.setAttribute("role", "menu");
+  // buttons (they were divs: no keyboard, no menu for a screen reader); the arrows move between them
+  menu.innerHTML = items.map((it, i) => `<button type="button" class="save-menu-item" role="menuitem" data-i="${i}">${escapeHtml(it.label)}</button>`).join("");
   document.body.appendChild(menu);
+  menu.addEventListener("keydown", (e) => {
+    const list = [...menu.querySelectorAll(".save-menu-item")], i = list.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); list[(i + (e.key === "ArrowDown" ? 1 : list.length - 1)) % list.length]?.focus(); }
+    else if (e.key === "Tab") { closeSaveMenu(); try { anchor?.focus?.(); } catch (er) {} }
+  });
   // Position by the anchor when it has a real on-screen box; otherwise fall
   // back to the upper third of the viewport (never the body-flow corner).
   let left = null, top = null;
@@ -6911,6 +6964,7 @@ function _renderSaveMenu(items, anchor) {
     });
   });
   setTimeout(() => document.addEventListener("click", closeSaveMenu), 0);
+  if (document.documentElement.classList.contains("kb-nav")) menu.querySelector(".save-menu-item")?.focus();   // opened from the keyboard
 }
 function openSaveMenu(question, type, anchor) {
   closeSaveMenu();
@@ -14820,6 +14874,7 @@ function showUpdateDialog(info, opts) {
   const el = document.createElement("div");
   el.id = "update-dialog";
   el.className = "qb-overlay confirm-overlay";
+  el.setAttribute("role", "alertdialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "App update");
   const head = opts.installed
     ? `Version ${escapeHtml(String(info.version))} is ready. Restart to apply it.`
     : `Version ${escapeHtml(String(info.version))} is available${info.critical ? " (important)" : ""}`;
