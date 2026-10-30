@@ -1,5 +1,5 @@
 {
-  "version": "15.47",
+  "version": "15.48",
   "renderer": [
     "index.html",
     "style.css",
@@ -61,10 +61,10 @@
     "renderer/style.css": "b40d6e3b7c12576eccfdb3865182d1ccd2a1f80b49db6dcdcae5f62c947933f2",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "2219f331812693993229f86fc860e95fe4c1062cb8f7694c619dc9309edf3b00",
-    "renderer/app.js": "d168dc668d688758bdf61539a51948d43b5d5e96b985e0e755dde67444be7872",
+    "renderer/app.js": "58ab6a9ee000d5a9959d5d7ce4af423c3fa3e5eab9011974b666b793c8aafc89",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
-    "plugins/canon-tracker.zip": "61700802d7421b309f884be764a6733dade6942dfa209ef93b8efa74985cd7a0",
+    "plugins/canon-tracker.zip": "e98de9e23e33b6bff0ee1f912ec67126833205b716599c3e978870f4f5844810",
     "plugins/coach-mode.zip": "e23183227fe3dec730e3f37e43906ee5e1d6c0e74b063c9a4e8a2da77a623fad",
     "plugins/fact-sheet.zip": "e317174cc88cda1b451b6ed006cf6a6e295fe2e087689ff44d634edc2309b74e",
     "plugins/flashcards.zip": "b7d9c887a1d181db2511ccd595d63a013c2f0e15694a889b2b7499d7219b8bdc",
@@ -72,5 +72,5 @@
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/packet-builder.zip": "1932c45fc046b949267be9e7960939222ba0b9929ba6716fbe7626c5a7f7a9c6"
   },
-  "signature": "6Yrxh77BENP9q3jdXGYmPmZ9iWw/eAmNvOH8Jksmz2PpI20DBAtpeYW45SyazCw5JQ+LybsxU1cY0UI9gY4CBw=="
+  "signature": "QnE3stYYS02VkFnMWISVd7W5+RvIRhKs7gTlliQFsNjmPjcYm7rRwSDiabWZdQz35tu4pPwTQVJtd2DynFFmCg=="
 }

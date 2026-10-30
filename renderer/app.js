@@ -103,7 +103,7 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/sessions/breakdown") return window.qbreader.getSessionBreakdown(q.category, q.difficulty, q.categoryIds || null);
         if (path === "/api/sessions/entries") return window.qbreader.getSessionEntries(q.sessionId);
         if (path === "/api/sessions/all-entries")
-          return window.qbreader.getAllSessionEntries({ answers: q.answers === "1" || q.answers === "true" });
+          return window.qbreader.getAllSessionEntries({ answers: q.answers === "1" || q.answers === "true", fields: q.fields || "" });
         if (path === "/api/answer-powers") return window.qbreader.getAnswerPowers();
         if (path === "/api/achievements/timeline") return window.qbreader.getAchievementTimeline ? window.qbreader.getAchievementTimeline() : { rows: [], cats: [] };
         if (path === "/api/trials") return window.qbreader.getTrials ? window.qbreader.getTrials() : { trials: {}, cats: [] };

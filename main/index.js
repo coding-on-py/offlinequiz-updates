@@ -1089,9 +1089,13 @@ export class App {
   // caller re-request one question at a time — the same normalization
   // getAnswerPowers uses, so callers can compare against it directly.
   // answer_norms is a list because a bonus carries one answer per part.
+  // opts.fields ("type,answer,correct" or a list): only those of each entry. 100,000 answers are 54 MB whole
+  // (60 with answers), and a plugin seldom needs more than a few of them
   getAllSessionEntries(opts = {}) {
+    const fields = opts && opts.fields ? (Array.isArray(opts.fields) ? opts.fields : String(opts.fields).split(",")).map((f) => String(f).trim()).filter(Boolean) : null;
+    const pick = (list) => (fields && fields.length ? list.map((e) => { const o = {}; for (const f of fields) if (e[f] !== undefined) o[f] = e[f]; return o; }) : list);
     const entries = this._relabel(this.userData.getAllSessionEntries());
-    if (!opts || !opts.answers) return entries;
+    if (!opts || !opts.answers) return pick(entries);
 
     const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     const cache = new Map();
@@ -1126,11 +1130,11 @@ export class App {
       return out;
     };
 
-    return entries.map((e) => {
+    return pick(entries.map((e) => {
       if (!e.question_id) return e;
       const r = resolve(e.type === "bonus" ? "bonus" : "tossup", e.question_id);
       return { ...e, answer: r.answer, answer_norms: r.answer_norms };
-    });
+    }));
   }
 
   // categories per session in the CURRENT tree (rows store the old labels)

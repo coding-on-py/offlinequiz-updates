@@ -65,11 +65,14 @@ export function computeStats(entries) {
       totalCelerity += t.celerity;
       celerityCount++;
 
-      if (t.celerity <= 0.2) stats.celerityDistribution.power.push(t);
-      else if (t.celerity <= 0.4) stats.celerityDistribution.early.push(t);
-      else if (t.celerity <= 0.6) stats.celerityDistribution.mid.push(t);
-      else if (t.celerity <= 0.8) stats.celerityDistribution.late.push(t);
-      else stats.celerityDistribution.end.push(t);
+      // what the Statistics page reads of each (its zone's count, celerity by difficulty), not the whole answer:
+      // 100,000 answers made the overall stats 43 MB
+      const cz = { difficulty: t.difficulty, celerity: t.celerity };
+      if (t.celerity <= 0.2) stats.celerityDistribution.power.push(cz);
+      else if (t.celerity <= 0.4) stats.celerityDistribution.early.push(cz);
+      else if (t.celerity <= 0.6) stats.celerityDistribution.mid.push(cz);
+      else if (t.celerity <= 0.8) stats.celerityDistribution.late.push(cz);
+      else stats.celerityDistribution.end.push(cz);
     }
 
     addToCategoryStats(stats.byCategory, t, "tossup");
