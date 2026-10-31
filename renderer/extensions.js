@@ -2601,6 +2601,9 @@ function __qbMain(ctx) {
     // Next shows it and reads it at once (optNext, until the room serves it: the old question's messages wait in
     // `held`, its state in `prev`); a press while that's on its way goes on as soon as the following one is here
     var upNext = null, optNext = null, optConfirmRead = false, pressAgain = false;
+    // 15.55: the question the room said is this player's alone ("solo": its count), so the answer box may open at the
+    // press; a pause or resume shown at the press until the room says so: { want, t }
+    var soloN = -1, optPause = null;
     var OPT_HELD = { buzz: 1, buzzno: 1, buzzwin: 1, result: 1, read: 1, reveal: 1, more: 1, pause: 1, prompt: 1, typing: 1, bonus: 1, bpart: 1, bcancel: 1, reading: 1, qreset: 1 };
     var lockedTeams = {}, lockedIds = {};   // per-question lockouts
     // this player can't buzz again on this question (their wrong answer, or their team's, with rebuzzes
@@ -3279,7 +3282,7 @@ function __qbMain(ctx) {
       if (!roll && optNext) { pressAgain = true; return; }
       toHost(roll ? { t: "reqNext", roll: roll } : { t: "reqNext" });
     }
-    function applyQuestionMsg(d) { clearOptBuzz(); outIds = {}; outTeams = {}; stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
+    function applyQuestionMsg(d) { if (optPause) { clearTimeout(optPause.t); optPause = null; } clearOptBuzz(); outIds = {}; outTeams = {}; stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
     // Next can show the waiting question now: the room would go on (the same rules as the game server's next())
     function instantNextOk() {
       var u = upNext;
@@ -3551,17 +3554,21 @@ function __qbMain(ctx) {
       // Same wall-clock pacing as the host's reveal, so both texts track the
       // same clock regardless of tick jitter on either machine.
       var tickMs = speed;   // may be under 1 ms per character: the clock decides how many show
-      var t0 = Date.now(), base = from0;
+      var t0 = Date.now(), base = from0, crept = Date.now() - tickMs;   // (the first slow step comes half a character's time after)
       clientReadTimer = setInterval(function () {
         // While held, slide the baseline so a resume never leaks unread text.
         if (paused || ended || !current) { t0 = Date.now(); base = revealIdx; return; }
         if (revealIdx >= (current.len || current.text.length)) { stopClientRead(); return; }
         // text not here yet (server rooms send it just ahead): wait for it
         var want = Math.min(current.text.length, base + Math.floor((Date.now() - t0) / tickMs));
-        if (want <= revealIdx) return;
+        if (want <= revealIdx) {
+          // ahead of the room (keepAhead): on at two-thirds speed until it catches up, rather than a stop
+          if (keepAhead && want < revealIdx && revealIdx < current.text.length && Date.now() - crept >= 1.5 * tickMs) { crept = Date.now(); revealIdx++; applyReveal(revealIdx); }
+          return;
+        }
         revealIdx = want;
         applyReveal(revealIdx);
-      }, Math.max(8, tickMs));
+      }, Math.max(8, Math.min(tickMs, 20)));
     }
     function stopReveal() { if (revealTimer) { clearInterval(revealTimer); revealTimer = null; } }
 
@@ -3840,6 +3847,8 @@ function __qbMain(ctx) {
         return;
       }
       if (d.t === "nextno") { if (optNext && optNext.key === d.key) undoOptNext(); return; }
+      if (d.t === "solo") { soloN = typeof d.n === "number" ? d.n : -1; return; }
+      if (d.t === "pauseno") { undoOptPause(); return; }
       if (d.t === "state") {
         if (admitting) { admitting = false; door = null; render(); }   // let in: now the room shows
         if (rejoining || reconnectN) reconnected();
@@ -3889,11 +3898,14 @@ function __qbMain(ctx) {
           applyQuestionMsg(d);
         }
       }
-      else if (d.t === "read") { if (d.speed) pendingBuzzer = null; var ahead = optConfirmRead; optConfirmRead = false; clientStartRead(d.from, d.speed, ahead); }
+      // the room's reading never takes back text this page shows already (it ran ahead: Next or a resume at the
+      // press): it eases back into step instead
+      else if (d.t === "read") { if (d.speed) pendingBuzzer = null; optConfirmRead = false; clientStartRead(d.from, d.speed, true); }
       else if (d.t === "reveal") { revealIdx = d.index; applyReveal(d.index); }  // legacy hosts
       else if (d.t === "buzz") {
         var early = optBuzz; clearOptBuzz(); pendingBuzzer = d.id || null;
-        stopClientRead(); if (typeof d.index === "number") { revealIdx = d.index; applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyBuzz(d.id, d.name, d.index, answerDeadline);
+        // (the answerer's own box runs `lag` short of the room's time: it closes before the room gives the buzz on)
+        stopClientRead(); if (typeof d.index === "number") { revealIdx = d.index; applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000) - (d.id === myId ? (d.lag || 0) : 0); applyBuzz(d.id, d.name, d.index, answerDeadline);
         if (early && d.id === myId) {   // typed (or entered) before the room said it was ours
           var inp0 = body && body.querySelector("#mp-ans-input"), typed = early.answer != null ? early.answer : early.typed.replace(/^\s+/, "") || (early.boxed && inp0 ? inp0.value : "");
           if (inp0 && typed) { inp0.value = typed; resetTyping(); sendTyping(typed); }
@@ -3910,8 +3922,14 @@ function __qbMain(ctx) {
         if (!d.correct && !d.noBuzz && d.id && !settings.rebuzz && current) { var bz = players[d.id], me0 = players[myId]; if (d.id === myId || (bz && me0 && bz.team && bz.team === me0.team)) lockedOn = current; outIds[d.id] = 1; if (bz && bz.team) outTeams[bz.team] = 1; }
         if (current && d.fullText && d.fullText.length > current.text.length) current.text = d.fullText; if (typeof d.index === "number" && !d.ended) revealIdx = d.index; buzzHistory = d.history || buzzHistory; if (d.ended) ended = true; applyResult(d); renderBuzzes(); }
       else if (d.t === "reading") { /* the host's "read" message restarts the local ticker */ }
-      else if (d.t === "pause") { paused = d.paused; if (typeof d.idx === "number") { revealIdx = d.idx; applyReveal(revealIdx); } applyPause(d.paused); }
-      else if (d.t === "prompt") { pendingBuzzer = d.id || pendingBuzzer; answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000); applyPrompt(d.id, d.name, d.ask, answerDeadline); }
+      else if (d.t === "pause") {
+        if (optPause) { clearTimeout(optPause.t); optPause = null; }
+        paused = d.paused;
+        // where the room stopped (others saw up to there); never back from what's shown
+        if (typeof d.idx === "number" && d.idx > revealIdx) { revealIdx = d.idx; applyReveal(revealIdx); }
+        applyPause(d.paused);
+      }
+      else if (d.t === "prompt") { pendingBuzzer = d.id || pendingBuzzer; answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000) - (d.id === myId ? (d.lag || 0) : 0); applyPrompt(d.id, d.name, d.ask, answerDeadline); }
       else if (d.t === "typing") { if (d.id !== myId) applyTyping(d.id, d.text); }
       else if (d.t === "logentry") { sessionLog.push(d.entry); renderSessionLog(); }
       else if (d.t === "matchover") { if (active()) openMatchSheet(); }
@@ -3960,8 +3978,9 @@ function __qbMain(ctx) {
         stopClientRead();
         optBuzz = { idx: revealIdx, at: Date.now(), speed: lastReadSpeed, typed: "", answer: null };
         clearTimeout(optBuzzT); optBuzzT = setTimeout(undoOptBuzz, 2500);
-        // nobody else can buzz (alone, or the others out, watching or away): no race to lose, so the box opens now
-        if (!paused && !bonusView && !rivalCanBuzz()) { optBuzz.boxed = true; applyBuzz(myId, myName, revealIdx, Date.now() + (settings.answerSeconds || 10) * 1000, true); }
+        // the room said this question is this player's alone (checkSolo: nobody else may buzz it now), so the box
+        // opens at the press; anywhere else it waits for the room to give the buzz, so two boxes never show at once
+        if (!paused && !bonusView && soloN === qCount && qCount > 0) { optBuzz.boxed = true; applyBuzz(myId, myName, revealIdx, Date.now() + (settings.answerSeconds || 10) * 1000, true); }
         syncActions();
       }
     }
@@ -3980,7 +3999,27 @@ function __qbMain(ctx) {
       if (o.speed) clientStartRead(Math.min(current.text.length, o.idx + Math.floor((Date.now() - o.at) / o.speed)), o.speed);
       syncActions();
     }
-    function requestPause() { if (inDiag() && !amHost()) return; if (isHost) hostTogglePause(myId); else toHost({ t: "pause" }); }
+    function requestPause() {
+      if (inDiag() && !amHost()) return;
+      if (isHost) { hostTogglePause(myId); return; }
+      // a game-server room: the reading stops (or goes on) here at the press; the room's "pause" confirms it, and
+      // "pauseno" (it couldn't: a bonus began, the question ended) puts it back
+      if (serverMode && current && !ended && !(bonusView && !bonusView.done) && !optNext) {
+        var want = !paused;
+        if (optPause) clearTimeout(optPause.t);
+        var o = optPause = { want: want };
+        o.t = setTimeout(function () { if (optPause === o) undoOptPause(); }, 4000);
+        paused = want; applyPause(want);   // the reading timer holds while paused and goes on when not
+        toHost({ t: "pause", want: want });
+        return;
+      }
+      toHost({ t: "pause" });
+    }
+    function undoOptPause() {
+      var o = optPause; if (!o) return;
+      clearTimeout(o.t); optPause = null;
+      paused = !o.want; applyPause(paused);
+    }
     function submitAnswer(text) { if (isHost) hostHandleAnswer(myId, text); else toHost({ t: "answer", text: text }); }
     function changeName(name) { myName = name; try { ctx.setSetting("name", name); } catch (e) {} if (isHost) { var old = players[myId].name; players[myId].name = name; sysChat(old + " is now " + name); pushState(); } else toHost({ t: "setName", name: name }); }
     function changeTeam(team) { if (isHost) { players[myId].team = team; pushState(); } else toHost({ t: "setTeam", team: team }); }
