@@ -518,14 +518,18 @@ export class App {
     return { v: BW_VERSION, n, answers, types: atypes, cands };
   }
 
-  frequentAnswersApi({ category, subcategory, alternateSubcategory, limit, qtype, nodeId, nodeIds, offset } = {}) {
+  // answerTypes: a JSON list (or a list) of answer types, "Work: *" for every work (database.js getAnswerLinesForFreq)
+  frequentAnswersApi({ category, subcategory, alternateSubcategory, limit, qtype, nodeId, nodeIds, offset, answerTypes } = {}) {
     const lim = Math.max(1, Math.min(2000, parseInt(limit) || 50));
     const type = qtype === "bonus" || qtype === "both" ? qtype : "tossup";
     if (category || subcategory || alternateSubcategory) {
       return { answers: this.getFrequentAnswers(category || null, subcategory || null, alternateSubcategory || null, lim, type, nodeId || null) };
     }
     const ids = (Array.isArray(nodeIds) ? nodeIds : String(nodeIds || nodeId || "").split(",")).map(String).filter(Boolean);
-    return this.getFrequentAnswersPage({ qtype: type, nodeIds: ids, offset: parseInt(offset) || 0, limit: lim });
+    let at = answerTypes;
+    if (typeof at === "string") { try { at = JSON.parse(at); } catch { at = []; } }
+    at = [...new Set((Array.isArray(at) ? at : []).map((t) => String(t).trim().slice(0, 60)).filter(Boolean))].sort().slice(0, 40);
+    return this.getFrequentAnswersPage({ qtype: type, nodeIds: ids, offset: parseInt(offset) || 0, limit: lim, answerTypes: at });
   }
 
   // ── Topic tags (the 2026-10-28 build, brief §5.1). The app shows them only with Settings → Tags → Topic tags on,
@@ -618,10 +622,13 @@ export class App {
 
   // The whole merged list for (qtype, subtrees) is built once (~2 s over every
   // tossup) and kept on the open database, so every later page is instant.
-  getFrequentAnswersPage({ qtype = "tossup", nodeIds = [], offset = 0, limit = 50 } = {}) {
+  getFrequentAnswersPage({ qtype = "tossup", nodeIds = [], offset = 0, limit = 50, answerTypes = [] } = {}) {
     const db = this.questionDb;
     const ids = [...new Set(nodeIds.map(String).filter(Boolean))].sort();
-    const key = qtype + "|" + ids.join(",");
+    const at = answerTypes || [];
+    // an answer type's list is a list of its own (memory and disk: "tossup-at<its hash>")
+    const name = at.length ? qtype + "-at" + createHash("sha1").update(at.join("\u0001")).digest("hex").slice(0, 10) : qtype;
+    const key = name + "|" + ids.join(",");
     const cache = db._freqCache || (db._freqCache = new Map());
     let list = cache.get(key);
     if (list) { cache.delete(key); cache.set(key, list); }
@@ -629,10 +636,10 @@ export class App {
       // a list takes 1–3 s to build (much longer on the website's small server), so
       // every one built is kept on disk per database build — the whole-database ones
       // and each category pick — for every later page, process and restart
-      list = this._freqDisk(qtype, undefined, ids);
+      list = this._freqDisk(name, undefined, ids);
       if (!list) {
-        list = this._frequencyRows(null, null, null, qtype, ids.length ? ids : null, FREQ_MAX);
-        this._freqDisk(qtype, list, ids);
+        list = this._frequencyRows(null, null, null, qtype, ids.length ? ids : null, FREQ_MAX, at);
+        this._freqDisk(name, list, ids);
       }
       cache.set(key, list);
       while (cache.size > 12) cache.delete(cache.keys().next().value);
@@ -668,25 +675,43 @@ export class App {
     return this._frequencyRows(category, subcategory, alternateSubcategory, qtype, nodeId, limit);
   }
 
-  _frequencyRows(category, subcategory, alternateSubcategory, qtype, nodeId, limit) {
+  _frequencyRows(category, subcategory, alternateSubcategory, qtype, nodeId, limit, answerTypes) {
     let rows = [];
+    const at = answerTypes && answerTypes.length ? answerTypes : null;
+    const isType = (v) => at.some((t) => (t.endsWith("*") ? String(v).startsWith(t.slice(0, -1)) : v === t));
     if (qtype !== "bonus") {
-      rows = this.questionDb.getAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId);
+      rows = this.questionDb.getAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId, at);
     }
     if (qtype === "bonus" || qtype === "both") {
-      for (const r of this.questionDb.getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId)) {
+      for (const r of this.questionDb.getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId, at)) {
         let raw, sani;
         try { raw = JSON.parse(r.answers || "[]"); } catch { raw = []; }
         try { sani = JSON.parse(r.answers_sanitized || "[]"); } catch { sani = []; }
+        // a bonus's answer types go part by part: only its parts of the type count (when the list doesn't line up
+        // with the parts, which part is which isn't known, so none)
+        let types = null;
+        if (at) { try { types = (JSON.parse(r.tags || "{}") || {}).answer_type; } catch { types = null; } if (!Array.isArray(types) || types.length !== sani.length) continue; }
         for (let i = 0; i < sani.length; i++) {
-          if (sani[i]) rows.push({ answer: raw[i] || "", answer_sanitized: sani[i] });
+          if (sani[i] && (!types || isType(types[i]))) rows.push({ answer: raw[i] || "", answer_sanitized: sani[i] });
         }
       }
     }
-    return this._countPrimaryAnswers(rows, limit);
+    // people by name: a person's required part is the surname, so "Williams" was Tennessee, William Carlos and Roger
+    // at once. Listing people only, each goes by the name its line starts with ("Tennessee Williams")
+    return this._countPrimaryAnswers(rows, limit, { fullNames: !!at && at.length === 1 && at[0] === "Person" });
   }
 
-  _countPrimaryAnswers(rows, limit) {
+  // the name an answer line starts with ("Giacomo (Antonio …) Puccini [or …]" → "Giacomo Puccini") when it holds
+  // the required part (`req`) and is a name's length; else ""
+  _leadName(sani, req) {
+    const lead = String(sani || "").split(/[\[;]/)[0].replace(/\([^)]*\)/g, " ").replace(/["\u201c\u201d]/g, "").replace(/\s+/g, " ").trim().replace(/[;:,.]+$/, "");
+    const words = lead.split(" ");
+    if (!lead || words.length < 2 || words.length > 5 || lead.length > 40 || /\b(prompt|accept|or|do not)\b/i.test(lead)) return "";
+    const last = String(req || "").toLowerCase().split(" ").pop();
+    return last && lead.toLowerCase().split(" ").includes(last) ? lead : "";
+  }
+
+  _countPrimaryAnswers(rows, limit, opts = {}) {
     const JUNK = /\b(word ?forms?|equivalents?|underlined|synonyms?|obvious|either|etc|portions?|reasonable|anything|spellings?|pronunciations?|descriptions?|abbreviations?|partial|answers?|orders?|variants?|the above|any of)\b/i;
     const counts = new Map();
     for (const r of rows) {
@@ -695,6 +720,7 @@ export class App {
       try { display = primaryAnswer(r.answer || "", sani); } catch { display = ""; }
       if (!display) display = sani.split(/[\[(]/)[0].trim();
       display = display.replace(/[;:,.]+$/, "").trim();
+      if (opts.fullNames && display) display = this._leadName(sani, display) || display;
       if (!display || display.length > 80 || JUNK.test(display)) continue;
       const key = frequencyKey(display);
       if (!key) continue;

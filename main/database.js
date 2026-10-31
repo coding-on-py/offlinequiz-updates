@@ -1054,7 +1054,10 @@ export class QuestionDatabase {
     return where + " AND (" + parts.join(" OR ") + ")";
   }
 
-  getAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId) {
+  // answerTypes (the Frequency page's answer type): the question's tags.answer_type is one of them; a name ending in
+  // "*" takes every type that starts so ("Work: *"). A bonus has a type per part, so its rows carry `tags` for
+  // index.js to keep only those parts
+  getAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId, answerTypes) {
     const params = {};
     let where = "WHERE answer_sanitized != ''";
     if (this.v2) where += " AND playable = 1";
@@ -1062,18 +1065,27 @@ export class QuestionDatabase {
     if (category) { where += " AND category = :cat"; params.cat = category; }
     if (subcategory) { where += " AND subcategory = :sub"; params.sub = subcategory; }
     if (alternateSubcategory) { where += " AND alternate_subcategory = :alt"; params.alt = alternateSubcategory; }
+    if (answerTypes && answerTypes.length && this.hasTags) where += " AND " + this._answerTypeSql(answerTypes, params);
     return this.db.prepare(`SELECT answer, answer_sanitized FROM tossups ${where}`).all(params);
   }
 
-  getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId) {
-    const params = {};
+  getBonusAnswerLinesForFreq(category, subcategory, alternateSubcategory, nodeId, answerTypes) {
+    const params = {}, typed = !!(answerTypes && answerTypes.length && this.hasTags);
     let where = "WHERE answers_sanitized != '' AND answers_sanitized != '[]'";
     if (this.v2) where += " AND playable = 1";
     where = this._freqNode(where, params, nodeId, 1);
     if (category) { where += " AND category = :cat"; params.cat = category; }
     if (subcategory) { where += " AND subcategory = :sub"; params.sub = subcategory; }
     if (alternateSubcategory) { where += " AND alternate_subcategory = :alt"; params.alt = alternateSubcategory; }
-    return this.db.prepare(`SELECT answers, answers_sanitized FROM bonuses ${where}`).all(params);
+    if (typed) where += " AND " + this._answerTypeSql(answerTypes, params);
+    return this.db.prepare(`SELECT answers, answers_sanitized${typed ? ", tags" : ""} FROM bonuses ${where}`).all(params);
+  }
+  _answerTypeSql(types, params) {
+    const ors = types.map((t, i) => {
+      if (t.endsWith("*")) { params["atp" + i] = t.slice(0, -1).replace(/[\\%_]/g, (c) => "\\" + c) + "%"; return `value LIKE :atp${i} ESCAPE '\\'`; }
+      params["atv" + i] = t; return `value = :atv${i}`;
+    });
+    return `EXISTS (SELECT 1 FROM json_each(tags, '$.answer_type') WHERE ${ors.join(" OR ")})`;
   }
 
   getSetPacketNumbers(setName) {

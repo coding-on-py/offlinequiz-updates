@@ -118,7 +118,7 @@ contextBridge.exposeInMainWorld("qbreader", {
 
   getPacketContent: (setName, packetNumber) => ipcRenderer.invoke("get-packet-content", { setName, packetNumber }),
 
-  getFrequentAnswers: (category, subcategory, alternateSubcategory, limit, qtype, nodeId, offset, nodeIds) => ipcRenderer.invoke("get-frequent-answers", { category, subcategory, alternateSubcategory, limit, qtype, nodeId, offset, nodeIds }),
+  getFrequentAnswers: (category, subcategory, alternateSubcategory, limit, qtype, nodeId, offset, nodeIds, answerTypes) => ipcRenderer.invoke("get-frequent-answers", { category, subcategory, alternateSubcategory, limit, qtype, nodeId, offset, nodeIds, answerTypes }),
 
   getCategoryTree: (type) => ipcRenderer.invoke("get-category-tree", { type }),
 

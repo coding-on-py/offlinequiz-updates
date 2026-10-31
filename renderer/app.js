@@ -117,7 +117,7 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/set-packets") return window.qbreader.getSetPackets(q.setName);
         if (path === "/api/packets-for-set") return window.qbreader.getPacketsForSet(q.setName);
         if (path === "/api/packet-content") return window.qbreader.getPacketContent(q.setName, parseInt(q.packetNumber) || 0);
-        if (path === "/api/frequent-answers") return window.qbreader.getFrequentAnswers(q.category, q.subcategory, q.alternateSubcategory, parseInt(q.limit) || 50, q.qtype || "tossup", q.nodeId || null, parseInt(q.offset) || 0, q.nodeIds || null);
+        if (path === "/api/frequent-answers") return window.qbreader.getFrequentAnswers(q.category, q.subcategory, q.alternateSubcategory, parseInt(q.limit) || 50, q.qtype || "tossup", q.nodeId || null, parseInt(q.offset) || 0, q.nodeIds || null, q.answerTypes || null);
         if (path === "/api/category-tree") return window.qbreader.getCategoryTree ? window.qbreader.getCategoryTree(q.type || "tossups") : { tree: [] };
         if (path === "/api/db-info") return window.qbreader.getDbInfo ? window.qbreader.getDbInfo() : { schema: 1 };
         if (path === "/api/tag-vocab") return window.qbreader.getTagVocab ? window.qbreader.getTagVocab() : { tags: {} };
@@ -12400,12 +12400,33 @@ const FREQ_PAGE = 50;
 let _freqUnits = [], _freqType = "tossup", _freqPage = 0, _freqSeq = 0;
 // answers, or (topic tags on, 15.29) the tags most questions carry
 let _freqWhat = (() => { try { return localStorage.getItem("qb-freq-what") === "tags" ? "tags" : "answers"; } catch (e) { return "answers"; } })();
+// The answer list by answer type (the questions' answer_type tags; "Work: *" is every kind of work). People are
+// listed by name (index.js: their required part alone is a surname)
+const FREQ_ATYPES = [
+  ["", "Any answer", null],
+  ["people", "People", ["Person"]],
+  ["places", "Places", ["Place"]],
+  ["works", "Works", ["Work: *"]],
+  ["books", "Books", ["Work: Book"]],
+  ["plays", "Plays", ["Work: Play"]],
+  ["poems", "Poems", ["Work: Poem"]],
+  ["music", "Music", ["Work: Musical Composition", "Work: Song", "Work: Album", "Work: Musical"]],
+  ["art", "Artworks", ["Work: Artwork"]],
+  ["film", "Films and TV", ["Work: Film or TV"]],
+  ["characters", "Characters and myth", ["Fictional Character", "Deity or Mythic Being", "Legendary or Scriptural Figure"]],
+  ["events", "Events", ["Event", "Period or Movement"]],
+  ["groups", "Groups and peoples", ["Organization or Company", "Group, Dynasty or Family", "People or Ethnic Group", "Musical Group or Band"]],
+  ["concepts", "Concepts and terms", ["Concept or Theory", "Term or Word", "Process or Phenomenon", "Law, Theorem or Equation", "Method, Technique or Experiment"]],
+  ["things", "Things", ["Substance", "Object or Artifact", "Organism", "Anatomical Structure", "Particle", "Celestial Object"]],
+];
+let _freqAType = (() => { try { const v = localStorage.getItem("qb-freq-atype") || ""; return FREQ_ATYPES.some((a) => a[0] === v) ? v : ""; } catch (e) { return ""; } })();
+const freqATypes = () => (FREQ_ATYPES.find((a) => a[0] === _freqAType) || [])[2] || null;
 const freqTags = () => _freqWhat === "tags" && !!(window.QBTopics && QBTopics.enabled());
 
 // Snapshot for Back: returning from an answer's search shows the same list and page.
 function currentFrequencySelection() {
   if (!document.getElementById("freq-results")) return null;
-  return { units: _freqUnits.slice(), type: _freqType, page: _freqPage };
+  return { units: _freqUnits.slice(), type: _freqType, page: _freqPage, atype: _freqAType };
 }
 
 // Polls until an async-filled <select> has the option (plugins and tests use it).
@@ -12428,6 +12449,7 @@ function applyFrequencySelection(sel) {
   const units = Array.isArray(sel.units) ? sel.units : [sel.deep, sel.alt, sel.sub, sel.cat].filter(Boolean).slice(0, 1);
   _freqUnits = units.map(String);
   if (["tossup", "bonus", "both"].includes(sel.type)) _freqType = sel.type;
+  if (sel.atype != null && FREQ_ATYPES.some((a) => a[0] === sel.atype)) _freqAType = sel.atype;
   _freqPage = Math.max(0, parseInt(sel.page, 10) || 0);
 }
 
@@ -12444,6 +12466,7 @@ function renderFrequencyTab(restore) {
         `<div class="seg topics-only" id="freq-what-seg" role="group" aria-label="List">${what}</div>` +
         `<button type="button" class="btn" id="freq-cat-btn">Categories <span class="accent-val" id="freq-cat-val">${escapeHtml(unitsSummary(_freqUnits))}</span>${ic("down", 14)}</button>` +
         `<div class="seg" id="freq-type-seg" role="group" aria-label="Question type">${seg}</div>` +
+        `<select id="freq-atype" class="db-input" aria-label="Answer type"${freqTags() ? " hidden" : ""}>${FREQ_ATYPES.map(([v, l]) => `<option value="${v}"${v === _freqAType ? " selected" : ""}>${l}</option>`).join("")}</select>` +
         `<div class="seg" id="freq-role-seg" role="group" aria-label="Where"${freqTags() ? "" : " hidden"}>${window.QBTopics ? QBTopics.roleSegHtml() : ""}</div>` +
       "</div>" +
       '<div class="rhead" id="freq-rhead"><span class="total num" id="freq-total"></span><span class="spacer"></span><span id="freq-pager-top"></span></div>' +
@@ -12456,6 +12479,11 @@ function renderFrequencyTab(restore) {
     _freqWhat = b.dataset.fwhat; _freqPage = 0; lsSet("qb-freq-what", _freqWhat);
     document.querySelectorAll("#freq-what-seg [data-fwhat]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
     const rs = document.getElementById("freq-role-seg"); if (rs) rs.hidden = !freqTags();
+    const at = document.getElementById("freq-atype"); if (at) { at.hidden = freqTags(); const w = at.closest(".qb-select"); if (w) w.hidden = freqTags(); }
+    runFrequency();
+  });
+  document.getElementById("freq-atype").addEventListener("change", (e) => {
+    _freqAType = e.target.value; _freqPage = 0; lsSet("qb-freq-atype", _freqAType);
     runFrequency();
   });
   document.getElementById("freq-role-seg").addEventListener("click", (e) => {
@@ -12480,8 +12508,9 @@ function renderFrequencyTab(restore) {
 // fetched once per launch (LRU): a revisited page, the prefetched next page and
 // the start-up prefetch of the default lists (prefetchDefaults) render at once.
 const _freqPageCache = new Map();
-function freqUrl(qtype, page, units) {
-  return `/api/frequent-answers?limit=${FREQ_PAGE}&offset=${page * FREQ_PAGE}&qtype=${qtype}` + (units.length ? `&nodeIds=${encodeURIComponent(units.join(","))}` : "");
+function freqUrl(qtype, page, units, atypes) {
+  return `/api/frequent-answers?limit=${FREQ_PAGE}&offset=${page * FREQ_PAGE}&qtype=${qtype}` + (units.length ? `&nodeIds=${encodeURIComponent(units.join(","))}` : "") +
+    (atypes && atypes.length ? `&answerTypes=${encodeURIComponent(JSON.stringify(atypes))}` : "");
 }
 function freqFetch(url) {
   let p = _freqPageCache.get(url);
@@ -12513,21 +12542,21 @@ async function runFrequency(page) {
   }
   const bar = setTimeout(() => { if (seq === _freqSeq) el.innerHTML = loadingBarHtml(_freqPage ? "Loading…" : "Building frequency list…"); }, 90);
   try {
-    const units = _freqUnits.slice();
-    const data = await freqFetch(freqUrl(qtype, _freqPage, units));
+    const units = _freqUnits.slice(), atypes = freqATypes();
+    const data = await freqFetch(freqUrl(qtype, _freqPage, units, atypes));
     clearTimeout(bar);
     if (seq !== _freqSeq) return;
     const rows = (data && data.answers) || [];
     const totalN = data && typeof data.total === "number" ? data.total : rows.length;
     const pages = Math.max(1, Math.ceil(totalN / FREQ_PAGE));
     if (_freqPage > pages - 1 && totalN) return runFrequency(pages - 1);
-    if (_freqPage + 1 < pages) { const next = _freqPage + 1; setTimeout(() => freqFetch(freqUrl(qtype, next, units)), 50); }
+    if (_freqPage + 1 < pages) { const next = _freqPage + 1; setTimeout(() => freqFetch(freqUrl(qtype, next, units, atypes)), 50); }
     const t = document.getElementById("freq-total"); if (t) t.textContent = totalN ? totalN.toLocaleString() + (totalN === 1 ? " answer" : " answers") : "";
     const pt = document.getElementById("freq-pager-top"), pb = document.getElementById("freq-pager-bottom");
     if (pt) pt.innerHTML = dbPagerHtml("top", _freqPage, pages);
     if (pb) pb.innerHTML = rows.length > 10 ? dbPagerHtml("bottom", _freqPage, pages) : "";
     positionPagerStrips();
-    if (!rows.length) { el.innerHTML = '<div class="db-empty">No answers found for this selection.</div>'; return; }
+    if (!rows.length) { el.innerHTML = '<div class="db-empty">' + (atypes ? "No answers of that type in these categories." : "No answers found for this selection.") + "</div>"; return; }
     const max = (data && data.max) || rows[0].count || 1;
     const off = _freqPage * FREQ_PAGE;
     el.innerHTML = '<div class="list freq-list">' +
@@ -12623,7 +12652,7 @@ async function prefetchDefaults() {
     const e = dbFetchPage(plan.keyFor(page), plan.urlsFor(page));
     return Promise.all([e.t, e.b]);
   };
-  const freq = (qtype, page) => (_freqUnits.length ? null : freqFetch(freqUrl(qtype, page, [])));
+  const freq = (qtype, page) => (_freqUnits.length ? null : freqFetch(freqUrl(qtype, page, [], freqATypes())));   // the answer type this player picked
   const steps = [() => search(0), () => freq("tossup", 0), () => freq("bonus", 0), () => freq("both", 0),
     () => search(1), () => freq("tossup", 1), () => freq("bonus", 1), () => freq("both", 1)];
   for (const step of steps) { await calm(); await settle(step()); }

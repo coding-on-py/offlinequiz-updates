@@ -3816,6 +3816,9 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .sbar-right { cursor: default; }
 /* frequency */
 .freq-toolbar { margin-top: 0; }
+/* the answer type: a name's width beside the other controls (it stretched across the rest of the row); a phone's own row */
+.freq-toolbar > .qb-select:has(> #freq-atype) { flex: 0 1 240px; min-width: 200px; }
+@media (max-width: 760px) { .freq-toolbar > .qb-select:has(> #freq-atype) { flex: 1 1 100%; } }
 .qb-select[data-for="freq-type"] { width: auto; }
 .freq-list .list-row .lr-rank { flex: 0 0 46px; }
 /* multiplayer lobby: one card — a code joins that room, an empty box makes one */
