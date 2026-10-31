@@ -1943,7 +1943,7 @@ QB.registerTheme({
               ' <span class="ext-badge">' + badge + "</span>" +
               (kind === "plugin" ? ' <span class="ext-ver">v' + esc(ext.version) + "</span>" : "") +
               (ext.enabled ? ' <span class="ext-badge on">' + onLabel + "</span>" : "") +
-              (ext._error ? ' <span class="ext-badge err">failed</span><span class="qb-info" data-tip="' + esc(ext._error) + '">i</span>' : "") +
+              (ext._error ? ' <span class="ext-badge err">Failed</span><span class="qb-info" data-tip="' + esc(ext._error) + '">i</span>' : "") +
             "</div>" +
             '<div class="ext-card-meta">by ' + esc(ext.author) + (ext.filename ? " · " + esc(ext.filename) : "") + "</div>" +
           "</div>" +
@@ -2195,7 +2195,7 @@ QB.registerTheme({
         return '<div class="ext-row ext-card' + (on ? " active" : "") + '" data-guide="' + esc(p.id) + '" tabindex="0" role="button" aria-label="' + esc(p.name) + ', how to use it">' +
           piconHtml(p, GROUP_COLOR[g]) +
           '<span class="er-name"><b>' + esc(p.name) +
-            (p._error ? ' <span class="ext-badge err">failed</span><span class="qb-info" data-tip="' + esc(p._error) + '">i</span>' : "") + "</b>" +
+            (p._error ? ' <span class="ext-badge err">Failed</span><span class="qb-info" data-tip="' + esc(p._error) + '">i</span>' : "") + "</b>" +
             '<small>' + esc(p.author ? "by " + p.author : "") + "</small></span>" +
           '<span class="er-ver">v' + esc(p.version) + "</span>" +
           '<span class="er-grp">' + esc(g) + "</span>" +
@@ -4775,7 +4775,7 @@ function __qbMain(ctx) {
     function lobbySectionHtml() {
       // Lobby info + your name/team in one section.
       return '<div class="filter-section mp-injected">' +
-        '<div class="filter-label">Room ' + esc(String(lobby).toUpperCase()) + (isHost ? ' <span class="badge rh-host">host</span>' : "") + "</div>" +
+        '<div class="filter-label">Room ' + esc(String(lobby).toUpperCase()) + (isHost ? ' <span class="badge rh-host">Host</span>' : "") + "</div>" +
         '<label class="mode-field"><span>Your name</span><input id="mp-myname" class="mode-input" autocomplete="off"></label>' +
         (mySpec ? '<div class="text-muted" style="font-size:11px">Spectating</div>'
                 : '<label class="mode-field"><span>Team</span><input id="mp-myteam" class="mode-input" placeholder="(none)" autocomplete="off"></label>') +

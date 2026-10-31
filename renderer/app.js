@@ -12443,7 +12443,7 @@ async function renderSetsTab() {
     const list = _dbSets.filter((s) => !term || (s.name || "").toLowerCase().includes(term));
     const n = document.getElementById("db-set-n"); if (n) n.textContent = list.length.toLocaleString() + " sets";
     document.getElementById("db-set-list").innerHTML = list.map((s) =>
-      `<div class="list-row clickable db-row" data-set="${escapeHtml(s.name)}"><span class="lr-name">${escapeHtml(s.name)}</span>${yearBadgeHtml(s.year)}<span class="lr-diff">${escapeHtml(DIFF_FULL[s.difficulty] || "")}</span><span class="lr-std">${s.standard ? '<span class="qtag">standard</span>' : '<span class="qtag" style="opacity:.6">non-standard</span>'}</span></div>`
+      `<div class="list-row clickable db-row" data-set="${escapeHtml(s.name)}"><span class="lr-name">${escapeHtml(s.name)}</span>${yearBadgeHtml(s.year)}<span class="lr-diff">${escapeHtml(DIFF_FULL[s.difficulty] || "")}</span><span class="lr-std">${s.standard ? '<span class="qtag">Standard</span>' : '<span class="qtag" style="opacity:.6">non-standard</span>'}</span></div>`
     ).join("") || '<div class="db-empty" style="border:0">No sets</div>';
     document.querySelectorAll("#db-set-list .db-row").forEach((r) => {
       r.addEventListener("click", () => openSet(r.dataset.set));
