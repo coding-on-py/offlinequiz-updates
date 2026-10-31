@@ -50,7 +50,30 @@ const TRIAL_CATS = [
   ["pop", "Pop Culture", "Pop Culture", "n9b8235c01e"], ["sports", "Sports", "Sports", "nc647c3608a"],
   ["misc", "Miscellaneous", "Miscellaneous", "n5f2cbd1070"],
 ];
-const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3;
+// 15.58: subcategory trials, mastery of one branch (a category's child node): [key, name, category key, node id].
+// Five tossups a run, no cooldown, and their XP is their own (keys "<cat>-<sub>|<level>"), never the category's.
+// The "Any …" buckets and the small branches aren't here. (app.js TRIAL_SUBS is the same list.)
+const TRIAL_SUBS = [
+  ["lit-eng", "English Literature", "lit", "n35336fe01e"], ["lit-world", "Non English Literature", "lit", "n4226830785"], ["lit-young", "Young Reader Literature", "lit", "n8e75d37c66"],
+  ["hist-am", "American History", "hist", "n1cf7b17e0c"], ["hist-eu", "European History", "hist", "n26ec00d934"], ["hist-world", "World History", "hist", "n42db86dcc6"], ["hist-anc", "Ancient History", "hist", "n9abdc1bdf8"],
+  ["sci-phys", "Physics", "sci", "n23858b9459"], ["sci-astro", "Astronomy", "sci", "n8975ecf6e0"], ["sci-bio", "Biology", "sci", "n7c3ece61e4"], ["sci-chem", "Chemistry", "sci", "ne559beba64"],
+  ["sci-cs", "Computer Science", "sci", "n28ae138fe8"], ["sci-earth", "Earth Science", "sci", "n5bc9597ef7"],
+  ["math-theory", "Math Theory", "math", "n8f509b363e"],
+  ["fa-visual", "Visual Arts", "fa", "n770d122fff"], ["fa-music", "Fine Arts Music", "fa", "ncd1d8777ca"], ["fa-perf", "Performing Arts", "fa", "nf47165363d"],
+  ["myth-classical", "Classical Myth", "myth", "nf6b2135ea1"], ["myth-norse", "Scandinavian Myth", "myth", "n5ee35f04d6"], ["myth-noneu", "Non European Myth", "myth", "nb6a0129bc9"], ["myth-nonclassical", "Nonclassical Myth", "myth", "nb0539fb1c5"],
+  ["phil-ancient", "Ancient Philosophy", "phil", "n2a0c39e1d1"], ["phil-medieval", "Medieval & Renaissance Philosophy", "phil", "nc4ad5d0f22"], ["phil-early", "Early Modern Philosophy", "phil", "nefd0811a1d"],
+  ["phil-19c", "19th-Century Philosophy", "phil", "ndb4743fa2d"], ["phil-analytic", "Analytic Philosophy", "phil", "nb8f3d8c1b4"], ["phil-continental", "Continental Philosophy", "phil", "nfd111ec97c"],
+  ["phil-problems", "Philosophical Problems & Concepts", "phil", "n036ba1244d"],
+  ["rel-practice", "Theology and Practice", "rel", "n99a456d86f"], ["rel-lit", "Religious Literature", "rel", "nd3841ca2c1"],
+  ["geo-na", "North American Geography", "geo", "n6e6392c94f"], ["geo-world", "World Geography", "geo", "nb3bb9df196"],
+  ["ss-anth", "Anthropology & Sociology", "ss", "na456c7bbf0"], ["ss-econ", "Economics", "ss", "n1b3ed2760b"], ["ss-gov", "Government", "ss", "nebb231dfda"],
+  ["ss-law", "Jurisprudence", "ss", "nacea789c24"], ["ss-polphil", "Political Philosophy", "ss", "n6331ed63c2"], ["ss-psych", "Psychology", "ss", "nca77abee6a"],
+  ["ce-us", "US Current Events", "ce", "n1ac30d9c7c"], ["ce-world", "World Current Events", "ce", "nc4be452b9a"], ["ce-biz", "Business", "ce", "nfaa1694bc6"],
+  ["pop-tv", "TV", "pop", "nb329af5c53"], ["pop-music", "Pop Music", "pop", "nb53f444bad"], ["pop-film", "Film", "pop", "n6fd4f2a4dc"], ["pop-games", "Video Games", "pop", "nb309304bdc"],
+  ["pop-musicals", "Musicals", "pop", "nb812346614"], ["pop-comics", "Comics", "pop", "n3c6cbcc69e"],
+  ["sports-major", "Major Sports", "sports", "nc5f3adef24"], ["sports-minor", "Minor Sports", "sports", "nf90ed1d6e8"],
+];
+const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3, SUB_LEN = 5;
 // 15.0 (XP): every attempt reads all ten; each power earns 10 × the level in XP, and the run is multiplied by 1.25
 // for 5 powers, 1.5 for 6–9 and 2.5 for all ten (which passes the level and opens the next). A level can be tried
 // again after its cooldown, counted from the last attempt: none for I, 5 min for II–III, 10 min for IV–X.
@@ -66,6 +89,8 @@ export function mergeRegrade(a, b) {
     xp: n(a.xp) + n(b.xp), trials: [...(a.trials || []), ...(b.trials || [])], manual: !!(a.manual && b.manual) };
 }
 export const trialXp = (level, powers) => { const p = Math.max(0, Math.min(TRIAL_LEN, parseInt(powers, 10) || 0)); return Math.round(p * 10 * level * (p >= 10 ? 2.5 : p >= 6 ? 1.5 : p >= 5 ? 1.25 : 1)); };
+// a subcategory trial (15.58): 10 × the level a power, ×1.25 for 4 and ×2 for all five (level I perfect 100, X 1,000)
+export const subTrialXp = (level, powers) => { const p = Math.max(0, Math.min(SUB_LEN, parseInt(powers, 10) || 0)); return Math.round(p * 10 * level * (p >= SUB_LEN ? 2 : p >= 4 ? 1.25 : 1)); };
 
 function apFold(s) {
   return String(s == null ? "" : s)
@@ -1285,11 +1310,14 @@ export class App {
     return { pid, t: t && typeof t === "object" && !Array.isArray(t) ? t : {} };
   }
   getTrials() {
-    return { trials: this._trialsOf().t, cats: TRIAL_CATS.map(([key, name, path]) => ({ key, name, path })), cooldowns: Array.from({ length: 11 }, (_, l) => trialCooldownMs(l)), length: TRIAL_LEN, now: Date.now(), api: 3 };   // api 2: categories by node id (14.99); 3: XP and "finish" (15.0)
+    return { trials: this._trialsOf().t, cats: TRIAL_CATS.map(([key, name, path]) => ({ key, name, path })), subs: TRIAL_SUBS.map(([key, name, cat]) => ({ key, name, cat })),
+      cooldowns: Array.from({ length: 11 }, (_, l) => trialCooldownMs(l)), length: TRIAL_LEN, subLength: SUB_LEN, now: Date.now(), api: 4 };   // api 2: categories by node id (14.99); 3: XP and "finish" (15.0); 4: subcategories (15.58)
   }
   trialAction(action, category, level, powers, instance) {
-    const cat = TRIAL_CATS.find((c) => c[0] === category); level = parseInt(level, 10);
+    const sub = TRIAL_SUBS.find((c) => c[0] === category);
+    const cat = sub ? [sub[0], sub[1], null, sub[3]] : TRIAL_CATS.find((c) => c[0] === category); level = parseInt(level, 10);
     if (!cat || !(level >= 1 && level <= 10)) throw Object.assign(new Error("No such trial."), { status: 400 });
+    const LEN = sub ? SUB_LEN : TRIAL_LEN, xpOf = sub ? subTrialXp : trialXp, cooldown = (lv) => (sub ? 0 : trialCooldownMs(lv));
     const { pid, t: all } = this._trialsOf(), key = cat[0] + "|" + level, t = all[key] || {}, now = Date.now();
     const save = () => { all[key] = t; this.userData.setConfig("trials:" + pid, JSON.stringify(all)); };
     if (action === "start") {
@@ -1301,10 +1329,10 @@ export class App {
       const me = String(instance || "").slice(0, 40);
       if (t.s && !(Number(t.e) >= t.s) && now - t.s < TRIAL_RUN_MS && t.run && me && t.run !== me)
         return { ok: false, busy: true, error: "This trial is running in another window. Finish it there first." };
-      const since = Math.max(Number(t.s) || 0, Number(t.e) || 0), cd = trialCooldownMs(level);
+      const since = Math.max(Number(t.s) || 0, Number(t.e) || 0), cd = cooldown(level);
       if (cd && since && now - since < cd) return { ok: false, cooldownUntil: since + cd };
       const tree = this.questionDb._loadTree().nodes || [];
-      const node = this.questionDb.getCategoryNode(cat[3]) || tree.find((n) => n.path === cat[2]) || tree.find((n) => n.name === cat[2] && /^(Science and Math|Pop Culture Sports) > /.test(n.path));
+      const node = this.questionDb.getCategoryNode(cat[3]) || (sub ? null : tree.find((n) => n.path === cat[2]) || tree.find((n) => n.name === cat[2] && /^(Science and Math|Pop Culture Sports) > /.test(n.path)));
       if (!node) return { ok: false, error: "This category isn't in the question database." };
       // a trial is that category alone: every category a question covers lies inside it (catMode "pure"). Where
       // that's short (Miscellaneous II: most Misc questions also carry a second category), questions whose main
@@ -1312,14 +1340,18 @@ export class App {
       // ten different answers (a level's ten had Jason twice and Poseidon twice): a few more drawn, one of each answer kept
       const seen = new Set();
       const answerKey = (q) => { let a = ""; try { a = primaryAnswer(q.answer || "", q.answer_sanitized || ""); } catch {} return frequencyKey(a || String(q.answer_sanitized || "").split(/[\[(]/)[0]) || String(q.id); };
-      const pick = (catMode) => ((this.questionDb.queryTossups({ categoryIds: [node.id], catMode, difficulties: [level], powermarkOnly: true, cleanOnly: true, random: true, limit: TRIAL_LEN * 3 }) || {}).rows || [])
-        .filter((q) => { if (!q.id) return false; const k = answerKey(q); if (seen.has(k)) return false; seen.add(k); return true; }).map((q) => q.id).slice(0, TRIAL_LEN);
+      const pick = (catMode, difficulties = [level]) => ((this.questionDb.queryTossups({ categoryIds: [node.id], catMode, difficulties, powermarkOnly: true, cleanOnly: true, random: true, limit: LEN * 3 }) || {}).rows || [])
+        .filter((q) => { if (!q.id) return false; const k = answerKey(q); if (seen.has(k)) return false; seen.add(k); return true; }).map((q) => q.id).slice(0, LEN);
+      const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
       let ids = pick("pure");
-      if (ids.length < TRIAL_LEN) {
-        ids = [...new Set([...ids, ...pick("home")])].slice(0, TRIAL_LEN);
-        for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+      if (ids.length < LEN) ids = shuffle([...new Set([...ids, ...pick("home")])].slice(0, LEN));
+      // a branch short at its level borrows from the levels next to it, then the ones beside those
+      if (sub) for (const d of [[level - 1, level + 1], [level - 2, level + 2]]) {
+        if (ids.length >= LEN) break;
+        const ds = d.filter((x) => x >= 0 && x <= 10);
+        ids = shuffle([...new Set([...ids, ...pick("pure", ds), ...pick("home", ds)])].slice(0, LEN));
       }
-      if (ids.length < TRIAL_LEN) return { ok: false, error: "There aren't enough power-marked questions for this trial yet." };
+      if (ids.length < LEN) return { ok: false, error: "There aren't enough power-marked questions for this trial yet." };
       t.s = now; t.run = me; save();
       return { ok: true, ids, startedAt: now };
     }
@@ -1327,15 +1359,15 @@ export class App {
     // "pass" / "fail" are what apps before 15.0 send.
     if (action === "finish" || action === "pass" || action === "fail") {
       if (!t.s || now - t.s > 3 * 3600e3) return { ok: false, error: "Start the trial first." };
-      const p = action === "pass" ? TRIAL_LEN : Math.max(0, Math.min(TRIAL_LEN, parseInt(powers, 10) || 0));
+      const p = action === "pass" ? LEN : Math.max(0, Math.min(LEN, parseInt(powers, 10) || 0));
       t.a = t.a && typeof t.a === "object" && !Array.isArray(t.a) ? t.a : {};
-      const cd = trialCooldownMs(level);
+      const cd = cooldown(level);
       if (t.a[t.s] != null) return { ok: true, xp: t.a[t.s], passed: !!(t.l >= t.s), trials: all, cooldownUntil: cd ? (Number(t.e) || now) + cd : 0 };
-      const xp = trialXp(level, p);
+      const xp = xpOf(level, p);
       t.a[t.s] = xp; t.e = now;
-      if (p >= TRIAL_LEN) { t.l = now; if (!t.p) t.p = now; }
+      if (p >= LEN) { t.l = now; if (!t.p) t.p = now; }
       save();
-      return { ok: true, xp, passed: p >= TRIAL_LEN, trials: all, cooldownUntil: cd ? now + cd : 0 };
+      return { ok: true, xp, passed: p >= LEN, trials: all, cooldownUntil: cd ? now + cd : 0 };
     }
     throw Object.assign(new Error("Unknown trial action."), { status: 400 });
   }

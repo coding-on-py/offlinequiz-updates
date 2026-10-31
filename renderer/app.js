@@ -10347,6 +10347,43 @@ const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
 const TRIAL_LEN = 10;
 const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
 const trialXp = (level, powers) => { const p = Math.max(0, Math.min(TRIAL_LEN, powers | 0)); return Math.round(p * 10 * level * (p >= 10 ? 2.5 : p >= 6 ? 1.5 : p >= 5 ? 1.25 : 1)); };
+// 15.58: subcategory trials, mastery of one branch: [key, name, category key] (index.js TRIAL_SUBS, with node ids).
+// Five tossups a run, no cooldown, 10 × the level a power (×1.25 for 4, ×2 for all five), and a badge's level n needs
+// 40 × n² XP, so they move much faster than a category's. Their XP is their own: it never counts toward the category.
+const TRIAL_SUBS = [
+  ["lit-eng", "English Literature", "lit"], ["lit-world", "Non English Literature", "lit"], ["lit-young", "Young Reader Literature", "lit"],
+  ["hist-am", "American History", "hist"], ["hist-eu", "European History", "hist"], ["hist-world", "World History", "hist"], ["hist-anc", "Ancient History", "hist"],
+  ["sci-phys", "Physics", "sci"], ["sci-astro", "Astronomy", "sci"], ["sci-bio", "Biology", "sci"], ["sci-chem", "Chemistry", "sci"], ["sci-cs", "Computer Science", "sci"], ["sci-earth", "Earth Science", "sci"],
+  ["math-theory", "Math Theory", "math"],
+  ["fa-visual", "Visual Arts", "fa"], ["fa-music", "Fine Arts Music", "fa"], ["fa-perf", "Performing Arts", "fa"],
+  ["myth-classical", "Classical Myth", "myth"], ["myth-norse", "Scandinavian Myth", "myth"], ["myth-noneu", "Non European Myth", "myth"], ["myth-nonclassical", "Nonclassical Myth", "myth"],
+  ["phil-ancient", "Ancient Philosophy", "phil"], ["phil-medieval", "Medieval & Renaissance Philosophy", "phil"], ["phil-early", "Early Modern Philosophy", "phil"],
+  ["phil-19c", "19th-Century Philosophy", "phil"], ["phil-analytic", "Analytic Philosophy", "phil"], ["phil-continental", "Continental Philosophy", "phil"], ["phil-problems", "Philosophical Problems & Concepts", "phil"],
+  ["rel-practice", "Theology and Practice", "rel"], ["rel-lit", "Religious Literature", "rel"],
+  ["geo-na", "North American Geography", "geo"], ["geo-world", "World Geography", "geo"],
+  ["ss-anth", "Anthropology & Sociology", "ss"], ["ss-econ", "Economics", "ss"], ["ss-gov", "Government", "ss"], ["ss-law", "Jurisprudence", "ss"], ["ss-polphil", "Political Philosophy", "ss"], ["ss-psych", "Psychology", "ss"],
+  ["ce-us", "US Current Events", "ce"], ["ce-world", "World Current Events", "ce"], ["ce-biz", "Business", "ce"],
+  ["pop-tv", "TV", "pop"], ["pop-music", "Pop Music", "pop"], ["pop-film", "Film", "pop"], ["pop-games", "Video Games", "pop"], ["pop-musicals", "Musicals", "pop"], ["pop-comics", "Comics", "pop"],
+  ["sports-major", "Major Sports", "sports"], ["sports-minor", "Minor Sports", "sports"],
+];
+const SUB_LEN = 5;
+const isSubTrial = (key) => String(key || "").includes("-");
+// a trial's name, its category, and its rules, whichever kind it is
+function trialMeta(key) {
+  const sub = TRIAL_SUBS.find((x) => x[0] === key);
+  if (sub) { const c = TRIAL_CATS.find((x) => x[0] === sub[2]); return { key, name: sub[1], cat: sub[2], catName: c ? c[1] : "", path: c ? c[2] : "", sub: true, len: SUB_LEN, word: "five" }; }
+  const c = TRIAL_CATS.find((x) => x[0] === key);
+  return c ? { key, name: c[1], cat: key, catName: c[1], path: c[2], sub: false, len: TRIAL_LEN, word: "ten" } : null;
+}
+const trialLenOf = (key) => (isSubTrial(key) ? SUB_LEN : TRIAL_LEN);
+const trialXpFor = (key, level, powers) => {
+  if (!isSubTrial(key)) return trialXp(level, powers);
+  const p = Math.max(0, Math.min(SUB_LEN, powers | 0)); return Math.round(p * 10 * level * (p >= SUB_LEN ? 2 : p >= 4 ? 1.25 : 1));
+};
+const trialCooldownFor = (key, level) => (isSubTrial(key) ? 0 : trialCooldownMs(level));
+const trialMultText = (key, powered) => isSubTrial(key)
+  ? (powered >= SUB_LEN ? "×2 for all five" : powered >= 4 ? "×1.25 for 4 powers" : "")
+  : (powered >= 10 ? "×2.5 for all ten" : powered >= 6 ? "×1.5 for 6+ powers" : powered >= 5 ? "×1.25 for 5 powers" : "");
 // XP earned: every attempt's (synced as { "<start>": xp } per level), in one category or all
 function trialXpOf(trials, key) {
   let n = 0;
@@ -10358,16 +10395,18 @@ const fmtXp = (n) => Number(n || 0).toLocaleString() + " XP";
 // levels are passed (15.2), so one perfect level I run is the first badge. Passing a level only opens the next one.
 // A pass from before trial XP (TRIAL_XP_EPOCH) keeps its badge whatever the XP.
 const trialBadgeXp = (n) => 250 * n * n;
+const trialBadgeXpFor = (key, n) => (isSubTrial(key) ? 40 * n * n : trialBadgeXp(n));
 const TRIAL_XP_EPOCH = 1792162633223;
 function trialBadgeOf(trials, key) {
   const xp = trialXpOf(trials, key);
   let passed = 0, legacy = 0, byXp = 0;
-  for (let n = 1; n <= 10; n++) { const t = (trials || {})[key + "|" + n]; if (t && t.p) { passed = n; if (t.p < TRIAL_XP_EPOCH) legacy = n; } }
-  for (let n = 1; n <= 10; n++) if (xp >= trialBadgeXp(n)) byXp = n;
-  const level = Math.max(legacy, byXp), next = level < 10 ? level + 1 : 0, need = next ? trialBadgeXp(next) : 0;
+  for (let n = 1; n <= 10; n++) { const t = (trials || {})[key + "|" + n]; if (t && t.p) { passed = n; if (t.p < TRIAL_XP_EPOCH && !isSubTrial(key)) legacy = n; } }
+  for (let n = 1; n <= 10; n++) if (xp >= trialBadgeXpFor(key, n)) byXp = n;
+  const level = Math.max(legacy, byXp), next = level < 10 ? level + 1 : 0, need = next ? trialBadgeXpFor(key, next) : 0;
   return { level, xp, passed, next, need, xpOk: !next || xp >= need };
 }
 function trialBadges(trials) { const out = {}; for (const [k] of TRIAL_CATS) { const b = trialBadgeOf(trials, k).level; if (b) out[k] = b; } return out; }
+function subTrialBadges(trials) { const out = {}; for (const [k] of TRIAL_SUBS) { const b = trialBadgeOf(trials, k).level; if (b) out[k] = b; } return out; }
 // how close a category is to its next badge: the XP bar and the XP still to earn
 function trialProgressHtml(trials, key, fromXp) {
   const b = trialBadgeOf(trials, key);
@@ -10404,8 +10443,8 @@ function startWaitTicker() {
 }
 let _trial = null;   // the trial being played: { key, name, level, ids, n, powered, servedId, answeredId, done }
 let _trialInfo = null, _trialSkew = 0;
-const trialName = (key, level) => { const c = TRIAL_CATS.find((x) => x[0] === key); return (c ? c[1] : key) + " " + (ROMAN[level] || level); };
-const trialHue = (key) => { const c = TRIAL_CATS.find((x) => x[0] === key); return (c && ROOT_COLOR[c[2]]) || "var(--accent)"; };
+const trialName = (key, level) => { const m = trialMeta(key); return (m ? m.name : key) + " " + (ROMAN[level] || level); };
+const trialHue = (key) => { const m = trialMeta(key); return (m && ROOT_COLOR[m.path]) || "var(--accent)"; };
 // the badges: each category's highest level passed
 function trialBest(trials) {
   const best = {};
@@ -10514,15 +10553,16 @@ function emblemSvg(o) {
     `</svg>`;
 }
 // EMBLEM END
-const trialEmblem = (key, level, size) => emblemSvg({ level, hue: trialHue(key), glyph: TRIAL_GLYPH[key], ribbon: ROMAN[level] || String(level), size });
+const trialEmblem = (key, level, size) => emblemSvg({ level, hue: trialHue(key), glyph: TRIAL_GLYPH[(trialMeta(key) || {}).cat || key], ribbon: ROMAN[level] || String(level), size });
+// badges in two sections (15.58): the categories (and event badges) on top, then a line, then the subcategories'
 function trialBadgesHtml(trials, extra) {
-  const best = trialBadges(trials);
-  const keys = TRIAL_CATS.map((c) => c[0]).filter((k) => best[k]).sort((a, b) => best[b] - best[a]), xp = trialXpOf(trials);
-  if (!keys.length && !extra && !xp) return "";
-  return `<div class="tr-badges" aria-label="Badges">${xp ? `<span class="tr-xp-pill num" title="Trial XP">${fmtXp(xp)}</span>` : ""}${extra || ""}${keys.map((k) => {
-    const lv = best[k];
-    return `<button type="button" class="tr-emb lv${lv}" data-badge="${k}" data-lv="${lv}" title="${escapeHtml(trialName(k, lv))}" aria-label="${escapeHtml(trialName(k, lv))} badge">${trialEmblem(k, lv, 62)}<span class="tr-emb-name">${escapeHtml(trialName(k, lv))}</span></button>`;
-  }).join("")}</div>`;
+  const best = trialBadges(trials), subs = subTrialBadges(trials), xp = trialXpOf(trials);
+  const order = (b) => Object.keys(b).sort((x, y) => b[y] - b[x]);
+  const keys = order(best), subKeys = order(subs);
+  if (!keys.length && !subKeys.length && !extra && !xp) return "";
+  const emb = (k, lv, size) => `<button type="button" class="tr-emb lv${lv}" data-badge="${k}" data-lv="${lv}" title="${escapeHtml(trialName(k, lv))}" aria-label="${escapeHtml(trialName(k, lv))} badge">${trialEmblem(k, lv, size)}<span class="tr-emb-name">${escapeHtml(trialName(k, lv))}</span></button>`;
+  return `<div class="tr-badge-sets"><div class="tr-badges" aria-label="Category badges">${xp ? `<span class="tr-xp-pill num" title="Trial XP">${fmtXp(xp)}</span>` : ""}${extra || ""}${keys.map((k) => emb(k, best[k], 62)).join("")}</div>` +
+    (subKeys.length ? `<div class="tr-badges tr-badges-sub" aria-label="Subcategory badges">${subKeys.map((k) => emb(k, subs[k], 46)).join("")}</div>` : "") + `</div>`;
 }
 // a badge's details: the emblem big, when it was won, the road through the ten, and (your own) the next level
 function wireBadges(container, trials, own) {
@@ -10541,13 +10581,13 @@ function openBadgeDetail(key, trials, own, extra) {
     hero = seasonEmblem(sev, 150);
     body = `<p class="bd-sub">Event badge · ${escapeHtml(extra || String(sev.goal))} ${sev.many}</p><p class="bd-text">Collected ${sev.goal} ${sev.many} during ${escapeHtml(sev.label)}.</p>`;
   } else {
-    const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
-    const best = trialBadges(trials)[key] || 0, rec = (trials || {})[key + "|" + best] || {}, open = trialBest(trials)[key] || 0;
+    const meta = trialMeta(key); if (!meta) return;
+    const best = (meta.sub ? subTrialBadges : trialBadges)(trials)[key] || 0, rec = (trials || {})[key + "|" + best] || {}, open = trialBest(trials)[key] || 0;
     title = trialName(key, best);
     hero = trialEmblem(key, best, 150);
     const metal = best >= 10 ? "Prismatic" : best >= 7 ? "Gold" : best >= 4 ? "Silver" : "Bronze";
     const road = Array.from({ length: 10 }, (_, i) => `<span class="bd-step${i + 1 <= best ? " on" : ""}${i + 1 === best ? " cur" : ""}" title="${escapeHtml(trialName(key, i + 1))}">${trialEmblem(key, i + 1, 40)}</span>`).join("");
-    body = `<p class="bd-sub">${metal} · level ${best} of 10${rec.p ? " · passed " + escapeHtml(new Date(rec.p).toLocaleDateString()) : ""} · ${fmtXp(trialXpOf(trials, key))}</p>` +
+    body = `<p class="bd-sub">${meta.sub ? escapeHtml(meta.catName) + " · " : ""}${metal} · level ${best} of 10${rec.p ? " · passed " + escapeHtml(new Date(rec.p).toLocaleDateString()) : ""} · ${fmtXp(trialXpOf(trials, key))}</p>` +
       trialProgressHtml(trials, key) +
       `<div class="bd-road" aria-label="Levels">${road}</div>`;
     // your own: the next level to pass (or, all passed, the top one again)
@@ -10572,37 +10612,45 @@ function openBadgeDetail(key, trials, own, extra) {
   el.querySelector("#bd-x").onclick = close;
   el.querySelector("#bd-close").onclick = close;
   const nx = el.querySelector("#bd-next");
-  if (nx) nx.onclick = () => { const cat = TRIAL_CATS.find((c) => c[0] === key); close(); prepTrial({ key, name: cat[1], level: parseInt(nx.dataset.lv, 10) || 1 }); };
+  if (nx) nx.onclick = () => { const m = trialMeta(key); close(); prepTrial({ key, name: m.name, level: parseInt(nx.dataset.lv, 10) || 1 }); };
   try { el.querySelector(".bd-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 function trialState(info, key, level) {
   const t = (info && info.trials && info.trials[key + "|" + level]) || {};
   const now = Date.now() + _trialSkew;
-  const since = Math.max(Number(t.s) || 0, Number(t.e) || 0), cd = trialCooldownMs(level);
+  const since = Math.max(Number(t.s) || 0, Number(t.e) || 0), cd = trialCooldownFor(key, level);
   const wait = cd && since && now - since < cd ? since + cd - now : 0;
   // progressive (14.95): I first, then each level once the one below is passed; a badge won before keeps its level
   const best = trialBest(info && info.trials)[key] || 0;
   return { passed: !!t.p || level <= best, wait, locked: level > best + 1 };
 }
 const fmtWait = (ms) => { const s = Math.max(1, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+function trialCardHtml(info, key, name, bl) {
+  const lv = trialBest(info && info.trials)[key] || 0, b = trialBadgeOf(info && info.trials, key);
+  const pips = Array.from({ length: 10 }, (_, i) => { const st = trialState(info, key, i + 1); return `<i class="${st.passed ? "on" : st.wait ? "wait" : st.locked ? "lock" : ""}"></i>`; }).join("");
+  return `<button type="button" class="tr-card${bl ? "" : " none"}${isSubTrial(key) ? " tr-sub" : ""}" data-trial="${key}" style="--hue:${trialHue(key)}"><span class="tr-card-emb" aria-hidden="true">${trialEmblem(key, bl || 1, 40)}</span><span class="tr-name">${escapeHtml(name)}</span>` +
+    `<span class="tr-lv">${bl ? escapeHtml(name + " " + ROMAN[bl]) : "No badge yet"}</span>` +
+    `<span class="tr-meta"><span class="tr-xp num">${b.next ? b.xp.toLocaleString() + " / " + fmtXp(b.need) : fmtXp(b.xp)}</span>${(() => { const nx = trialState(info, key, Math.min(10, lv + 1)); return nx.wait && !nx.locked ? waitHtml(nx.wait) : ""; })()}</span>` +
+    `<span class="tr-prog" title="${escapeHtml(b.next ? b.xp.toLocaleString() + " of " + b.need.toLocaleString() + " XP to " + trialName(key, b.next) : "Top badge")}"><i style="width:${b.next ? Math.min(100, (b.xp / b.need) * 100) : 100}%"></i></span>` +
+    `<span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
+}
+// XP in the categories' trials or in the subcategories' (a subcategory's never counts toward its category)
+const trialXpSum = (trials, sub) => (sub ? TRIAL_SUBS : TRIAL_CATS).reduce((n, [k]) => n + trialXpOf(trials, k), 0);
 function trialsSectionHtml(info) {
-  const best = trialBest(info && info.trials), badges = trialBadges(info && info.trials);
-  return `<section class="pf-trials"><div class="pf-ach-head"><h2 class="eyebrow">Trials</h2><span class="pf-ach-n tr-total"><b class="num">${trialXpOf(info && info.trials).toLocaleString()}</b> XP</span></div>
-    <div class="tr-grid">${TRIAL_CATS.map(([key, name]) => {
-      const lv = best[key] || 0, bl = badges[key] || 0, b = trialBadgeOf(info && info.trials, key);
-      const pips = Array.from({ length: 10 }, (_, i) => { const st = trialState(info, key, i + 1); return `<i class="${st.passed ? "on" : st.wait ? "wait" : st.locked ? "lock" : ""}"></i>`; }).join("");
-      return `<button type="button" class="tr-card${bl ? "" : " none"}" data-trial="${key}" style="--hue:${trialHue(key)}"><span class="tr-card-emb" aria-hidden="true">${trialEmblem(key, bl || 1, 40)}</span><span class="tr-name">${escapeHtml(name)}</span>` +
-        `<span class="tr-lv">${bl ? escapeHtml(name + " " + ROMAN[bl]) : "No badge yet"}</span>` +
-        `<span class="tr-meta"><span class="tr-xp num">${b.next ? b.xp.toLocaleString() + " / " + fmtXp(b.need) : fmtXp(b.xp)}</span>${(() => { const nx = trialState(info, key, Math.min(10, lv + 1)); return nx.wait && !nx.locked ? waitHtml(nx.wait) : ""; })()}</span>` +
-        `<span class="tr-prog" title="${escapeHtml(b.next ? b.xp.toLocaleString() + " of " + b.need.toLocaleString() + " XP to " + trialName(key, b.next) : "Top badge")}"><i style="width:${b.next ? Math.min(100, (b.xp / b.need) * 100) : 100}%"></i></span>` +
-        `<span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
-    }).join("")}</div></section>`;
+  const trials = info && info.trials, badges = trialBadges(trials), subBadges = subTrialBadges(trials);
+  return `<section class="pf-trials"><div class="pf-ach-head"><h2 class="eyebrow">Trials</h2><span class="pf-ach-n tr-total"><b class="num">${trialXpSum(trials, false).toLocaleString()}</b> XP</span></div>
+    <div class="tr-grid">${TRIAL_CATS.map(([key, name]) => trialCardHtml(info, key, name, badges[key] || 0)).join("")}</div></section>` +
+    `<section class="pf-trials tr-subs"><div class="pf-ach-head"><h2 class="eyebrow">Subcategories</h2><span class="pf-ach-n tr-total"><b class="num">${trialXpSum(trials, true).toLocaleString()}</b> XP</span></div>` +
+    TRIAL_CATS.map(([ck, cname]) => {
+      const subs = TRIAL_SUBS.filter((x) => x[2] === ck);
+      return subs.length ? `<div class="tr-sub-group" style="--hue:${trialHue(ck)}"><h3 class="tr-sub-h">${escapeHtml(cname)}</h3><div class="tr-grid tr-sub-grid">${subs.map(([key, name]) => trialCardHtml(info, key, name, subBadges[key] || 0)).join("")}</div></div>` : "";
+    }).join("") + `</section>`;
 }
 // the trials' state, whatever came back (an older app, an error, a malformed synced value): always { trials: {…} }
 function normTrialInfo(d) {
   const raw = d && typeof d === "object" && d.trials && typeof d.trials === "object" && !Array.isArray(d.trials) ? d.trials : {};
   const trials = {};
-  for (const [k, v] of Object.entries(raw)) if (/^[a-z]+\|\d{1,2}$/.test(k) && v && typeof v === "object") {
+  for (const [k, v] of Object.entries(raw)) if (/^[a-z]+(?:-[a-z0-9]+)?\|\d{1,2}$/.test(k) && v && typeof v === "object") {
     const a = {};
     if (v.a && typeof v.a === "object" && !Array.isArray(v.a)) for (const [ts, x] of Object.entries(v.a)) if (/^\d{10,14}$/.test(ts) && Number(x) >= 0) a[ts] = Math.min(Number(x), 2500);
     trials[k] = { s: Number(v.s) || 0, p: Number(v.p) || 0, l: Number(v.l) || 0, e: Number(v.e) || 0, a };
@@ -10625,7 +10673,7 @@ async function renderTrialsPage() {
     const going = state.practiceKind === "trial" && trialRunning() ? trialNow() : null;
     c.innerHTML = `<div class="pf-page tr-page">` +
       (going ? `<div class="tr-going" style="--hue:${trialHue(going.key)}">${ic("award", 16)}<span><b>${escapeHtml(trialName(going.key, going.level))}</b> is still going</span><span class="spacer"></span><button type="button" class="btn btn-primary btn-sm" id="tr-continue">${ic("play", 14)}Continue</button></div>` : "") +
-      `<p class="tr-intro">Power all ten tossups at a level to unlock the next.</p>` +
+      `<p class="tr-intro">Power every tossup at a level to unlock the next. A subcategory trial is five tossups.</p>` +
       (badges ? `<section class="tr-badge-row">${badges}</section>` : "") + trialsSectionHtml(info) + `</div>`;
     c.querySelector("#tr-continue")?.addEventListener("click", resumeTrialPage);
     wireTrials(c);
@@ -10645,7 +10693,7 @@ function wireTrials(container) {
 }
 // A category's levels: a window over the profile (the 14.92 inline panel is gone again, 14.93).
 function openTrialPicker(key) {
-  const cat = TRIAL_CATS.find((c) => c[0] === key); if (!cat) return;
+  const meta = trialMeta(key); if (!meta) return;
   document.getElementById("trial-pick")?.remove();
   const info = normTrialInfo(_trialInfo);
   const lvState = (lv) => { try { return trialState(info, key, lv); } catch (e) { return { passed: false, wait: 0, locked: lv > 1 }; } };
@@ -10667,15 +10715,15 @@ function openTrialPicker(key) {
       const go = el.querySelector("#tp-go"), note = el.querySelector("#tp-note");
       go.disabled = !pick;
       go.innerHTML = pick ? "Continue" + ic("right", 14) : "Pick a level";
-      note.textContent = pick ? `${10 * pick} XP a power, ${fmtXp(trialXp(pick, TRIAL_LEN))} for all ten.` + (lvState(pick).passed ? " You passed this level already." : "") : "";
+      note.textContent = pick ? `${10 * pick} XP a power, ${fmtXp(trialXpFor(key, pick, meta.len))} for all ${meta.word}.` + (lvState(pick).passed ? " You passed this level already." : "") : "";
     } catch (e) {}
   };
   el.innerHTML = `
     <div class="settings-modal tp-modal" tabindex="-1" style="--hue:${trialHue(key)}">
-      <div class="modal-head"><h2 id="tp-h">${escapeHtml(cat[1])} trial</h2><span class="tp-xp num">${fmtXp(trialXpOf(info.trials, key))}</span><span class="spacer"></span>
+      <div class="modal-head"><h2 id="tp-h">${escapeHtml(meta.name)} trial</h2><span class="tp-xp num">${fmtXp(trialXpOf(info.trials, key))}</span><span class="spacer"></span>
         <button type="button" class="btn btn-ghost btn-icon" id="tp-x" aria-label="Close">${ic("x")}</button></div>
       <div class="achd-body">
-        <p class="tp-lead"><b>Power all ten</b> to pass. The first tossup you don't power ends the trial. Higher levels earn more XP.</p>
+        <p class="tp-lead">${meta.sub ? escapeHtml(meta.catName) + " · " : ""}<b>Power all ${meta.word}</b> to pass. The first tossup you don't power ends the trial. Higher levels earn more XP.</p>
         ${trialProgressHtml(info.trials, key)}
         <div class="tp-levels" role="group" aria-label="Level">${levels()}</div>
         <p class="achd-fine" id="tp-note"></p>
@@ -10695,7 +10743,7 @@ function openTrialPicker(key) {
   el.querySelector("#tp-go").onclick = () => {
     if (!pick) return;
     close();
-    prepTrial({ key, name: cat[1], level: pick });
+    prepTrial({ key, name: meta.name, level: pick });
   };
   paint();
   try { el.querySelector(".tp-modal").focus({ preventScroll: true }); } catch (e) {}
@@ -10783,10 +10831,11 @@ function paintTrialBar() {
   if (!bar) { bar = document.createElement("div"); bar.id = "trial-bar"; bar.className = "trial-bar"; area.insertBefore(bar, area.firstChild); }
   bar.style.setProperty("--hue", trialHue(_trial.key));
   const res = _trial.res || [];
-  const pips = Array.from({ length: TRIAL_LEN }, (_, i) => `<i class="${i < res.length ? (res[i] === "p" ? "on" : "miss") : i === res.length && !_trial.done && _trial.n > i ? "now" : ""}"></i>`).join("");
+  const LEN = trialLenOf(_trial.key);
+  const pips = Array.from({ length: LEN }, (_, i) => `<i class="${i < res.length ? (res[i] === "p" ? "on" : "miss") : i === res.length && !_trial.done && _trial.n > i ? "now" : ""}"></i>`).join("");
   bar.innerHTML = `<span class="tb-k">${ic("award", 14)}Trial</span><b class="tb-name">${escapeHtml(trialName(_trial.key, _trial.level))}</b>` +
-    `<span class="tb-pips" aria-label="${_trial.powered} of ${TRIAL_LEN} powered">${pips}</span><span class="tb-n num">${_trial.powered}/${TRIAL_LEN}</span>` +
-    `<span class="tb-xp num">+${fmtXp(trialXp(_trial.level, _trial.powered))}</span>` +
+    `<span class="tb-pips" aria-label="${_trial.powered} of ${LEN} powered">${pips}</span><span class="tb-n num">${_trial.powered}/${LEN}</span>` +
+    `<span class="tb-xp num">+${fmtXp(trialXpFor(_trial.key, _trial.level, _trial.powered))}</span>` +
     // over: Result reopens its window; Done is the page's main button (and the start-skip key), not one here too
     (_trial.done ? `<button type="button" class="btn btn-sm btn-ghost" id="tb-result">Result</button>`
       : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
@@ -10815,7 +10864,7 @@ function trialMark(power, why) {
   t.res.push(power ? "p" : "x");
   if (power) t.powered++;
   paintTrialBar();
-  if (!power || t.res.length >= TRIAL_LEN) { t.ending = true; setTimeout(() => trialEnd(power ? "" : why || "not a power"), 700); }
+  if (!power || t.res.length >= trialLenOf(t.key)) { t.ending = true; setTimeout(() => trialEnd(power ? "" : why || "not a power"), 700); }
 }
 // the trial is over: its result shows, or will in a moment (the last verdict is in)
 function trialOver() { try { return !!(_trial && !_trial.pending && (_trial.done || _trial.ending)); } catch (e) { return false; } }
@@ -10830,7 +10879,7 @@ function playSetting(k) {
   }
   return state.settings[k];
 }
-const trialComplete = () => !!(_trial && !_trial.done && !_trial.pending && (_trial.res || []).length >= TRIAL_LEN);
+const trialComplete = () => !!(_trial && !_trial.done && !_trial.pending && (_trial.res || []).length >= trialLenOf(_trial.key));
 async function trialEnd(why, quiet) {
   if (!_trial || _trial.done) return;
   if (_trial.pending) { _trial = null; paintTrialBar(); return; }   // never started: nothing to record
@@ -10840,13 +10889,13 @@ async function trialEnd(why, quiet) {
   let r = null;
   try { r = await API.post("/api/trials", { action: "finish", category: t.key, level: t.level, powers }); } catch (e) {}
   if (!r || !r.ok && !r.cooldownUntil) {   // a backend from before 15.0 knows only pass / fail
-    try { r = await API.post("/api/trials", { action: powers >= TRIAL_LEN ? "pass" : "fail", category: t.key, level: t.level }); } catch (e) {}
+    try { r = await API.post("/api/trials", { action: powers >= trialLenOf(t.key) ? "pass" : "fail", category: t.key, level: t.level }); } catch (e) {}
   }
-  const passed = r && r.passed != null ? !!r.passed : powers >= TRIAL_LEN && !!(r && r.ok);
-  t.xp = r && r.xp != null ? Number(r.xp) : trialXp(t.level, powers);
+  const passed = r && r.passed != null ? !!r.passed : powers >= trialLenOf(t.key) && !!(r && r.ok);
+  t.xp = r && r.xp != null ? Number(r.xp) : trialXpFor(t.key, t.level, powers);
   if (r && r.trials) _trialInfo = normTrialInfo({ ..._trialInfo, trials: r.trials });
   else { const k = t.key + "|" + t.level, now = Date.now() + _trialSkew; _trialInfo = normTrialInfo(_trialInfo); const o = _trialInfo.trials[k] = _trialInfo.trials[k] || { a: {} }; o.e = now; if (passed) { o.l = now; o.p = o.p || now; } }
-  const cd = trialCooldownMs(t.level);
+  const cd = trialCooldownFor(t.key, t.level);
   t.waitMs = r && r.cooldownUntil ? Math.max(0, r.cooldownUntil - (Date.now() + _trialSkew)) : cd;
   t.badgeAfter = trialBadgeOf((_trialInfo || {}).trials, t.key);
   if (quiet) { _trial = null; paintTrialBar(); return; }
@@ -10859,7 +10908,7 @@ function showTrialResult(t, passed, why) {
   el.id = "trial-done";
   el.className = "qb-overlay review-ovl ach-ovl";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "td-h");
-  const mult = t.powered >= 10 ? "×2.5 for all ten" : t.powered >= 6 ? "×1.5 for 6+ powers" : t.powered >= 5 ? "×1.25 for 5 powers" : "";
+  const mult = trialMultText(t.key, t.powered);
   const next = passed && t.level < 10 ? t.level + 1 : 0, again = !next && !t.waitMs;
   const before = t.badgeBefore || { level: 0, xp: 0 }, after = t.badgeAfter || before, upgraded = after.level > before.level;
   el.innerHTML = `
@@ -10869,7 +10918,7 @@ function showTrialResult(t, passed, why) {
         <h2 id="td-h">${upgraded ? "Badge earned" : passed ? "Level passed" : why === "left" ? "Trial left" : "Trial over"}</h2>
         <p class="td-name">${escapeHtml(upgraded ? trialName(t.key, after.level) : trialName(t.key, t.level))}</p>
         <p class="td-xp num">+${fmtXp(t.xp)}</p>
-        <p class="td-why">${passed || why === "left" || !why ? "" : "Ended on question " + (t.res || []).length + " (" + escapeHtml(why) + "). "}You powered ${t.powered} of 10${mult ? ", " + mult : ""}.${passed ? (next ? " " + escapeHtml(trialName(t.key, next)) + " is open." : " That's the top level.") : ""}</p>
+        <p class="td-why">${passed || why === "left" || !why ? "" : "Ended on question " + (t.res || []).length + " (" + escapeHtml(why) + "). "}You powered ${t.powered} of ${trialLenOf(t.key)}${mult ? ", " + mult : ""}.${passed ? (next ? " " + escapeHtml(trialName(t.key, next)) + " is open." : " That's the top level.") : ""}</p>
         ${trialProgressHtml((_trialInfo || {}).trials, t.key, before.xp)}
         ${t.waitMs ? `<p class="td-wait">Try ${escapeHtml(trialName(t.key, t.level))} again in ${waitHtml(t.waitMs, "Ready to try " + trialName(t.key, t.level) + " again.")}</p>` : ""}
       </div>
@@ -10892,9 +10941,9 @@ function showTrialResult(t, passed, why) {
   document.body.appendChild(el);
   el.querySelector("#td-close").onclick = () => close();
   el.querySelector("#td-trials").onclick = () => finish(true);
-  const nx = el.querySelector("#td-next"), ag = el.querySelector("#td-again"), cat = TRIAL_CATS.find((c) => c[0] === t.key);
-  if (nx) nx.onclick = () => { finish(false); prepTrial({ key: t.key, name: cat[1], level: t.level + 1 }); };
-  if (ag) ag.onclick = () => { finish(false); prepTrial({ key: t.key, name: cat[1], level: t.level }); };
+  const nx = el.querySelector("#td-next"), ag = el.querySelector("#td-again"), meta = trialMeta(t.key);
+  if (nx) nx.onclick = () => { finish(false); prepTrial({ key: t.key, name: meta.name, level: t.level + 1 }); };
+  if (ag) ag.onclick = () => { finish(false); prepTrial({ key: t.key, name: meta.name, level: t.level }); };
   growProgress(el);
   if ((passed || upgraded) && !t._sounded) { t._sounded = true; try { Sound.achievement(); } catch (e) {} }
   try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}

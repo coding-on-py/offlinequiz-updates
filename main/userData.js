@@ -72,7 +72,7 @@ export function eventItemNow(id, now = Date.now()) { const ev = eventAt(now); re
 export function mergeTrials(a, b) {
   const out = {};
   for (const src of [a || {}, b || {}]) for (const [k, v] of Object.entries(src)) {
-    if (!/^[a-z]+\|\d{1,2}$/.test(k) || !v || typeof v !== "object") continue;
+    if (!/^[a-z]+(?:-[a-z0-9]+)?\|\d{1,2}$/.test(k) || !v || typeof v !== "object") continue;   // "<cat>|n", or a subcategory's "<cat>-<sub>|n" (15.58)
     const o = out[k] || (out[k] = {});
     if (Number(v.s) > (o.s || 0)) { o.s = Number(v.s); if (v.run) o.run = String(v.run).slice(0, 40); else delete o.run; }   // (who runs the latest start)
     if (Number(v.p) > 0 && (!o.p || Number(v.p) < o.p)) o.p = Number(v.p);

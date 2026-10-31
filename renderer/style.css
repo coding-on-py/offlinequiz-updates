@@ -6064,6 +6064,15 @@ html.hw .tb-scheme.hw-zap { color: #fff; }
 
 /* 14.95: badges are emblems (app.js emblemSvg) under the player's name; a click opens the badge's details */
 .pf-id .tr-badges, .up-who .tr-badges { margin-top: 8px; }
+/* badges in two sections (15.58): the categories (and event badges), a line, then the subcategories */
+.tr-badge-sets { display: flex; flex-direction: column; gap: 8px; }
+.pf-id .tr-badge-sets, .up-who .tr-badge-sets { margin-top: 8px; }
+.tr-badge-sets > .tr-badges { margin: 0; }
+.tr-badge-sets > .tr-badges-sub { padding-top: 8px; border-top: 1px solid var(--line-soft); }
+/* the Trials page's subcategories, each category's under its name */
+.pf-trials.tr-subs { margin-top: 26px; }
+.tr-sub-h { margin: 14px 0 0; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--hue); font-weight: 600; }
+.tr-sub-grid { margin-top: 6px; }
 .tr-badges { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 6px; }
 .tr-emb { position: relative; display: inline-flex; padding: 2px; border: 0; border-radius: 12px; background: none; cursor: pointer; transition: transform 0.16s var(--ease-out); }
 .tr-emb:hover { transform: translateY(-2px) scale(1.07); }
