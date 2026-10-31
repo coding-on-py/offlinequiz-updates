@@ -2597,6 +2597,11 @@ function __qbMain(ctx) {
     var ended = false, pendingBuzzer = null, answerTimer = null, answerDeadline = 0, tickTimer = null, pendingPrompted = false, pendingPromptFrom = "";
     // a buzz shown before the room confirmed it (a round trip later): { idx, at, speed, answer }
     var optBuzz = null, optBuzzT = null, lastReadSpeed = 0;
+    // The next question, sent ahead by the game server ("upnext", 15.54: its opening, no id): { key, speed, count, q }.
+    // Next shows it and reads it at once (optNext, until the room serves it: the old question's messages wait in
+    // `held`, its state in `prev`); a press while that's on its way goes on as soon as the following one is here
+    var upNext = null, optNext = null, optConfirmRead = false, pressAgain = false;
+    var OPT_HELD = { buzz: 1, buzzno: 1, buzzwin: 1, result: 1, read: 1, reveal: 1, more: 1, pause: 1, prompt: 1, typing: 1, bonus: 1, bpart: 1, bcancel: 1, reading: 1, qreset: 1 };
     var lockedTeams = {}, lockedIds = {};   // per-question lockouts
     // this player can't buzz again on this question (their wrong answer, or their team's, with rebuzzes
     // off): the question it happened on — a new question frees them
@@ -2862,7 +2867,7 @@ function __qbMain(ctx) {
       // above the bar along the bottom (ui.css), not over the question's first line
       (area.querySelector(":scope > .mp-actions") || area).appendChild(el);
     }
-    function reconnected() { reconnectN = 0; rejoining = false; reconnectWait = false; clearTimeout(reconnectT); reconnectNote(false); var dc = body && body.querySelector("#mp-disconnect"); if (dc) dc.remove(); }
+    function reconnected() { if (optNext) { clearTimeout(optNext.t); optNext = null; } upNext = null; pressAgain = false; optConfirmRead = false; reconnectN = 0; rejoining = false; reconnectWait = false; clearTimeout(reconnectT); reconnectNote(false); var dc = body && body.querySelector("#mp-disconnect"); if (dc) dc.remove(); }
     // The network back (Wi-Fi returning) or the page shown again (a phone unlocked, a laptop opened): a room
     // waiting out its back-off tries now, from the first step, and one behind the Rejoin card rejoins by itself
     // (after ~20 s of failed tries it used to stay there until Rejoin was pressed)
@@ -2976,6 +2981,8 @@ function __qbMain(ctx) {
       // Packet/set reading never carries across lobbies — always start at q1.
       setSig = ""; setIndex = 0; setQueue = null; impSig = ""; impIndex = 0;
       roomConfig = null; leftIntentionally = false;
+      if (optNext) clearTimeout(optNext.t);
+      upNext = null; optNext = null; optConfirmRead = false; pressAgain = false;   // another room's (or a dropped connection's)
       roomInfo = null; roomOpErr = ""; showPw = false; pwPending = false; pwDraft = null; pwErr = "";
       if (!rejoining) { dxInfo = null; dxDone = null; }
       if (inDiag()) mySpec = false;   // a diagnostic seats its players (its hosts watch) by account
@@ -3267,7 +3274,48 @@ function __qbMain(ctx) {
       // fresh roll (every panel mirrors the room, so any roll is the same draw)
       var roll = null;
       if (serverMode && weightedOn()) { try { roll = panelCfg().filters || null; } catch (e) {} }
+      if (!roll && instantNextOk()) { nextNow(); return; }
+      // pressed again while the last one is on its way: it goes on the moment the following question is here
+      if (!roll && optNext) { pressAgain = true; return; }
       toHost(roll ? { t: "reqNext", roll: roll } : { t: "reqNext" });
+    }
+    function applyQuestionMsg(d) { clearOptBuzz(); outIds = {}; outTeams = {}; stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
+    // Next can show the waiting question now: the room would go on (the same rules as the game server's next())
+    function instantNextOk() {
+      var u = upNext;
+      return !!(u && u.key && u.q && u.speed > 0 && serverMode && !isHost && !inDiag() && !settings.tournament && !weightedOn() && !optNext && !optBuzz && !pendingBuzzer &&
+        !(players[myId] && players[myId].spec) && !(bonusView && !bonusView.done) && (!current || ended || skipsAllowed()));
+    }
+    function nextNow() {
+      var u = upNext; upNext = null;
+      var o = optNext = { key: u.key, held: [], at: Date.now(),
+        prev: { current: current, ended: ended, revealIdx: revealIdx, qCount: qCount, paused: paused, speed: lastReadSpeed, buzzHistory: buzzHistory, buzzCharMarks: buzzCharMarks, outIds: outIds, outTeams: outTeams, endedPowerEnd: endedPowerEnd } };
+      // no answer either way (a lost message): the old question comes back and the room's next message sets it right
+      o.t = setTimeout(function () { if (optNext === o) undoOptNext(); }, 8000);
+      applyQuestionMsg({ q: u.q, count: u.count });
+      clientStartRead(0, u.speed);
+      toHost({ t: "reqNext", key: u.key });
+    }
+    // the room didn't go on (someone buzzed first, a bonus began): the old question comes back and what came for it
+    // meanwhile is played on it
+    function undoOptNext() {
+      var o = optNext; if (!o) return;
+      clearTimeout(o.t); optNext = null; optConfirmRead = false; pressAgain = false;
+      var p = o.prev;
+      stopClientRead();
+      current = p.current; ended = p.ended; qCount = p.qCount; paused = p.paused; buzzHistory = p.buzzHistory; buzzCharMarks = p.buzzCharMarks;
+      outIds = p.outIds; outTeams = p.outTeams; endedPowerEnd = p.endedPowerEnd; revealIdx = p.revealIdx;
+      if (current) {
+        renderQuestion();
+        // it went on reading meanwhile (the room's clock)
+        if (!ended && !paused && p.speed) clientStartRead(Math.min((current.len || current.text.length), p.revealIdx + Math.floor((Date.now() - o.at) / p.speed)), p.speed);
+        else applyReveal(revealIdx);
+      } else {
+        var ph = body && body.querySelector("#mp-placeholder"); if (ph) ph.classList.remove("hidden");
+        var ct = body && body.querySelector("#mp-content"); if (ct) ct.classList.add("hidden");
+      }
+      renderBuzzes(); updateTopBar(); setTimeout(syncActions, 0);
+      o.held.forEach(function (m) { onClientData(m); });
     }
     function skipsAllowed() { return settings.allowSkips !== false; }
     async function hostNext(byName) {
@@ -3491,16 +3539,19 @@ function __qbMain(ctx) {
     // ── client-side reading ticker (driven by the host's "read" message) ──
     var clientReadTimer = null;
     function stopClientRead() { if (clientReadTimer) { clearInterval(clientReadTimer); clientReadTimer = null; } }
-    function clientStartRead(from, speed) {
+    function clientStartRead(from, speed, keepAhead) {
       stopClientRead();
       lastReadSpeed = speed || 0;
-      if (typeof from === "number") revealIdx = from;
+      // keepAhead: this page is ahead (Next showed the question at the press, a round trip before the room read
+      // it): it holds there until the room's clock catches up, in step with everyone, and takes no text back
+      var from0 = typeof from === "number" ? from : revealIdx;
+      if (!(keepAhead && revealIdx > from0)) revealIdx = from0;
       applyReveal(revealIdx);
       if (!current || !speed) return;   // speed 0 ⇒ hold at "from" (instant reveal sends from = full length)
       // Same wall-clock pacing as the host's reveal, so both texts track the
       // same clock regardless of tick jitter on either machine.
       var tickMs = speed;   // may be under 1 ms per character: the clock decides how many show
-      var t0 = Date.now(), base = revealIdx;
+      var t0 = Date.now(), base = from0;
       clientReadTimer = setInterval(function () {
         // While held, slide the baseline so a resume never leaks unread text.
         if (paused || ended || !current) { t0 = Date.now(); base = revealIdx; return; }
@@ -3780,6 +3831,15 @@ function __qbMain(ctx) {
 
     // ── client: handle messages from host ──
     function onClientData(d) {
+      // Next showed the waiting question before the room served it: the old question's own messages wait (played on it
+      // if the room says no; moot once it serves the new one)
+      if (optNext && OPT_HELD[d.t]) { optNext.held.push(d); return; }
+      if (d.t === "upnext") {
+        upNext = d.key && d.q ? d : null;
+        if (pressAgain && !optNext) { pressAgain = false; if (instantNextOk()) nextNow(); }
+        return;
+      }
+      if (d.t === "nextno") { if (optNext && optNext.key === d.key) undoOptNext(); return; }
       if (d.t === "state") {
         if (admitting) { admitting = false; door = null; render(); }   // let in: now the room shows
         if (rejoining || reconnectN) reconnected();
@@ -3805,7 +3865,7 @@ function __qbMain(ctx) {
         if (officialRoom) syncDiagDrawer();
         // the room has no question in play (the game server restarted under it): a question this page still
         // showed mid-read, or a bonus, is gone, and Next comes back. A question that ended keeps its result
-        if (d.live === false && ((current && !ended) || bonusView)) { clearOptBuzz(); stopClientRead(); stopAutoSub(); current = null; ended = false; pendingBuzzer = null; bonusView = null; paused = false; restHeld = false; if (active()) render(); }
+        if (d.live === false && !optNext && ((current && !ended) || bonusView)) { clearOptBuzz(); stopClientRead(); stopAutoSub(); current = null; ended = false; pendingBuzzer = null; bonusView = null; paused = false; restHeld = false; if (active()) render(); }
         renderScores(); renderSettings(); renderFilterSummary(); updateTopBar();
         if (inDiag()) renderDiag();   // who's here (the waiting view)
       }
@@ -3815,8 +3875,21 @@ function __qbMain(ctx) {
       else if (d.t === "more") { if (current && typeof d.text === "string") current.text += d.text; }
       else if (d.t === "status") { setStatus(d.text || ""); }
       else if (d.t === "needConfig") { sendRoomConfig(true); }
-      else if (d.t === "question") { clearOptBuzz(); outIds = {}; outTeams = {}; stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
-      else if (d.t === "read") { if (d.speed) pendingBuzzer = null; clientStartRead(d.from, d.speed); }
+      else if (d.t === "question") {
+        // the room served the question Next showed: it reads on from where it is (the "read" that follows holds it
+        // there until the room catches up)
+        if (optNext && d.q && d.q.key && d.q.key === optNext.key) {
+          clearTimeout(optNext.t); optNext = null; optConfirmRead = true;
+          if (current) { current.text = String(d.q.text || ""); if (d.q.len) current.len = d.q.len; if (d.q.shape) current.shape = d.q.shape; }
+          if (typeof d.count === "number") qCount = d.count;
+          updateTopBar(); setTimeout(syncActions, 0);
+        } else {
+          if (optNext) { clearTimeout(optNext.t); optNext = null; }
+          optConfirmRead = false;
+          applyQuestionMsg(d);
+        }
+      }
+      else if (d.t === "read") { if (d.speed) pendingBuzzer = null; var ahead = optConfirmRead; optConfirmRead = false; clientStartRead(d.from, d.speed, ahead); }
       else if (d.t === "reveal") { revealIdx = d.index; applyReveal(d.index); }  // legacy hosts
       else if (d.t === "buzz") {
         var early = optBuzz; clearOptBuzz(); pendingBuzzer = d.id || null;
