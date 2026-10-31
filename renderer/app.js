@@ -304,6 +304,9 @@ function persistSettingsToLocalStorage() {
     "qb-show-qmeta": st.showQuestionMeta, "qb-hide-pron": st.hidePronunciations, "qb-hide-notes": st.hideNotes, "qb-use-weights": st.useWeights,
     "qb-app-accent": st.appAccent, "qb-app-radius": st.appRadius, "qb-app-btngap": st.appBtnGap,
     "qb-app-mode": st.appAppearanceMode, "qb-app-custom-accent": st.appCustomAccent, "qb-app-font": st.appFont,
+    "qb-app-bg": st.appBg || "default", "qb-app-colors": JSON.stringify(st.appColors || {}),
+    "qb-app-qsize": st.appQSize || "default", "qb-app-qlh": st.appQLh || "default", "qb-app-width": st.appWidth || "default",
+    "qb-app-stats-pos": st.appStatsPos || "right", "qb-app-panel-side": st.appPanelSide || "right",
     "qb-review-wrongend": st.reviewWrongEnd, "qb-session-retention": st.sessionRetentionDays,
     "qb-hotkeys": JSON.stringify(st.hotkeys || {}), "qb-viewmode": state.viewMode,
     "qb-username": state.username, "qb-avatar": state.avatar,
@@ -407,6 +410,13 @@ const state = {
     appAppearanceMode: localStorage.getItem("qb-app-mode") || "preset",
     appCustomAccent: localStorage.getItem("qb-app-custom-accent") || "#58a6ff",
     appFont: localStorage.getItem("qb-app-font") || "default",
+    appBg: localStorage.getItem("qb-app-bg") || "default",
+    appColors: (() => { try { return JSON.parse(localStorage.getItem("qb-app-colors") || "null") || {}; } catch (e) { return {}; } })(),
+    appQSize: localStorage.getItem("qb-app-qsize") || "default",
+    appQLh: localStorage.getItem("qb-app-qlh") || "default",
+    appWidth: localStorage.getItem("qb-app-width") || "default",
+    appStatsPos: localStorage.getItem("qb-app-stats-pos") || "right",
+    appPanelSide: localStorage.getItem("qb-app-panel-side") || "right",
     bonusAfter: localStorage.getItem("qb-bonus-after") === "true",
     reviewNegs: localStorage.getItem("qb-review-negs") !== "false",
     reviewUnans: localStorage.getItem("qb-review-unans") !== "false",
@@ -722,7 +732,8 @@ function syncScheme() {
     if (bg[3] < 128) bg = finalBg(root);   // a theme that paints <html> instead
     if (bg[3] >= 128) root.dataset.scheme = lum(bg) > 140 ? "light" : "dark";
     const acc = getComputedStyle(root).getPropertyValue("--accent").trim();
-    if (acc) root.style.setProperty("--on-accent", lum(rgba(acc)) > 170 ? "#0d1117" : "#fff");
+    // an accent chosen in Appearance beats an event's (!important), and so must the text drawn on it
+    if (acc) root.style.setProperty("--on-accent", lum(rgba(acc)) > 170 ? "#0d1117" : "#fff", root.style.getPropertyPriority("--accent") || "");
   } catch (e) {}
 }
 
@@ -1565,7 +1576,7 @@ let _dom = {};
 function dom(id) { return _dom[id] || (_dom[id] = document.getElementById(id)); }
 function refreshDom() {
   _dom = {};
-  ["stat-acc","stat-pwr","stat-neg","stat-cel","stat-cel-detail","stat-ppq",
+  ["stat-acc","stat-cel","stat-cel-detail","stat-ppq",
    "session-counter","session-score","btn-start-session","question-area",
    "question-text","question-meta","question-placeholder","question-content",
    "buzz-area","buzz-input","result-area","result-banner","result-answer",
@@ -4634,9 +4645,26 @@ function applyModeVisibility(mode) {
 // are the whole session's (they read "PPB 15.0" off the tossup's 15)
 function applyStatLabels(mode) {
   const tossup = mode === "tossups";
-  for (const id of ["#stat-cel", "#stat-neg", "#stat-pwr"]) { const row = $(id)?.closest(".stat-item"); if (row) row.style.display = tossup ? "" : "none"; }
-  const ppqLabel = $("#stat-ppq")?.closest(".stat-item")?.querySelector(".stat-label");
-  if (ppqLabel) ppqLabel.textContent = tossup ? "PTS/Q" : "PPB";
+  const side = document.getElementById("live-stats"); if (side) side.dataset.kind = tossup ? "tossups" : "bonuses";
+  const cap = document.getElementById("stat-ppq-cap"); if (cap) cap.textContent = tossup ? "per tossup" : "per bonus";
+  renderSessionBar();
+}
+// the scoreboard's bar and its key: how this session's questions went, best first. Tossups are powers, gets, negs
+// and the rest. Bonuses are perfect (every part), partial and zeroed.
+function renderSessionBar() {
+  const bar = document.getElementById("sb-bar"), key = document.getElementById("sb-legend");
+  if (!bar || !key) return;
+  const tossup = state.mode !== "bonuses", n = {};
+  for (const e of state.sessionHistory) {
+    if (e.type !== (tossup ? "tossup" : "bonus")) continue;
+    const k = tossup ? (e.isPower ? "pwr" : e.points > 0 ? "get" : e.points < 0 ? "neg" : "dead") : (e.correct ? "get" : (e.points || 0) > 0 ? "part" : "dead");
+    n[k] = (n[k] || 0) + 1;
+  }
+  const parts = (tossup
+    ? [["pwr", "power", "powers"], ["get", "get", "gets"], ["neg", "neg", "negs"], ["dead", "zero", "zeros"]]
+    : [["get", "perfect", "perfect"], ["part", "partial", "partial"], ["dead", "zeroed", "zeroed"]]).filter(([k]) => n[k]);
+  bar.innerHTML = parts.map(([k]) => `<i class="k-${k}" style="flex-grow:${n[k]}"></i>`).join("");
+  key.innerHTML = parts.map(([k, one, many]) => `<span class="k-${k}"><b>${n[k]}</b>${n[k] === 1 ? one : many}</span>`).join("");
 }
 
 
@@ -6675,14 +6703,114 @@ const DEFAULT_APPEARANCE = {
   },
   radius: { default: null, sharp: "2px", round: "12px" },
   gap: { default: null, compact: "4px", spacious: "16px" },
+  // fonts the computer already has (nothing to download: the app works offline), each with fallbacks
   fonts: {
     default: null,
-    mono: "'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace",
     sans: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    humanist: "'Avenir Next', Avenir, 'Segoe UI', 'Helvetica Neue', sans-serif",
+    geometric: "Futura, 'Century Gothic', 'Trebuchet MS', sans-serif",
+    classic: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+    wide: "Verdana, Geneva, Tahoma, sans-serif",
     serif: "Georgia, 'Iowan Old Style', 'Times New Roman', serif",
+    book: "'Iowan Old Style', Palatino, 'Palatino Linotype', 'Book Antiqua', serif",
+    charter: "Charter, 'Bitstream Charter', Cambria, Georgia, serif",
+    mono: "'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace",
+    typewriter: "'American Typewriter', 'Courier New', Courier, monospace",
     rounded: "'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', system-ui, sans-serif",
   },
+  // background tones: [page, panels, raised, border, soft border], for the dark look and the light one
+  bg: {
+    default: null,
+    pure: { dark: ["#000000", "#0b0b0c", "#151517", "#2a2a2e", "#1c1c1f"], light: ["#ffffff", "#ffffff", "#f3f3f4", "#d7d7db", "#e9e9ec"] },
+    slate: { dark: ["#111315", "#1a1d20", "#222629", "#363b40", "#272b2f"], light: ["#f1f2f3", "#ffffff", "#e7e9eb", "#cdd1d5", "#dfe2e5"] },
+    navy: { dark: ["#0b1220", "#111a2e", "#18233b", "#2a3857", "#1c2843"], light: ["#eef3fb", "#ffffff", "#e3eaf6", "#c5d1e6", "#d9e2f1"] },
+    plum: { dark: ["#130f17", "#1c1622", "#251d2d", "#3c3047", "#2b2235"], light: ["#f7f2fa", "#ffffff", "#efe6f4", "#d9c8e3", "#e8dcef"] },
+    forest: { dark: ["#0c1310", "#121c17", "#19261f", "#2c3d34", "#1f2d26"], light: ["#f0f6f2", "#ffffff", "#e4efe8", "#c6dacd", "#d9e8de"] },
+    paper: { dark: ["#15130f", "#1d1a15", "#26221b", "#3b352b", "#2c2720"], light: ["#f7f3ea", "#fffdf8", "#efe8da", "#dbcfb8", "#e9e0cf"] },
+  },
 };
+const BG_VARS = ["--bg", "--bg-secondary", "--bg-tertiary", "--border", "--border-light"];
+// Appearance > Text and Layout: the values each one takes (a synced setting from elsewhere falls back to the first)
+const LAYOUT_PREFS = [
+  ["appQSize", "data-qsize", ["default", "small", "large", "xl"]],
+  ["appQLh", "data-qlh", ["default", "tight", "relaxed"]],
+  ["appWidth", "data-width", ["default", "narrow", "wide", "full"]],
+  ["appStatsPos", "data-stats-pos", ["right", "left", "below", "hidden"]],
+  ["appPanelSide", "data-panel-side", ["right", "left"]],
+];
+function applyLayoutPrefs() {
+  const root = document.documentElement;
+  for (const [key, attr, vals] of LAYOUT_PREFS) {
+    const v = vals.includes(state.settings[key]) ? state.settings[key] : vals[0];
+    if (v === vals[0]) root.removeAttribute(attr); else root.setAttribute(attr, v);
+  }
+  // the font works with any theme: Default gives back whatever font was there before
+  const font = DEFAULT_APPEARANCE.fonts[state.settings.appFont], st = root.style;
+  if (font) {
+    if (applyLayoutPrefs._mine == null) applyLayoutPrefs._prev = st.getPropertyValue("--font");
+    st.setProperty("--font", font); applyLayoutPrefs._mine = font;
+  } else if (applyLayoutPrefs._mine != null) {
+    if (st.getPropertyValue("--font") === applyLayoutPrefs._mine) { if (applyLayoutPrefs._prev) st.setProperty("--font", applyLayoutPrefs._prev); else st.removeProperty("--font"); }
+    applyLayoutPrefs._mine = null;
+  }
+}
+// Colors chosen in Appearance win over a theme's and an event's (!important). Each is undone only if it's still the
+// one set here, so a theme that set the same variable since keeps its own.
+const _apVars = new Map();
+function apSet(name, val) {
+  const st = document.documentElement.style;
+  if (!_apVars.has(name)) _apVars.set(name, { prev: st.getPropertyValue(name), prio: st.getPropertyPriority(name) });
+  st.setProperty(name, val, "important");
+  _apVars.get(name).mine = val;
+}
+function apClearAll() {
+  const st = document.documentElement.style;
+  for (const [name, o] of _apVars) {
+    if (st.getPropertyValue(name) !== o.mine || st.getPropertyPriority(name) !== "important") continue;
+    if (o.prev) st.setProperty(name, o.prev, o.prio); else st.removeProperty(name);
+  }
+  _apVars.clear();
+}
+function cssHex(css) {
+  try {
+    const cv = cssHex._cv || (cssHex._cv = document.createElement("canvas").getContext("2d", { willReadFrequently: true }));
+    cv.clearRect(0, 0, 1, 1); cv.fillStyle = "#000"; cv.fillStyle = css; cv.fillRect(0, 0, 1, 1);
+    const d = cv.getImageData(0, 0, 1, 1).data;
+    return "#" + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, "0")).join("");
+  } catch (e) { return null; }
+}
+const isHex6 = (v) => /^#[0-9a-fA-F]{6}$/.test(v || "");
+const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const hexLum = (h) => { const [r, g, b] = hexRgb(h); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+function hexMix(a, b, t) { const A = hexRgb(a), B = hexRgb(b); return "#" + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, "0")).join(""); }
+// custom colors: the page, the panels and the text bring the shades made from them
+const CUSTOM_COLOR_VAR = { bg: "--bg", panel: "--bg-secondary", text: "--text", power: "--yellow", correct: "--green", neg: "--red" };
+function applyCustomColors() {
+  const C = state.settings.appColors || {}, root = document.documentElement;
+  const cur = (name, fb) => cssHex(getComputedStyle(root).getPropertyValue(name).trim() || fb) || fb;
+  if (isHex6(C.bg)) apSet("--bg", C.bg);
+  const bgRef = isHex6(C.bg) ? C.bg : cur("--bg", "#0d1117"), lightBg = hexLum(bgRef) > 140;
+  if (isHex6(C.panel)) {
+    const c = hexLum(C.panel) > 140 ? "#000000" : "#ffffff";
+    apSet("--bg-secondary", C.panel); apSet("--bg-tertiary", hexMix(C.panel, c, 0.05));
+    apSet("--border-light", hexMix(C.panel, c, 0.09)); apSet("--border", hexMix(C.panel, c, 0.17));
+  }
+  if (isHex6(C.text)) {
+    apSet("--text", C.text); apSet("--text-secondary", hexMix(C.text, bgRef, 0.38)); apSet("--text-muted", hexMix(C.text, bgRef, 0.62));
+    apSet("--strong", hexMix(C.text, lightBg ? "#000000" : "#ffffff", 0.45));
+  }
+  if (isHex6(C.power)) { apSet("--yellow", C.power); apSet("--yellow-dim", C.power + "33"); apSet("--power-mark", C.power); apSet("--star", C.power); }
+  if (isHex6(C.correct)) { apSet("--green", C.correct); apSet("--green-dim", C.correct + "33"); apSet("--go", C.correct); apSet("--go-strong", hexMix(C.correct, "#000000", 0.3)); }
+  if (isHex6(C.neg)) { apSet("--red", C.neg); apSet("--red-dim", C.neg + "33"); apSet("--error", C.neg); }
+}
+// the pickers show the color in use, chosen or not
+function syncColorPickers() {
+  const C = state.settings.appColors || {}, cs = getComputedStyle(document.documentElement);
+  document.querySelectorAll(".app-color[data-color]").forEach((inp) => {
+    const k = inp.dataset.color;
+    inp.value = isHex6(C[k]) ? C[k] : (cssHex(cs.getPropertyValue(CUSTOM_COLOR_VAR[k]).trim()) || "#000000");
+  });
+}
 
 // A plugin-added accent has no light variant: darken it until it reads on white.
 function lightAccentFor(light, acc) {
@@ -6718,9 +6846,10 @@ function syncAppearanceSection() {
 }
 // Every appearance change (theme on/off, accent, boot) re-derives
 // html[data-scheme] and --on-accent from what is now on screen.
-function applyDefaultAppearance() { applyDefaultAppearanceVars(); syncScheme(); syncThemeColor(); }
+function applyDefaultAppearance() { applyLayoutPrefs(); applyDefaultAppearanceVars(); syncScheme(); syncThemeColor(); }
 function applyDefaultAppearanceVars() {
   const theme = activeTheme();
+  apClearAll();
   if (window.QB?.hasAppearancePanel?.()) {
     $("#default-appearance")?.classList.add("hidden");
     syncAppearanceSection();
@@ -6751,14 +6880,15 @@ function applyDefaultAppearanceVars() {
     const acc = (light && DEFAULT_APPEARANCE.lightAccent[state.settings.appAccent]) || lightAccentFor(light, DEFAULT_APPEARANCE.accent[state.settings.appAccent]);
     if (acc) { root.setProperty("--accent", acc[0]); root.setProperty("--accent-dim", acc[1]); }
     else { root.removeProperty("--accent"); root.removeProperty("--accent-dim"); }
-    if (!theme) root.removeProperty("--font");
+    const tone = DEFAULT_APPEARANCE.bg[state.settings.appBg];
+    if (tone) { const set = tone[light && !document.documentElement.classList.contains("hw") ? "light" : "dark"]; BG_VARS.forEach((v, i) => apSet(v, set[i])); }
   } else {
-    const hex = state.settings.appCustomAccent || "#58a6ff";
-    root.setProperty("--accent", hex);
-    root.setProperty("--accent-dim", hexToDim(hex));
-    const font = DEFAULT_APPEARANCE.fonts[state.settings.appFont];
-    if (font) root.setProperty("--font", font); else root.removeProperty("--font");
+    const hex = isHex6(state.settings.appCustomAccent) ? state.settings.appCustomAccent : "#58a6ff";
+    apSet("--accent", hex);
+    apSet("--accent-dim", hexToDim(hex));
+    applyCustomColors();
   }
+  syncColorPickers();
 }
 $("#app-mode")?.addEventListener("change", (e) => { state.settings.appAppearanceMode = e.target.value; lsSet("qb-app-mode", e.target.value); applyDefaultAppearance(); });
 $("#app-accent")?.addEventListener("change", (e) => { state.settings.appAccent = e.target.value; lsSet("qb-app-accent", e.target.value); applyDefaultAppearance(); });
@@ -6766,8 +6896,24 @@ $("#app-custom-accent")?.addEventListener("input", (e) => { state.settings.appCu
 $("#app-font")?.addEventListener("change", (e) => { state.settings.appFont = e.target.value; lsSet("qb-app-font", e.target.value); applyDefaultAppearance(); });
 $("#app-radius")?.addEventListener("change", (e) => { state.settings.appRadius = e.target.value; lsSet("qb-app-radius", e.target.value); applyDefaultAppearance(); });
 $("#app-btngap")?.addEventListener("change", (e) => { state.settings.appBtnGap = e.target.value; lsSet("qb-app-btngap", e.target.value); applyDefaultAppearance(); });
+for (const [id, key, ls] of [["app-bg", "appBg", "qb-app-bg"], ["app-qsize", "appQSize", "qb-app-qsize"], ["app-qlh", "appQLh", "qb-app-qlh"],
+  ["app-width", "appWidth", "qb-app-width"], ["app-stats-pos", "appStatsPos", "qb-app-stats-pos"], ["app-panel-side", "appPanelSide", "qb-app-panel-side"]]) {
+  document.getElementById(id)?.addEventListener("change", (e) => { state.settings[key] = e.target.value; lsSet(ls, e.target.value); applyDefaultAppearance(); });
+}
+document.querySelectorAll(".app-color[data-color]").forEach((inp) => inp.addEventListener("input", () => {
+  state.settings.appColors = { ...(state.settings.appColors || {}), [inp.dataset.color]: inp.value };
+  lsSet("qb-app-colors", JSON.stringify(state.settings.appColors));
+  applyDefaultAppearance();
+}));
+document.getElementById("app-colors-reset")?.addEventListener("click", () => {
+  state.settings.appColors = {}; state.settings.appCustomAccent = "#58a6ff";
+  lsSet("qb-app-colors", "{}"); lsSet("qb-app-custom-accent", "#58a6ff");
+  const a = document.getElementById("app-custom-accent"); if (a) a.value = "#58a6ff";
+  applyDefaultAppearance();
+});
 function appearanceLabel(k, kind) {
-  const fontLabels = { default: "Default", mono: "Monospace", sans: "Sans-serif", serif: "Serif", rounded: "Rounded" };
+  const fontLabels = { default: "Default", sans: "System", humanist: "Avenir", geometric: "Futura", classic: "Helvetica", wide: "Verdana",
+    serif: "Georgia", book: "Palatino", charter: "Charter", mono: "Monospace", typewriter: "Typewriter", rounded: "Rounded" };
   if (kind === "font" && fontLabels[k]) return fontLabels[k];
   if (k === "blue") return "Blue (default)";
   return k.charAt(0).toUpperCase() + k.slice(1);
@@ -7376,7 +7522,7 @@ function histTrackHtml(e) {
 }
 
 function renderHistoryPanel() {
-  try { renderSessionMini(); } catch (e) {}
+  try { renderSessionMini(); renderSessionBar(); } catch (e) {}
   const panel = document.getElementById("history-panel");
   if (panel) {
     panel.style.display = state.sessionHistory.length ? "" : "none";
@@ -7652,8 +7798,6 @@ function updateLiveStats() {
   // skipped questions aren't attempts: accuracy is over the rest
   const answered = state.questionCount - (state.skips || 0);
   $("#stat-acc").textContent = active && answered > 0 ? `${((state.correct / answered) * 100).toFixed(0)}%` : "\u2014";
-  $("#stat-pwr").textContent = active ? `${state.powers}` : "\u2014";
-  $("#stat-neg").textContent = active ? `${state.negs}` : "\u2014";
 
   const avgCel = state.correctCelerityHistory.length > 0
     ? state.correctCelerityHistory.reduce((a, b) => a + b, 0) / state.correctCelerityHistory.length
@@ -7662,22 +7806,17 @@ function updateLiveStats() {
     ? `${(avgCel * 100).toFixed(0)}%`
     : "\u2014";
 
-  const correctAvg = state.correctCelerityHistory.length > 0
-    ? state.correctCelerityHistory.reduce((a,b) => a+b, 0) / state.correctCelerityHistory.length
-    : 0;
   const incorrectAvg = state.incorrectCelerityHistory.length > 0
     ? state.incorrectCelerityHistory.reduce((a,b) => a+b, 0) / state.incorrectCelerityHistory.length
     : 0;
+  // the big number is the right answers' celerity, so the line under it is only the wrong ones'
   const celEl = $("#stat-cel-detail");
-  if (celEl) {
-    const parts = [];
-    if (state.correctCelerityHistory.length > 0) parts.push(`\u2713${(correctAvg * 100).toFixed(0)}%`);
-    if (state.incorrectCelerityHistory.length > 0) parts.push(`\u2717${(incorrectAvg * 100).toFixed(0)}%`);
-    celEl.textContent = parts.join(" ");
-  }
+  if (celEl) celEl.textContent = active && state.incorrectCelerityHistory.length > 0 ? `wrong ${(incorrectAvg * 100).toFixed(0)}%` : "";
 
   $("#stat-ppq").textContent = active ? `${(state.totalPoints / n).toFixed(1)}` : "\u2014";
   $("#session-counter").textContent = `${state.questionCount}`;
+  $("#session-score")?.classList.toggle("neg", state.totalPoints < 0);
+  renderSessionBar();
 }
 
 
@@ -9172,6 +9311,12 @@ function initSettings() {
   const aFont = $("#app-font"); if (aFont) aFont.value = state.settings.appFont;
   const aRad = $("#app-radius"); if (aRad) aRad.value = state.settings.appRadius;
   const aGap = $("#app-btngap"); if (aGap) aGap.value = state.settings.appBtnGap;
+  const aBg = $("#app-bg"); if (aBg) aBg.value = DEFAULT_APPEARANCE.bg[state.settings.appBg] !== undefined ? state.settings.appBg : "default";
+  for (const [key, , vals] of LAYOUT_PREFS) {
+    const el = document.getElementById({ appQSize: "app-qsize", appQLh: "app-qlh", appWidth: "app-width", appStatsPos: "app-stats-pos", appPanelSide: "app-panel-side" }[key]);
+    if (el) el.value = vals.includes(state.settings[key]) ? state.settings[key] : vals[0];
+  }
+  for (const id of ["app-accent", "app-mode", "app-font", "app-radius", "app-btngap", "app-bg", "app-qsize", "app-qlh", "app-width", "app-stats-pos", "app-panel-side"]) _syncSel(document.getElementById(id));
   const sret = $("#session-retention"); if (sret) sret.value = String(state.settings.sessionRetentionDays || 0);
   applyDefaultAppearance();
   const buzzSlider = $("#buzz-timeout-slider");

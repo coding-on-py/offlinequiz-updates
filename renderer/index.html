@@ -25,6 +25,9 @@
       var c = localStorage.getItem("qb-boot-bg");
       if (c) document.documentElement.style.setProperty("--boot-bg", c);
       if (localStorage.getItem("qb-scheme") === "light") document.documentElement.setAttribute("data-theme", "light");
+      // Appearance > Text and Layout (app.js applyLayoutPrefs) from the first frame, so nothing moves after
+      var lay = { "qb-app-qsize": "data-qsize", "qb-app-qlh": "data-qlh", "qb-app-width": "data-width", "qb-app-stats-pos": "data-stats-pos", "qb-app-panel-side": "data-panel-side" };
+      for (var lk in lay) { var lv = localStorage.getItem(lk); if (lv && lv !== "default" && lv !== "right") document.documentElement.setAttribute(lay[lk], lv); }
       // the running event's theme from the first frame (app.js SEASONS), unless this viewer picked Default
       var evNow = Date.now(), evLight = localStorage.getItem("qb-scheme") === "light";
       if (evNow >= Date.UTC(2026, 9, 16) && evNow < Date.UTC(2026, 10, 1, 7) && localStorage.getItem("qb-hw-theme") !== "default") { document.documentElement.classList.add("hw"); document.documentElement.style.setProperty("--boot-bg", "#0f0d12"); }
@@ -310,14 +313,19 @@
         </main>
 
         <aside class="stats-panel practice-side" id="live-stats" aria-label="This session">
-          <div class="side-stats">
-            <div class="stat-item stat-score"><div class="stat-value" id="session-score">0</div><div class="stat-label">SCORE</div></div>
-            <div class="stat-item stat-heard"><div class="stat-value" id="session-counter">0</div><div class="stat-label">HEARD</div></div>
-            <div class="stat-item"><div class="stat-value" id="stat-acc">—</div><div class="stat-label">ACC</div></div>
-            <div class="stat-item"><div class="stat-value" id="stat-ppq">—</div><div class="stat-label">PTS/Q</div></div>
-            <div class="stat-item"><div class="stat-value stat-pwr" id="stat-pwr">—</div><div class="stat-label">PWR</div></div>
-            <div class="stat-item"><div class="stat-value stat-neg" id="stat-neg">—</div><div class="stat-label">NEG</div></div>
-            <div class="stat-item stat-cel"><div class="stat-value" id="stat-cel">—</div><div class="stat-label">CEL</div><div class="stat-detail" id="stat-cel-detail"></div></div>
+          <!-- one scoreboard card: the score, how the questions went (bar), the rates. app.js updateLiveStats -->
+          <div class="side-stats sb">
+            <div class="sb-head">
+              <div class="sb-score"><div class="sb-big" id="session-score">0</div><div class="sb-cap">points</div></div>
+              <div class="sb-heard"><div class="sb-mid" id="session-counter">0</div><div class="sb-cap">heard</div></div>
+            </div>
+            <div class="sb-bar" id="sb-bar" aria-hidden="true"></div>
+            <div class="sb-legend" id="sb-legend"></div>
+            <div class="sb-rates">
+              <div class="sb-rate"><div class="sb-val" id="stat-acc">—</div><div class="sb-cap">accuracy</div></div>
+              <div class="sb-rate"><div class="sb-val" id="stat-ppq">—</div><div class="sb-cap" id="stat-ppq-cap">per tossup</div></div>
+              <div class="sb-rate sb-tu"><div class="sb-val" id="stat-cel">—</div><div class="sb-cap">celerity</div><div class="sb-sub" id="stat-cel-detail"></div></div>
+            </div>
           </div>
           <div class="side-hist">
             <div class="eyebrow">This session</div>
@@ -689,12 +697,17 @@
                   </select>
                 </div>
                 <div id="default-appearance">
+                  <div class="setting-subhead">Colors</div>
                   <div class="setting-row" id="app-mode-row">
-                    <span class="setting-label">Appearance mode</span>
+                    <span class="setting-label">Palette</span>
                     <select id="app-mode" class="mode-input">
-                      <option value="preset">Preset palette</option>
-                      <option value="custom">Custom color</option>
+                      <option value="preset">Presets</option>
+                      <option value="custom">Custom colors</option>
                     </select>
+                  </div>
+                  <div class="setting-row" id="row-light-mode">
+                    <span class="setting-label">Light mode<span class="qb-info" data-tip="The same switch as the sun / moon in the top bar.">i</span></span>
+                    <input type="checkbox" class="switch" aria-label="Light mode" id="opt-light-mode">
                   </div>
                   <div id="app-preset-controls">
                     <div class="setting-row">
@@ -709,23 +722,54 @@
                         <option value="red">Red</option>
                       </select>
                     </div>
-                  </div>
-                  <div id="app-custom-controls" class="hidden">
                     <div class="setting-row">
-                      <span class="setting-label">Accent color</span>
-                      <input type="color" id="app-custom-accent" class="mode-input">
-                    </div>
-                    <div class="setting-row">
-                      <span class="setting-label">Font</span>
-                      <select id="app-font" class="mode-input">
+                      <span class="setting-label">Background</span>
+                      <select id="app-bg" class="mode-input">
                         <option value="default">Default</option>
-                        <option value="mono">Monospace</option>
-                        <option value="sans">Sans-serif</option>
-                        <option value="serif">Serif</option>
-                        <option value="rounded">Rounded</option>
+                        <option value="pure">Pure black or white</option>
+                        <option value="slate">Slate</option>
+                        <option value="navy">Navy</option>
+                        <option value="plum">Plum</option>
+                        <option value="forest">Forest</option>
+                        <option value="paper">Paper</option>
                       </select>
                     </div>
                   </div>
+                  <div id="app-custom-controls" class="hidden">
+                    <div class="setting-row">
+                      <span class="setting-label">Accent</span>
+                      <input type="color" id="app-custom-accent" class="mode-input app-color">
+                    </div>
+                    <div class="setting-row">
+                      <span class="setting-label">Background</span>
+                      <input type="color" class="mode-input app-color" data-color="bg" aria-label="Background color">
+                    </div>
+                    <div class="setting-row">
+                      <span class="setting-label">Panels and cards</span>
+                      <input type="color" class="mode-input app-color" data-color="panel" aria-label="Panel color">
+                    </div>
+                    <div class="setting-row">
+                      <span class="setting-label">Text</span>
+                      <input type="color" class="mode-input app-color" data-color="text" aria-label="Text color">
+                    </div>
+                    <div class="setting-row">
+                      <span class="setting-label">Powers</span>
+                      <input type="color" class="mode-input app-color" data-color="power" aria-label="Power color">
+                    </div>
+                    <div class="setting-row">
+                      <span class="setting-label">Correct</span>
+                      <input type="color" class="mode-input app-color" data-color="correct" aria-label="Correct color">
+                    </div>
+                    <div class="setting-row">
+                      <span class="setting-label">Negs and wrong</span>
+                      <input type="color" class="mode-input app-color" data-color="neg" aria-label="Neg color">
+                    </div>
+                    <div class="setting-row">
+                      <span class="setting-label">Start over</span>
+                      <button type="button" class="btn btn-sm" id="app-colors-reset">Reset colors</button>
+                    </div>
+                  </div>
+                  <div class="setting-subhead">Shape</div>
                   <div class="setting-row">
                     <span class="setting-label">Corner roundness</span>
                     <select id="app-radius" class="mode-input">
@@ -745,9 +789,59 @@
                 </div>
                 <div id="theme-appearance-host"></div>
               </div>
-              <div class="setting-row" id="row-light-mode">
-                <span class="setting-label">Light mode<span class="qb-info" data-tip="The same switch as the sun / moon in the top bar.">i</span></span>
-                <input type="checkbox" class="switch" aria-label="Light mode" id="opt-light-mode">
+              <div class="setting-subhead">Text</div>
+              <div class="setting-row">
+                <span class="setting-label">Font</span>
+                <select id="app-font" class="mode-input">
+                  <option value="default">Default</option>
+                  <option value="mono">Monospace</option>
+                  <option value="sans">Sans-serif</option>
+                  <option value="serif">Serif</option>
+                  <option value="rounded">Rounded</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Question text size</span>
+                <select id="app-qsize" class="mode-input">
+                  <option value="small">Small</option>
+                  <option value="default">Default</option>
+                  <option value="large">Large</option>
+                  <option value="xl">Extra large</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Line spacing</span>
+                <select id="app-qlh" class="mode-input">
+                  <option value="tight">Tight</option>
+                  <option value="default">Default</option>
+                  <option value="relaxed">Relaxed</option>
+                </select>
+              </div>
+              <div class="setting-subhead">Layout</div>
+              <div class="setting-row">
+                <span class="setting-label">Session stats<span class="qb-info" data-tip="Where the score card sits while you practice.">i</span></span>
+                <select id="app-stats-pos" class="mode-input">
+                  <option value="right">On the right</option>
+                  <option value="left">On the left</option>
+                  <option value="below">Under the question</option>
+                  <option value="hidden">Hidden</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Setup panel<span class="qb-info" data-tip="The side the practice setup opens on. The page moves over to make room.">i</span></span>
+                <select id="app-panel-side" class="mode-input">
+                  <option value="right">Opens on the right</option>
+                  <option value="left">Opens on the left</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Page width</span>
+                <select id="app-width" class="mode-input">
+                  <option value="narrow">Narrow</option>
+                  <option value="default">Default</option>
+                  <option value="wide">Wide</option>
+                  <option value="full">Full window</option>
+                </select>
               </div>
               <div class="setting-row set-theme-row">
                 <span class="setting-label">Theme</span>

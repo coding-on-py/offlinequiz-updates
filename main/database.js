@@ -592,6 +592,8 @@ export class QuestionDatabase {
     if (c.has(id)) return c.get(id);
     let tid = 0;
     try { const r = this.db.prepare("SELECT tid FROM tag_vocab WHERE id = ?").get(id); tid = r ? r.tid : 0; } catch { tid = 0; }
+    // a tag merged into another since that id was saved (the 2026-11-01 build's tag_merged; older builds have none)
+    if (!tid) { try { const m = this.db.prepare("SELECT tid FROM tag_merged WHERE id = ?").get(id); tid = m ? m.tid : 0; } catch { tid = 0; } }
     if (c.size > 20000) c.clear();
     c.set(id, tid);
     return tid;
