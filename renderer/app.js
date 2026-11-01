@@ -6785,11 +6785,16 @@ const hexLum = (h) => { const [r, g, b] = hexRgb(h); return 0.2126 * r + 0.7152 
 function hexMix(a, b, t) { const A = hexRgb(a), B = hexRgb(b); return "#" + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, "0")).join(""); }
 // custom colors: the page, the panels and the text bring the shades made from them
 const CUSTOM_COLOR_VAR = { bg: "--bg", panel: "--bg-secondary", text: "--text", power: "--yellow", correct: "--green", neg: "--red" };
-function applyCustomColors() {
+function applyCustomColors(withBg) {
   const C = state.settings.appColors || {}, root = document.documentElement;
   const cur = (name, fb) => cssHex(getComputedStyle(root).getPropertyValue(name).trim() || fb) || fb;
-  if (isHex6(C.bg)) apSet("--bg", C.bg);
-  const bgRef = isHex6(C.bg) ? C.bg : cur("--bg", "#0d1117"), lightBg = hexLum(bgRef) > 140;
+  const bgOn = withBg && isHex6(C.bg);
+  if (bgOn) {
+    const c = hexLum(C.bg) > 140 ? "#000000" : "#ffffff";
+    apSet("--bg", C.bg); apSet("--bg-secondary", hexMix(C.bg, c, 0.05)); apSet("--bg-tertiary", hexMix(C.bg, c, 0.09));
+    apSet("--border", hexMix(C.bg, c, 0.2)); apSet("--border-light", hexMix(C.bg, c, 0.13));
+  }
+  const bgRef = bgOn ? C.bg : cur("--bg", "#0d1117"), lightBg = hexLum(bgRef) > 140;
   if (isHex6(C.panel)) {
     const c = hexLum(C.panel) > 140 ? "#000000" : "#ffffff";
     apSet("--bg-secondary", C.panel); apSet("--bg-tertiary", hexMix(C.panel, c, 0.05));
@@ -6809,8 +6814,113 @@ function syncColorPickers() {
   document.querySelectorAll(".app-color[data-color]").forEach((inp) => {
     const k = inp.dataset.color;
     inp.value = isHex6(C[k]) ? C[k] : (cssHex(cs.getPropertyValue(CUSTOM_COLOR_VAR[k]).trim()) || "#000000");
+    inp.closest(".ap-sw")?.style.setProperty("--sw", inp.value);
+    inp.closest(".ap-mc")?.classList.toggle("on", isHex6(C[k]));
   });
 }
+
+// ── Appearance as pictures (15.60): colors are circles (the presets, then a custom one that opens the color
+// picker), and every Shape, Text and Layout choice is a small rounded mock-up of the page. The <select>s stay,
+// hidden, as the source of truth (their change handlers save and apply); the circles and tiles set them. ──
+const AP_DEFAULT_BG = { dark: "#0d1117", light: "#f4f6f8" };
+function apMode() { return state.settings.appAppearanceMode === "custom" ? "custom" : "preset"; }
+// the old Custom colors palette reads as accent and background "custom"; choosing anything moves it to presets
+function apAccentKey() { return apMode() === "custom" ? "custom" : state.settings.appAccent; }
+function apBgKey() { const C = state.settings.appColors || {}; return apMode() === "custom" ? (isHex6(C.bg) ? "custom" : "default") : state.settings.appBg; }
+function apPresetMode() { if (state.settings.appAppearanceMode !== "preset") { state.settings.appAppearanceMode = "preset"; lsSet("qb-app-mode", "preset"); } }
+// a tile's little picture, by setting and value: plain rounded boxes, the page drawn small
+function apPreview(id, v) {
+  const lines = (n, w) => Array.from({ length: n }, (_, i) => `<i class="apl" style="width:${i === n - 1 ? 60 : w}%"></i>`).join("");
+  const q = (cls) => `<span class="apq${cls ? " " + cls : ""}">${lines(3, 100)}</span>`;
+  switch (id) {
+    case "app-stats-pos": {
+      const st = '<span class="aps"><i class="apl"></i><i class="apl"></i></span>';
+      return v === "hidden" ? `<span class="apw">${q()}</span>` : v === "below" ? `<span class="apw col">${q()}${st}</span>`
+        : `<span class="apw${v === "left" ? " rev" : ""}">${q()}${st}</span>`;
+    }
+    case "app-panel-side": return `<span class="apw${v === "left" ? " rev" : ""}">${q("dim")}<span class="app-pan">${lines(4, 80)}</span></span>`;
+    case "app-width": return `<span class="apw ctr"><span class="apq" style="width:${{ narrow: 44, default: 62, wide: 80, full: 100 }[v] || 62}%">${lines(3, 100)}</span></span>`;
+    case "app-qsize": return `<span class="apw ctr"><b class="apa" style="font-size:${{ small: 12, default: 15, large: 19, xl: 23 }[v] || 15}px">Aa</b></span>`;
+    case "app-qlh": return `<span class="apw ctr"><span class="aplh" style="gap:${{ tight: 3, default: 6, relaxed: 10 }[v] || 6}px">${lines(3, 100)}</span></span>`;
+    case "app-radius": return `<span class="apw ctr"><span class="apcard" style="border-radius:${{ sharp: 1, default: 6, round: 13 }[v] ?? 6}px">${lines(2, 100)}</span></span>`;
+    case "app-btngap": return `<span class="apw ctr"><span class="apbtns" style="gap:${{ compact: 3, default: 7, spacious: 14 }[v] || 7}px"><i></i><i></i><i></i></span></span>`;
+    case "app-font": return `<span class="apw ctr"><b class="apa" style="font-family:${escapeHtml(DEFAULT_APPEARANCE.fonts[v] || "inherit")}">Aa</b></span>`;
+  }
+  return "";
+}
+const AP_TILE_IDS = ["app-radius", "app-btngap", "app-font", "app-qsize", "app-qlh", "app-stats-pos", "app-panel-side", "app-width"];
+function apBuild() {
+  // the tiles, one per option of each select
+  for (const id of AP_TILE_IDS) {
+    const sel = document.getElementById(id); if (!sel) continue;
+    const row = sel.closest(".setting-row"); if (!row) continue;
+    let box = row.querySelector(".ap-tiles");
+    const want = [...sel.options].map((o) => o.value + ":" + o.textContent).join("|");
+    if (box && box.dataset.v === want) continue;
+    if (!box) { box = document.createElement("div"); box.className = "ap-tiles"; box.setAttribute("role", "radiogroup"); box.setAttribute("aria-label", (row.querySelector(".setting-label")?.textContent || "").trim()); row.appendChild(box); }
+    box.dataset.v = want;
+    box.innerHTML = [...sel.options].map((o) => `<button type="button" class="ap-tile" role="radio" aria-checked="false" data-v="${escapeHtml(o.value)}"><span class="ap-prev" aria-hidden="true">${apPreview(id, o.value)}</span><span class="ap-name">${escapeHtml(o.textContent.replace(/ \(default\)$/, ""))}</span></button>`).join("");
+    box.onclick = (e) => { const b = e.target.closest(".ap-tile"); if (!b || sel.value === b.dataset.v) return; sel.value = b.dataset.v; sel.dispatchEvent(new Event("change", { bubbles: true })); apSync(); };
+  }
+  // the color circles
+  const light = uiScheme() === "light" && !activeTheme();
+  const swRow = (row, keys, colorOf, nameOf, customLabel) => {
+    let box = row.querySelector(".ap-sws");
+    if (!box) { box = document.createElement("div"); box.className = "ap-sws"; box.setAttribute("role", "radiogroup"); box.setAttribute("aria-label", (row.querySelector(".setting-label")?.textContent || "").trim()); row.appendChild(box); }
+    const want = keys.join("|") + (light ? "L" : "D");
+    const inp = row.querySelector(".ap-color-in");   // the picker sits on the custom circle, so its window opens there
+    if (box.dataset.v === want) { if (inp && inp.parentElement !== box) box.appendChild(inp); return box; }
+    box.dataset.v = want;
+    box.innerHTML = keys.map((k) => `<button type="button" class="ap-sw" role="radio" aria-checked="false" data-k="${escapeHtml(k)}" style="--sw:${colorOf(k)}" title="${escapeHtml(nameOf(k))}" aria-label="${escapeHtml(nameOf(k))}"></button>`).join("") +
+      `<button type="button" class="ap-sw ap-sw-custom" role="radio" aria-checked="false" data-k="custom" title="${escapeHtml(customLabel)}" aria-label="${escapeHtml(customLabel)}"></button>`;
+    if (inp) box.appendChild(inp);
+    return box;
+  };
+  const accRow = document.getElementById("ap-accent-row");
+  if (accRow) {
+    const box = swRow(accRow, Object.keys(DEFAULT_APPEARANCE.accent), (k) => ((light && DEFAULT_APPEARANCE.lightAccent[k]) || lightAccentFor(light, DEFAULT_APPEARANCE.accent[k]) || ["#888"])[0],
+      (k) => appearanceLabel(k, "accent").replace(/ \(default\)$/, ""), "Custom accent");
+    box.onclick = (e) => {
+      const b = e.target.closest(".ap-sw"); if (!b) return;
+      if (b.dataset.k === "custom") { document.getElementById("app-custom-accent")?.click(); return; }
+      apPresetMode(); const sel = document.getElementById("app-accent"); sel.value = b.dataset.k; sel.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+  }
+  const bgRow = document.getElementById("ap-bg-row");
+  if (bgRow) {
+    const box = swRow(bgRow, Object.keys(DEFAULT_APPEARANCE.bg), (k) => { const t = DEFAULT_APPEARANCE.bg[k]; return t ? t[light ? "light" : "dark"][0] : AP_DEFAULT_BG[light ? "light" : "dark"]; },
+      (k) => (k === "default" ? "Default" : k === "pure" ? (light ? "White" : "Black") : appearanceLabel(k)), "Custom background");
+    box.onclick = (e) => {
+      const b = e.target.closest(".ap-sw"); if (!b) return;
+      if (b.dataset.k === "custom") { bgRow.querySelector(".ap-color-in")?.click(); return; }
+      apPresetMode(); const sel = document.getElementById("app-bg"); sel.value = b.dataset.k; sel.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+  }
+}
+// which tile and circle is on, after any change (and the custom circles show their color)
+function apSync() {
+  apBuild();
+  for (const id of AP_TILE_IDS) {
+    const sel = document.getElementById(id), box = sel?.closest(".setting-row")?.querySelector(".ap-tiles"); if (!box) continue;
+    box.querySelectorAll(".ap-tile").forEach((b) => { const on = b.dataset.v === sel.value; b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on)); b.tabIndex = on ? 0 : -1; });
+  }
+  const C = state.settings.appColors || {};
+  const mark = (rowId, key, custom) => {
+    const box = document.querySelector("#" + rowId + " .ap-sws"); if (!box) return;
+    box.querySelectorAll(".ap-sw").forEach((b) => { const on = b.dataset.k === key; b.classList.toggle("on", on); b.setAttribute("aria-checked", String(on)); b.tabIndex = on ? 0 : -1; });
+    const cb = box.querySelector(".ap-sw-custom"); if (cb) { if (key === "custom" && isHex6(custom)) cb.style.setProperty("--sw", custom); else cb.style.removeProperty("--sw"); }
+  };
+  mark("ap-accent-row", apAccentKey(), state.settings.appCustomAccent);
+  mark("ap-bg-row", apBgKey(), C.bg);
+  const bgIn = document.querySelector("#ap-bg-row .ap-color-in"); if (bgIn && isHex6(C.bg)) bgIn.value = C.bg;
+}
+// arrow keys move along a row of tiles or circles (a radio group)
+document.addEventListener("keydown", (e) => {
+  const b = e.target.closest?.(".ap-tile, .ap-sw[role=radio]"); if (!b) return;
+  const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key]; if (!d) return;
+  const all = [...b.parentElement.querySelectorAll(":scope > .ap-tile, :scope > .ap-sw[role=radio]")], n = all[(all.indexOf(b) + d + all.length) % all.length];
+  e.preventDefault(); n.focus(); n.click();
+});
 
 // A plugin-added accent has no light variant: darken it until it reads on white.
 function lightAccentFor(light, acc) {
@@ -6861,9 +6971,9 @@ function applyDefaultAppearanceVars() {
 
   const panel = $("#default-appearance");
   panel?.classList.toggle("hidden", mode == null);
-  $("#app-mode-row")?.classList.toggle("hidden", !!theme || mode == null);
-  $("#app-preset-controls")?.classList.toggle("hidden", mode !== "preset");
-  $("#app-custom-controls")?.classList.toggle("hidden", mode !== "custom");
+  $("#app-mode-row")?.classList.add("hidden");   // (15.60: the circles hold both palettes)
+  $("#app-preset-controls")?.classList.toggle("hidden", mode == null);
+  $("#app-custom-controls")?.classList.toggle("hidden", mode == null);
 
   syncAppearanceSection();
 
@@ -6875,24 +6985,37 @@ function applyDefaultAppearanceVars() {
   const gap = DEFAULT_APPEARANCE.gap[state.settings.appBtnGap];
   if (gap) root.setProperty("--btn-gap", gap); else root.removeProperty("--btn-gap");
 
-  if (mode === "preset") {
-    const light = !theme && uiScheme() === "light";
-    const acc = (light && DEFAULT_APPEARANCE.lightAccent[state.settings.appAccent]) || lightAccentFor(light, DEFAULT_APPEARANCE.accent[state.settings.appAccent]);
+  // the accent and the background: a preset, or "custom" (its own color); then any of More colors on top
+  const light = !theme && uiScheme() === "light", accKey = apAccentKey(), bgKey = apBgKey();
+  if (accKey === "custom") {
+    const hex = isHex6(state.settings.appCustomAccent) ? state.settings.appCustomAccent : "#58a6ff";
+    apSet("--accent", hex); apSet("--accent-dim", hexToDim(hex));
+  } else {
+    const acc = (light && DEFAULT_APPEARANCE.lightAccent[accKey]) || lightAccentFor(light, DEFAULT_APPEARANCE.accent[accKey]);
     if (acc) { root.setProperty("--accent", acc[0]); root.setProperty("--accent-dim", acc[1]); }
     else { root.removeProperty("--accent"); root.removeProperty("--accent-dim"); }
-    const tone = DEFAULT_APPEARANCE.bg[state.settings.appBg];
-    if (tone) { const set = tone[light && !document.documentElement.classList.contains("hw") ? "light" : "dark"]; BG_VARS.forEach((v, i) => apSet(v, set[i])); }
-  } else {
-    const hex = isHex6(state.settings.appCustomAccent) ? state.settings.appCustomAccent : "#58a6ff";
-    apSet("--accent", hex);
-    apSet("--accent-dim", hexToDim(hex));
-    applyCustomColors();
   }
+  const tone = DEFAULT_APPEARANCE.bg[bgKey];
+  if (tone) { const set = tone[light && !document.documentElement.classList.contains("hw") ? "light" : "dark"]; BG_VARS.forEach((v, i) => apSet(v, set[i])); }
+  applyCustomColors(bgKey === "custom");
   syncColorPickers();
+  try { apSync(); } catch (e) {}
 }
 $("#app-mode")?.addEventListener("change", (e) => { state.settings.appAppearanceMode = e.target.value; lsSet("qb-app-mode", e.target.value); applyDefaultAppearance(); });
 $("#app-accent")?.addEventListener("change", (e) => { state.settings.appAccent = e.target.value; lsSet("qb-app-accent", e.target.value); applyDefaultAppearance(); });
-$("#app-custom-accent")?.addEventListener("input", (e) => { state.settings.appCustomAccent = e.target.value; lsSet("qb-app-custom-accent", e.target.value); applyDefaultAppearance(); });
+$("#app-custom-accent")?.addEventListener("input", (e) => {
+  apPresetMode();
+  state.settings.appCustomAccent = e.target.value; lsSet("qb-app-custom-accent", e.target.value);
+  state.settings.appAccent = "custom"; lsSet("qb-app-accent", "custom");
+  applyDefaultAppearance();
+});
+// the custom background: its own color, with panels and borders made from it
+document.querySelector("#ap-bg-row .ap-color-in")?.addEventListener("input", (e) => {
+  apPresetMode();
+  state.settings.appColors = { ...(state.settings.appColors || {}), bg: e.target.value }; lsSet("qb-app-colors", JSON.stringify(state.settings.appColors));
+  state.settings.appBg = "custom"; lsSet("qb-app-bg", "custom");
+  applyDefaultAppearance();
+});
 $("#app-font")?.addEventListener("change", (e) => { state.settings.appFont = e.target.value; lsSet("qb-app-font", e.target.value); applyDefaultAppearance(); });
 $("#app-radius")?.addEventListener("change", (e) => { state.settings.appRadius = e.target.value; lsSet("qb-app-radius", e.target.value); applyDefaultAppearance(); });
 $("#app-btngap")?.addEventListener("change", (e) => { state.settings.appBtnGap = e.target.value; lsSet("qb-app-btngap", e.target.value); applyDefaultAppearance(); });
@@ -6908,6 +7031,8 @@ document.querySelectorAll(".app-color[data-color]").forEach((inp) => inp.addEven
 document.getElementById("app-colors-reset")?.addEventListener("click", () => {
   state.settings.appColors = {}; state.settings.appCustomAccent = "#58a6ff";
   lsSet("qb-app-colors", "{}"); lsSet("qb-app-custom-accent", "#58a6ff");
+  apPresetMode(); state.settings.appAccent = "blue"; lsSet("qb-app-accent", "blue"); state.settings.appBg = "default"; lsSet("qb-app-bg", "default");
+  const sa = document.getElementById("app-accent"); if (sa) sa.value = "blue"; const sb = document.getElementById("app-bg"); if (sb) sb.value = "default";
   const a = document.getElementById("app-custom-accent"); if (a) a.value = "#58a6ff";
   applyDefaultAppearance();
 });
@@ -11004,10 +11129,11 @@ function showTrialResult(t, passed, why) {
 const PUMPKIN_SVG = '<svg class="hw-pumpkin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.2c-.4-1.9.3-3.3 1.6-3.9" fill="none" stroke="#5d9a2e" stroke-width="1.9" stroke-linecap="round"/>' +
   '<ellipse cx="7.4" cy="14" rx="5.1" ry="7" fill="#d9661a"/><ellipse cx="16.6" cy="14" rx="5.1" ry="7" fill="#d9661a"/><ellipse cx="12" cy="14" rx="5.6" ry="7.6" fill="#ff8a24"/>' +
   '<path d="M7.2 12.3 9.6 10l.7 2.9zM16.8 12.3 14.4 10l-.7 2.9z" fill="#3b1600"/><path d="M7.3 15.5c1.7 2.4 7.7 2.4 9.4 0l-1.5.3-.8 1.1-1.1-.9-1.3 1-1.3-1-1.1.9-.8-1.1z" fill="#3b1600"/></svg>';
-// a slice of pumpkin pie with cream
-const PIE_SVG = '<svg class="ev-pie" viewBox="0 0 24 24" aria-hidden="true"><path d="M1.4 13.6 22.2 8.8v6.6L1.8 19.8z" fill="#b8571a"/><path d="M1.8 19.8 22.2 15.4v2.3L2.1 22.2z" fill="#c98d47"/>' +
-  '<path d="M1.4 13.6 14.6 4.4c3.9-1.2 6.6 1 7.6 4.4z" fill="#f0913a"/><path d="M13.4 3.9c5.2-2.6 10.6.5 9.8 7.3l-.4 4.6-.6-7c-1-3.4-3.7-5.6-7.6-4.4z" fill="#e0a95e"/>' +
-  '<ellipse cx="12.4" cy="8.4" rx="3.1" ry="1.8" fill="#fff4e2"/><ellipse cx="12.8" cy="7.5" rx="1.7" ry="1.1" fill="#fffbf4"/></svg>';
+// a slice of pumpkin pie with cream: the top, the cut side, the crust under it and around the back (15.60: one
+// solid wedge, centred in its box, so it still reads at 16px)
+const PIE_SVG = '<svg class="ev-pie" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 14.5 21.6 10.6v4.8L2.4 18.6z" fill="#c4621f"/><path d="M2.4 18.6 21.6 15.4v1.8L2.8 20.4z" fill="#d49a52"/>' +
+  '<path d="M2 14.5 17.2 4.6c2.2 1.4 3.8 3.5 4.4 6z" fill="#f29a45"/><path d="M16.2 3.7c3.6 1.5 6 4.2 6.9 7.7l-1.5-.8c-.6-2.5-2.2-4.6-4.4-6z" fill="#e2ad66"/><path d="M21.6 10.6l1.5.8v5.6l-1.5.2z" fill="#b97c3c"/>' +
+  '<ellipse cx="12.4" cy="10.5" rx="3" ry="1.7" fill="#fff4e2"/><ellipse cx="12.7" cy="9.7" rx="1.7" ry="1.05" fill="#fffbf4"/></svg>';
 const BAT_SVG = '<svg viewBox="0 0 48 20" aria-hidden="true"><path d="M24 7c-1.3 0-2.1.8-2.6 1.8C19.6 6 15.8 4.5 8 5c3.6 1.6 5 3.8 5.4 6.4 2-.9 4-.6 5.6.7 1-1.3 2.6-1.3 3.6 0 .5-.9 1.2-1.4 1.4-1.4s.9.5 1.4 1.4c1-1.3 2.6-1.3 3.6 0 1.6-1.3 3.6-1.6 5.6-.7.4-2.6 1.8-4.8 5.4-6.4-7.8-.5-11.6 1-13.4 3.8C26.1 7.8 25.3 7 24 7z" fill="currentColor"/></svg>';
 // cls: the theme's class on <html> (index.html sets it before the first paint too); theme: where Default is kept
 const SEASONS = [
@@ -11015,7 +11141,8 @@ const SEASONS = [
     start: Date.UTC(2026, 9, 16), end: Date.UTC(2026, 10, 1, 7), boardUntil: Date.UTC(2026, 10, 16), ends: "November 1", goal: 31,
     svg: PUMPKIN_SVG, one: "candy", many: "candies", unit: "candy", mark: "Pumpkin tossup. Power it for candy", how: "Power pumpkin tossups for candy",
     room: "haunted-house", roomName: "Haunted House", metal: "pumpkin", hue: "#3a1a06" },
-  { key: "thanksgiving", id: "thanksgiving-2026", name: "Thanksgiving", label: "Thanksgiving 2026", cls: "tg", theme: "qb-tg-theme",
+  // optIn (15.60): a secondary theme, only for whoever picks it (a new key, so everyone on it before is on Default)
+  { key: "thanksgiving", id: "thanksgiving-2026", name: "Thanksgiving", label: "Thanksgiving 2026", cls: "tg", theme: "qb-tg-theme2", optIn: true,
     start: Date.UTC(2026, 10, 1, 7), end: Date.UTC(2026, 11, 1, 8), boardUntil: Date.UTC(2026, 11, 15), ends: "December 1", goal: 26,
     svg: PIE_SVG, one: "pie", many: "pies", unit: "pies", mark: "Pie tossup. Power it for a pie", how: "Power pie tossups to collect pies",
     room: "harvest-table", roomName: "Harvest Table", metal: "harvest", hue: "#3a2106" },
@@ -11024,7 +11151,10 @@ const HW = SEASONS[0], TG = SEASONS[1];
 const HW_WIN = [HW.start, HW.end], TG_WIN = [TG.start, TG.end];
 const seasonNow = (t = Date.now()) => SEASONS.find((e) => t >= e.start && t < e.end) || null;
 const hwOn = () => seasonNow() === HW;
-function seasonThemeOn(ev) { if (!ev) return false; try { return localStorage.getItem(ev.theme) !== "default"; } catch (e) { return true; } }
+function seasonThemeOn(ev) {
+  if (!ev) return false;
+  try { const v = localStorage.getItem(ev.theme); return ev.optIn ? v === "on" : v !== "default"; } catch (e) { return !ev.optIn; }
+}
 // the logo's first "o" becomes a jack-o'-lantern during Halloween (the word stays for screen readers)
 function hwLogos(on) {
   for (const el of document.querySelectorAll("#tb-brand, .wordmark")) {
@@ -11153,7 +11283,7 @@ function applySeasonTheme() {
   hwLogos(on && ev === HW);
   const row = document.getElementById("ev-theme-row"), sel = document.getElementById("ev-theme");
   if (row) row.classList.toggle("hidden", !ev);
-  if (sel && ev) { sel.options[0].textContent = ev.name; sel.value = on ? "event" : "default"; try { _syncSel(sel); } catch (e) {} }
+  if (sel && ev) { const o = [...sel.options].find((x) => x.value === "event"); if (o) o.textContent = ev.name; sel.value = on ? "event" : "default"; try { _syncSel(sel); } catch (e) {} }
   try { applyTheme(); syncScheme(); } catch (e) {}
 }
 document.getElementById("ev-theme")?.addEventListener("change", (e) => {
@@ -13305,7 +13435,8 @@ function init() {
       extractPrimaryAnswer: (raw, sani) => { try { return apPrimary(raw, sani); } catch (e) { return ""; } },
     });
   }
-  if (IS_WEB) handleAccountLinks().then(refreshAccount); else refreshAccount();
+  // (a share link opened signed out comes back once they're signed in: QBClubs.resumeLink)
+  if (IS_WEB) handleAccountLinks().then(refreshAccount).then(() => { try { window.QBClubs?.resumeLink(); } catch (e) {} }); else refreshAccount();
   // the website opened at a page's address (a link, a bookmark, a reload)
   if (IS_WEB) setTimeout(() => { if (location.pathname !== "/") webRoute(location.pathname); else webTitleSync(); }, 0);
   // the website runs on the server's (current) question database and has no app to update (nor has an
@@ -13423,7 +13554,8 @@ async function handleAccountLinks() {
   if (q.get("verify")) {
     const r = await API.post("/api/account/verify", { token: q.get("verify") }).catch(() => ({ error: "Couldn't reach the server. Try the link again." }));
     clean("verify");
-    if (r && r.ok) { try { sessionStorage.setItem("qb-acct-note", "confirmed"); } catch (e) {} location.reload(); return; }
+    // (never settles: what runs after this, like a share link reopening, waits for the reloaded page)
+    if (r && r.ok) { try { sessionStorage.setItem("qb-acct-note", "confirmed"); } catch (e) {} location.reload(); return new Promise(() => {}); }
     openAccount("signin", { error: (r && r.error) || "This link has expired or was already used.", offerResend: true });
     return;
   }
@@ -13628,6 +13760,7 @@ function openAccount(mode, opts) {
         Account.user = r.user; renderAccountMenu(); applyAccountName();
         if (document.querySelector("#friends-screen.active")) renderFriends();
         if (document.querySelector("#leaderboards-screen.active")) renderLeaderboards();
+        try { window.QBClubs?.resumeLink(); } catch (e) {}   // a share link waiting for a username
         if (typeof opts.then === "function") { close(); opts.then(); return; }
         render("account", { note: "Saved." }); return;
       }
@@ -14321,7 +14454,7 @@ function renderStore() {
   const wasOpen = !!c.querySelector(".st-neon-pop:not([hidden])");
   const incl = (p) => `<li>${plugIco(p, 16)}<span>${escapeHtml(p.name)}</span>${has("plugin:" + p.id) ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
   // the Starter Bundle's neon line: your name glowing — pressing it opens the colours (a popover)
-  const neonLi = `<li><span class="st-ico st-ico-neon">${ic("sparkle", 16)}</span><span class="st-neon-line">Neon name <span class="pop-wrap st-neon-wrap">` +
+  const neonLi = !window.QB?.NEON_ON ? "" : `<li><span class="st-ico st-ico-neon">${ic("sparkle", 16)}</span><span class="st-neon-line">Neon name <span class="pop-wrap st-neon-wrap">` +
     `<button type="button" class="st-neon-me" aria-haspopup="dialog" aria-expanded="false" aria-label="Neon colour" title="Pick a colour"><span class="st-neon-sample">${neonName(myName, shown)}</span>${ic("down", 12)}</button>` +
     neonPopHtml(shown, has("neon")) +
     `</span></span>${has("neon") ? `<small class="st-have">${ic("check", 12)}yours</small>` : ""}</li>`;
@@ -14410,7 +14543,7 @@ function wireNeonPop(me, pop, startOpen) {
   if (startOpen) show(true);   // repainted while it was open
 }
 // Profile: the ✦ by your name (an account with the neon name)
-function ownsNeon() { const o = window.QB && window.QB._owned; return !!(Account.user && o && o.signedIn && (o.grants || []).includes("neon")); }
+function ownsNeon() { const o = window.QB && window.QB._owned; return !!(window.QB && window.QB.NEON_ON && Account.user && o && o.signedIn && (o.grants || []).includes("neon")); }
 function paintProfileNeon() {
   const row = document.querySelector("#player-screen .pf-name-row"); if (!row) return;
   const have = row.querySelector(".pf-neon-wrap"), own = ownsNeon(), n = own ? ((window.QB._owned || {}).neon || null) : null;
@@ -14656,7 +14789,7 @@ function paintAdmUser() {
       <form id="adm-profile" class="adm-form">
         <label class="mode-field"><span>Display name</span><input id="adm-dn" class="mode-input" maxlength="24" value="${escapeHtml(u.displayName || "")}"></label>
         <label class="mode-field"><span>Username</span><input id="adm-handle" class="mode-input" maxlength="21" value="${escapeHtml(u.handle || "")}" autocapitalize="off" spellcheck="false"></label>
-        <label class="mode-field"><span>Neon colour</span><select id="adm-neon" class="mode-input">${neonOpts}</select></label>
+        ${window.QB?.NEON_ON ? `<label class="mode-field"><span>Neon colour</span><select id="adm-neon" class="mode-input">${neonOpts}</select></label>` : ""}
         <label class="checkbox-row"><input type="checkbox" id="adm-lb"${u.onLeaderboard ? " checked" : ""}> On the global leaderboard</label>
         <div class="adm-formfoot"><button type="submit" class="btn btn-primary btn-sm">Save</button><span class="adm-msg" id="adm-profile-msg" role="status"></span></div>
       </form></section>
@@ -14672,7 +14805,7 @@ function paintAdmUser() {
   const id = u.id;
   el.querySelector("#adm-profile").onsubmit = async (e) => {
     e.preventDefault(); const msg = el.querySelector("#adm-profile-msg"); msg.textContent = "Saving…";
-    let r = null; try { r = await API.post("/api/admin/profile", { id, displayName: el.querySelector("#adm-dn").value.trim(), handle: el.querySelector("#adm-handle").value.trim(), neon: el.querySelector("#adm-neon").value, onLeaderboard: el.querySelector("#adm-lb").checked }); } catch (e2) {}
+    let r = null; try { r = await API.post("/api/admin/profile", { id, displayName: el.querySelector("#adm-dn").value.trim(), handle: el.querySelector("#adm-handle").value.trim(), ...(el.querySelector("#adm-neon") ? { neon: el.querySelector("#adm-neon").value } : {}), onLeaderboard: el.querySelector("#adm-lb").checked }); } catch (e2) {}
     msg.textContent = r && r.ok ? "Saved" : (r && r.error) || "Couldn't save that.";
     if (r && r.ok) admOpen(id, true);
   };

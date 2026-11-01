@@ -2803,7 +2803,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px 
 .dual-range input[type="range"]::-moz-range-progress { background: transparent; }
 
 /* ── Info dots ── */
-.qb-info { width: 16px; height: 16px; font-size: 10px; border-color: var(--line-strong); color: var(--muted); font-weight: 700; text-transform: none; letter-spacing: 0; }
+/* vertical-align: middle centres the circle on the text (15.60): a pixel offset lined up the "i" inside it with the
+   text's baseline instead, so the circle sat low */
+.qb-info { width: 16px; height: 16px; font-size: 10px; border-color: var(--line-strong); color: var(--muted); font-weight: 700; text-transform: none; letter-spacing: 0; vertical-align: middle; }
 
 /* ═══ App top bar ═══ */
 .app-topbar {
@@ -3274,6 +3276,8 @@ html:not(.kb-nav) :is(.qb-overlay, .pop, [role="dialog"]) :is(.btn, button, a):f
 .set-pane .setting-subhead { margin: 18px 0 2px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
 .set-pane .stats-section { border: 0; background: transparent; padding: 0; margin: 0; box-shadow: none; }
 .set-pane .setting-row input[type="checkbox"].switch { width: 42px; height: 24px; }
+/* a switch sits at the row's end, under the right edge of the selects above and below it */
+.set-pane .setting-row > input[type="checkbox"].switch { margin-left: auto; }
 .set-status { font-size: 12px; color: var(--muted); padding: 6px 0; }
 .set-status:empty { display: none; }
 .set-theme-name { flex: 1; color: var(--strong); }
@@ -4909,7 +4913,7 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 .db-crumb .ext-link:hover { color: var(--strong); opacity: 1; }
 /* Settings labels: the ⓘ follows the words, even when a long label wraps (it used to float to the right edge) */
 .set-pane .setting-label { display: block; line-height: 1.5; }
-.set-pane .setting-label > .qb-info { vertical-align: -3px; margin-left: 6px; }
+.set-pane .setting-label > .qb-info { vertical-align: middle; margin-left: 6px; position: relative; top: -1px; }
 /* The practice / room settings panel scrolls under its sticky head and foot: the Years slider's
    knobs (absolutely placed range inputs) could paint OVER the head ("Room settings" with two white
    dots on it — WebKit lifts the knobs into their own layer). The slider keeps to its own stacking
@@ -6696,3 +6700,70 @@ html.tb-nocrumb .tb-crumb { display: none; }
 .qb-sel-pill[hidden] { display: none; }
 @media (prefers-reduced-motion: no-preference) { .qb-sel-pill:not([hidden]) { animation: qb-tip-in 160ms var(--ease-out); } }
 @media (pointer: coarse) { .qb-ctx-item { padding: 11px 14px; font-size: 15px; } .qb-ctx-menu { max-width: min(320px, calc(100vw - 16px)); } }
+
+/* ── Appearance as pictures (15.60, app.js apBuild): color circles with a custom one, and rounded mock-ups of the page
+   for every Shape, Text and Layout choice. The selects behind them stay in the page, hidden. ── */
+.set-pane .setting-row.ap-row { align-items: flex-start; flex-wrap: wrap; padding: 14px 0; }
+.set-pane .ap-row > .setting-label { padding-top: 6px; }
+.set-pane .ap-row > .qb-select, .set-pane .ap-row > select { display: none !important; }
+.ap-tiles, .ap-sws, .ap-more { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; }
+.ap-tiles { gap: 8px; }
+.ap-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100px; padding: 6px 6px 7px; margin: 0;
+  border: 1px solid var(--line-soft); border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; font: inherit; }
+.ap-tile:hover { border-color: var(--line-strong); color: var(--text); }
+.ap-tile.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
+.ap-tile:focus-visible, .ap-sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ap-name { font-size: 11px; line-height: 1.25; text-align: center; }
+.ap-prev { display: block; width: 86px; height: 58px; padding: 6px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line-soft); overflow: hidden; }
+.apw { display: flex; gap: 4px; height: 100%; }
+.apw.rev { flex-direction: row-reverse; }
+.apw.col { flex-direction: column; }
+.apw.ctr { align-items: center; justify-content: center; }
+.apq { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 5px; border-radius: 4px; background: var(--bg-secondary); min-width: 0; }
+.apw.ctr > .apq { flex: none; height: 100%; }
+.apq.dim { opacity: .55; }
+.aps { flex: 0 0 22px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 4px; border-radius: 4px; background: var(--accent-dim); }
+.apw.col > .aps { flex: 0 0 13px; flex-direction: row; align-items: center; }
+.app-pan { flex: 0 0 30px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 4px; border-radius: 4px; background: var(--bg-tertiary); border: 1px solid var(--accent); }
+.apl { display: block; height: 3px; flex: none; border-radius: 2px; background: var(--muted); opacity: .55; }
+.aps .apl { flex: 1; background: var(--accent); opacity: .8; }
+.apa { color: var(--text); line-height: 1; font-weight: 600; }
+.aplh { display: flex; flex-direction: column; width: 72%; }
+.apcard { display: flex; flex-direction: column; gap: 4px; width: 62%; padding: 6px; background: var(--bg-secondary); border: 1px solid var(--line-strong); }
+.apbtns { display: flex; }
+.apbtns i { display: block; width: 14px; height: 10px; border-radius: 3px; background: var(--accent); opacity: .85; }
+.ap-sws { gap: 10px; align-items: center; padding-top: 2px; }
+.ap-sw { position: relative; flex: none; width: 30px; height: 30px; margin: 0; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  background: var(--sw, var(--bg-secondary)); box-shadow: inset 0 0 0 1px rgba(127, 127, 127, .4); }
+.ap-sw.on, .ap-mc.on .ap-sw { outline: 2px solid var(--text); outline-offset: 2px; }
+/* the custom circle: a colour wheel, with the chosen colour in the middle once there is one */
+.ap-sw-custom { background: conic-gradient(#ff4d4d, #ffd84d, #6dff4d, #4dffe0, #4d7dff, #d44dff, #ff4d4d); }
+.ap-sw-custom::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; background: var(--sw, var(--bg-secondary)); box-shadow: 0 0 0 2px var(--bg-secondary); }
+.ap-color-in { width: 30px; height: 30px; margin: 0 0 0 -40px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
+.ap-row > .ap-color-in { position: absolute; width: 1px; height: 1px; margin: 0; }
+.ap-more { gap: 12px 18px; align-items: flex-start; padding-top: 2px; }
+.ap-mc { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.ap-sw-pick { display: block; }
+.ap-sw-pick input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.ap-reset { align-self: center; margin-left: 0 !important; }
+@media (max-width: 760px) {
+  .set-pane .ap-row > .setting-label { flex: 1 1 100%; padding-top: 0; }
+  .ap-tiles, .ap-sws, .ap-more { flex-basis: 100%; }
+  .ap-tile { width: calc((100% - 24px) / 4); min-width: 70px; padding: 5px 4px 6px; }
+  .ap-prev { width: 100%; height: 50px; padding: 5px; }
+}
+/* A page head lines up with the column under it (15.60): the title over the column's left edge, Back over its right
+   (they ran the window's width over a narrower column). The column follows Appearance > Page width when it's narrower. */
+#leaderboards-screen > .top-bar, #clubs-screen > .top-bar, #store-screen > .top-bar, #streaks-screen > .top-bar, #link-screen > .top-bar { max-width: min(var(--page-w), 1040px); }
+#diagnostic-screen > .top-bar, #report-screen > .top-bar { max-width: min(var(--page-w), 1100px); }
+#friends-screen > .top-bar { max-width: min(var(--page-w), 980px); }
+#player-screen > .top-bar, #trials-screen > .top-bar { max-width: min(var(--page-w), 1088px); }   /* .pf-page: 1040px inside the gutters */
+:is(.lb-container, .cl-container, .st-container, .stk-container) { max-width: min(var(--page-w), 1040px); }
+:is(#diagnostic-screen, #report-screen) .cl-container { max-width: min(var(--page-w), 1100px); }
+.friends-container { max-width: min(var(--page-w), 980px); }
+/* two buttons that wrap onto two rows take the row's width, so they line up (Clubs' empty state: two widths, centred) */
+.acct-panel-btns > .btn { flex: 1 1 auto; justify-content: center; margin: 0; }   /* (margin: the global .btn + .btn gap pushed the second one in) */
+/* phones: "Playing as" is as wide as the room card under it (it was a little narrower, its edges off the card's) */
+@media (max-width: 600px) { .mp-lobby-main > .mp-who { align-self: stretch; } .mp-who input { width: 100%; min-width: 0; } .mp-who-txt { flex: 1; min-width: 0; } }
+/* phones: periods that wrap start on the left (the last one sat alone in the middle) */
+@media (max-width: 600px) { .lb-periods { justify-content: flex-start; } }

@@ -28,10 +28,11 @@
       // Appearance > Text and Layout (app.js applyLayoutPrefs) from the first frame, so nothing moves after
       var lay = { "qb-app-qsize": "data-qsize", "qb-app-qlh": "data-qlh", "qb-app-width": "data-width", "qb-app-stats-pos": "data-stats-pos", "qb-app-panel-side": "data-panel-side" };
       for (var lk in lay) { var lv = localStorage.getItem(lk); if (lv && lv !== "default" && lv !== "right") document.documentElement.setAttribute(lay[lk], lv); }
-      // the running event's theme from the first frame (app.js SEASONS), unless this viewer picked Default
+      // the running event's theme from the first frame (app.js SEASONS): Halloween unless this viewer picked Default,
+      // Thanksgiving only for whoever picked it
       var evNow = Date.now(), evLight = localStorage.getItem("qb-scheme") === "light";
       if (evNow >= Date.UTC(2026, 9, 16) && evNow < Date.UTC(2026, 10, 1, 7) && localStorage.getItem("qb-hw-theme") !== "default") { document.documentElement.classList.add("hw"); document.documentElement.style.setProperty("--boot-bg", "#0f0d12"); }
-      else if (evNow >= Date.UTC(2026, 10, 1, 7) && evNow < Date.UTC(2026, 11, 1, 8) && localStorage.getItem("qb-tg-theme") !== "default") { document.documentElement.classList.add("tg"); document.documentElement.style.setProperty("--boot-bg", evLight ? "#f8f3ec" : "#14110d"); }
+      else if (evNow >= Date.UTC(2026, 10, 1, 7) && evNow < Date.UTC(2026, 11, 1, 8) && localStorage.getItem("qb-tg-theme2") === "on") { document.documentElement.classList.add("tg"); document.documentElement.style.setProperty("--boot-bg", evLight ? "#f8f3ec" : "#14110d"); }
     } catch (e) {}
   </script>
 </head>
@@ -692,8 +693,8 @@
                 <div class="setting-row hidden" id="ev-theme-row">
                   <span class="setting-label">Event theme</span>
                   <select id="ev-theme" class="mode-input" aria-label="Event theme">
-                    <option value="event">Event</option>
                     <option value="default">Default</option>
+                    <option value="event">Event</option>
                   </select>
                 </div>
                 <div id="default-appearance">
@@ -710,9 +711,9 @@
                     <input type="checkbox" class="switch" aria-label="Light mode" id="opt-light-mode">
                   </div>
                   <div id="app-preset-controls">
-                    <div class="setting-row">
-                      <span class="setting-label">Accent color</span>
-                      <select id="app-accent" class="mode-input">
+                    <div class="setting-row ap-row" id="ap-accent-row">
+                      <span class="setting-label">Accent</span>
+                      <select id="app-accent" class="mode-input" aria-label="Accent color">
                         <option value="blue">Blue (default)</option>
                         <option value="gold">Gold</option>
                         <option value="green">Green</option>
@@ -721,10 +722,11 @@
                         <option value="amber">Amber</option>
                         <option value="red">Red</option>
                       </select>
+                      <input type="color" id="app-custom-accent" class="ap-color-in" aria-label="Custom accent color" tabindex="-1">
                     </div>
-                    <div class="setting-row">
+                    <div class="setting-row ap-row" id="ap-bg-row">
                       <span class="setting-label">Background</span>
-                      <select id="app-bg" class="mode-input">
+                      <select id="app-bg" class="mode-input" aria-label="Background">
                         <option value="default">Default</option>
                         <option value="pure">Pure black or white</option>
                         <option value="slate">Slate</option>
@@ -733,44 +735,24 @@
                         <option value="forest">Forest</option>
                         <option value="paper">Paper</option>
                       </select>
+                      <input type="color" class="ap-color-in" data-color="bg" aria-label="Custom background color" tabindex="-1">
                     </div>
                   </div>
-                  <div id="app-custom-controls" class="hidden">
-                    <div class="setting-row">
-                      <span class="setting-label">Accent</span>
-                      <input type="color" id="app-custom-accent" class="mode-input app-color">
-                    </div>
-                    <div class="setting-row">
-                      <span class="setting-label">Background</span>
-                      <input type="color" class="mode-input app-color" data-color="bg" aria-label="Background color">
-                    </div>
-                    <div class="setting-row">
-                      <span class="setting-label">Panels and cards</span>
-                      <input type="color" class="mode-input app-color" data-color="panel" aria-label="Panel color">
-                    </div>
-                    <div class="setting-row">
-                      <span class="setting-label">Text</span>
-                      <input type="color" class="mode-input app-color" data-color="text" aria-label="Text color">
-                    </div>
-                    <div class="setting-row">
-                      <span class="setting-label">Powers</span>
-                      <input type="color" class="mode-input app-color" data-color="power" aria-label="Power color">
-                    </div>
-                    <div class="setting-row">
-                      <span class="setting-label">Correct</span>
-                      <input type="color" class="mode-input app-color" data-color="correct" aria-label="Correct color">
-                    </div>
-                    <div class="setting-row">
-                      <span class="setting-label">Negs and wrong</span>
-                      <input type="color" class="mode-input app-color" data-color="neg" aria-label="Neg color">
-                    </div>
-                    <div class="setting-row">
-                      <span class="setting-label">Start over</span>
-                      <button type="button" class="btn btn-sm" id="app-colors-reset">Reset colors</button>
+                  <div id="app-custom-controls">
+                    <div class="setting-row ap-row" id="ap-more-row">
+                      <span class="setting-label">More colors<span class="qb-info" data-tip="Panels, text, and the colors of powers, right answers and wrong ones. Tap a circle to pick.">i</span></span>
+                      <div class="ap-more">
+                        <label class="ap-mc"><span class="ap-sw ap-sw-pick"><input type="color" class="app-color" data-color="panel" aria-label="Panel color"></span><small>Panels</small></label>
+                        <label class="ap-mc"><span class="ap-sw ap-sw-pick"><input type="color" class="app-color" data-color="text" aria-label="Text color"></span><small>Text</small></label>
+                        <label class="ap-mc"><span class="ap-sw ap-sw-pick"><input type="color" class="app-color" data-color="power" aria-label="Power color"></span><small>Powers</small></label>
+                        <label class="ap-mc"><span class="ap-sw ap-sw-pick"><input type="color" class="app-color" data-color="correct" aria-label="Correct color"></span><small>Correct</small></label>
+                        <label class="ap-mc"><span class="ap-sw ap-sw-pick"><input type="color" class="app-color" data-color="neg" aria-label="Neg color"></span><small>Negs</small></label>
+                        <button type="button" class="btn btn-sm btn-ghost ap-reset" id="app-colors-reset">Reset colors</button>
+                      </div>
                     </div>
                   </div>
                   <div class="setting-subhead">Shape</div>
-                  <div class="setting-row">
+                  <div class="setting-row ap-row">
                     <span class="setting-label">Corner roundness</span>
                     <select id="app-radius" class="mode-input">
                       <option value="default">Default</option>
@@ -778,7 +760,7 @@
                       <option value="round">Round</option>
                     </select>
                   </div>
-                  <div class="setting-row">
+                  <div class="setting-row ap-row">
                     <span class="setting-label">Button spacing</span>
                     <select id="app-btngap" class="mode-input">
                       <option value="default">Default</option>
@@ -790,7 +772,7 @@
                 <div id="theme-appearance-host"></div>
               </div>
               <div class="setting-subhead">Text</div>
-              <div class="setting-row">
+              <div class="setting-row ap-row">
                 <span class="setting-label">Font</span>
                 <select id="app-font" class="mode-input">
                   <option value="default">Default</option>
@@ -800,7 +782,7 @@
                   <option value="rounded">Rounded</option>
                 </select>
               </div>
-              <div class="setting-row">
+              <div class="setting-row ap-row">
                 <span class="setting-label">Question text size</span>
                 <select id="app-qsize" class="mode-input">
                   <option value="small">Small</option>
@@ -809,7 +791,7 @@
                   <option value="xl">Extra large</option>
                 </select>
               </div>
-              <div class="setting-row">
+              <div class="setting-row ap-row">
                 <span class="setting-label">Line spacing</span>
                 <select id="app-qlh" class="mode-input">
                   <option value="tight">Tight</option>
@@ -818,7 +800,7 @@
                 </select>
               </div>
               <div class="setting-subhead">Layout</div>
-              <div class="setting-row">
+              <div class="setting-row ap-row">
                 <span class="setting-label">Session stats<span class="qb-info" data-tip="Where the score card sits while you practice.">i</span></span>
                 <select id="app-stats-pos" class="mode-input">
                   <option value="right">On the right</option>
@@ -827,14 +809,14 @@
                   <option value="hidden">Hidden</option>
                 </select>
               </div>
-              <div class="setting-row">
+              <div class="setting-row ap-row">
                 <span class="setting-label">Setup panel<span class="qb-info" data-tip="The side the practice setup opens on. The page moves over to make room.">i</span></span>
                 <select id="app-panel-side" class="mode-input">
                   <option value="right">Opens on the right</option>
                   <option value="left">Opens on the left</option>
                 </select>
               </div>
-              <div class="setting-row">
+              <div class="setting-row ap-row">
                 <span class="setting-label">Page width</span>
                 <select id="app-width" class="mode-input">
                   <option value="narrow">Narrow</option>

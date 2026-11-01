@@ -977,22 +977,26 @@
   // escaped HTML) glowing in one — leaderboards, multiplayer
   QB.NEON = { cyan: "#22d3ee", blue: "#4d8dff", indigo: "#7c7dff", violet: "#a95cff", magenta: "#e64bff", pink: "#ff4fa8",
     red: "#ff4545", orange: "#ff8a1f", gold: "#ffcc1a", lime: "#a6ff1a", green: "#2ee36e", teal: "#19e0c0" };
-  QB.neonHtml = (html, neon) => QB.NEON[neon] ? '<span class="neon-name" style="--neon:' + QB.NEON[neon] + '">' + html + "</span>" : html;
+  // NEON_ON (15.60): off while the community site is free and the store is closed. Everyone's name looks the same;
+  // the colours people chose are kept, so turning this back on brings them back
+  QB.NEON_ON = false;
+  const neonC = (k) => (QB.NEON_ON ? QB.NEON[k] : null);
+  QB.neonHtml = (html, neon) => neonC(neon) ? '<span class="neon-name" style="--neon:' + neonC(neon) + '">' + html + "</span>" : html;
   // an avatar circle in the neon colour (its letter dark or white, whichever reads): inline CSS, or ""
   QB.neonAvatar = (neon) => {
-    const c = QB.NEON[neon]; if (!c) return "";
+    const c = neonC(neon); if (!c) return "";
     const n = parseInt(c.slice(1), 16), lum = (0.2126 * (n >> 16 & 255) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255;
     return "background:" + c + ";color:" + (lum > 0.6 ? "#0d1117" : "#fff") + ";box-shadow:0 0 10px " + c + "66";
   };
   // your own colour, when the signed-in account has the neon name (else null)
-  QB.myNeon = () => { const o = QB._owned; return o && o.signedIn && (o.grants || []).includes("neon") && QB.NEON[o.neon] ? o.neon : null; };
+  QB.myNeon = () => { const o = QB._owned; return o && o.signedIn && (o.grants || []).includes("neon") && neonC(o.neon) ? o.neon : null; };
   // A name typed in a text box glows too: an input clips its own text (the glow came out a
   // rectangle), so a glowing copy lies over it — the box's text hidden — until it's focused for
   // editing. Call again after setting the box's value from code (it re-syncs); neon null undoes it.
   QB.neonField = (inp, neon) => {
     if (!inp || !inp.parentElement) return;
     let g = inp._neonGhost;
-    if (!QB.NEON[neon]) { inp.classList.remove("neon-in"); if (g) { g.remove(); inp._neonGhost = null; } return; }
+    if (!neonC(neon)) { inp.classList.remove("neon-in"); if (g) { g.remove(); inp._neonGhost = null; } return; }
     if (!g) {
       g = document.createElement("span");
       g.className = "neon-ghost neon-name"; g.setAttribute("aria-hidden", "true");
@@ -6829,10 +6833,21 @@ function __qbMain(ctx) {
     p.innerHTML = tabHtml();
     afterTab(document.getElementById("clubs-container"));
   }
-  async function respondInvite(btn, id, yes) {
+  // one organization a person: a join refused because they're in another one (r.inOrg) asks whether to leave it
+  // and join, then tries again with { leave }; an owner can only hand theirs over first. → false when it wasn't that
+  function offerSwitch(r, target, again) {
+    if (!r || !r.error || !r.inOrg) return false;
+    const cur = r.inOrg;
+    if (cur.owner) { confirmDialog(r.error, () => {}, { title: "You own " + cur.name, yes: "OK", noCancel: true }); return true; }
+    confirmDialog("You can be in one organization at a time, so joining " + (target || r.target || "this one") + " means leaving " + cur.name + ". Your teams and results there stay with " + cur.name + ".",
+      () => again(cur.id), { title: "Leave " + cur.name + "?", yes: "Leave and join", danger: true });
+    return true;
+  }
+  async function respondInvite(btn, id, yes, leave) {
     btn.disabled = true;
-    const r = await post("/api/clubs/respond", { id, accept: yes });
+    const r = await post("/api/clubs/respond", leave ? { id, accept: yes, leave } : { id, accept: yes });
     btn.disabled = false;
+    if (yes && offerSwitch(r, ((S.list && S.list.invites) || []).filter((i) => i.id === id).map((i) => i.org.name)[0], (org) => respondInvite(btn, id, yes, org))) return;
     if (!r || r.error) { failBubble(btn, (r && r.error) || OFFLINE); return; }
     if (yes && r.orgId) { S.orgId = r.orgId; ls.set("qb-club-org", r.orgId); S.tab = "teams"; }
     await refresh();
@@ -6871,7 +6886,7 @@ function __qbMain(ctx) {
         return;
       }
       case "new-code": return confirmDialog("Make a new code? The old one stops working.", () => act(null, "/api/clubs/code", { org }), { yes: "New code" });
-      case "req-yes": case "req-no": return act(t, "/api/clubs/request", { org, handle: t.dataset.h, accept: a === "req-yes" });
+      case "req-yes": case "req-no": return act(t, "/api/clubs/request", { org, handle: t.dataset.h, accept: a === "req-yes" }, (r) => { if (r && r.invited) msg("@" + t.dataset.h + " is in another organization now, so they got an invite to choose."); });
       case "release": return confirmDialog("Release the report now? Anyone who hasn't finished is scored on what they read.", () => act(null, "/api/diag/release", { id: t.dataset.id }), { yes: "Release now", danger: true });
       case "dx-delete": return confirmDialog(t.dataset.done ? "Delete this report for everyone? It can't be brought back." : "Delete this diagnostic for everyone?", () => act(null, "/api/diag/delete", { id: t.dataset.id }), { yes: "Delete", danger: true });
     }
@@ -6938,7 +6953,7 @@ function __qbMain(ctx) {
   // the Join or create window: a code, or a new organization (you own it)
   function joinCreateDialog(focus) {
     const el = overlay('<div class="confirm-box cl-modal cl-jc" role="document"><div class="cl-modal-head"><div class="confirm-title">Join or create an organization</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-x aria-label="Close">' + ico("x", 16) + "</button></div>" +
-      '<form class="cl-mform" id="cl-join-form" novalidate><h3 class="eyebrow">Join with a code' + info("Ask your coach or captain for the code, like LHS-7Q2K.", "About codes") + '</h3><div class="cl-field-row"><input type="text" id="cl-join-code" class="mode-input" placeholder="ABC-1234" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Invite code"><button type="submit" class="btn btn-primary">Join</button></div><p class="fr-msg" id="cl-join-msg" role="status"></p></form>' +
+      '<form class="cl-mform" id="cl-join-form" novalidate><h3 class="eyebrow">Join with a code' + info("Ask your coach or captain for the code, like LHS-7Q2K." + (S.list && S.list.orgs && S.list.orgs.length ? " You can be in one organization at a time, so joining another means leaving " + S.list.orgs[0].name + "." : ""), "About codes") + '</h3><div class="cl-field-row"><input type="text" id="cl-join-code" class="mode-input" placeholder="ABC-1234" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Invite code"><button type="submit" class="btn btn-primary">Join</button></div><p class="fr-msg" id="cl-join-msg" role="status"></p></form>' +
       '<div class="cl-or">or</div>' +
       '<form class="cl-mform" id="cl-create-form" novalidate><h3 class="eyebrow">Create an organization' + info("You'll be the owner. Add teams next, then invite people.", "About creating an organization") + "</h3>" +
       '<div class="two-in"><label class="cl-field"><span class="cl-lbl">School or club name</span><input type="text" id="cl-new-name" class="mode-input" placeholder="Harbor View High School" maxlength="40" autocomplete="off"></label><label class="cl-field"><span class="cl-lbl">Tag</span><input type="text" id="cl-new-tag" class="mode-input" placeholder="HVHS" maxlength="5" autocomplete="off" autocapitalize="characters"></label></div>' +
@@ -6948,16 +6963,20 @@ function __qbMain(ctx) {
     // a tag suggested from the name's initials until one is typed
     nameIn.oninput = () => { if (tagIn.dataset.typed) return; tagIn.value = nameIn.value.split(/\s+/).filter((w) => /^[A-Za-z0-9]/.test(w) && !/^(of|the|and|for|at)$/i.test(w)).map((w) => w[0]).join("").toUpperCase().slice(0, 5); };
     tagIn.oninput = () => { tagIn.dataset.typed = tagIn.value ? "1" : ""; tagIn.value = tagIn.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); };
+    const joinCode = async (code, b, leave) => {
+      b.disabled = true;
+      const r = await post("/api/clubs/join", leave ? { code, leave } : { code });
+      b.disabled = false;
+      if (offerSwitch(r, null, (org) => joinCode(code, b, org))) return;
+      if (!r || r.error) { say("#cl-join-msg", (r && r.error) || OFFLINE, true); return; }
+      if (r.requested) { say("#cl-join-msg", "Asked to join " + (r.name || "it") + ". An admin will let you in."); return; }
+      closeOverlay(el); S.orgId = r.id; ls.set("qb-club-org", r.id); S.tab = "teams"; await refresh();
+    };
     el.querySelector("#cl-join-form").onsubmit = async (e) => {
       e.preventDefault();
       const code = el.querySelector("#cl-join-code").value.trim().toUpperCase();
       if (!code) { say("#cl-join-msg", "Type the code first.", true); return; }
-      const b = e.target.querySelector("button"); b.disabled = true;
-      const r = await post("/api/clubs/join", { code });
-      b.disabled = false;
-      if (!r || r.error) { say("#cl-join-msg", (r && r.error) || OFFLINE, true); return; }
-      if (r.requested) { say("#cl-join-msg", "Asked to join " + (r.name || "it") + ". An admin will let you in."); return; }
-      closeOverlay(el); S.orgId = r.id; ls.set("qb-club-org", r.id); S.tab = "teams"; await refresh();
+      joinCode(code, e.target.querySelector("button"));
     };
     el.querySelector("#cl-create-form").onsubmit = async (e) => {
       e.preventDefault();
@@ -7021,6 +7040,19 @@ function __qbMain(ctx) {
     S.link = { token, d: null, done: null };
     if (typeof goTo === "function") goTo("link");
   }
+  // a link opened signed out (or before choosing a username) comes back after signing up, confirming the email
+  // (whose link opens the home page) or signing in: kept for three days
+  const PENDING = "qb-link-pending";
+  function rememberLink(token) { try { ls.set(PENDING, JSON.stringify({ t: token, at: Date.now() })); } catch (e) {} }
+  function resumeLink() {
+    let p = null; try { p = JSON.parse(ls.get(PENDING) || "null"); } catch (e) {}
+    if (!p || !p.t || !(typeof Account !== "undefined" && Account.user)) return;
+    if (Date.now() - (p.at || 0) > 3 * 864e5) { ls.set(PENDING, ""); return; }
+    if (!Account.user.handle) return;   // still choosing a username: the page asks for it first
+    ls.set(PENDING, "");
+    if (S.link && S.link.token === p.t && screenOn("link-screen")) { S.link.d = null; renderLink(); return; }
+    openLink(p.t);
+  }
   async function renderLink() {
     const c = document.getElementById("ln-container"); if (!c) return;
     const L = S.link;
@@ -7040,6 +7072,7 @@ function __qbMain(ctx) {
     const title = document.querySelector("#link-screen .top-bar-title"); if (title) title.textContent = (d && LINK_TITLE[d.kind]) || "Shared link";
     try { if (typeof updateTopbar === "function") updateTopbar(); if (typeof webTitleSync === "function") webTitleSync(); } catch (e) {}
     if (!d || d.error) { c.innerHTML = plainPanel("link", (d && d.error) || OFFLINE, home); return; }
+    if (d.kind !== "diag" && (!d.signedIn || !d.hasHandle)) rememberLink(L.token);
     if (d.kind === "diag") {
       const r = d.report || {};
       if (r.locked) { c.innerHTML = plainPanel("lock", (r.team ? r.team + "'s" : "This") + " report comes out when the diagnostic ends. Open this link again then.", home); return; }
@@ -7067,24 +7100,48 @@ function __qbMain(ctx) {
         esc(t ? o.name + " · " + plural((t.players || []).length, "player") : plural(o.members || 0, "member") + " · " + plural((o.teams || []).length, "team")) + "</small></div></div>" +
         (t ? '<ul class="ln-list">' + ((t.players || []).map((x) => "<li>" + av(x, "xs") + "<span>" + nm(x) + "</span>" + (x.captain ? '<small class="ln-cap">' + ico("crown", 12) + "Captain</small>" : "") + "</li>").join("") || '<li class="cl-none">No players yet</li>') + "</ul>"
           : teamsList ? '<ul class="ln-list">' + teamsList + "</ul>" : "");
-      const where = t ? t.name : o.name;
+      const where = t ? t.name : o.name, cur = d.inOrg;
+      const curNote = cur && !d.member ? '<p class="ln-why">' + (cur.owner ? "You own " + esc(cur.name) + ". You can be in one organization at a time, so hand it over or delete it in Clubs before you join " + esc(o.name) + "."
+        : "You're in " + esc(cur.name) + ". You can be in one organization at a time, so joining " + esc(o.name) + " means leaving it.") + "</p>" : "";
       act = L.done ? '<p class="ln-done">' + ico("check", 16) + esc(L.done) + '</p><div class="ln-act"><button type="button" class="btn btn-primary" data-ln="clubs">Open Clubs</button></div>'
         : d.member && (!t || d.onTeam) ? '<p class="ln-done">' + ico("check", 16) + "You're in " + esc(where) + " already.</p>" + '<div class="ln-act"><button type="button" class="btn" data-ln="clubs">Open Clubs</button></div>'
         : !d.signedIn ? acctBtns("Sign in to join " + where + ".")
         : !d.hasHandle ? handleBtn
-        : '<div class="ln-act"><button type="button" class="btn btn-primary" data-ln="accept">' + ico("userplus", 16) + "Join " + esc(where) + "</button></div>";
+        : cur && !d.member && cur.owner ? curNote + '<div class="ln-act"><button type="button" class="btn" data-ln="clubs">Open Clubs</button></div>'
+        : curNote + '<div class="ln-act"><button type="button" class="btn btn-primary" data-ln="accept">' + ico("userplus", 16) + (cur && !d.member ? "Leave " + esc(cur.name) + " and join" : "Join " + esc(where)) + "</button></div>";
     }
     c.innerHTML = '<div class="cl-page ln-page"><section class="cl-card ln-card">' + body + '<div class="ln-foot">' + act + '<p class="ln-err" id="ln-err" role="alert"></p></div></section></div>';
     c.onclick = async (e) => {
       const b = e.target.closest("[data-ln]"); if (!b) return;
       if (b.dataset.ln === "clubs") { if (L.orgId) { S.orgId = L.orgId; ls.set("qb-club-org", L.orgId); S.org = null; } open("teams"); return; }
       if (b.dataset.ln !== "accept") return;
-      b.disabled = true;
-      const r = await post("/api/links/accept", { t: L.token });
-      if (S.link !== L) return;
-      if (!r || r.error) { b.disabled = false; const m = document.getElementById("ln-err"); if (m) m.textContent = (r && r.error) || OFFLINE; return; }
-      if (d.kind === "friend") L.done = "You and " + ((d.user && d.user.displayName) || "@" + (d.user && d.user.handle)) + " are friends now.";
-      else { L.orgId = r.id; L.done = "You're in " + (r.name || "the organization") + (r.team ? " on " + r.team : "") + "."; S.list = null; try { poll(); } catch (e2) {} }
+      const go = async (leave) => {
+        b.disabled = true;
+        const r = await post("/api/links/accept", leave ? { t: L.token, leave } : { t: L.token });
+        if (S.link !== L) return;
+        b.disabled = false;
+        if (offerSwitch(r, (d.org && d.org.name) || null, (org) => go(org))) return;
+        if (!r || r.error) { const m = document.getElementById("ln-err"); if (m) m.textContent = (r && r.error) || OFFLINE; return; }
+        done(r);
+      };
+      // in another organization: ask first (the button already says so), then leave it and join
+      if (d.kind !== "friend" && d.inOrg && !d.member) {
+        confirmDialog("You can be in one organization at a time. Your teams and results in " + d.inOrg.name + " stay with it.", () => go(d.inOrg.id),
+          { title: "Leave " + d.inOrg.name + " and join " + ((d.org && d.org.name) || "this one") + "?", yes: "Leave and join", danger: true });
+        return;
+      }
+      go(null);
+    };
+    const done = (r) => {
+      if (d.kind === "friend") {
+        L.done = r.already ? "You're friends already." : "You and " + ((d.user && d.user.displayName) || "@" + (d.user && d.user.handle)) + " are friends now.";
+        try { if (typeof friendPoll === "function") friendPoll(); } catch (e2) {}
+      } else {
+        // the organization they joined is the one Clubs opens on
+        L.orgId = r.id; S.orgId = r.id; ls.set("qb-club-org", r.id); S.org = null; S.tab = "teams";
+        L.done = r.joined === false ? (r.addedToTeam ? "You're on " + r.team + " now." : "You're in " + (r.name || "the organization") + " already.") : "You're in " + (r.name || "the organization") + (r.team ? " on " + r.team : "") + ".";
+        S.list = null; try { poll(); } catch (e2) {}
+      }
       paintLink(c);
     };
   }
@@ -7993,7 +8050,7 @@ function __qbMain(ctx) {
     if (a === "l" && b) { openLink(b); return true; }
     return false;
   }
-  window.QBClubs = { poll, paintBadge, onScreen, open, openIrl, openReport, openLink, shareDialog, webPath, route, renderGroups, groupsTip, renderClubs, beforeBack };
+  window.QBClubs = { resumeLink, poll, paintBadge, onScreen, open, openIrl, openReport, openLink, shareDialog, webPath, route, renderGroups, groupsTip, renderClubs, beforeBack };
   if (window.QB) {
     window.QB.openClubs = (tab) => open(tab || "diagnostics");
     window.QB.openDiagReport = (id) => openReport(id);
