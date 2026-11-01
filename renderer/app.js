@@ -8059,6 +8059,52 @@ function selectionTermItems(term) {
   return items;
 }
 
+// Phones and tablets have no right-click: a highlight (press a word, then drag the handles) shows a small Search
+// button under it, which opens the menu a right-click on a highlight opens (Copy, search questions / answers…).
+(function selectionPill() {
+  if (!matchMedia("(hover: none) and (pointer: coarse)").matches) return;
+  let pill = null, term = "", pressed = 0, wait = null;
+  const hide = () => { if (pill) pill.hidden = true; term = ""; };
+  const place = () => {
+    const sel = window.getSelection();
+    const text = String(sel || "").replace(/\s+/g, " ").trim();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || text.length < 2 || text.length > 80) return hide();
+    const range = sel.getRangeAt(0), n = range.commonAncestorContainer, node = n.nodeType === 1 ? n : n.parentElement;
+    // not in a text box (the phone's own menu edits it), nor the unread part of a question
+    if (!node || node.closest("input, textarea, select, [contenteditable], .unrevealed, .qb-ctx-menu, #qb-sel-pill")) return hide();
+    const rects = [...range.getClientRects()].filter((r) => r.width && r.height), r = rects[rects.length - 1] || range.getBoundingClientRect();
+    if (!r || !r.height) return hide();
+    if (!pill) {
+      pill = document.createElement("button");
+      pill.type = "button"; pill.id = "qb-sel-pill"; pill.className = "qb-sel-pill";
+      pill.innerHTML = ic("search", 15) + "<span>Search</span>";
+      // a press keeps the highlight (and its word), the tap opens the menu
+      pill.addEventListener("pointerdown", (e) => { pressed = Date.now(); e.preventDefault(); });
+      pill.addEventListener("click", () => {
+        const t = term; if (!t || !window.QB?.contextMenu) return;
+        const pr = pill.getBoundingClientRect();
+        hide();
+        try { window.getSelection().removeAllRanges(); } catch (e) {}   // the phone's own Copy bar goes with it
+        window.QB.contextMenu(Math.max(8, pr.left), pr.bottom + 6, [{ label: "Copy", onClick: () => copyToClipboard(t) }, ...selectionTermItems(t)], { title: "“" + t.slice(0, 40) + "”" });
+      });
+      document.body.appendChild(pill);
+    }
+    term = text;
+    pill.hidden = false;
+    const w = pill.offsetWidth || 100, h = pill.offsetHeight || 38;
+    // under the end of the highlight, clear of the selection handles; above it when there's no room below
+    const x = Math.min(window.innerWidth - w - 8, Math.max(8, r.right - w / 2));
+    let y = r.bottom + 30;
+    if (y + h > window.innerHeight - 8) y = Math.max(8, r.top - h - 44);
+    pill.style.left = x + "px"; pill.style.top = y + "px";
+  };
+  document.addEventListener("selectionchange", () => {
+    clearTimeout(wait);
+    wait = setTimeout(() => { if (Date.now() - pressed > 700) place(); }, 220);
+  });
+  window.addEventListener("scroll", () => { if (pill && !pill.hidden) place(); }, { passive: true, capture: true });
+})();
+
 // Right-click the live practice question for the same quick actions.
 $("#question-content")?.addEventListener("contextmenu", (e) => {
   if (!state.currentQuestion || !window.QB?.contextMenu) return;
