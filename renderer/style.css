@@ -3546,13 +3546,17 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .sc-foot { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 16px; }
 .sc-get svg { margin-right: 6px; }
 /* the Store's search box (15.63): filters the cards as you type */
-.sc-search { display: flex; align-items: center; gap: 10px; max-width: 460px; height: 40px; margin: 0 0 18px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--muted); cursor: text; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.sc-bar { display: flex; flex-direction: column; gap: 12px; margin: 0 0 22px; }
+.sc-search { display: flex; align-items: center; gap: 12px; height: 50px; padding: 0 18px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--muted); cursor: text; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.sc-search svg { width: 19px; height: 19px; flex: none; }
+.sc-types { display: flex; flex-wrap: wrap; gap: 8px; }
+.sc-types .chip { height: 34px; padding: 0 14px; font-size: 13px; }
+.sc-types .chip .n { margin-left: -2px; }
 .sc-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
-.sc-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--strong); font: inherit; font-size: 14px; }
+.sc-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--strong); font: inherit; font-size: 15.5px; }
 .sc-search input::placeholder { color: var(--muted); }
 .sc-search input::-webkit-search-cancel-button { cursor: pointer; }
 .sc-card[hidden], .sc-none[hidden] { display: none; }
-@media (max-width: 680px) { .sc-search { max-width: none; } }
 @media (max-width: 680px) { .sc-grid { grid-template-columns: minmax(0, 1fr); } .sc-shot { height: 138px; } .sc-shot .pgm { zoom: 0.5; } }
 .store-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 1100px) { .store-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -6803,26 +6807,25 @@ html.tb-nocrumb .tb-crumb { display: none; }
 /* phones: periods that wrap start on the left (the last one sat alone in the middle) */
 @media (max-width: 600px) { .lb-periods { justify-content: flex-start; } }
 
-/* Read aloud with the text hidden (15.63, app.js setReadHidden): the words give way to a box that says "Reading" while
-   the voice reads that text (its unread rest still there), "Buzzed" after a buzz, and "Hidden" once it's all been said,
-   until the result shows the text */
-#question-area.read-hidden :is(#question-text, .bonus-part-text):not(:empty) > * { display: none !important; }
-#question-area.read-hidden :is(#question-text, .bonus-part-text):not(:empty)::before {
-  content: "Hidden"; display: inline-flex; align-items: center; gap: 10px; padding: 10px 16px; border: 1px solid var(--line); border-radius: var(--r-lg);
-  background: var(--surface); color: var(--muted); font: 500 13px/1.2 var(--font); letter-spacing: .02em; }
-#question-area.read-hidden :is(#question-text, .bonus-part-text):has(> .unrevealed:not(:empty)):not(:has(> .buzz-marker))::before { content: "Reading"; color: var(--text); }
-#question-area.read-hidden :is(#question-text, .bonus-part-text):has(> .unrevealed:not(:empty)):not(:has(> .buzz-marker))::after {
-  content: ""; display: inline-block; width: 14px; height: 12px; margin-left: -34px; vertical-align: middle; transform: translateY(-1px);
-  background: linear-gradient(var(--accent), var(--accent)) 0 50% / 3px 40% no-repeat, linear-gradient(var(--accent), var(--accent)) 50% 50% / 3px 100% no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 100% 50% / 3px 60% no-repeat; animation: qb-read-wave 900ms ease-in-out infinite; }
-#question-area.read-hidden :is(#question-text, .bonus-part-text):has(> .unrevealed:not(:empty)):not(:has(> .buzz-marker))::before { padding-right: 40px; }
-#question-area.read-hidden #question-text:has(> .buzz-marker)::before { content: "Buzzed"; color: var(--text); }
-@keyframes qb-read-wave {
-  0%, 100% { background-size: 3px 40%, 3px 100%, 3px 60%; }
-  33% { background-size: 3px 100%, 3px 50%, 3px 80%; }
-  66% { background-size: 3px 60%, 3px 80%, 3px 40%; }
-}
-@media (prefers-reduced-motion: reduce) { #question-area.read-hidden :is(#question-text, .bonus-part-text)::after { animation: none; } }
+/* Read aloud with the text hidden (15.63, app.js setReadHidden; 15.65 wide, its bars following the voice): the words
+   give way to a box that says "Reading" while the voice reads (some text still to come), "Buzzed" after a buzz, and
+   "Hidden" once it's all been said, until the result shows the text. --rb1..3 (app.js readMeter) size the bars. */
+.read-box { display: none; }
+#question-area.read-hidden :is(#question-text, .bonus-part-text) { display: none !important; }
+#question-area.read-hidden .read-box {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; width: 100%; min-height: 188px; margin: 6px 0 10px;
+  padding: 30px 24px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.rb-bars { display: flex; align-items: center; justify-content: center; gap: 12px; height: 72px; }
+.rb-bars i { display: block; width: 12px; height: 72px; border-radius: 6px; background: var(--accent); transform: scaleY(.12); transition: transform 80ms linear; }
+#question-area.read-hidden .rb-bars i:nth-child(1) { transform: scaleY(var(--rb1, .12)); }
+#question-area.read-hidden .rb-bars i:nth-child(2) { transform: scaleY(var(--rb2, .12)); }
+#question-area.read-hidden .rb-bars i:nth-child(3) { transform: scaleY(var(--rb3, .12)); }
+.rb-label::before { content: "Hidden"; font: 600 15px/1.2 var(--font); color: var(--muted); letter-spacing: .01em; }
+#question-area.read-hidden:has(:is(#question-text, .bonus-part-text) > .unrevealed:not(:empty)):not(:has(#question-text > .buzz-marker)) .rb-label::before { content: "Reading"; color: var(--text); }
+#question-area.read-hidden:has(#question-text > .buzz-marker) .rb-label::before { content: "Buzzed"; color: var(--text); }
+#question-area.read-hidden:not(:has(:is(#question-text, .bonus-part-text) > .unrevealed:not(:empty))) .rb-bars i,
+#question-area.read-hidden:has(#question-text > .buzz-marker) .rb-bars i { transform: scaleY(.12); opacity: .55; }
+@media (max-width: 600px) { #question-area.read-hidden .read-box { min-height: 150px; padding: 24px 16px; } .rb-bars { height: 56px; } .rb-bars i { height: 56px; width: 10px; } }
 /* guides and notes stay hidden while Read aloud is on (their switches locked on) */
 .locked-by-read { opacity: .55; }
 
@@ -6852,9 +6855,26 @@ html.tb-nocrumb .tb-crumb { display: none; }
 
 /* a plugin's page on the reader (15.63, app.js startPluginPractice): its own box at the top of the side column, its
    stops (First Lines: "next line") and an opponent's missed buzz */
-.side-plugin { margin-bottom: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.side-plugin { margin-bottom: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
 .side-plugin[hidden] { display: none; }
 .pause-overlay.page-stop { cursor: pointer; }
-.opp-note { position: absolute; top: 10px; right: 12px; padding: 5px 12px; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line)); border-radius: 99px; background: var(--surface); color: var(--text); font-size: 12.5px; animation: qb-rise 200ms var(--ease-out); }
+/* (15.65) under the text, where the answer box was: it covered the flag and star buttons up in the corner */
+.opp-note { display: block; width: fit-content; max-width: 100%; box-sizing: border-box; margin-top: 14px; padding: 6px 14px; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line)); border-radius: 99px; background: var(--surface); color: var(--text); font-size: 13px; animation: qb-rise 200ms var(--ease-out); }
 .voice-pop .vp-status { margin: 2px 0 6px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .voice-pop .vp-status[hidden] { display: none; }
+/* an opponent's answer, typed a letter at a time (15.65, app.js opponentBuzz): the answer box's look, in the
+   opponent's colour, then green or red once it's judged */
+.opp-answer { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px 16px; max-width: 720px; min-height: 48px; box-sizing: border-box;
+  border: 1px solid var(--yellow); border-radius: var(--r-lg); background: var(--sunken); font-size: 17px; animation: qb-rise 160ms var(--ease-out); }
+.opp-answer .prompt-symbol { color: var(--yellow); }
+.opp-answer .opp-ph { color: var(--muted); font-size: 14px; }
+.opp-answer .opp-live { flex: 1 1 auto; min-width: 0; color: var(--strong); overflow-wrap: anywhere; }
+.opp-answer:not(.opp-right):not(.opp-wrong) .opp-live:not(:empty)::after { content: "\258E"; color: var(--yellow); animation: blink 1s steps(1) infinite; }
+.opp-answer .opp-mark { flex: none; font-weight: 800; font-size: 18px; }
+.opp-answer.opp-right { border-color: var(--green); }
+.opp-answer.opp-right .opp-mark { color: var(--green); }
+.opp-answer.opp-wrong { border-color: var(--red); }
+.opp-answer.opp-wrong .opp-mark { color: var(--red); }
+.opp-answer.opp-wrong .opp-live { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--red) 70%, transparent); }
+.buzz-marker.opp-marker { color: var(--yellow); letter-spacing: 1px; }
+#live-stats .side-stats[hidden] { display: none !important; }

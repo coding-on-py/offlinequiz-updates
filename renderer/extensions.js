@@ -943,7 +943,7 @@
   // boot and the zip is refused on import (multiplayer is refused as a registered builtin). Since 14.85
   // the plugins retired in 14.50 (plugins/retired/) can be imported again; none is listed here.
   const BUILT_IN_PLUGINS = { "achievement-icons": "Achievement Icons" };
-  const REMOVED_PLUGINS = { "set-series": "Set Series", "bonus-parts": "Bonus Parts" };   // 15.63: taken out of the Store and dropped where they were added
+  const REMOVED_PLUGINS = { "set-series": "Set Series", "bonus-parts": "Bonus Parts", "difficulty-ladder": "Difficulty Ladder" };   // 15.63 (Difficulty Ladder 15.65): taken out of the Store and dropped where they were added
   const RETIRED_PLUGINS = { ...BUILT_IN_PLUGINS, ...REMOVED_PLUGINS };
   function finalizePlugin(filename, code, manifest, pkg) {
     if (!manifest || !manifest.id) { importFail("Plugin must call QB.registerPlugin({ id, ... })"); return null; }
@@ -2003,7 +2003,7 @@ QB.registerTheme({
     "keyword-freq": "Analysis", "buzz-words": "Analysis", "fact-sheet": "Analysis", "canon-tracker": "Analysis",
     "achievement-glyphs": "Extras",
     // 15.62
-    "rival": "Play", "challenge": "Play", "difficulty-ladder": "Play", "lightning": "Play", "voice-answers": "Play",
+    "rival": "Play", "challenge": "Play", "lightning": "Play", "voice-answers": "Play",
     "first-lines": "Study", "quotations": "Study", "missed-clues": "Study", "listen": "Study", "answer-notes": "Study",
     "buzz-tracker": "Analysis", "gap-finder": "Analysis", "neg-check": "Analysis", "answer-clusters": "Analysis",
     "weekly-plan": "Tools", "tournament-prep": "Tools", "pyramid-check": "Tools", "moderator": "Tools", "layout-customizer": "Tools", "kokoro-voice": "Play",
@@ -2277,7 +2277,7 @@ QB.registerTheme({
     "keyword-freq": ["Analysis", "Clues", "Words"], "buzz-words": ["Analysis", "Clues", "Power"],
     "fact-sheet": ["Analysis", "Answers", "Study"], "canon-tracker": ["Analysis", "Canon", "Progress"],
     "achievement-glyphs": ["Extras", "Achievements", "Icons"],
-    "rival": ["Play", "Buzzing", "Adaptive"], "challenge": ["Play", "Friends", "Compare"], "difficulty-ladder": ["Play", "Difficulty", "Adaptive"],
+    "rival": ["Play", "Buzzing", "Adaptive"], "challenge": ["Play", "Friends", "Compare"],
     "lightning": ["Play", "Speed", "Recall"], "voice-answers": ["Play", "Voice", "Tournament"],
     "first-lines": ["Study", "Power", "Clues"], "quotations": ["Study", "Literature", "Quotes"], "missed-clues": ["Study", "Review", "Memory"],
     "listen": ["Study", "Audio", "Hands free"], "answer-notes": ["Study", "Notes", "Answers"],
@@ -2329,7 +2329,14 @@ QB.registerTheme({
     if (!st.list.length) return '<div class="ext-empty-state">The Store is empty right now</div>';
     // (15.63: no download or like counts on the cards; a search box over them instead, which filters as you type)
     const items = st.list.slice().sort((a, b) => GROUP_ORDER.indexOf(groupOf(a.id)) - GROUP_ORDER.indexOf(groupOf(b.id)) || String(a.name).localeCompare(String(b.name)));
-    const search = '<label class="sc-search">' + SICO.search + '<input type="search" id="store-search" placeholder="Search plugins" aria-label="Search plugins" autocomplete="off" spellcheck="false" value="' + esc(st.q || "") + '"></label>';
+    // a wide search box, then a chip for each kind of plugin with how many there are (15.65)
+    const count = (g) => items.filter((x) => (g === "added" ? QB._plugins.some((p) => p.id === x.id && !p._builtin) : groupOf(x.id) === g)).length;
+    const kinds = GROUP_ORDER.filter((g) => count(g) > 0);
+    const chip = (k, label, dot) => '<button type="button" class="chip' + ((st.type || "") === k ? " on" : "") + '" data-store-type="' + esc(k) + '" aria-pressed="' + ((st.type || "") === k) + '">' +
+      (dot ? '<span class="dot" style="--c:' + esc(dot) + '"></span>' : "") + esc(label) + '<span class="n">' + (k ? count(k) : items.length) + "</span></button>";
+    const added = count("added");
+    const search = '<div class="sc-bar"><label class="sc-search">' + SICO.search + '<input type="search" id="store-search" placeholder="Search plugins" aria-label="Search plugins" autocomplete="off" spellcheck="false" value="' + esc(st.q || "") + '"></label>' +
+      '<div class="sc-types" role="group" aria-label="Kind of plugin">' + chip("", "All") + kinds.map((g) => chip(g, g, GROUP_COLOR[g])).join("") + (added ? chip("added", "Added") : "") + "</div></div>";
     return search + '<div class="ext-empty-state sc-none" hidden>No plugins match</div><div class="sc-grid">' + items.map((item) => {
       const g = groupOf(item.id), color = GROUP_COLOR[g];
       const have = QB._plugins.find((x) => x.id === item.id && !x._builtin);
@@ -2342,18 +2349,22 @@ QB.registerTheme({
         : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
       const tags = (PLUGIN_TAGS[item.id] || [g]).map((t) => '<span class="sc-tag">' + esc(t) + "</span>").join("");
       const words = [item.name, item.description, g].concat(PLUGIN_TAGS[item.id] || []).join(" ").toLowerCase();
-      return '<article class="sc-card" data-guide="' + esc(item.id) + '" data-search="' + esc(words) + '" tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it" style="--g:' + esc(color) + '">' +
+      return '<article class="sc-card" data-guide="' + esc(item.id) + '" data-search="' + esc(words) + '" data-kind="' + esc(g) + '"' + (have ? " data-added" : "") + ' tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it" style="--g:' + esc(color) + '">' +
         storeShot(item, color) +
         '<div class="sc-body"><h3 class="sc-name">' + esc(item.name) + '</h3><div class="sc-by">by <span>' + esc(item.author || "OfflineQuiz") + "</span> · v" + esc(item.version) + "</div>" +
         '<p class="sc-desc">' + esc(item.description || "") + '</p><div class="sc-tags">' + tags + "</div>" +
         '<div class="sc-foot">' + btn + "</div></div></article>";
     }).join("") + "</div>";
   }
-  // every word typed is somewhere in a card's name, description, group or tags
+  // every word typed is somewhere in a card's name, description, group or tags, and it's the kind picked
   function storeFilter(root) {
-    const q = String(QB._store.q || "").toLowerCase().split(/\s+/).filter(Boolean);
+    const q = String(QB._store.q || "").toLowerCase().split(/\s+/).filter(Boolean), k = QB._store.type || "";
     let shown = 0;
-    root.querySelectorAll(".sc-card[data-search]").forEach((c) => { const ok = q.every((w) => c.dataset.search.includes(w)); c.hidden = !ok; if (ok) shown++; });
+    root.querySelectorAll(".sc-card[data-search]").forEach((c) => {
+      const ok = q.every((w) => c.dataset.search.includes(w)) && (!k || (k === "added" ? c.hasAttribute("data-added") : c.dataset.kind === k));
+      c.hidden = !ok; if (ok) shown++;
+    });
+    root.querySelectorAll("[data-store-type]").forEach((b) => { const on = b.dataset.storeType === k; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
     const none = root.querySelector(".sc-none"); if (none) none.hidden = shown > 0;
   }
   async function storeGet(id) {
@@ -2411,6 +2422,7 @@ QB.registerTheme({
       storeFilter(root);
       ss.addEventListener("input", () => { QB._store.q = ss.value; storeFilter(root); });
       ss.addEventListener("keydown", (e) => { if (e.key === "Escape" && ss.value) { e.preventDefault(); e.stopPropagation(); ss.value = ""; QB._store.q = ""; storeFilter(root); } });
+      root.querySelectorAll("[data-store-type]").forEach((b) => b.addEventListener("click", () => { QB._store.type = b.dataset.storeType; storeFilter(root); }));
       // the screen draws again as a plugin is added: the box keeps its place
       if (QB._store.searching) { ss.focus(); ss.setSelectionRange(ss.value.length, ss.value.length); }
     }
