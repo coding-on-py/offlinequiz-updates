@@ -1,5 +1,5 @@
 {
-  "version": "15.62",
+  "version": "15.63",
   "renderer": [
     "index.html",
     "style.css",
@@ -22,11 +22,6 @@
       "id": "answer-notes",
       "name": "Answer Notes",
       "file": "answer-notes.zip"
-    },
-    {
-      "id": "bonus-parts",
-      "name": "Bonus Parts",
-      "file": "bonus-parts.zip"
     },
     {
       "id": "buzz-tracker",
@@ -134,11 +129,6 @@
       "file": "rival.zip"
     },
     {
-      "id": "set-series",
-      "name": "Set Series",
-      "file": "set-series.zip"
-    },
-    {
       "id": "tournament-prep",
       "name": "Tournament Prep",
       "file": "tournament-prep.zip"
@@ -155,42 +145,40 @@
     }
   ],
   "main": true,
-  "notes": "new plugins and improvements",
+  "notes": "new features and bug fixes",
   "files": {
-    "renderer/index.html": "de575a88ec811242b8b2b79cbcc60f235d51a3194d07b010dc03ec90f2a191a2",
-    "renderer/style.css": "ecc9abf27d9420375f2f2777ae3f5950657e938ed896dc3dd7df723274a9a962",
+    "renderer/index.html": "fb49e0ea7f15cf4f8a62a57ce01dd066dab3c906bd99a379d922b114f6050029",
+    "renderer/style.css": "acd57cb6811033f99d913af0dfe4e183d1002bba55cec4dad71354245efa0d5a",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "8484aaee1f5f7389a09f6970f321e49c47ebe89e360dc45def59ad7bd7bb080f",
-    "renderer/app.js": "b35aab92783dff12380dbe878a9f96bf03367d882a3da243686eca4967bed987",
+    "renderer/extensions.js": "c283374f48e64ae484d10552a1d64b165fb5d5bcc204c01c16d5089cec9bab64",
+    "renderer/app.js": "dbf5d399ad076ad1fd8f9b000b9f5c9b1857b7801ccd13bd4bd7bb08d9904834",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
-    "plugins/answer-clusters.zip": "076c124b062f04e986d577edff205900996d1021bbeea8b241ec9148d2aee7f2",
-    "plugins/answer-notes.zip": "143d4e4952198acc91b714fcb06fe2fcb19370f395ff4d45f8ab87a733a6ca44",
-    "plugins/bonus-parts.zip": "c34a1cfb8f3e98eb9b51efccbe5d5792e7b3a10db2b7c8469a769d7738850bef",
-    "plugins/buzz-tracker.zip": "ef3fae4309b127b87ce58d9d8321c2281f2b49cbadaa7c3ddce559984acffbf3",
+    "plugins/answer-clusters.zip": "1786320905ebce6c4ae9c4ad720c651da12400e965635fa84cd97de5db679e4c",
+    "plugins/answer-notes.zip": "d4ec33b1ab701b24004055687ee3091f2af05eaae8e792276da180887bde980d",
+    "plugins/buzz-tracker.zip": "32ae11b4aad35b3e9e8a59f97f2a5d4817341ffbcd2bfa4356039cda87831826",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
     "plugins/canon-tracker.zip": "e98de9e23e33b6bff0ee1f912ec67126833205b716599c3e978870f4f5844810",
-    "plugins/challenge.zip": "ef0eb345730c1f5517e73fe98f82f6c23cda0b684e221a41890a7570abbd0989",
+    "plugins/challenge.zip": "846103b05f4e5c58cfd6ef12c7721e331965d3f5ceb71a95a28f7c3f3b789c0f",
     "plugins/coach-mode.zip": "e23183227fe3dec730e3f37e43906ee5e1d6c0e74b063c9a4e8a2da77a623fad",
-    "plugins/difficulty-ladder.zip": "7e96e3e35e24470e2e2a86bbf9969bf2dc99744d2db33e044ec07dad665f7eff",
+    "plugins/difficulty-ladder.zip": "417532dc8bb26eb8b37c38ddbb43672a8d4c226e40f4c7b2e90f154256c279d2",
     "plugins/fact-sheet.zip": "e317174cc88cda1b451b6ed006cf6a6e295fe2e087689ff44d634edc2309b74e",
-    "plugins/first-lines.zip": "4bd4945b18e1878cf7942affc9dd299b456fd6da90539e25f95f2e476215edf3",
+    "plugins/first-lines.zip": "bb3f27956fe3310b9007019080adabe90cb4699b4a7f1ec9e90c8a8471cf33ea",
     "plugins/flashcards.zip": "b7d9c887a1d181db2511ccd595d63a013c2f0e15694a889b2b7499d7219b8bdc",
     "plugins/folders.zip": "c6b3b1c2a9723af244dae0913eb8847178ae767cbfcfbb4a8ffad7276979faf6",
-    "plugins/gap-finder.zip": "44765dbc29df43ba966db71781d7f6bd3b008950eaa2dd8ed9ea3f88237adef7",
+    "plugins/gap-finder.zip": "cd4a7a47927685d2b10e3d4bdb3987d7b3b24365b47fff7a4852a6118e92a8d1",
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
-    "plugins/lightning.zip": "b430b9d5b310c4710be80e39c9641549eac3f84c5f6116e6d1b0e572f4dba40e",
-    "plugins/listen.zip": "810ede8a733aab7dd8c456fe590652e55aba851fa80ec1f3247d8bac496a1a45",
-    "plugins/missed-clues.zip": "a4db353f4b7ae53eae9ba305c29ceb24e3dda12d84fcfff94912de1a069799b9",
-    "plugins/moderator.zip": "85fd3e9826c8279a26fa162071bff2e7bcda286c8672b41600ab79724cb81e62",
-    "plugins/neg-check.zip": "9d4e3b8ea5a635b87aa01e7fcc8a88fdfeb4a4b439d59593a8d0621b1fb6225d",
+    "plugins/lightning.zip": "5e8aa9e6ad13d7bd4066c9c0f6b86231516dad0b54aaff9c49a20fe901abd046",
+    "plugins/listen.zip": "b2268166bd6bfbcdb4e1b3c61952b711127b97d9c46a1754c7892ae8e4c9db99",
+    "plugins/missed-clues.zip": "c8a1eba345dd6e3edaa1cc290ce907b7eb0ca89beb7b3ddbe915cab606cb7847",
+    "plugins/moderator.zip": "8ad0537f358ccf00be0fc013e7f4c665df2398435fa26d94834d88cfa89cd373",
+    "plugins/neg-check.zip": "ef4ee8c26023ba990400388aa29c09097f965bdd86041cec5dfaf07d132aa9b4",
     "plugins/packet-builder.zip": "1932c45fc046b949267be9e7960939222ba0b9929ba6716fbe7626c5a7f7a9c6",
-    "plugins/pyramid-check.zip": "a3a090b5bf89023c26c85d75caffbc33dd814f1ddcb14dd16577f92d070cf1f0",
-    "plugins/quotations.zip": "1fac06537b1f477252ee59275ce0474bc37ff42197139ebceeb673239f62c174",
-    "plugins/rival.zip": "fc9878b82a141c8c0fff7140c0265b84ac6d63d88331e396f976ef5d96fccd18",
-    "plugins/set-series.zip": "ccbe94d26e5dd7d73b759e48020300c1fe33dce8b3716c8539d8597339a29f49",
-    "plugins/tournament-prep.zip": "6737ab8f6446bc5f9707e58a331c5889b18fe3f3bf656ffaa4838cb379332e5e",
-    "plugins/voice-answers.zip": "aacd1eddfea1c311be241ad105434c35692f7360523fd47ce829c1e107ae2914",
-    "plugins/weekly-plan.zip": "d38309d67f33d229506937b3f7c00b281ab23d2185a7cbeaf40275c891ce7eda"
+    "plugins/pyramid-check.zip": "1f0a0d41db086d8400cdce94fc247f1e9cbc63591a810cf33e26d7909a61cc4b",
+    "plugins/quotations.zip": "44754337526cc69c1b3a5134857daa75284aab2bfd49471047fe75cf0e921bea",
+    "plugins/rival.zip": "792e05b3093d3e681b0187e422ba27862512c6c88f80a22eb038c164b8598f00",
+    "plugins/tournament-prep.zip": "c3f9b512dd05d4ab259c92edc50c1d8c68ed6da742bc90a88f5550d680e29216",
+    "plugins/voice-answers.zip": "6c94c9579bd7293bea44204949b6644c9da20b24b3c4ddc3f012c8ba9b5c750f",
+    "plugins/weekly-plan.zip": "a8355c9b4b87907251f78dcaf700f486b9e343031e895c4c80760af2de8b86ed"
   },
-  "signature": "dfS8u+1Wn7Gm9meAqYFL/p5C2oAOh11NHLgFrLJ4iLHlzmNZXHaXsyn2km872Gvaz6o8ut75usqbP27mZuYpBQ=="
+  "signature": "UIrY11ZnTYzzKJMnaHvyPWvb/JtEQeUv7xcGspRIKQ1uQ96LrYeFWJASQwf45HPOkCr++eJN0vLfZ6olkmjXAQ=="
 }

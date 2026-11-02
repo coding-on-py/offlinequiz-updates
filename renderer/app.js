@@ -466,6 +466,7 @@ const DEFAULT_HOTKEYS = {
   "text-bigger": IS_MAC ? "Meta+=" : "Ctrl+=",
   "text-smaller": IS_MAC ? "Meta+-" : "Ctrl+-",
   "text-reset": IS_MAC ? "Meta+0" : "Ctrl+0",
+  "read-aloud": "r",
 };
 
 const HOTKEY_LABELS = {
@@ -479,6 +480,7 @@ const HOTKEY_LABELS = {
   "text-bigger": "Bigger text",
   "text-smaller": "Smaller text",
   "text-reset": "Reset text size",
+  "read-aloud": "Read aloud on or off",
 };
 
 function getHotkey(action) {
@@ -1701,19 +1703,30 @@ const Speech = (() => {
     const g = choices(), want = state.settings.voice;
     return g.length ? (g.find((v) => v.voiceURI === want) || g[0]) : fallback();
   }
-  function stop() { seq++; try { if (ok) window.speechSynthesis.cancel(); } catch (e) {} }
+  // silent at once: pause() cuts the sound off where cancel() alone can let a network voice finish its word, and
+  // resume() so the next question doesn't start paused
+  let keep = 0;
+  function stop() {
+    seq++; clearInterval(keep); keep = 0;
+    if (!ok) return;
+    const ss = window.speechSynthesis;
+    try { ss.pause(); } catch (e) {}
+    try { ss.cancel(); } catch (e) {}
+    try { ss.resume(); } catch (e) {}
+  }
   function rate() { const ms = Number(state.settings.revealSpeed) || 0; return ms > 0 ? Math.max(0.6, Math.min(2.4, 70 / ms)) : 1; }
-  // pieces of at most ~160 characters, ending at a sentence (a long utterance stops partway on some voices, Google's
-  // after about 15 seconds, with no end event), else at a comma or a space
-  function piecesOf(said) {
-    const out = [], MAX = 160;
+  // Each utterance a network voice (Google's) is given takes it a second or two to start, so the text goes in long
+  // pieces, about 40 seconds of speech, cut only between sentences (a cut mid-sentence was an odd pause); a sentence
+  // longer than that is cut at a comma, else a space. Other voices start at once and take a few sentences at a time.
+  function piecesOf(said, net) {
+    const out = [], MAX = net ? Math.max(240, Math.round(40000 * charsPerMs())) : 400;
     let at = 0;
     while (at < said.length) {
       let end = said.length;
       if (end - at > MAX) {
         const win = said.slice(at, at + MAX);
         let cut = -1;
-        for (const re of [/[.?!;]["”’)]*\s/g, /[,:]\s/g, /\s/g]) { let m; while ((m = re.exec(win))) cut = m.index + m[0].length; if (cut > 40) break; cut = -1; }
+        for (const re of [/[.?!;]["”’)]*\s/g, /[,:]\s/g, /\s/g]) { let m; while ((m = re.exec(win))) cut = m.index + m[0].length; if (cut > MAX * 0.3) break; cut = -1; }
         end = at + (cut > 0 ? cut : MAX);
       }
       out.push({ at, t: said.slice(at, end) });
@@ -1721,35 +1734,43 @@ const Speech = (() => {
     }
     return out.filter((p) => p.t.trim());
   }
+  // from: where to start in text, moved back to the start of its word (picking up after a wrong buzz says the
+  // whole word the buzz cut). onPos(i, sync): i the text index heard up to; sync when a piece starts sounding
   function speak(text, from, onPos, onEnd, raw) {
     stop();
     if (!ok) return false;
-    const my = seq, sc = speechScript(String(text), raw);
+    text = String(text);
+    while (from > 0 && from < text.length && /\S/.test(text[from - 1])) from--;
+    const my = seq, sc = speechScript(text, raw);
     let start = 0;
     while (start < sc.map.length && sc.map[start] < from) start++;
     const said = sc.spoken.slice(start);
     const at = (k) => (k > 0 ? sc.map[start + k - 1] + 1 : from);   // the text index after spoken character k-1
-    const todo = piecesOf(said);
+    const v = voice(), net = !!(v && v.localService === false);
+    const todo = piecesOf(said, net);
     if (!todo.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return true; }
-    const v = voice();
+    // Chrome has stopped a network voice partway through a long utterance; pausing and resuming it now and then
+    // keeps it going
+    if (net) keep = setInterval(() => { const ss = window.speechSynthesis; if (my !== seq) return; if (ss.speaking && !ss.paused) { try { ss.pause(); ss.resume(); } catch (e) {} } }, 12000);
     todo.forEach((p, k) => {
       const u = new SpeechSynthesisUtterance(p.t);
       if (v) { u.voice = v; u.lang = v.lang; }
       u.rate = rate();
+      u.onstart = () => { if (my === seq) onPos(at(p.at), true); };
       u.onboundary = (e) => {
         if (my !== seq || (e.name && e.name !== "word")) return;
         const ci = e.charIndex || 0, len = e.charLength || (/^\S*/.exec(p.t.slice(ci)) || [""])[0].length;
         onPos(at(p.at + ci + len));
       };
-      u.onend = () => { if (my !== seq) return; onPos(at(p.at + p.t.length)); if (k === todo.length - 1) onEnd(); };
-      u.onerror = (e) => { if (my === seq && e.error !== "interrupted" && e.error !== "canceled" && k === todo.length - 1) onEnd(); };
+      u.onend = () => { if (my !== seq) return; onPos(at(p.at + p.t.length)); if (k === todo.length - 1) { clearInterval(keep); keep = 0; onEnd(); } };
+      u.onerror = (e) => { if (my === seq && e.error !== "interrupted" && e.error !== "canceled" && k === todo.length - 1) { clearInterval(keep); keep = 0; onEnd(); } };
       window.speechSynthesis.speak(u);
     });
     return true;
   }
   // a voice that never says where it is (Google's voices send no word positions): the text follows its usual pace
   const charsPerMs = () => rate() * 0.015;
-  const on = () => ok && !!state.settings.readAloud && Number(state.settings.revealSpeed) > 0;
+  const on = () => ok && (!!state.settings.readAloud || !!pageRules().readAloud) && Number(state.settings.revealSpeed) > 0;
   return { ok, on, voices, choices, voice, rate, speak, stop, charsPerMs };
 })();
 
@@ -1925,7 +1946,7 @@ function followVoice(text, from, show, done, live, raw) {
     }
     raf = requestAnimationFrame(pace);
   };
-  Speech.speak(text, from, (i) => { if (!live() || ended) return; if (i > pos) { pos = i; lastAt = performance.now(); show(i); } }, finish, raw);
+  Speech.speak(text, from, (i, sync) => { if (!live() || ended) return; if (sync) lastAt = performance.now(); if (i > pos) { pos = i; lastAt = performance.now(); show(i); } }, finish, raw);
   raf = requestAnimationFrame(pace);
   return quit;
 }
@@ -2315,6 +2336,7 @@ document.addEventListener("keydown", (e) => {
     }
   }
 
+  if (e.key === "Escape" && voicePopOpen()) { e.preventDefault(); closeVoicePop(); return; }
   if (e.key === "Escape") {
     // Only VISIBLE overlays count, and the persistent settings modals are
     // excluded — they live in the DOM even while hidden, so the old selector
@@ -2373,6 +2395,11 @@ document.addEventListener("keydown", (e) => {
     if (matchesHotkey(e, "buzz") && !isInput) {
       e.preventDefault();
       if (state.sessionActive && !state.isBuzzed && state.mode === "tossups") buzz();
+    }
+    if (matchesHotkey(e, "read-aloud") && !isInput) {
+      e.preventDefault();
+      const ra = document.getElementById("opt-read-aloud");
+      if (ra && !ra.disabled) { ra.checked = !ra.checked; ra.dispatchEvent(new Event("change", { bubbles: true })); }
     }
     if (matchesHotkey(e, "start-skip") && !isInput) {
       e.preventDefault();
@@ -2920,11 +2947,11 @@ async function openReviewViewer(items) {
 // (function declarations: showScreen runs at boot, before this part of the file)
 function practiceKindOf(name) {
   if (name === "practice-tossups" || name === "practice-bonuses") return "own";
-  return { "practice-review": "review", "practice-trial": "trial", "practice-list": "list", "practice-starred": "starred" }[name] || null;
+  return { "practice-review": "review", "practice-trial": "trial", "practice-list": "list", "practice-starred": "starred", "practice-plugin": "plugin" }[name] || null;
 }
 function isPracticePage(name) { const k = practiceKindOf(name); return !!k && k !== "own"; }
-const PRACTICE_TITLES = { review: "Review", trial: "Trial", list: "Question list", starred: "Starred tossups" };
-function isListPage() { return ["review", "list", "starred"].includes(state.practiceKind); }
+const PRACTICE_TITLES = { review: "Review", trial: "Trial", list: "Question list", starred: "Starred tossups", plugin: "Practice" };
+function isListPage() { return ["review", "list", "starred"].includes(state.practiceKind) || (state.practiceKind === "plugin" && !!pageRules().ids); }
 function trialNow() { try { return _trial; } catch (e) { return null; } }   // (safe before _trial exists)
 // what a session is made of: parked and brought back together
 const PRACTICE_SESSION_KEYS = ["sessionActive", "sessionId", "questionCount", "totalPoints", "powers", "negs", "correct", "skips",
@@ -2995,6 +3022,7 @@ function endSpecialPractice() {
   if (state.sessionActive) endSession(); else endCustom();
   freeReader();
   state._pageTitle = null;
+  if (state._pageRules) { const r = state._pageRules; state._pageRules = null; paintPluginSide(); try { if (r.onLeave) r.onLeave(); } catch (e) { console.error(e); } }
 }
 // Put a kind of practice on the reader. fresh: start that page anew even if it's the one showing (a new review).
 function enterPracticeKind(kind, fresh) {
@@ -3034,9 +3062,83 @@ function startListSession(kind, type, ids, opts) {
   startSession();
 }
 function startReviewSession(ids) { startListSession("review", "tossups", ids); }
+// ── A plugin's page on the reader (15.63) ──
+// Rival, Lightning, First Lines, Quotations, Listen and Challenge play on the real reader, on a page of their own titled
+// for them, with Setup (its categories) beside it. Their rules (all optional):
+//   title, type ("tossups"), ids (a fixed list instead of Setup's questions; then autostart), start (true: start now)
+//   accept(q): only questions it takes · excerpt(q, text) → { from, to }: the part read (text: the display text)
+//   stops(q, text) → [index…]: reading waits at each until P (pauseLabel says what P does there)
+//   onTick(index, q, length): as it reads (index in the excerpt) · think: seconds to buzz after it's read
+//   readAloud / readHide: the voice on (and the text hidden) on this page whatever the Voice settings say
+//   panel(el): draws its own box at the top of the side column · onStart / onLeave
+// Events: question:render, buzz, answer:result, question:dead (read through with no buzz, or an opponent took it).
+const pageRules = () => (state.practiceKind === "plugin" && state._pageRules) || {};
+function startPluginPractice(rules) {
+  if (!rules || typeof rules !== "object") return false;
+  if (leaveTrialFirst(() => startPluginPractice(rules))) return true;
+  const type = rules.type === "bonuses" ? "bonuses" : "tossups";
+  const ids = Array.isArray(rules.ids) && rules.ids.length ? rules.ids.slice() : null;
+  enterPracticeKind("plugin", true);
+  state._pageRules = Object.assign({}, rules, { ids });
+  state._pageType = type;
+  state._pageTitle = typeof rules.title === "string" && rules.title.trim() ? rules.title.trim().slice(0, 60) : null;
+  if (ids) { state.customType = type; state.reviewIds = type === "tossups" ? ids.slice() : null; state.bonusIds = type === "bonuses" ? ids.slice() : null; }
+  showScreen("practice-plugin");
+  setMode(type);
+  paintPluginSide();
+  if (ids || rules.start) startSession();
+  return true;
+}
+function paintPluginSide() {
+  const el = document.getElementById("plugin-side"); if (!el) return;
+  const r = pageRules();
+  el.hidden = !r.panel;
+  if (!r.panel) { el.innerHTML = ""; return; }
+  try { r.panel(el); } catch (e) { console.error(e); }
+}
+// where reading waits next on a plugin's page (an index in the display text), or 0
+function pageStop() {
+  const at = state._pageStopDone || 0;
+  return (state._pageStops || []).find((i) => i > at && i > 0 && i < (state.currentDisplayText || "").length) || 0;
+}
+function pauseAtPageStop(i) {
+  state._pageStopDone = i;
+  state.isPaused = true;
+  const el = document.createElement("div");
+  el.className = "pause-overlay page-stop"; el.id = "pause-overlay";
+  el.textContent = pageRules().pauseLabel || "PAUSED";
+  el.addEventListener("click", () => togglePause());
+  $("#question-area")?.appendChild(el);
+}
+function pageTick() {
+  const r = pageRules(); if (!r.onTick || state.mode !== "tossups") return;
+  try { r.onTick(state.revealIndex, state.currentQuestion, (state.currentDisplayText || "").length); } catch (e) { console.error(e); }
+}
+// someone else buzzes (Rival): right, the tossup is theirs and its answer shows; wrong, it reads on
+function opponentBuzz(o) {
+  o = o || {};
+  if (!state.sessionActive || state.mode !== "tossups" || state.isBuzzed || state.resultAreaVisible || !state.currentQuestion) return false;
+  const text = state.currentDisplayText || "";
+  (state.buzzMarks = state.buzzMarks || []).push(state.revealIndex);
+  const who = String(o.name || "Your rival").slice(0, 30);
+  if (o.correct) {
+    if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+    Speech.stop(); stopEventTimer();
+    state._deadBanner = who + " got it";
+    state._deadBy = who;
+    markDeadQuestion(text);
+    return true;
+  }
+  const n = document.createElement("div");
+  n.className = "opp-note"; n.textContent = who + " buzzed and missed";
+  $("#question-area")?.appendChild(n);
+  setTimeout(() => n.remove(), 2600);
+  $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
+  return true;
+}
 function startBonusIdsSession(ids, opts) { startListSession("list", "bonuses", ids, opts); }
 // what a finished list says, and its Done (back to where it was started from)
-const listDoneText = () => (state.practiceKind === "starred" ? "That's all your starred tossups." : state.practiceKind === "list" ? "That's the whole list." : "Review complete");
+const listDoneText = () => (state.practiceKind === "starred" ? "That's all your starred tossups." : state.practiceKind === "list" ? "That's the whole list." : state.practiceKind === "plugin" ? (pageRules().doneText || "That's the whole list.") : "Review complete");
 const listPageDone = () => isListPage() && practiceStalled() && !state.reviewIds && !state.bonusIds;
 function leaveListPage() { if (state.sessionActive) endSession(); goBack(); }
 
@@ -4808,6 +4910,8 @@ function fillVoices() {
 // pronunciation guides and moderator notes hidden (their switches locked on)
 function syncVoiceRow() {
   const on = Speech.ok && !!state.settings.readAloud;
+  const vb = document.getElementById("btn-voice"); if (vb) { vb.classList.toggle("on", on); vb.title = on ? "Read aloud is on" : ""; }
+  const vk = document.getElementById("vp-key"); if (vk) { const k = keyDisplay("read-aloud"); vk.innerHTML = k && k !== "Not Set" ? "<kbd>" + escapeHtml(k) + "</kbd>" : ""; }
   const row = document.getElementById("read-voice-row"); if (row) row.hidden = !(on && Speech.choices().length > 1);
   const hide = document.getElementById("read-hide-row"); if (hide) hide.hidden = !on;
   const hb = document.getElementById("opt-read-hide"); if (hb) hb.checked = !!state.settings.readHide;
@@ -4822,13 +4926,38 @@ function syncVoiceRow() {
     const row = b.closest(".checkbox-row, .setting-row"); if (row) { row.classList.toggle("locked-by-read", on); row.title = on ? "Always on while Read aloud is on" : ""; }
   });
 }
-// Read aloud with the text hidden: the words read so far show as bars (the question's shape, not its words) until
+// Read aloud with the text hidden: a box that says "Reading" (ui.css) stands in for the words until
 // the result is up
 function setReadHidden(on) { document.getElementById("question-area")?.classList.toggle("read-hidden", !!on); }
 // after the whole script has loaded (syncVoiceRow may switch guides and notes off through setHidePron / setHideNotes)
 if (Speech.ok) { setTimeout(fillVoices, 0); try { window.speechSynthesis.addEventListener("voiceschanged", fillVoices); } catch (e) {} }
 setTimeout(syncVoiceRow, 0);
-window.QB?.on?.("screen:change", () => Speech.stop());
+window.QB?.on?.("screen:change", () => { Speech.stop(); closeVoicePop(); });
+// ── The Voice button (15.63): Read aloud, its voice, hiding the text and plugins' voice settings (Voice Answers) in a
+// popover beside Setup; R turns Read aloud on or off ──
+function voicePopOpen() { const p = document.getElementById("voice-pop"); return !!p && !p.hidden; }
+function placeVoicePop() {
+  const b = document.getElementById("btn-voice"), p = document.getElementById("voice-pop"); if (!b || !p) return;
+  const r = b.getBoundingClientRect(), w = p.offsetWidth || 320;
+  p.style.top = Math.round(r.bottom + 6) + "px";
+  p.style.left = Math.round(Math.max(12, Math.min(window.innerWidth - w - 12, r.right - w))) + "px";
+}
+function openVoicePop() {
+  const p = document.getElementById("voice-pop"); if (!p) return;
+  if (p.parentElement !== document.body) document.body.appendChild(p);   // fixed to the window, whatever the header does
+  window.QB?.renderVoiceSettings?.(document.getElementById("ext-voice-host"));
+  syncVoiceRow();
+  p.hidden = false; placeVoicePop();
+  document.getElementById("btn-voice")?.setAttribute("aria-expanded", "true");
+}
+function closeVoicePop() {
+  const p = document.getElementById("voice-pop"); if (!p || p.hidden) return;
+  p.hidden = true;
+  document.getElementById("btn-voice")?.setAttribute("aria-expanded", "false");
+}
+document.getElementById("btn-voice")?.addEventListener("click", () => (voicePopOpen() ? closeVoicePop() : openVoicePop()));
+document.addEventListener("pointerdown", (e) => { if (voicePopOpen() && !e.target.closest("#voice-pop, #btn-voice")) closeVoicePop(); });
+window.addEventListener("resize", () => { if (voicePopOpen()) placeVoicePop(); });
 $("#opt-allow-skips")?.addEventListener("change", (e) => { state.settings.allowSkips = e.target.checked; lsSet("qb-allow-skips", e.target.checked); });
 $("#strictness-slider")?.addEventListener("input", (e) => {
   state.settings.strictness = parseInt(e.target.value);
@@ -5070,6 +5199,7 @@ async function nextQuestion() {
   state.isBuzzed = false;
   state.questionFullyRead = false;
   state._stoppedAtPower = false;
+  state._pageStops = null; state._pageStopDone = 0; state._deadBanner = null; state._deadBy = null;
   state.buzzMarks = [];
   state.buzzPosition = 0;
   state.revealIndex = 0;
@@ -5170,7 +5300,8 @@ async function nextQuestion() {
   const params = _randomQuestionParams(filters);
 
   const qType = state.mode === "tossups" ? "tossup" : "bonus";
-  const servable = (q) => q && (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode }));
+  const accept = pageRules().accept;
+  const servable = (q) => q && (!window.QB?.passesQuestionFilters || window.QB.passesQuestionFilters(q, { mode: state.mode })) && (!accept || (() => { try { return !!accept(q); } catch (e) { return true; } })());
 
   // Serve from the prefetch queue when it has something valid — this is what
   // makes "next" instant. Fall back to a live fetch otherwise.
@@ -5208,7 +5339,7 @@ async function nextQuestion() {
       endOfQueue("No questions match your filters. Change Setup and press Next");
       return;
     }
-    for (let tries = 0; tries < 8 && !fresh(question); tries++) {
+    for (let tries = 0; tries < (accept ? 20 : 8) && !fresh(question); tries++) {
       try {
         const retry = await API.get(`${endpoint}?${params}`);
         const next = state.mode === "tossups" ? retry.tossup : retry.bonus;
@@ -5746,8 +5877,19 @@ function tossupDisplay(q) {
   if (state.settings.hidePronunciations) text = stripPronunciations(text);
   text = window.QB?.applyTextTransforms?.(text, { type: "tossup", question: q }) ?? text;
   const powerIdx = text.indexOf("(*)");
-  const displayText = text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "");
-  return { displayText, prePowerEnd: powerIdx >= 0 ? powerIdx : -1 };
+  const full = text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "");
+  // a plugin's page may read only part of it (Lightning: the giveaway); positions are mapped back (displayPosToOriginal)
+  state._excerptFrom = 0; state._fullDisplayText = null;
+  const ex = pageRules().excerpt;
+  if (ex && state.currentQuestion === q) {
+    let r = null; try { r = ex(q, full); } catch (e) { console.error(e); }
+    if (r && r.to > r.from && r.from >= 0 && r.to <= full.length && (r.from > 0 || r.to < full.length)) {
+      state._excerptFrom = r.from; state._fullDisplayText = full;
+      const p = powerIdx >= r.from && powerIdx <= r.to ? powerIdx - r.from : -1;
+      return { displayText: full.slice(r.from, r.to), prePowerEnd: p };
+    }
+  }
+  return { displayText: full, prePowerEnd: powerIdx >= 0 ? powerIdx : -1 };
 }
 function bonusDisplay(q) {
   let leadin = q.leadin_sanitized || q.leadin || "";
@@ -5767,9 +5909,10 @@ function bonusDisplay(q) {
 }
 
 function renderTossup(q) {
-  setReadHidden(Speech.on() && state.settings.readHide);
+  setReadHidden(Speech.on() && (state.settings.readHide || !!pageRules().readHide));
   const { displayText, prePowerEnd } = tossupDisplay(q);
   state.currentDisplayText = displayText;
+  { const st = pageRules().stops; let a = null; try { a = st ? st(q, displayText) : null; } catch (e) { console.error(e); } state._pageStops = Array.isArray(a) ? a.filter((i) => i > 0).sort((x, y) => x - y) : null; }
 
   state.buzzPosition = 0;
 
@@ -5881,7 +6024,7 @@ function readBonusText(el, text, done, kind) {
   r.finish = (callDone = true) => {
     if (r.raf) cancelAnimationFrame(r.raf); r.raf = 0;
     if (state._bonusReader === r) state._bonusReader = null;
-    el.innerHTML = '<span class="revealed">' + escapeHtml(r.text) + "</span>";   // a span, so a hidden read (read-hidden) shows it as bars
+    el.innerHTML = '<span class="revealed">' + escapeHtml(r.text) + "</span>";   // a span, so a hidden read (read-hidden) shows its box
     if (callDone && r.done) { const d = r.done; r.done = null; d(); }
   };
   const step = (t) => {
@@ -6257,6 +6400,12 @@ function revealText(text) {
 
   const speed = state.settings.revealSpeed;
   if (speed === 0) {
+    // a plugin page's stop before the power mark: show up to it and wait there
+    { const ps = pageStop(); if (ps && !(playSetting("stopOnPower") && state.prePowerEnd > 0 && !state._stoppedAtPower && state.prePowerEnd < ps)) {
+      state.revealIndex = ps; state.buzzPosition = ps;
+      $("#question-text").innerHTML = formatQuestionText(text, ps, state.prePowerEnd);
+      pauseAtPageStop(ps); pageTick(); return;
+    } }
     // Instant reading still honours "Stop on power": reveal exactly to the
     // power mark and pause there; resuming reveals the rest instantly.
     if (playSetting("stopOnPower") && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) {
@@ -6285,10 +6434,13 @@ function revealText(text) {
     const quit = followVoice(text, state.revealIndex, (i) => {
       let n = Math.min(text.length, i);
       if (atPower(n)) n = state.prePowerEnd;
+      const ps = pageStop(); if (ps && n >= ps) n = ps;
       if (n <= state.revealIndex) return;
       state.revealIndex = n; state.buzzPosition = n;
       $("#question-text").innerHTML = formatQuestionText(text, n, state.prePowerEnd);
       followReading($("#question-text .revealed"), qid);
+      pageTick();
+      if (ps && n >= ps && !atPower(n)) { Speech.stop(); quit(); pauseAtPageStop(ps); return; }
       if (atPower(n)) {
         Speech.stop(); quit();
         state._stoppedAtPower = true; state.isPaused = true;
@@ -6342,10 +6494,13 @@ function revealText(text) {
     let n = Math.max(1, Math.floor((ts - lastTime) / curSpeed));
     lastTime += n * curSpeed;
     if (playSetting("stopOnPower") && state.prePowerEnd > 0 && !state._stoppedAtPower && state.revealIndex < state.prePowerEnd) n = Math.min(n, state.prePowerEnd - state.revealIndex);
+    const ps = pageStop(); if (ps) n = Math.min(n, ps - state.revealIndex);
     state.revealIndex = Math.min(text.length, state.revealIndex + n);
     state.buzzPosition = state.revealIndex;
     $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
     followReading($("#question-text .revealed"), state.currentQuestion && state.currentQuestion.id);
+    pageTick();
+    if (ps && state.revealIndex >= ps && !(playSetting("stopOnPower") && state.prePowerEnd === ps && !state._stoppedAtPower)) { pauseAtPageStop(ps); return; }
     if (playSetting("stopOnPower") && state.prePowerEnd > 0 && state.revealIndex >= state.prePowerEnd && !state._stoppedAtPower) {
       state._stoppedAtPower = true;
       state.isPaused = true;
@@ -6376,7 +6531,7 @@ function markDeadQuestion(text) {
   const answerDiv = $("#result-answer");
   area.classList.remove("hidden");
   banner.className = "result-banner dead";
-  banner.textContent = "DEAD (0 pts)";
+  banner.textContent = state._deadBanner || "DEAD (0 pts)";
   answerDiv.innerHTML = `<div class="ra-row"><span class="ra-k">Answer</span><span class="actual">${answerLineHtml(state.currentQuestion?.answer, state.currentQuestion?.answer_sanitized || "")}</span></div>`;
   renderResultTags(state.currentQuestion);
   $("#buzz-area").classList.add("hidden");
@@ -6406,6 +6561,7 @@ function markDeadQuestion(text) {
       points: 0,
     }).catch(() => {});
   }
+  qbEmit("question:dead", { question: state.currentQuestion, by: state._deadBy || null });
 
   setTimeout(() => { try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {} }, 50);
 }
@@ -6467,7 +6623,8 @@ function mapDisplayPosToOriginal(disp, orig, displayPos) {
 }
 function displayPosToOriginal(displayPos) {
   const orig = state.currentQuestion?.question_sanitized || "";
-  const disp = state.currentDisplayText || "";
+  const disp = state._fullDisplayText || state.currentDisplayText || "";
+  displayPos += state._excerptFrom || 0;
   if (!disp || !orig || disp === orig) return displayPos;
   let oi = 0, di = 0;
   while (di < displayPos && oi < orig.length) {
@@ -6638,7 +6795,8 @@ function stopBuzzTimer() { stopEventTimer(); }
 
 function startBuzzWindow() {
   if (ttsHold) return;
-  startEventTimer(playSetting("buzzWindow"), "Buzz", () => {
+  const think = pageRules().think;
+  startEventTimer(think != null ? think : playSetting("buzzWindow"), "Buzz", () => {
     markDeadQuestion(state.currentDisplayText || state.currentQuestion?.question_sanitized || "");
   });
 }
@@ -6757,7 +6915,7 @@ function reconcileTossup(q, was, srv) {
 
 async function submitTossupAnswer(answer) {
   if (!state.currentQuestion || state.mode !== "tossups") return;
-  state.resultAreaVisible = true; setReadHidden(false);
+  state.resultAreaVisible = true;   // (the hidden text stays hidden through a prompt or a rebuzz: displayTossupResult shows it)
   stopBuzzTimer();
 
   try {
@@ -6884,6 +7042,7 @@ async function judgeWithPluginRules(answer) {
 function displayTossupResult(result, userAnswer) {
   const area = $("#result-area");
   area.classList.remove("hidden");
+  setReadHidden(false);   // the answer is in: nothing more to answer, so a hidden read shows its text
 
   const pauseOverlay = document.getElementById("pause-overlay");
   if (pauseOverlay) pauseOverlay.remove();
@@ -10171,7 +10330,7 @@ function allHotkeyActions() {
 }
 const HOTKEY_SCOPES = {
   "buzz": "practice", "start-skip": "practice", "next-question": "practice",
-  "end-session": "practice", "star-question": "practice", "pause-reveal": "practice",
+  "end-session": "practice", "star-question": "practice", "pause-reveal": "practice", "read-aloud": "practice",
 
   "home": "global",
 };
@@ -13629,6 +13788,8 @@ function init() {
         sessionId: state.sessionId,
         currentQuestion: state.currentQuestion,
         isBuzzed: state.isBuzzed,
+        resultShown: !!state.resultAreaVisible,   // the tossup is over (answered, or read through)
+        practiceKind: state.practiceKind || "own",
         questionCount: state.questionCount,
         totalPoints: state.totalPoints,
         avatar: state.avatar,
@@ -13748,6 +13909,16 @@ function init() {
       refreshArt: () => { try { loadTitleArt(); loadSettingsArt(); } catch (e) {} },
       addAppearanceOptions: (opts) => { try { return addAppearanceOptions(opts); } catch (e) { return () => {}; } },
       playSound: (name) => { try { if (Sound && typeof Sound[name] === "function") Sound[name](); } catch (e) {} },
+      // a page of the plugin's own on the real reader, with Setup beside it (15.63; its rules: startPluginPractice)
+      playPractice: (rules) => startPluginPractice(rules),
+      endPractice: () => { if (state.practiceKind === "plugin" && state.sessionActive) endSession(); },
+      opponentBuzz: (o) => opponentBuzz(o),
+      nextQuestion: () => { if (state.practiceKind === "plugin" && state.sessionActive && !state._awaitingNext) nextQuestion(); },
+      paintPracticePanel: () => paintPluginSide(),
+      onPracticePage: () => state.practiceKind === "plugin" && !!document.querySelector("#practice-screen.active"),
+      // say something in the Read aloud voice (Listen says the answer); done() after
+      speak: (text, done) => { if (!Speech.ok || !Speech.speak(String(text || ""), 0, () => {}, () => { if (done) done(); })) { if (done) setTimeout(done, 0); } },
+      stopSpeaking: () => Speech.stop(),
       // tossups / bonuses play on a page of their own; opts.title names it ("Folder: Shakespeare")
       launchQuestions: (target, ids, opts) => {
         if (!Array.isArray(ids) || !ids.length) return false;

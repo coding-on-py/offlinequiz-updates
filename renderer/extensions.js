@@ -928,7 +928,7 @@
   // boot and the zip is refused on import (multiplayer is refused as a registered builtin). Since 14.85
   // the plugins retired in 14.50 (plugins/retired/) can be imported again; none is listed here.
   const BUILT_IN_PLUGINS = { "achievement-icons": "Achievement Icons" };
-  const REMOVED_PLUGINS = {};
+  const REMOVED_PLUGINS = { "set-series": "Set Series", "bonus-parts": "Bonus Parts" };   // 15.63: taken out of the Store and dropped where they were added
   const RETIRED_PLUGINS = { ...BUILT_IN_PLUGINS, ...REMOVED_PLUGINS };
   function finalizePlugin(filename, code, manifest, pkg) {
     if (!manifest || !manifest.id) { importFail("Plugin must call QB.registerPlugin({ id, ... })"); return null; }
@@ -1835,9 +1835,19 @@ QB.registerTheme({
   // own now (see syncBaseTheme), so using this only creates a duplicate entry.
   QB.installStarterTheme = () => { QB.installTheme(DEFAULT_THEME_FILE, STARTER_THEME); QB.renderScreen(); };
 
-  function settingControl(extId, def) {
+  function settingControl(extId, def, location) {
     const val = QB.getSetting(extId, def.key);
     const idAttr = ' data-ext-id="' + esc(extId) + '" data-setting-key="' + esc(def.key) + '"';
+    // in the Setup panel a plugin's settings look like the app's own: a switch before its label, a select beside it
+    const rows = location === "practice" || location === "voice";
+    if (rows && def.type === "toggle")
+      return '<label class="checkbox-row"><input type="checkbox"' + idAttr + (val ? " checked" : "") + "> " + esc(def.label) + "</label>";
+    if (rows && def.type === "select") {
+      let opts = typeof def.options === "function" ? def.options() : (def.options || []);
+      if (!Array.isArray(opts)) opts = [];
+      return '<div class="slider-group"><span class="sg-label">' + esc(def.label) + '</span><select class="mode-input"' + idAttr + ">" +
+        opts.map((o) => { const v = o.value != null ? o.value : o; const l = o.label != null ? o.label : o; return '<option value="' + esc(v) + '"' + (val == v ? " selected" : "") + ">" + esc(l) + "</option>"; }).join("") + "</select></div>";
+    }
     let control = "";
     if (def.type === "toggle") {
       control = '<label class="ext-switch ext-switch-sm"><input type="checkbox"' + idAttr + (val ? " checked" : "") + '><span class="ext-slider"></span></label>';
@@ -1870,7 +1880,7 @@ QB.registerTheme({
   function settingsHtml(ext, location) {
     const defs = ((ext._manifest && ext._manifest.settings) || []).filter((d) => d.type !== "hidden" && (d.location || "card") === location);
     if (!ext.enabled || !defs.length) return "";
-    return defs.map((d) => settingControl(ext.id, d)).join("");
+    return defs.map((d) => settingControl(ext.id, d, location)).join("");
   }
   function wireSettingControls(root) {
     if (!root) return;
@@ -1896,6 +1906,8 @@ QB.registerTheme({
     });
   }
 
+  // "Voice Answers" → "Voice answers"; a word in capitals (TTS) or with one inside (QBReader) stays
+  const sentenceCase = (t) => String(t || "").split(" ").map((w, i) => (i && /^[A-Z][a-z]+$/.test(w) ? w.toLowerCase() : w)).join(" ");
   function renderSettingsInto(container, location) {
     if (!container) return;
     const exts = QB._themes.filter((t) => t.enabled).concat(QB._plugins.filter((p) => p.enabled));
@@ -1912,7 +1924,10 @@ QB.registerTheme({
         (s.title ? '<div class="ext-setting-label">' + esc(s.title) + "</div>" : "") +
         '<div data-settings-section="' + esc(ext.id + ":" + s.id) + '"></div>'
       ).join("");
-      if (inner || sectionHtml) html += '<div class="ext-settings-group"><div class="ext-settings-group-title">' + esc(ext.name) + "</div>" + (inner || "") + sectionHtml + "</div>";
+      if (!inner && !sectionHtml) return;
+      // Setup's own sections: a sentence-case label ("Voice answers") over the rows
+      if (location === "practice" || location === "voice") html += '<div class="ext-settings-group ext-practice-group"><div class="filter-label">' + esc(sentenceCase(ext.name)) + '</div><div class="fp-checks">' + (inner || "") + "</div>" + sectionHtml + "</div>";
+      else html += '<div class="ext-settings-group"><div class="ext-settings-group-title">' + esc(ext.name) + "</div>" + (inner || "") + sectionHtml + "</div>";
     });
     container.innerHTML = html;
     container.style.display = html ? "" : "none";
@@ -1925,6 +1940,7 @@ QB.registerTheme({
     if (sec) sec.style.display = container && container.children.length ? "" : "none";
   };
   QB.renderPracticeSettings = (container) => renderSettingsInto(container, "practice");
+  QB.renderVoiceSettings = (container) => renderSettingsInto(container, "voice");   // the Voice popover by Setup (15.63)
   QB.renderAppearanceSettings = (container) => {
     renderSettingsInto(container, "appearance");
     try { if (QB._host && QB._host.syncAppearanceSection) QB._host.syncAppearanceSection(); } catch (e) {}
@@ -1974,8 +1990,8 @@ QB.registerTheme({
     // 15.62
     "rival": "Play", "challenge": "Play", "difficulty-ladder": "Play", "lightning": "Play", "voice-answers": "Play",
     "first-lines": "Study", "quotations": "Study", "missed-clues": "Study", "listen": "Study", "answer-notes": "Study",
-    "buzz-tracker": "Analysis", "gap-finder": "Analysis", "neg-check": "Analysis", "bonus-parts": "Analysis", "answer-clusters": "Analysis",
-    "weekly-plan": "Tools", "tournament-prep": "Tools", "set-series": "Tools", "pyramid-check": "Tools", "moderator": "Tools",
+    "buzz-tracker": "Analysis", "gap-finder": "Analysis", "neg-check": "Analysis", "answer-clusters": "Analysis",
+    "weekly-plan": "Tools", "tournament-prep": "Tools", "pyramid-check": "Tools", "moderator": "Tools",
   };
   const GROUP_ORDER = ["Play", "Study", "Tools", "Analysis", "Extras", "Other"];
   const GROUP_COLOR = { Play: "#f0883e", Study: "#3fb950", Tools: "#58a6ff", Analysis: "#bc8cff", Extras: "#8b949e", Other: "#8b949e" };
@@ -2220,7 +2236,13 @@ QB.registerTheme({
       cards += QB._themes.map((t) => themeCardHtml(t.id, t.name, themeColors(t), !!t.enabled, t.description || "", true)).join("");
       body = '<div class="theme-grid">' + cards + "</div>" + importZone("theme", ' style="margin-top:16px"');
     }
+    QB._store.searching = !!(document.activeElement && document.activeElement.id === "store-search");
+    // drawn again in place (a Get, a switch): whatever scrolls stays where it was, so a card never jumps
+    const kept = []; for (let n = container; n; n = n.parentElement) if (n.scrollTop) kept.push([n, n.scrollTop]);
+    const sy = window.scrollY;
     container.innerHTML = '<div class="ext-tabs" role="tablist" aria-label="Plugins">' + tabs + bulk + "</div>" + body;
+    if (QB._drawnTab === tab) { kept.forEach(([n, y]) => { n.scrollTop = y; }); if (window.scrollY !== sy) window.scrollTo(0, sy); }
+    QB._drawnTab = tab;
     wireScreen();
     if (tab === "store" && QB._host && QB._host.tip) QB._host.tip(container, "store", null, container.querySelector(".ext-tabs")?.nextElementSibling);
   };
@@ -2244,28 +2266,18 @@ QB.registerTheme({
     "lightning": ["Play", "Speed", "Recall"], "voice-answers": ["Play", "Voice", "Tournament"],
     "first-lines": ["Study", "Power", "Clues"], "quotations": ["Study", "Literature", "Quotes"], "missed-clues": ["Study", "Review", "Memory"],
     "listen": ["Study", "Audio", "Hands free"], "answer-notes": ["Study", "Notes", "Answers"],
-    "buzz-tracker": ["Analysis", "Buzzing", "Progress"], "gap-finder": ["Analysis", "Distribution", "Practice"], "neg-check": ["Analysis", "Negs", "Patterns"],
-    "bonus-parts": ["Analysis", "Bonuses", "Drill"], "answer-clusters": ["Analysis", "Answers", "Mix-ups"],
-    "weekly-plan": ["Tools", "Plan", "Goals"], "tournament-prep": ["Tools", "Tournaments", "Plan"], "set-series": ["Tools", "Sets", "Packets"],
+    "buzz-tracker": ["Analysis", "Buzzing", "Progress"], "gap-finder": ["Analysis", "Distribution", "Practice"], "neg-check": ["Analysis", "Negs", "Patterns"], "answer-clusters": ["Analysis", "Answers", "Mix-ups"],
+    "weekly-plan": ["Tools", "Plan", "Goals"], "tournament-prep": ["Tools", "Tournaments", "Plan"],
     "pyramid-check": ["Tools", "Writing", "Clues"], "moderator": ["Tools", "Club", "Reading"],
   };
-  const fmtCount = (n) => { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1).replace(/\.0$/, "") + "K" : String(n); };
   const SICO = {
     down: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
-    heart: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>',
+    search: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
   };
   // an id for this browser or app, so a download is counted once (an account counts as itself)
   function installId() {
     try { let v = localStorage.getItem("qb-install-id"); if (!v || !/^[a-z0-9]{16,40}$/.test(v)) { v = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 24); localStorage.setItem("qb-install-id", v); } return v; }
     catch (e) { return ""; }
-  }
-  function loadStoreStats() {
-    const st = QB._store;
-    if (st.statsLoading || (st.stats && Date.now() - st.statsAt < 60e3)) return;
-    st.statsLoading = true;
-    Promise.resolve(QB._host && QB._host.api ? QB._host.api.get("/api/plugin-stats") : null)
-      .then((d) => { if (d && d.stats) { st.stats = d.stats; st.statsAt = Date.now(); } })
-      .catch(() => {}).then(() => { st.statsLoading = false; if (QB._extTab === "store" && st.stats) QB.renderScreen(); });
   }
   // the app's list: the plugins its updates carry, each read from its zip (kept for Get)
   async function appStoreList() {
@@ -2300,13 +2312,13 @@ QB.registerTheme({
       return '<div class="ext-empty-state">Loading…</div>';
     }
     if (!st.list.length) return '<div class="ext-empty-state">The Store is empty right now</div>';
-    loadStoreStats();
-    const stats = st.stats || {};
-    const items = st.list.slice().sort((a, b) => GROUP_ORDER.indexOf(groupOf(a.id)) - GROUP_ORDER.indexOf(groupOf(b.id)) || ((stats[b.id] || {}).downloads || 0) - ((stats[a.id] || {}).downloads || 0) || String(a.name).localeCompare(String(b.name)));
-    return '<div class="sc-grid">' + items.map((item) => {
+    // (15.63: no download or like counts on the cards; a search box over them instead, which filters as you type)
+    const items = st.list.slice().sort((a, b) => GROUP_ORDER.indexOf(groupOf(a.id)) - GROUP_ORDER.indexOf(groupOf(b.id)) || String(a.name).localeCompare(String(b.name)));
+    const search = '<label class="sc-search">' + SICO.search + '<input type="search" id="store-search" placeholder="Search plugins" aria-label="Search plugins" autocomplete="off" spellcheck="false" value="' + esc(st.q || "") + '"></label>';
+    return search + '<div class="ext-empty-state sc-none" hidden>No plugins match</div><div class="sc-grid">' + items.map((item) => {
       const g = groupOf(item.id), color = GROUP_COLOR[g];
       const have = QB._plugins.find((x) => x.id === item.id && !x._builtin);
-      const busy = st.busy[item.id], n = stats[item.id] || { downloads: 0, likes: 0, liked: false };
+      const busy = st.busy[item.id];
       const btn = busy ? '<button type="button" class="btn btn-sm" disabled>' + esc(busy) + "</button>"
         : st.failed[item.id] ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '" title="Couldn\'t add it. Try again">Retry</button>'
         : QB.pluginLocked(item.id) ? buyBtn(item.id)
@@ -2314,20 +2326,20 @@ QB.registerTheme({
         : verNewer(item.version, have.version) ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '">Update</button>'
         : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
       const tags = (PLUGIN_TAGS[item.id] || [g]).map((t) => '<span class="sc-tag">' + esc(t) + "</span>").join("");
-      return '<article class="sc-card" data-guide="' + esc(item.id) + '" tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it" style="--g:' + esc(color) + '">' +
+      const words = [item.name, item.description, g].concat(PLUGIN_TAGS[item.id] || []).join(" ").toLowerCase();
+      return '<article class="sc-card" data-guide="' + esc(item.id) + '" data-search="' + esc(words) + '" tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it" style="--g:' + esc(color) + '">' +
         storeShot(item, color) +
         '<div class="sc-body"><h3 class="sc-name">' + esc(item.name) + '</h3><div class="sc-by">by <span>' + esc(item.author || "OfflineQuiz") + "</span> · v" + esc(item.version) + "</div>" +
         '<p class="sc-desc">' + esc(item.description || "") + '</p><div class="sc-tags">' + tags + "</div>" +
-        '<div class="sc-foot">' + btn + '<span class="sc-nums"><span class="sc-n" title="Downloads">' + SICO.down + '<b class="num">' + fmtCount(n.downloads) + "</b></span>" +
-        '<button type="button" class="sc-n sc-like' + (n.liked ? " on" : "") + '" data-store-like="' + esc(item.id) + '" aria-pressed="' + !!n.liked + '" title="' + (n.liked ? "Unlike" : "Like") + '">' + SICO.heart + '<b class="num">' + fmtCount(n.likes) + "</b></button></span></div></div></article>";
+        '<div class="sc-foot">' + btn + "</div></div></article>";
     }).join("") + "</div>";
   }
-  async function storeLike(id, btn) {
-    const st = QB._store, cur = (st.stats || {})[id] || { downloads: 0, likes: 0, liked: false }, on = !cur.liked;
-    let r = null;
-    try { r = await QB._host.api.post("/api/plugin-stats", { action: "like", id, on }); } catch (e) {}
-    if (r && r.stats) { st.stats = { ...(st.stats || {}), [id]: r.stats }; QB.renderScreen(); return; }
-    if (QB._host && QB._host.openAccount) QB._host.openAccount("signin", { reason: "Sign in to like plugins." });
+  // every word typed is somewhere in a card's name, description, group or tags
+  function storeFilter(root) {
+    const q = String(QB._store.q || "").toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    root.querySelectorAll(".sc-card[data-search]").forEach((c) => { const ok = q.every((w) => c.dataset.search.includes(w)); c.hidden = !ok; if (ok) shown++; });
+    const none = root.querySelector(".sc-none"); if (none) none.hidden = shown > 0;
   }
   async function storeGet(id) {
     const st = QB._store, item = (st.list || []).find((x) => x.id === id);
@@ -2343,9 +2355,8 @@ QB.registerTheme({
     } catch (e) { console.error("store:", e); }
     if (ok) delete st.failed[id]; else st.failed[id] = true;
     delete st.busy[id];
-    // counted once for this account or install
-    if (ok && !had && QB._host && QB._host.api) QB._host.api.post("/api/plugin-stats", { action: "install", id, who: installId() })
-      .then((r) => { if (r && r.stats) { st.stats = { ...(st.stats || {}), [id]: r.stats }; if (QB._extTab === "store") QB.renderScreen(); } }).catch(() => {});
+    // counted once for this account or install (the counts aren't shown, 15.63)
+    if (ok && !had && QB._host && QB._host.api) QB._host.api.post("/api/plugin-stats", { action: "install", id, who: installId() }).catch(() => {});
     QB.renderScreen();
   }
 
@@ -2380,7 +2391,14 @@ QB.registerTheme({
     wireSettingControls(root);
     root.querySelectorAll("[data-ext-tab]").forEach((b) => b.addEventListener("click", () => { QB._extTab = b.dataset.extTab; QB.renderScreen(); if (window.qbWebPathSync) window.qbWebPathSync(); }));
     root.querySelectorAll("[data-store-get]").forEach((b) => b.addEventListener("click", () => storeGet(b.dataset.storeGet)));
-    root.querySelectorAll("[data-store-like]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); storeLike(b.dataset.storeLike, b); }));
+    const ss = root.querySelector("#store-search");
+    if (ss) {
+      storeFilter(root);
+      ss.addEventListener("input", () => { QB._store.q = ss.value; storeFilter(root); });
+      ss.addEventListener("keydown", (e) => { if (e.key === "Escape" && ss.value) { e.preventDefault(); e.stopPropagation(); ss.value = ""; QB._store.q = ""; storeFilter(root); } });
+      // the screen draws again as a plugin is added: the box keeps its place
+      if (QB._store.searching) { ss.focus(); ss.setSelectionRange(ss.value.length, ss.value.length); }
+    }
     root.querySelectorAll("[data-buy-plugin]").forEach((b) => b.addEventListener("click", () => QB._host?.openStore?.(QB.PAID[b.dataset.buyPlugin])));
     root.querySelector("[data-store-reload]")?.addEventListener("click", () => { QB._store.err = false; QB.renderScreen(); });
     root.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => QB.showPage(b.dataset.page)));

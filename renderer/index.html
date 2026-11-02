@@ -136,6 +136,15 @@
           <span class="top-bar-title" id="practice-title">Tossups</span>
         </div>
         <div class="top-bar-right">
+          <button type="button" class="btn" id="btn-voice" aria-expanded="false" aria-haspopup="dialog" aria-controls="voice-pop"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H3v6h3l5 4z"/><path class="vb-wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>Voice</button>
+          <div class="voice-pop" id="voice-pop" role="dialog" aria-label="Voice" hidden>
+            <div class="vp-row"><label class="checkbox-row"><input type="checkbox" id="opt-read-aloud"> Read aloud</label><span class="qb-info" data-tip="A voice reads each question to you and the text follows it. Reading speed sets how fast it talks.">i</span><span class="vp-key" id="vp-key"></span></div>
+            <div class="vp-sub" id="vp-sub">
+              <div class="slider-group read-voice-row" id="read-voice-row" hidden><span class="sg-label">Voice</span><select id="opt-voice" class="mode-input" aria-label="Voice"></select></div>
+              <div class="vp-row" id="read-hide-row" hidden><label class="checkbox-row"><input type="checkbox" id="opt-read-hide"> Hide the text while it's read</label><span class="qb-info" data-tip="Listen like a real game. A box says Reading while it reads, and the text comes back with the answer.">i</span></div>
+            </div>
+            <div id="ext-voice-host"></div>
+          </div>
           <button type="button" class="btn" id="btn-open-setup"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Setup</button>
           <button type="button" class="btn" id="btn-end-session">End</button>
           <button type="button" class="btn btn-ghost" id="btn-home">Back</button>
@@ -213,9 +222,6 @@
               <label class="checkbox-row"><input type="checkbox" id="opt-bonus-after"> Bonus after a correct tossup</label>
               <label class="checkbox-row"><input type="checkbox" id="opt-allow-rebuzzes"> Allow rebuzzes</label>
               <label class="checkbox-row"><input type="checkbox" id="opt-stop-on-power"> Stop on power</label>
-              <span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="opt-read-aloud"> Read aloud</label><span class="qb-info" data-tip="A voice reads each question to you and the text follows it. Reading speed sets how fast it talks.">i</span></span>
-              <div class="slider-group read-voice-row" id="read-voice-row" hidden><span class="sg-label">Voice</span><select id="opt-voice" class="mode-input" aria-label="Voice"></select></div>
-              <span class="checkbox-row-wrap" id="read-hide-row" hidden><label class="checkbox-row"><input type="checkbox" id="opt-read-hide"> Hide the text while it's read</label><span class="qb-info" data-tip="Listen like a real game. Bars show how far it has read, and the text comes back with the answer.">i</span></span>
               <label class="checkbox-row"><input type="checkbox" id="opt-allow-skips" checked> Allow skips</label>
               <label class="checkbox-row"><input type="checkbox" id="filter-hide-pron"> Hide pronunciation guides</label>
               <label class="checkbox-row"><input type="checkbox" id="filter-hide-notes"> Hide moderator notes</label>
@@ -311,6 +317,7 @@
         </main>
 
         <aside class="stats-panel practice-side" id="live-stats" aria-label="This session">
+          <div class="side-plugin" id="plugin-side" hidden></div>
           <!-- one scoreboard card: the score, how the questions went (bar), the rates. app.js updateLiveStats -->
           <div class="side-stats sb">
             <div class="sb-head">

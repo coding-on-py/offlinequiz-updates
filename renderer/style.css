@@ -3545,13 +3545,14 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .sc-tag { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: var(--text); font-size: 12px; }
 .sc-foot { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 16px; }
 .sc-get svg { margin-right: 6px; }
-.sc-nums { display: flex; align-items: center; gap: 14px; margin-left: auto; color: var(--muted); }
-.sc-n { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 13px; }
-.sc-n b { font-weight: 600; color: var(--text); }
-.sc-like { cursor: pointer; border-radius: 6px; }
-.sc-like:hover, .sc-like.on { color: #ff6b81; }
-.sc-like.on svg { fill: currentColor; }
-.sc-like:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* the Store's search box (15.63): filters the cards as you type */
+.sc-search { display: flex; align-items: center; gap: 10px; max-width: 460px; height: 40px; margin: 0 0 18px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--muted); cursor: text; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.sc-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+.sc-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--strong); font: inherit; font-size: 14px; }
+.sc-search input::placeholder { color: var(--muted); }
+.sc-search input::-webkit-search-cancel-button { cursor: pointer; }
+.sc-card[hidden], .sc-none[hidden] { display: none; }
+@media (max-width: 680px) { .sc-search { max-width: none; } }
 @media (max-width: 680px) { .sc-grid { grid-template-columns: minmax(0, 1fr); } .sc-shot { height: 138px; } .sc-shot .pgm { zoom: 0.5; } }
 .store-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 1100px) { .store-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -3867,7 +3868,6 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .mp-borrowed #sec-timing .slider-group:has(#panel-buzz-timer), .mp-borrowed #sec-timing .slider-group:has(#panel-buzz-window), .mp-borrowed #sec-timing .slider-group:has(#panel-bonus-timer) { display: none; }
 .mp-borrowed label:has(#filter-starred), .mp-borrowed label:has(#opt-allow-rebuzzes), .mp-borrowed label:has(#opt-stop-on-power), .mp-borrowed label:has(#opt-allow-skips), .mp-borrowed label:has(#opt-bonus-after) { display: none; }
 /* a room reads on its own clock: Read aloud is practice only */
-.mp-borrowed .checkbox-row-wrap:has(#opt-read-aloud), .mp-borrowed #read-voice-row, .mp-borrowed #read-hide-row { display: none !important; }
 .mp-borrowed .mp-room-checks { margin-top: 12px; }
 .mp-borrowed #mp-status:empty { display: none; }
 .mp-borrowed #ext-practice-section { display: none; }
@@ -6803,10 +6803,56 @@ html.tb-nocrumb .tb-crumb { display: none; }
 /* phones: periods that wrap start on the left (the last one sat alone in the middle) */
 @media (max-width: 600px) { .lb-periods { justify-content: flex-start; } }
 
-/* Read aloud with the text hidden (15.62, app.js setReadHidden): what's been read shows as bars until the result */
-#question-area.read-hidden :is(#question-text, .bonus-part-text), #question-area.read-hidden :is(#question-text, .bonus-part-text) * { color: transparent !important; text-shadow: none !important; }
-#question-area.read-hidden :is(#question-text, .bonus-part-text) .revealed { background: color-mix(in srgb, var(--muted) 22%, transparent); border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; user-select: none; }
-#question-area.read-hidden :is(#question-text, .bonus-part-text) .revealed * { background: none; }
-#read-hide-row[hidden] { display: none; }
+/* Read aloud with the text hidden (15.63, app.js setReadHidden): the words give way to a box that says "Reading" while
+   the voice reads that text (its unread rest still there), "Buzzed" after a buzz, and "Hidden" once it's all been said,
+   until the result shows the text */
+#question-area.read-hidden :is(#question-text, .bonus-part-text):not(:empty) > * { display: none !important; }
+#question-area.read-hidden :is(#question-text, .bonus-part-text):not(:empty)::before {
+  content: "Hidden"; display: inline-flex; align-items: center; gap: 10px; padding: 10px 16px; border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--surface); color: var(--muted); font: 500 13px/1.2 var(--font); letter-spacing: .02em; }
+#question-area.read-hidden :is(#question-text, .bonus-part-text):has(> .unrevealed:not(:empty)):not(:has(> .buzz-marker))::before { content: "Reading"; color: var(--text); }
+#question-area.read-hidden :is(#question-text, .bonus-part-text):has(> .unrevealed:not(:empty)):not(:has(> .buzz-marker))::after {
+  content: ""; display: inline-block; width: 14px; height: 12px; margin-left: -34px; vertical-align: middle; transform: translateY(-1px);
+  background: linear-gradient(var(--accent), var(--accent)) 0 50% / 3px 40% no-repeat, linear-gradient(var(--accent), var(--accent)) 50% 50% / 3px 100% no-repeat,
+    linear-gradient(var(--accent), var(--accent)) 100% 50% / 3px 60% no-repeat; animation: qb-read-wave 900ms ease-in-out infinite; }
+#question-area.read-hidden :is(#question-text, .bonus-part-text):has(> .unrevealed:not(:empty)):not(:has(> .buzz-marker))::before { padding-right: 40px; }
+#question-area.read-hidden #question-text:has(> .buzz-marker)::before { content: "Buzzed"; color: var(--text); }
+@keyframes qb-read-wave {
+  0%, 100% { background-size: 3px 40%, 3px 100%, 3px 60%; }
+  33% { background-size: 3px 100%, 3px 50%, 3px 80%; }
+  66% { background-size: 3px 60%, 3px 80%, 3px 40%; }
+}
+@media (prefers-reduced-motion: reduce) { #question-area.read-hidden :is(#question-text, .bonus-part-text)::after { animation: none; } }
 /* guides and notes stay hidden while Read aloud is on (their switches locked on) */
 .locked-by-read { opacity: .55; }
+
+/* the Voice button and its popover (15.63, app.js openVoicePop): Read aloud, its voice, hiding the text, then plugins'
+   voice settings. The button's sound waves light up while Read aloud is on */
+#btn-voice .vb-wave { opacity: 0.35; transition: opacity 160ms ease, stroke 160ms ease; }
+#btn-voice.on .vb-wave { opacity: 1; stroke: var(--accent); }
+#btn-voice[aria-expanded="true"] { background: var(--raised); border-color: var(--line-strong); color: var(--strong); }
+.voice-pop { position: fixed; z-index: 1200; width: min(330px, calc(100vw - 24px)); padding: 10px 14px 12px; border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--surface); box-shadow: var(--shadow); transition: opacity 160ms ease, transform 200ms var(--ease-out), display 200ms allow-discrete; }
+.voice-pop[hidden] { display: none; opacity: 0; transform: translateY(-6px); }
+@starting-style { .voice-pop:not([hidden]) { opacity: 0; transform: translateY(-6px); } }
+.voice-pop .vp-row { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+.voice-pop .vp-row[hidden] { display: none; }
+.voice-pop .checkbox-row { font-size: 13px; }
+.voice-pop .vp-key { margin-left: auto; }
+.voice-pop .vp-key kbd { display: inline-block; min-width: 20px; padding: 0 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; color: var(--muted); font: 500 11.5px/1.6 var(--font); text-align: center; }
+.voice-pop .read-voice-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; margin: 4px 0; }
+.voice-pop .read-voice-row[hidden] { display: none; }
+.voice-pop .read-voice-row select { width: 100%; }
+#ext-voice-host:not(:empty) { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line-soft); }
+#ext-voice-host .ext-settings-group { margin: 0; }
+#ext-voice-host .filter-label { margin: 6px 0 2px; }
+#ext-voice-host .fp-checks { grid-template-columns: minmax(0, 1fr); }
+#ext-voice-host .checkbox-row { font-size: 13px; min-height: 34px; }
+@media (prefers-reduced-motion: reduce) { .voice-pop { transition: none; } }
+
+/* a plugin's page on the reader (15.63, app.js startPluginPractice): its own box at the top of the side column, its
+   stops (First Lines: "next line") and an opponent's missed buzz */
+.side-plugin { margin-bottom: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.side-plugin[hidden] { display: none; }
+.pause-overlay.page-stop { cursor: pointer; }
+.opp-note { position: absolute; top: 10px; right: 12px; padding: 5px 12px; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line)); border-radius: 99px; background: var(--surface); color: var(--text); font-size: 12.5px; animation: qb-rise 200ms var(--ease-out); }
