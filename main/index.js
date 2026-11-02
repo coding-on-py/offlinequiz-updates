@@ -81,7 +81,7 @@ const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3, SUB_LEN = 5;
 export const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
 // 15.12 regrades: bump when a checker fix (or a corrected database) should look at old wrong answers again. A run is
 // keyed by this and the question database's build, so a new database re-runs it too (only answers still wrong).
-export const REGRADE_V = "15.41";   // 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME)
+export const REGRADE_V = "15.61";   // 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME); 15.61: subcategory trials refunded (_trialRepair)
 // two refund summaries as one window (an admin's refund and a regrade, or two refunds): their sums, their trials
 export function mergeRegrade(a, b) {
   const n = (x) => Number(x) || 0;
@@ -1423,18 +1423,18 @@ export class App {
     const { t: trials } = this._trialsOf(), U = this.userData, tu = new Map();
     const tossupOf = (id) => { if (!tu.has(id)) { let q = null; try { q = this.questionDb.getTossup(id) || null; } catch {} tu.set(id, q); } return tu.get(id); };
     for (const [key, tr] of Object.entries(trials)) {
-      const [ck, lv] = key.split("|"), level = parseInt(lv, 10), cat = TRIAL_CATS.find((c) => c[0] === ck);
-      if (!cat || !tr || !tr.a) continue;
+      const [ck, lv] = key.split("|"), level = parseInt(lv, 10), spec = this._trialSpec(ck);
+      if (!spec || !tr || !tr.a) continue;
       for (const [ts, xp] of Object.entries(tr.a)) {
-        const p = Array.from({ length: TRIAL_LEN + 1 }, (_, i) => i).find((i) => trialXp(level, i) === Number(xp));
+        const p = Array.from({ length: spec.len + 1 }, (_, i) => i).find((i) => spec.xpOf(level, i) === Number(xp));
         if (!(p >= 1)) continue;
-        const fits = (r) => { const q = tossupOf(r.question_id); return !!q && Number(q.difficulty) === level && (q.category === cat[2] || String(q.category_path || "").split(" > ")[0] === cat[2]); };
+        const fits = (r) => { const q = tossupOf(r.question_id); return !!q && spec.fits(q, level); };
         const after = U.tossupsBetween(Number(ts), Number(ts) + 3 * 3600e3), first = after.find(fits); if (!first) continue;
-        const run = after.filter((r) => r.session_id === first.session_id).slice(0, TRIAL_LEN);
+        const run = after.filter((r) => r.session_id === first.session_id).slice(0, spec.len);
         if (!run.every(fits) || !run[p - 1] || !powered.has(Number(run[p - 1].id))) continue;
         if (run.slice(0, p).some((r) => !(Number(r.points) >= 15))) continue;
-        const gain = trialXp(level, p) - trialXp(level, p - 1);
-        out.trials.push({ key, name: cat[1], level, xp: gain, passed: p >= TRIAL_LEN });
+        const gain = spec.xpOf(level, p) - spec.xpOf(level, p - 1);
+        out.trials.push({ key, name: spec.name, level, xp: gain, passed: p >= spec.len });
         out.xp += gain;
       }
     }
@@ -1473,21 +1473,15 @@ export class App {
       if (!q) return { error: "That question isn't in the database." };
       const was = Number(row.points) || 0, text0 = String(q.question_sanitized || q.question || ""), len = text0.length, fullyRead = was === 0;
       const pos = row.buzz_position != null ? Number(row.buzz_position) : len;
+      // the trial this answer ended, found before it's written right (written, it no longer ends anything)
+      const { trials, trialRow } = this._trialEnders(), trial = trialRow.get(row.id);
       // right at its own buzz: the scoring a right answer gets there (no checker)
       const res = scoreTossup({ userAnswer: String(row.given_answer || ""), answerline: q.answer, sanitizedAnswer: q.answer_sanitized, buzzCharIndex: fullyRead ? len : pos, questionText: text0, fullyRead }, () => ({ correct: true }));
       if (!U.applyRegrade(row.id, res.points, res.celerity).changes) return { error: "That answer already counts." };
       out.points = Number(res.points) - was; if (was < 0) out.negs = 1; if (res.isPower) out.powers = 1;
-      const { trials, trialRow } = this._trialEnders(), trial = trialRow.get(row.id);
       if (trial && res.isPower) {
-        const tr = trials[trial.key], p = trial.powers + 1, beforeXp = Number(tr.a[trial.start]) || 0, xp = trialXp(trial.level, p);
-        if (xp > beforeXp) {
-          tr.a[trial.start] = xp;
-          const passed = p >= TRIAL_LEN;
-          if (passed) { const when = Number(row.timestamp) || Date.now(); tr.l = Math.max(Number(tr.l) || 0, when); tr.p = tr.p ? Math.min(Number(tr.p), when) : when; }
-          out.trials.push({ key: trial.key, name: trial.name, level: trial.level, xp: xp - beforeXp, passed });
-          out.xp += xp - beforeXp;
-          U.setConfig("trials:" + pid, JSON.stringify(trials));
-        }
+        const c = this._creditTrial(trials, trial, Number(row.timestamp) || Date.now());
+        if (c) { out.trials.push(c); out.xp += c.xp; U.setConfig("trials:" + pid, JSON.stringify(trials)); }
       }
     }
     U.setConfig(doneKey, JSON.stringify(done.concat(key).slice(-5000)));
@@ -1496,27 +1490,81 @@ export class App {
     U.setConfig(noteKey, JSON.stringify({ summary: n && !n.seen && n.summary ? mergeRegrade(n.summary, out) : out, seen: false }));
     return { ...out, attempt };
   }
-  // the trial attempts that ended on a wrong answer: the trials, and each ending answer's row → its attempt
-  _trialEnders() {
+  // a trial's rules by its key: a category's ten at its level (the category by name, as before), or a subcategory's
+  // five (15.58), whose questions lie under its node and may come from the levels beside it (± 2)
+  _trialSpec(ck) {
+    const sub = TRIAL_SUBS.find((c) => c[0] === ck);
+    if (sub) {
+      let node = null; try { node = this.questionDb.getCategoryNode(sub[3]); } catch {}
+      if (!node) return null;
+      return { name: sub[1], len: SUB_LEN, xpOf: subTrialXp, fits: (q, level) => Math.abs(Number(q.difficulty) - level) <= 2 && Number(q.category_ord) >= node.ord && Number(q.category_ord) <= node.ord_end };
+    }
+    const cat = TRIAL_CATS.find((c) => c[0] === ck);
+    return cat ? { name: cat[1], len: TRIAL_LEN, xpOf: trialXp, fits: (q, level) => Number(q.difficulty) === level && (q.category === cat[2] || String(q.category_path || "").split(" > ")[0] === cat[2]) } : null;
+  }
+  // every recorded attempt that ended before its last question, with its answers: the first session after its start
+  // whose answers belong to the trial, the first `len` of them → { trials, attempts: [{ key, name, level, start,
+  // powers, len, xpOf, run }] }
+  _trialAttempts() {
     const U = this.userData, tossups = new Map(), tossupOf = (id) => { if (!tossups.has(id)) { let t = null; try { t = this.questionDb.getTossup(id) || null; } catch {} tossups.set(id, t); } return tossups.get(id); };
-    const { t: trials } = this._trialsOf(), trialRow = new Map();
+    const { t: trials } = this._trialsOf(), attempts = [];
     for (const [key, tr] of Object.entries(trials)) {
-      const [ck, lv] = key.split("|"), level = parseInt(lv, 10), cat = TRIAL_CATS.find((c) => c[0] === ck);
-      if (!cat || !(level >= 1) || !tr || !tr.a || typeof tr.a !== "object") continue;
+      const [ck, lv] = key.split("|"), level = parseInt(lv, 10), spec = this._trialSpec(ck);
+      if (!spec || !(level >= 1) || !tr || !tr.a || typeof tr.a !== "object") continue;
+      const starts = Object.keys(tr.a).map(Number).sort((x, y) => x - y);
       for (const [ts, xp] of Object.entries(tr.a)) {
-        const powers = Array.from({ length: TRIAL_LEN + 1 }, (_, p) => p).find((p) => trialXp(level, p) === Number(xp));
-        if (powers == null || powers >= TRIAL_LEN) continue;
-        const start = Number(ts), fits = (r) => { const q = tossupOf(r.question_id); return !!q && Number(q.difficulty) === level && (q.category === cat[2] || String(q.category_path || "").split(" > ")[0] === cat[2]); };
-        const after = U.tossupsBetween(start, start + 3 * 3600e3);
+        const powers = Array.from({ length: spec.len + 1 }, (_, p) => p).find((p) => spec.xpOf(level, p) === Number(xp));
+        if (powers == null || powers >= spec.len) continue;
+        const start = Number(ts), fits = (r) => { const q = tossupOf(r.question_id); return !!q && spec.fits(q, level); };
+        const next = starts.find((x) => x > start);   // (the next attempt's answers are its own)
+        const after = U.tossupsBetween(start, Math.min(start + 3 * 3600e3, next ? next - 1 : Infinity));
         const first = after.find(fits); if (!first) continue;
-        const run = after.filter((r) => r.session_id === first.session_id).slice(0, TRIAL_LEN);
+        const run = after.filter((r) => r.session_id === first.session_id).slice(0, spec.len);
         if (!run.every(fits)) continue;
-        const lead = run.findIndex((r) => !(Number(r.points) >= 15));
-        if (lead !== powers || !run[lead]) continue;
-        trialRow.set(run[lead].id, { key, level, start, powers, name: cat[1] });
+        attempts.push({ key, name: spec.name, level, start, powers, len: spec.len, xpOf: spec.xpOf, run });
       }
     }
+    return { trials, attempts };
+  }
+  // the trial attempts that ended on a wrong answer: the trials, and each ending answer's row → its attempt (the
+  // attempt as recorded: `powers` powers, then the answer that ended it)
+  _trialEnders() {
+    const { trials, attempts } = this._trialAttempts(), trialRow = new Map();
+    for (const a of attempts) {
+      const lead = a.run.findIndex((r) => !(Number(r.points) >= 15));
+      if (lead === a.powers && a.run[lead]) trialRow.set(a.run[lead].id, a);
+    }
     return { trials, trialRow };
+  }
+  // an attempt that ended on an answer counted a power now: one more power, and it ends there (its last question
+  // passes the level, which opens the next) → what it gave, or null
+  _creditTrial(trials, a, when) {
+    const tr = trials[a.key], p = a.powers + 1, before = Number(tr.a[a.start]) || 0, xp = a.xpOf(a.level, p);
+    if (!(xp > before)) return null;
+    tr.a[a.start] = xp;
+    const passed = p >= a.len;
+    if (passed) { tr.l = Math.max(Number(tr.l) || 0, when); tr.p = tr.p ? Math.min(Number(tr.p), when) : when; }
+    return { key: a.key, name: a.name, level: a.level, xp: xp - before, passed };
+  }
+  // 15.61: refunds and regrades before subcategory trials counted (they looked up categories only, so @wrn's refunded
+  // fifth question gave no XP and didn't open the next level): an attempt whose ending answer was refunded or
+  // regraded to a power gets that power now, once (afterwards the attempt's XP says it, so it isn't found again)
+  _trialRepair(pid) {
+    const U = this.userData;
+    let refunds = [], log = [];
+    try { refunds = JSON.parse(U.getConfig("refunds:" + pid) || "[]") || []; } catch {}
+    try { log = JSON.parse(U.getConfig("regrade_log:" + pid) || "[]") || []; } catch {}
+    const keys = new Set(Array.isArray(refunds) ? refunds : []), ids = new Set((Array.isArray(log) ? log : []).map((e) => Number(e && e.id)));
+    if (!keys.size && !ids.size) return [];
+    const { trials, attempts } = this._trialAttempts(), out = [];
+    for (const a of attempts) {
+      const end = a.run[a.powers];
+      if (!end || !(Number(end.points) >= 15) || a.run.slice(0, a.powers).some((r) => !(Number(r.points) >= 15))) continue;
+      if (!keys.has(U.sessionKeyOf(end)) && !ids.has(Number(end.id))) continue;
+      const c = this._creditTrial(trials, a, Number(end.timestamp) || Date.now()); if (c) out.push(c);
+    }
+    if (out.length) U.setConfig("trials:" + pid, JSON.stringify(trials));
+    return out;
   }
   async _regradeRun(pid, doneKey, stamp) {
     const U = this.userData, skip = U.overriddenKeys();
@@ -1526,25 +1574,8 @@ export class App {
     };
     let strict = 10;
     try { const ps = U.getProfileSettings(); const v = Number(ps && ps.settings && ps.settings.strictness); if (v >= 0 && v <= 20) strict = v; } catch {}
-    // the trial attempts that ended on a wrong answer: which answer, at which powers
-    const { t: trials } = this._trialsOf(), trialRow = new Map();
-    for (const [key, tr] of Object.entries(trials)) {
-      const [ck, lv] = key.split("|"), level = parseInt(lv, 10), cat = TRIAL_CATS.find((c) => c[0] === ck);
-      if (!cat || !(level >= 1) || !tr || !tr.a || typeof tr.a !== "object") continue;
-      for (const [ts, xp] of Object.entries(tr.a)) {
-        const powers = Array.from({ length: TRIAL_LEN + 1 }, (_, p) => p).find((p) => trialXp(level, p) === Number(xp));
-        if (powers == null || powers >= TRIAL_LEN) continue;
-        const start = Number(ts), fits = (r) => { const q = tossupOf(r.question_id); return !!q && Number(q.difficulty) === level && (q.category === cat[2] || String(q.category_path || "").split(" > ")[0] === cat[2]); };
-        const after = U.tossupsBetween(start, start + 3 * 3600e3);
-        const first = after.find(fits); if (!first) continue;
-        const run = after.filter((r) => r.session_id === first.session_id).slice(0, TRIAL_LEN);
-        if (!run.every(fits)) continue;
-        // the attempt as recorded: `powers` powers, then the answer that ended it
-        const lead = run.findIndex((r) => !(Number(r.points) >= 15));
-        if (lead !== powers || !run[lead]) continue;
-        trialRow.set(run[lead].id, { key, level, start, powers, name: cat[1] });
-      }
-    }
+    // the trial attempts that ended on a wrong answer: which answer, at which powers (a category's or a subcategory's)
+    const { trials, trialRow } = this._trialEnders();
     // a cheap look first: an answer sharing nothing with the answer line or its alternate names can't be right now
     const near = (resp, q) => {
       const r = normalizeText(String(resp || ""));
@@ -1574,17 +1605,13 @@ export class App {
       log.push({ id: r.id, q: r.question_id, from: was, to: Number(res.points), at: Date.now() });
       // a trial that ended here: one more power, and it ends there (the tenth passes)
       if (trial && res.isPower) {
-        const tr = trials[trial.key], p = trial.powers + 1, before = Number(tr.a[trial.start]) || 0, xp = trialXp(trial.level, p);
-        if (xp > before) {
-          tr.a[trial.start] = xp;
-          const passed = p >= TRIAL_LEN;
-          if (passed) { const when = Number(r.timestamp) || Date.now(); tr.l = Math.max(Number(tr.l) || 0, when); tr.p = tr.p ? Math.min(Number(tr.p), when) : when; }
-          out.trials.push({ key: trial.key, name: trial.name, level: trial.level, xp: xp - before, passed });
-          out.xp += xp - before;
-        }
+        const c = this._creditTrial(trials, trial, Number(r.timestamp) || Date.now());
+        if (c) { out.trials.push(c); out.xp += c.xp; }
       }
     }
     if (out.trials.length) U.setConfig("trials:" + pid, JSON.stringify(trials));
+    // refunds and regrades from before a subcategory's trials counted them (15.61)
+    for (const c of this._trialRepair(pid)) { out.trials.push(c); out.xp += c.xp; }
     if (log.length) {
       let old = []; try { old = JSON.parse(U.getConfig("regrade_log:" + pid) || "[]") || []; } catch {}
       U.setConfig("regrade_log:" + pid, JSON.stringify((Array.isArray(old) ? old : []).concat(log).slice(-5000)));
@@ -1839,6 +1866,8 @@ export class App {
     if (key === "GET /api/users/profile") return this._cloudFetch("GET", path + (body.qs ? "?" + body.qs : ""), null, c && c.token);
     // the shop (a room of your own) and room tickets: the account's, through the website
     if (key === "GET /api/shop/info") return this._cloudFetch("GET", path, null, c && c.token);
+    // the Plugin Store's numbers (15.61): downloads and likes, kept by the website
+    if (key === "GET /api/plugin-stats" || key === "POST /api/plugin-stats") return this._cloudFetch(method, path, method === "GET" ? null : body, c && c.token);
     if (key === "GET /api/shop/owned") return this._cloudFetch("GET", path, null, c && c.token);
     if (/^GET \/api\/shop\/(room-available|order|rooms)$/.test(key) || key === "POST /api/shop/checkout" || key === "POST /api/mp/ticket") {
       if (!c) return { error: "Sign in first.", authRequired: true };

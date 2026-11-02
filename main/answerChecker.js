@@ -2242,6 +2242,8 @@ function wordCands(w) {
   return w._cands;
 }
 
+// a word with every run of one letter written once ("mississippi" → "misisipi")
+const undoubled = (s) => s.replace(/(\p{L})\1+/gu, "$1");
 function budgetFor(len, ctx) {
   let b = len <= 4 ? 0 : len <= 8 ? 1 : 2;
   if (len >= 3) b += ctx.extraBudget || 0;
@@ -2336,6 +2338,13 @@ function wordCost(w, r, ctx, fuzzy, required) {
       const d = osa(c, rt, bud);
       // an edit to the first letter counts double against the token budget (asexual/sexual, citric/nitric, attachment/detachment)
       if (d > 0 && (c[0] !== rt[0] ? d + 1 : d) <= bud && (best < 0 || d < best)) best = d;
+      // a word that differs only in doubled letters, written single or double, is one typo however many there are:
+      // attila / atilla, mississippi / misisipi (3 edits). Nothing else may differ ("napoleoniii" is not napoleon);
+      // the budget and the collision guard still apply, as to any typo
+      if (best !== 1 && c[0] === rt[0]) {
+        const dc = undoubled(c);
+        if (dc.length >= 4 && dc === undoubled(rt)) best = 1;
+      }
     }
     if (best < 0 && ctx.lenientSpell && !r.split && c.length >= 6 && rt.length >= 5 && c[0] === rt[0]) {
       const kc = phonKey(c), kr = phonKey(rt);
@@ -3547,7 +3556,11 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   const hidden = opts.hidden && typeof opts.hidden === "object" && !Array.isArray(opts.hidden) ? opts.hidden : null;
   const hTok = (list) => (Array.isArray(list) ? list : []).map((e) => respTokens(String(e), plain)).filter((t) => t.length);
   const H = hidden ? { accept: hTok(hidden.accept), prompt: hTok(hidden.prompt), antiprompt: hTok(hidden.antiprompt), reject: hTok(hidden.reject) } : null;
-  if (H && H.reject.some((t) => strictEq(t, T, true)) && !wholeAccept()) return verdict("reject", { rule: "J4", via: "hidden" });
+  // the line's own prompt on this response wins over the hidden list's reject (the hidden lists are the release's
+  // extra names, the line is what's read out): "russia" was a neg on a Soviet Union line that says prompt on "Russia"
+  const linePrompts = () => F.prompts.some((f) => { if (!live(f)) return false; const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, F.promptPool); return !!(m && m.full && m.cost === 0); })
+    && !F.noprompts.some((r) => live(r) && !r.superset && r.terms.some((t) => strictEq(t, T, false)));
+  if (H && H.reject.some((t) => strictEq(t, T, true)) && !wholeAccept() && !linePrompts()) return verdict("reject", { rule: "J4", via: "hidden" });
   // ---- G3 (at J5, before the partial rule could call "sqrt(2)" part of "square root of 2"): the whole response
   // as math notation, M1 against the hidden accept_math entries, exact
   const g3 = mathAccept(resp, opts, rc);

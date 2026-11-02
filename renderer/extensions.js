@@ -2170,7 +2170,7 @@ QB.registerTheme({
     if (WEBSITE && QB._extTab === "themes") QB._extTab = "store";
     const tab = QB._extTab || "open";
     const visible = QB._plugins.filter((p) => !p._builtin);
-    const tabs = (WEBSITE ? [["open", "Open"], ["manage", "Manage"], ["store", "Store"]] : [["open", "Open"], ["manage", "Manage"], ["themes", "Themes"]]).map(([k, l]) =>
+    const tabs = (WEBSITE ? [["open", "Open"], ["manage", "Manage"], ["store", "Store"]] : [["open", "Open"], ["manage", "Manage"], ["store", "Store"], ["themes", "Themes"]]).map(([k, l]) =>
       '<button type="button" class="db-tab' + (tab === k ? " active" : "") + '" role="tab" aria-selected="' + (tab === k) + '" data-ext-tab="' + k + '">' + l + "</button>").join("");
     const bulk = tab === "manage" && visible.length
       ? '<span class="ext-bulk"><button class="btn btn-sm" id="ext-enable-all">Enable all</button><button class="btn btn-sm" id="ext-disable-all">Disable all</button></span>' : "";
@@ -2225,35 +2225,96 @@ QB.registerTheme({
   // turns it on, after which Manage switches it on and off like any plugin.
   QB._store = { list: null, loading: false, busy: {}, failed: {} };
   const verNewer = (a, b) => { const x = String(a || "0").split("."), y = String(b || "0").split("."); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0); if (d) return d > 0; } return false; };
+  // The Store's cards (15.61, like BetterDiscord's): a picture of the plugin in use on top, its name and author, a line
+  // about it, tags, then Get (or its switch once added) with how many have it and like it. The website lists what the
+  // server hosts (/api/plugin-store); the app lists the plugins its updates carry (/api/app-update-plugins, read from
+  // each zip), so it works offline. The numbers come from the website (/api/plugin-stats; the app forwards it).
+  const PLUGIN_TAGS = {
+    "flashcards": ["Study", "Review", "Memory"], "coach-mode": ["Study", "Reading", "Coaching"],
+    "packet-builder": ["Tools", "Packets", "Practice"], "folders": ["Tools", "Organize", "Saved"],
+    "keyword-freq": ["Analysis", "Clues", "Words"], "buzz-words": ["Analysis", "Clues", "Power"],
+    "fact-sheet": ["Analysis", "Answers", "Study"], "canon-tracker": ["Analysis", "Canon", "Progress"],
+    "achievement-glyphs": ["Extras", "Achievements", "Icons"],
+  };
+  const fmtCount = (n) => { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1).replace(/\.0$/, "") + "K" : String(n); };
+  const SICO = {
+    down: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+    heart: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>',
+  };
+  // an id for this browser or app, so a download is counted once (an account counts as itself)
+  function installId() {
+    try { let v = localStorage.getItem("qb-install-id"); if (!v || !/^[a-z0-9]{16,40}$/.test(v)) { v = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 24); localStorage.setItem("qb-install-id", v); } return v; }
+    catch (e) { return ""; }
+  }
+  function loadStoreStats() {
+    const st = QB._store;
+    if (st.statsLoading || (st.stats && Date.now() - st.statsAt < 60e3)) return;
+    st.statsLoading = true;
+    Promise.resolve(QB._host && QB._host.api ? QB._host.api.get("/api/plugin-stats") : null)
+      .then((d) => { if (d && d.stats) { st.stats = d.stats; st.statsAt = Date.now(); } })
+      .catch(() => {}).then(() => { st.statsLoading = false; if (QB._extTab === "store" && st.stats) QB.renderScreen(); });
+  }
+  // the app's list: the plugins its updates carry, each read from its zip (kept for Get)
+  async function appStoreList() {
+    const info = await QB._host.api.get("/api/app-update-plugins");
+    const out = [];
+    for (const p of (info && info.plugins) || []) {
+      if (!PLUGIN_GROUP[p.id] || RETIRED_PLUGINS[p.id]) continue;
+      try {
+        const bytes = Uint8Array.from(atob(p.base64), (c) => c.charCodeAt(0));
+        const files = await unzip(bytes.buffer), mf = JSON.parse(files["plugin.json"] || "{}");
+        out.push({ id: mf.id || p.id, name: mf.name || p.id, version: mf.version || "0", author: mf.author || "", description: mf.description || "", icon: mf.icon, guide: mf.guide, _bytes: bytes });
+      } catch (e) {}
+    }
+    return out;
+  }
+  function storeShot(item, color) {
+    const g = item.guide, sec = g && Array.isArray(g.sections) ? g.sections.find((x) => x && Array.isArray(x.shots) && x.shots.some((s) => s && typeof s.html === "string")) : null;
+    const shot = sec && sec.shots.find((s) => s && typeof s.html === "string");
+    if (shot) return '<div class="sc-shot" aria-hidden="true" inert><div class="pgm">' + cleanMock(shot.html) + "</div></div>";
+    return '<div class="sc-shot sc-hero" aria-hidden="true" style="--g:' + esc(color) + '">' + piconHtml(item, color, " sc-hero-ico") + "</div>";
+  }
   function storeHtml() {
     const st = QB._store;
     if (!st.list) {
       if (st.err) return '<div class="ext-empty-state">Couldn\'t reach the Store <button type="button" class="btn btn-sm" data-store-reload>Try again</button></div>';
       if (!st.loading) {
         st.loading = true;
-        fetch("/api/plugin-store", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-          .then((d) => { st.list = (d && d.plugins) || []; }).catch(() => { st.err = true; })
+        const load = WEBSITE ? fetch("/api/plugin-store", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then((d) => (d && d.plugins) || []) : appStoreList();
+        load.then((list) => { st.list = list; }).catch(() => { st.err = true; })
           .then(() => { st.loading = false; if (QB._extTab === "store") QB.renderScreen(); });
       }
       return '<div class="ext-empty-state">Loading…</div>';
     }
     if (!st.list.length) return '<div class="ext-empty-state">The Store is empty right now</div>';
-    const groups = {};
-    st.list.forEach((item) => { (groups[groupOf(item.id)] = groups[groupOf(item.id)] || []).push(item); });
-    return GROUP_ORDER.filter((g) => groups[g]).map((g) =>
-      '<section class="pgroup"><h2>' + esc(g) + '</h2><div class="store-grid">' + groups[g].map((item) => {
-        const have = QB._plugins.find((x) => x.id === item.id && !x._builtin);
-        const busy = st.busy[item.id];
-        const btn = busy ? '<button type="button" class="btn btn-sm" disabled>' + esc(busy) + "</button>"
-          : st.failed[item.id] ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '" title="Couldn\'t add it. Try again">Retry</button>'
-          : QB.pluginLocked(item.id) ? buyBtn(item.id)
-          : !have ? '<button type="button" class="btn btn-sm btn-primary" data-store-get="' + esc(item.id) + '">Get</button>'
-          : verNewer(item.version, have.version) ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '">Update</button>'
-          : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
-        return '<div class="store-card" data-guide="' + esc(item.id) + '" tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it">' + piconHtml(item, GROUP_COLOR[g]) +
-          '<span class="store-main"><b>' + esc(item.name) + '</b><small>v' + esc(item.version) + " · " + esc(item.author || "OfflineQuiz") + "</small></span>" +
-          btn + "</div>";
-      }).join("") + "</div></section>").join("");
+    loadStoreStats();
+    const stats = st.stats || {};
+    const items = st.list.slice().sort((a, b) => GROUP_ORDER.indexOf(groupOf(a.id)) - GROUP_ORDER.indexOf(groupOf(b.id)) || ((stats[b.id] || {}).downloads || 0) - ((stats[a.id] || {}).downloads || 0) || String(a.name).localeCompare(String(b.name)));
+    return '<div class="sc-grid">' + items.map((item) => {
+      const g = groupOf(item.id), color = GROUP_COLOR[g];
+      const have = QB._plugins.find((x) => x.id === item.id && !x._builtin);
+      const busy = st.busy[item.id], n = stats[item.id] || { downloads: 0, likes: 0, liked: false };
+      const btn = busy ? '<button type="button" class="btn btn-sm" disabled>' + esc(busy) + "</button>"
+        : st.failed[item.id] ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '" title="Couldn\'t add it. Try again">Retry</button>'
+        : QB.pluginLocked(item.id) ? buyBtn(item.id)
+        : !have ? '<button type="button" class="btn btn-sm btn-primary sc-get" data-store-get="' + esc(item.id) + '">' + SICO.down + "Get</button>"
+        : verNewer(item.version, have.version) ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '">Update</button>'
+        : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
+      const tags = (PLUGIN_TAGS[item.id] || [g]).map((t) => '<span class="sc-tag">' + esc(t) + "</span>").join("");
+      return '<article class="sc-card" data-guide="' + esc(item.id) + '" tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it" style="--g:' + esc(color) + '">' +
+        storeShot(item, color) +
+        '<div class="sc-body"><h3 class="sc-name">' + esc(item.name) + '</h3><div class="sc-by">by <span>' + esc(item.author || "OfflineQuiz") + "</span> · v" + esc(item.version) + "</div>" +
+        '<p class="sc-desc">' + esc(item.description || "") + '</p><div class="sc-tags">' + tags + "</div>" +
+        '<div class="sc-foot">' + btn + '<span class="sc-nums"><span class="sc-n" title="Downloads">' + SICO.down + '<b class="num">' + fmtCount(n.downloads) + "</b></span>" +
+        '<button type="button" class="sc-n sc-like' + (n.liked ? " on" : "") + '" data-store-like="' + esc(item.id) + '" aria-pressed="' + !!n.liked + '" title="' + (n.liked ? "Unlike" : "Like") + '">' + SICO.heart + '<b class="num">' + fmtCount(n.likes) + "</b></button></span></div></div></article>";
+    }).join("") + "</div>";
+  }
+  async function storeLike(id, btn) {
+    const st = QB._store, cur = (st.stats || {})[id] || { downloads: 0, likes: 0, liked: false }, on = !cur.liked;
+    let r = null;
+    try { r = await QB._host.api.post("/api/plugin-stats", { action: "like", id, on }); } catch (e) {}
+    if (r && r.stats) { st.stats = { ...(st.stats || {}), [id]: r.stats }; QB.renderScreen(); return; }
+    if (QB._host && QB._host.openAccount) QB._host.openAccount("signin", { reason: "Sign in to like plugins." });
   }
   async function storeGet(id) {
     const st = QB._store, item = (st.list || []).find((x) => x.id === id);
@@ -2262,13 +2323,16 @@ QB.registerTheme({
     st.busy[id] = had ? "Updating…" : "Adding…"; QB.renderScreen();
     let ok = false;
     try {
-      const r = await fetch("/store/" + encodeURIComponent(item.file));
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const p = await QB.installZipBytes(new Uint8Array(await r.arrayBuffer()));
+      let bytes = item._bytes;
+      if (!bytes) { const r = await fetch("/store/" + encodeURIComponent(item.file)); if (!r.ok) throw new Error("HTTP " + r.status); bytes = new Uint8Array(await r.arrayBuffer()); }
+      const p = await QB.installZipBytes(bytes);
       if (p && p.id) { if (!had) QB.enablePlugin(p.id); ok = true; }
     } catch (e) { console.error("store:", e); }
     if (ok) delete st.failed[id]; else st.failed[id] = true;
     delete st.busy[id];
+    // counted once for this account or install
+    if (ok && !had && QB._host && QB._host.api) QB._host.api.post("/api/plugin-stats", { action: "install", id, who: installId() })
+      .then((r) => { if (r && r.stats) { st.stats = { ...(st.stats || {}), [id]: r.stats }; if (QB._extTab === "store") QB.renderScreen(); } }).catch(() => {});
     QB.renderScreen();
   }
 
@@ -2303,6 +2367,7 @@ QB.registerTheme({
     wireSettingControls(root);
     root.querySelectorAll("[data-ext-tab]").forEach((b) => b.addEventListener("click", () => { QB._extTab = b.dataset.extTab; QB.renderScreen(); if (window.qbWebPathSync) window.qbWebPathSync(); }));
     root.querySelectorAll("[data-store-get]").forEach((b) => b.addEventListener("click", () => storeGet(b.dataset.storeGet)));
+    root.querySelectorAll("[data-store-like]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); storeLike(b.dataset.storeLike, b); }));
     root.querySelectorAll("[data-buy-plugin]").forEach((b) => b.addEventListener("click", () => QB._host?.openStore?.(QB.PAID[b.dataset.buyPlugin])));
     root.querySelector("[data-store-reload]")?.addEventListener("click", () => { QB._store.err = false; QB.renderScreen(); });
     root.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => QB.showPage(b.dataset.page)));
@@ -6682,13 +6747,13 @@ function __qbMain(ctx) {
   function lbRowHtml(r, rank) {
     return '<div class="lb-row' + (r.you ? " lb-you" : "") + '" data-user="' + esc(r.handle || "") + '" data-user-name="' + esc(r.displayName || r.handle || "") + '" data-user-neon="' + esc(r.neon || "") + '"><span class="lb-rank num">' + rank + "</span>" + av({ name: r.displayName || r.handle, neon: r.neon }) +
       '<span class="fr-name"><b>' + neonHtml(esc(r.displayName || r.handle), r.neon) + "</b>" + (r.you ? '<span class="badge cl-you">You</span>' : "") + "<small>@" + esc(r.handle) + (r.teams && r.teams.length ? " · " + esc(r.teams.join(", ")) : "") + "</small></span>" +
-      '<span class="fr-stat"><b class="num">' + fmt(r.points) + '</b><small>points</small></span><span class="fr-stat"><b class="num">' + fmt(r.questions) + '</b><small>questions</small></span><span class="fr-stat"><b class="num">' + fmt(r.powers) + '</b><small>powers</small></span><span class="fr-stat"><b class="num">' + (r.accuracy == null ? "—" : r.accuracy + "%") + "</b><small>accuracy</small></span></div>";
+      '<span class="fr-stat"><b class="num">' + fmt(r.points) + '</b><small title="Points">PTS</small></span><span class="fr-stat"><b class="num">' + fmt(r.tuh != null ? r.tuh : r.questions) + '</b><small title="' + (r.tuh != null ? 'Tossups heard">TUH' : 'Questions">Q') + '</small></span><span class="fr-stat"><b class="num">' + fmt(r.powers) + '</b><small title="Powers">15</small></span><span class="fr-stat"><b class="num">' + (r.accuracy == null ? "—" : r.accuracy + "%") + '</b><small title="Tossups answered right">ACC</small></span></div>';
   }
   function orgLbHtml() {
     if (S.lbTeam !== "all" && !team(S.lbTeam)) S.lbTeam = "all";
     const filt = '<div class="seg cl-seg-scroll" role="group" aria-label="Show">' + [["all", "Everyone"]].concat(teams().map((t) => [t.id, t.name])).map((x) => '<button type="button" data-lb-team="' + esc(x[0]) + '" aria-pressed="' + (S.lbTeam === x[0]) + '">' + esc(x[1]) + "</button>").join("") + "</div>";
     const key = S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod, d = S.lb && S.lb.key === key ? S.lb.d : null;
-    return '<div class="cl-toolbar">' + filt + '<div class="end">' + info(TIP.lbOrg, "What this leaderboard counts") + periodSeg(S.lbPeriod, "data-lb-period") + "</div></div>" +
+    return '<div class="cl-toolbar">' + filt + '<div class="end">' + periodSeg(S.lbPeriod, "data-lb-period") + "</div></div>" +
       '<div id="cl-lb">' + (d ? orgLbRows(d) : loading("Loading the leaderboard…")) + "</div>";
   }
   function orgLbRows(d) {
@@ -8010,9 +8075,9 @@ function __qbMain(ctx) {
       last = e.rank;
       html += kind === "teams"
         ? '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.team) + "</b>" + (e.mine ? '<span class="badge cl-you">Your team</span>' : "") + "<small>" + esc(e.org) + "</small></span>" +
-          stat(e.active + (e.roster !== e.active ? '<small class="num"> /' + e.roster + "</small>" : ""), "active") + stat(fmt(e.avg), "avg / member") + stat(fmt(e.total), "total points") + stat(e.acc == null ? "—" : e.acc + "%", "accuracy") + "</div>"
+          stat(e.active + (e.roster !== e.active ? '<small class="num"> /' + e.roster + "</small>" : ""), "active") + stat(fmt(e.avg), "Avg") + stat(fmt(e.total), "PTS") + stat(e.acc == null ? "—" : e.acc + "%", "ACC") + "</div>"
         : '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.name) + "</b>" + (e.mine ? '<span class="badge cl-you">Yours</span>' : "") + "<small>" + e.active + " of " + e.members + " active</small></span>" +
-          stat(e.teams, e.teams === 1 ? "team" : "teams") + stat(e.members, "members") + stat(fmt(e.avg), "avg / member") + stat(fmt(e.total), "total points") + "</div>";
+          stat(e.teams, e.teams === 1 ? "team" : "teams") + stat(e.members, "members") + stat(fmt(e.avg), "Avg") + stat(fmt(e.total), "PTS") + "</div>";
     });
     return '<div class="fr-list lb-board">' + html + "</div>";
   }
@@ -10307,6 +10372,8 @@ function wordCands(w) {
   return w._cands;
 }
 
+// a word with every run of one letter written once ("mississippi" → "misisipi")
+const undoubled = (s) => s.replace(/(\p{L})\1+/gu, "$1");
 function budgetFor(len, ctx) {
   let b = len <= 4 ? 0 : len <= 8 ? 1 : 2;
   if (len >= 3) b += ctx.extraBudget || 0;
@@ -10401,6 +10468,13 @@ function wordCost(w, r, ctx, fuzzy, required) {
       const d = osa(c, rt, bud);
       // an edit to the first letter counts double against the token budget (asexual/sexual, citric/nitric, attachment/detachment)
       if (d > 0 && (c[0] !== rt[0] ? d + 1 : d) <= bud && (best < 0 || d < best)) best = d;
+      // a word that differs only in doubled letters, written single or double, is one typo however many there are:
+      // attila / atilla, mississippi / misisipi (3 edits). Nothing else may differ ("napoleoniii" is not napoleon);
+      // the budget and the collision guard still apply, as to any typo
+      if (best !== 1 && c[0] === rt[0]) {
+        const dc = undoubled(c);
+        if (dc.length >= 4 && dc === undoubled(rt)) best = 1;
+      }
     }
     if (best < 0 && ctx.lenientSpell && !r.split && c.length >= 6 && rt.length >= 5 && c[0] === rt[0]) {
       const kc = phonKey(c), kr = phonKey(rt);
@@ -11612,7 +11686,11 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
   const hidden = opts.hidden && typeof opts.hidden === "object" && !Array.isArray(opts.hidden) ? opts.hidden : null;
   const hTok = (list) => (Array.isArray(list) ? list : []).map((e) => respTokens(String(e), plain)).filter((t) => t.length);
   const H = hidden ? { accept: hTok(hidden.accept), prompt: hTok(hidden.prompt), antiprompt: hTok(hidden.antiprompt), reject: hTok(hidden.reject) } : null;
-  if (H && H.reject.some((t) => strictEq(t, T, true)) && !wholeAccept()) return verdict("reject", { rule: "J4", via: "hidden" });
+  // the line's own prompt on this response wins over the hidden list's reject (the hidden lists are the release's
+  // extra names, the line is what's read out): "russia" was a neg on a Soviet Union line that says prompt on "Russia"
+  const linePrompts = () => F.prompts.some((f) => { if (!live(f)) return false; const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, F.promptPool); return !!(m && m.full && m.cost === 0); })
+    && !F.noprompts.some((r) => live(r) && !r.superset && r.terms.some((t) => strictEq(t, T, false)));
+  if (H && H.reject.some((t) => strictEq(t, T, true)) && !wholeAccept() && !linePrompts()) return verdict("reject", { rule: "J4", via: "hidden" });
   // ---- G3 (at J5, before the partial rule could call "sqrt(2)" part of "square root of 2"): the whole response
   // as math notation, M1 against the hidden accept_math entries, exact
   const g3 = mathAccept(resp, opts, rc);

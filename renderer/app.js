@@ -132,7 +132,7 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/profile-settings") return window.qbreader.getProfileSettings();
         if (path === "/api/review/due") return window.qbreader.getReviewDue({ negs: q.negs !== "0", unanswered: q.unanswered !== "0", wrongEnd: q.wrongEnd !== "0", power: q.power === "1" });
         if (path === "/api/plugin-data") return window.qbreader.getPluginData(q.plugin, q.key);
-        if (/^\/api\/(account\/|friends$|leaderboards(\/board|\/groups)?$|users\/profile$|shop\/|clubs(\/|$)|diag(\/|$)|links\/view$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
+        if (/^\/api\/(account\/|friends$|leaderboards(\/board|\/groups)?$|users\/profile$|shop\/|clubs(\/|$)|diag(\/|$)|links\/view$|plugin-stats$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("GET", path, { qs: qs || "" }) : { available: false };
         throw new Error("Unknown API route: " + path);
       },
       post(url, data) {
@@ -162,7 +162,7 @@ const API = IS_LAN ? LAN_API : isElectron
         if (path === "/api/import-questions") return window.qbreader.importQuestions(data.sets, data.tossups, data.bonuses);
         if (path === "/api/apply-update") return window.qbreader.applyUpdate(data.folderId);
         if (path === "/api/app-update-check") return window.qbreader.appUpdateCheck ? window.qbreader.appUpdateCheck() : { configured: false, updated: false, dev: true };
-        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/|clubs\/|diag\/|reports$|links(\/accept)?$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
+        if (/^\/api\/(account\/|friends\/|cloud\/|leaderboards\/|shop\/|mp\/|clubs\/|diag\/|reports$|links(\/accept)?$|plugin-stats$)/.test(path)) return window.qbreader.cloud ? window.qbreader.cloud("POST", path, data) : { error: "Update the app to use accounts." };
         throw new Error("Unknown API route: " + path);
       },
       delete(url) {
@@ -402,6 +402,8 @@ const state = {
     strictV: Number(localStorage.getItem("qb-strict-v") || 0),
     allowRebuzzes: localStorage.getItem("qb-allow-rebuzzes") === "true",
     stopOnPower: localStorage.getItem("qb-stop-on-power") === "true",
+    readAloud: localStorage.getItem("qb-read-aloud") === "true",
+    voice: localStorage.getItem("qb-voice") || "",
     allowSkips: localStorage.getItem("qb-allow-skips") !== "false",
     showQuestionMeta: localStorage.getItem("qb-show-qmeta") !== "false",
     hidePronunciations: localStorage.getItem("qb-hide-pron") === "true",
@@ -1340,7 +1342,7 @@ function homeBgCardHtml(pre, post, ans) {
 }
 
 // ── practice setup panel (#filters-panel while it sits on the practice screen):
-//    it opens beside the page and pushes it left (CSS :has(.filters-panel.open)),
+//    it opens beside the page and pushes it left (CSS .screen.panel-host, syncPanelHost),
 //    so the session keeps running and its hotkeys keep working ──
 function setupDrawerEl() {
   const p = document.getElementById("filters-panel");
@@ -1362,6 +1364,23 @@ function closeSetupDrawer() {
   if (p) p.classList.remove("open");
   document.getElementById("btn-open-setup")?.setAttribute("aria-expanded", "false");
 }
+// The screen holding the open setup panel is .panel-host (the page moves aside for it), and html.cat-ovl-open says
+// the category picker is open (the CSS that keeps its fixed position). Plain classes kept up to date here: the
+// :has(.filters-panel.open) / :has(#cat-ovl:not(.hidden)) rules on every screen they replace restyled the whole page
+// at each keystroke and timer tick (~25 ms on a practice page), which made typing an answer lag
+function syncPanelHost() {
+  const p = document.getElementById("filters-panel"), host = p && p.classList.contains("open") ? p.closest(".screen") : null;
+  for (const s of document.querySelectorAll(".screen.panel-host")) if (s !== host) s.classList.remove("panel-host");
+  if (host && !host.classList.contains("panel-host")) host.classList.add("panel-host");
+  const co = document.getElementById("cat-ovl"), open = !!(co && !co.classList.contains("hidden"));
+  if (document.documentElement.classList.contains("cat-ovl-open") !== open) document.documentElement.classList.toggle("cat-ovl-open", open);
+}
+(() => {
+  const mo = new MutationObserver(syncPanelHost);
+  for (const id of ["filters-panel", "cat-ovl"]) { const el = document.getElementById(id); if (el) mo.observe(el, { attributes: true, attributeFilter: ["class"] }); }
+  window.QB?.on?.("screen:change", () => requestAnimationFrame(syncPanelHost));   // (a page that moved the panel while open)
+  syncPanelHost();
+})();
 function syncDrawerStart() {
   const b = document.getElementById("btn-drawer-start");
   if (b) b.textContent = state.sessionActive ? "Done" : trialPending() ? "Start trial" : "Start";
@@ -1672,6 +1691,78 @@ const Sound = {
     crack.connect(hp); hp.connect(g2); g2.connect(c.destination); crack.start(t); crack.stop(t + 0.25);
   },
 };
+
+// ── Read aloud (15.61): the system's voice reads the question, and the text on screen follows it word by word ──
+// speak(text, from, onPos, onEnd): onPos(index) as each word is said (the index after it), onEnd() once it's done
+// (never after stop(), which a buzz, Pause, a new question or leaving calls). Pronunciation guides aren't said (they
+// become spaces of the same length, so indexes still line up). The reading speed sets how fast it talks.
+const Speech = (() => {
+  const ok = typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
+  let seq = 0;
+  const voices = () => { try { return window.speechSynthesis.getVoices() || []; } catch (e) { return []; } };
+  const english = (v) => /^en\b|^en[-_]/i.test(v.lang || "");
+  function voice() {
+    const vs = voices(), want = state.settings.voice;
+    return (want && vs.find((v) => v.voiceURI === want)) || vs.find((v) => v.default && english(v)) || vs.find((v) => english(v) && v.localService) || vs.find(english) || null;
+  }
+  function stop() { seq++; try { if (ok) window.speechSynthesis.cancel(); } catch (e) {} }
+  function rate() { const ms = Number(state.settings.revealSpeed) || 0; return ms > 0 ? Math.max(0.6, Math.min(2.4, 70 / ms)) : 1; }
+  // said a sentence at a time (one long utterance stops partway on some voices, with no end event), each piece's
+  // word positions shifted to where it sits in the text
+  function speak(text, from, onPos, onEnd) {
+    stop();
+    if (!ok) return false;
+    const my = seq, said = String(text).slice(from).replace(/\((?:“[^”]*”|"[^"]*")\)/g, (m) => " ".repeat(m.length));
+    const pieces = [], re = /[^.?!;]+(?:[.?!;]+["”’)]*\s*|$)/g;
+    let m, cur = null;
+    while ((m = re.exec(said)) && m[0]) {
+      if (cur && cur.t.length + m[0].length <= 220) cur.t += m[0]; else pieces.push(cur = { at: m.index, t: m[0] });
+      if (re.lastIndex >= said.length) break;
+    }
+    const todo = pieces.filter((p) => p.t.trim());
+    if (!todo.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return true; }
+    const v = voice();
+    todo.forEach((p, k) => {
+      const u = new SpeechSynthesisUtterance(p.t);
+      if (v) { u.voice = v; u.lang = v.lang; }
+      u.rate = rate();
+      u.onboundary = (e) => {
+        if (my !== seq || (e.name && e.name !== "word")) return;
+        const ci = e.charIndex || 0, len = e.charLength || (/^\S*/.exec(p.t.slice(ci)) || [""])[0].length;
+        onPos(from + p.at + ci + len);
+      };
+      u.onend = () => { if (my !== seq) return; onPos(from + p.at + p.t.length); if (k === todo.length - 1) onEnd(); };
+      u.onerror = (e) => { if (my === seq && e.error !== "interrupted" && e.error !== "canceled" && k === todo.length - 1) onEnd(); };
+      window.speechSynthesis.speak(u);
+    });
+    return true;
+  }
+  // a voice that never says where it is (some don't send word boundaries): the text follows its usual pace
+  const charsPerMs = () => rate() * 0.015;
+  const on = () => ok && !!state.settings.readAloud && Number(state.settings.revealSpeed) > 0;
+  return { ok, on, voices, speak, stop, charsPerMs };
+})();
+// the reader follows the voice: speak `text` from `from`, call show(index) as it goes (the voice's own word
+// positions, or its usual pace when it gives none or stalls), and done() at the end; live() false stops following.
+// A voice that never says it's done ends a moment after its pace reaches the end
+function followVoice(text, from, show, done, live) {
+  let raf = 0, pos = from, lastAt = performance.now(), ended = false;
+  const len = String(text).length, quit = () => { if (raf) cancelAnimationFrame(raf); raf = 0; };
+  const finish = () => { if (ended) return; ended = true; quit(); Speech.stop(); if (live()) done(); };
+  const pace = () => {
+    raf = 0; if (!live() || ended) return;
+    const now = performance.now(), quiet = now - lastAt;
+    if (quiet > 900) {   // no word heard lately: go on at the voice's usual pace from the last one
+      const est = pos + Math.floor((quiet - 600) * Speech.charsPerMs());
+      if (est >= len) { if (quiet > 900 + (len - pos) / Speech.charsPerMs()) { finish(); return; } }
+      else show(est);
+    }
+    raf = requestAnimationFrame(pace);
+  };
+  Speech.speak(text, from, (i) => { if (!live() || ended) return; if (i > pos) { pos = i; lastAt = performance.now(); show(i); } }, finish);
+  raf = requestAnimationFrame(pace);
+  return quit;
+}
 
 (function initGlobalClickSound() {
   const SEL = "button,a,input,select,textarea,label,.btn,.pill,.menu-item,.filter-item," +
@@ -4525,6 +4616,30 @@ document.addEventListener("change", (e) => { if (e.target && _MODE_SETTING_IDS.h
 document.addEventListener("input", (e) => { if (e.target && (e.target.id === "strictness-slider" || e.target.id === "panel-speed-slider" || e.target.id === "speed-slider")) scheduleModeSettingSave(); });
 $("#opt-allow-rebuzzes")?.addEventListener("change", (e) => { state.settings.allowRebuzzes = e.target.checked; lsSet("qb-allow-rebuzzes", e.target.checked); });
 $("#opt-stop-on-power")?.addEventListener("change", (e) => { state.settings.stopOnPower = e.target.checked; lsSet("qb-stop-on-power", e.target.checked); });
+// Read aloud: on, the question being read now is said from where it is; off, the voice stops and the text reads on
+$("#opt-read-aloud")?.addEventListener("change", (e) => {
+  state.settings.readAloud = e.target.checked; lsSet("qb-read-aloud", e.target.checked); syncVoiceRow();
+  if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+  Speech.stop();
+  if (state.mode === "tossups") resumeReveal(); else if (state._bonusReader) state._bonusReader.resume();
+});
+$("#opt-voice")?.addEventListener("change", (e) => { state.settings.voice = e.target.value; lsSet("qb-voice", e.target.value); });
+// the voices this computer has, English first (they arrive a moment after the page loads)
+function fillVoices() {
+  const sel = document.getElementById("opt-voice"); if (!sel) return;
+  const en = (v) => /^en\b|^en[-_]/i.test(v.lang || "");
+  const vs = Speech.voices().slice().sort((a, b) => (en(b) - en(a)) || String(a.name).localeCompare(String(b.name)));
+  const want = state.settings.voice || "";
+  sel.innerHTML = `<option value="">System voice</option>` + vs.map((v) => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} (${escapeHtml(v.lang)})</option>`).join("");
+  sel.value = vs.some((v) => v.voiceURI === want) ? want : "";
+}
+function syncVoiceRow() {
+  const row = document.getElementById("read-voice-row"); if (row) row.hidden = !(Speech.ok && state.settings.readAloud);
+  const box = document.getElementById("opt-read-aloud"); if (box) { box.checked = !!state.settings.readAloud; box.disabled = !Speech.ok; }
+}
+if (Speech.ok) { fillVoices(); try { window.speechSynthesis.addEventListener("voiceschanged", fillVoices); } catch (e) {} }
+syncVoiceRow();
+window.QB?.on?.("screen:change", () => Speech.stop());
 $("#opt-allow-skips")?.addEventListener("change", (e) => { state.settings.allowSkips = e.target.checked; lsSet("qb-allow-skips", e.target.checked); });
 $("#strictness-slider")?.addEventListener("input", (e) => {
   state.settings.strictness = parseInt(e.target.value);
@@ -4739,6 +4854,7 @@ function endSession() {
   state._gameSig = null; state._gameQueue = null; state._gameIdx = 0;
   state._wantBonus = false; state._pendingPairedBonus = null; state._currentPaired = null;
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+  Speech.stop();
   $("#btn-start-session").innerHTML = keyLabelHtml("start-skip", "Start Session");
   resetQuestionUI();
   updateLiveStats();
@@ -4748,6 +4864,7 @@ function endSession() {
 
 async function nextQuestion() {
   if (!state.sessionActive || state._awaitingNext) return;
+  Speech.stop();
   if (trialOver()) return;   // a trial that ended (or is about to show its result) reads nothing more
   // Random practice serves from the preload queue. If a run of Nexts ever outpaces it, the
   // screen stays exactly as it is — no blank, no wait text — until one is ready, and more
@@ -4979,7 +5096,7 @@ function schedulePrefetch(ms = 150) {
 }
 // Setup edits that pick different questions empty the queue; reading speed, timers,
 // strictness and display toggles don't (dragging the speed slider used to empty it).
-const _NOT_A_FILTER = new Set(["panel-speed-slider", "strictness-slider", "panel-buzz-timer", "panel-buzz-window", "panel-bonus-timer", "opt-allow-rebuzzes", "opt-stop-on-power", "opt-allow-skips", "opt-bonus-after", "opt-hide-pron", "opt-show-qmeta", "filter-hide-pron", "filter-hide-notes", "opt-hide-notes", "auto-reveal"]);
+const _NOT_A_FILTER = new Set(["opt-read-aloud", "opt-voice", "panel-speed-slider", "strictness-slider", "panel-buzz-timer", "panel-buzz-window", "panel-bonus-timer", "opt-allow-rebuzzes", "opt-stop-on-power", "opt-allow-skips", "opt-bonus-after", "opt-hide-pron", "opt-show-qmeta", "filter-hide-pron", "filter-hide-notes", "opt-hide-notes", "auto-reveal"]);
 const _filterEdit = (e) => { if (!(e.target && _NOT_A_FILTER.has(e.target.id))) clearPrefetch(); };
 document.getElementById("filters-panel")?.addEventListener("change", _filterEdit, true);
 document.getElementById("filters-panel")?.addEventListener("input", _filterEdit, true);
@@ -5592,11 +5709,20 @@ function readBonusText(el, text, done, kind) {
   if (!state.settings.revealSpeed || !text) { el.textContent = text; if (done) done(); return; }
   state._bonusReader = r;
   paint();
+  // read aloud: the part follows the voice; Pause stops it and resuming says the rest
+  if (Speech.on()) {
+    const live = () => state._bonusReader === r && !state.isPaused && state.currentQuestion === q && state.mode === "bonuses";
+    const fin = r.finish;
+    r.finish = (callDone = true) => { Speech.stop(); fin(callDone); };
+    r.resume = () => followVoice(r.text, r.idx, (i) => { const n = Math.min(r.text.length, i); if (n > r.idx) { r.idx = n; paint(); followReading(el.querySelector(".revealed"), q && q.id); } }, () => r.finish(), live);
+    r.resume();
+    return;
+  }
   r.raf = requestAnimationFrame(step);
 }
 function stopBonusReader() {
   const r = state._bonusReader;
-  if (r) { if (r.raf) cancelAnimationFrame(r.raf); state._bonusReader = null; }
+  if (r) { if (r.raf) cancelAnimationFrame(r.raf); state._bonusReader = null; Speech.stop(); }
 }
 
 function bonusPartLetter(i) { return "ABCDEFGHI"[i] || String(i + 1); }
@@ -5957,6 +6083,33 @@ function revealText(text) {
     startBuzzWindow();
     return;
   }
+  // read aloud: the text follows the voice (stopping at the power mark when reading does)
+  if (Speech.on() && state.mode === "tossups") {
+    const qid = state.currentQuestion && state.currentQuestion.id;
+    const live = () => state.sessionActive && !state.isBuzzed && !state.isPaused && state.mode === "tossups" && !!state.currentQuestion && state.currentQuestion.id === qid;
+    const atPower = (n) => playSetting("stopOnPower") && state.prePowerEnd > 0 && !state._stoppedAtPower && n >= state.prePowerEnd;
+    const quit = followVoice(text, state.revealIndex, (i) => {
+      let n = Math.min(text.length, i);
+      if (atPower(n)) n = state.prePowerEnd;
+      if (n <= state.revealIndex) return;
+      state.revealIndex = n; state.buzzPosition = n;
+      $("#question-text").innerHTML = formatQuestionText(text, n, state.prePowerEnd);
+      followReading($("#question-text .revealed"), qid);
+      if (atPower(n)) {
+        Speech.stop(); quit();
+        state._stoppedAtPower = true; state.isPaused = true;
+        const el = document.createElement("div");
+        el.className = "pause-overlay"; el.id = "pause-overlay"; el.textContent = "PAUSED";
+        $("#question-area")?.appendChild(el);
+      }
+    }, () => {
+      state.revealIndex = text.length; state.buzzPosition = text.length;
+      $("#question-text").innerHTML = formatQuestionText(text, text.length, state.prePowerEnd);
+      state.questionFullyRead = true;
+      startBuzzWindow();
+    }, live);
+    return;
+  }
 
   let lastTime = 0;
   function step(ts) {
@@ -6070,6 +6223,7 @@ function togglePause() {
 
   if (state.isPaused) {
     if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+    Speech.stop();
     pauseEventTimer();
     // a bonus part's answer box closes while paused: an open box counts as answering, which held every key (P
     // couldn't resume, and typed "p" into it instead); Resume opens it again where it was
@@ -6188,6 +6342,7 @@ function buzz() {
   state._promptFrom = null;
 
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
+  Speech.stop();
 
   Sound.buzz();
 
@@ -10238,11 +10393,21 @@ function achRecordHit(ach, rec) {
   if (ach.either) return g >= 0 ? g : inTopic ? 0 : -1;
   return inTopic && g >= 0 ? g : -1;
 }
+// a record's hit, kept on the achievement by question: a question's answer and path don't change, and every check ran
+// each achievement against every power again (~80 ms after each answer on 2,300 powers, while the next was typed)
+function achRecordHitKept(ach, rec) {
+  const m = ach._hits || (ach._hits = new Map()), c = m.get(rec.q);
+  if (c && c.a === rec.a && c.p === rec.p) return c.g;
+  const g = achRecordHit(ach, rec);
+  if (m.size > 200000) m.clear();
+  m.set(rec.q, { a: rec.a, p: rec.p, g });
+  return g;
+}
 function achTopicProgress(ach, records) {
   const mode = ach.count || "questions", seen = new Set();
   for (const r of records) {
     if (ach.during && !(r.t >= ach.during[0] && r.t < ach.during[1])) continue;   // a limited one: powers in its window only
-    const g = achRecordHit(ach, r);
+    const g = achRecordHitKept(ach, r);
     if (g >= 0) seen.add(mode === "targets" ? g : mode === "answers" ? r.a : r.q);
   }
   return seen.size;
@@ -10305,7 +10470,7 @@ function achUnlockTimes(list, tl, records) {
       const mode = ach.count || "questions", seen = new Set();
       for (const r of recs) {
         if (ach.during && !(r.t >= ach.during[0] && r.t < ach.during[1])) continue;
-        const g = achRecordHit(ach, r); if (g < 0) continue;
+        const g = achRecordHitKept(ach, r); if (g < 0) continue;
         seen.add(mode === "targets" ? g : mode === "answers" ? r.a : r.q);
         if (seen.size >= n) { t = r.t; break; }
       }
@@ -10430,10 +10595,13 @@ function achNoteResult(e) {
 async function refreshAchievementsRealtime() {
   try { await achLiveLoad(); } catch (e) {}
 }
-// a quiet re-read once the backend has the result (anything the live tally missed still pops up then)
+// a quiet re-read once the backend has the result (anything the live tally missed still pops up then). Never while
+// an answer is being typed: the stats and powers it reads (and, in the app, works out on the main process, which
+// carries the keystrokes) wait until the answer box closes
 function scheduleAchievementCheck() {
   if (_rtAchTimer) clearTimeout(_rtAchTimer);
-  _rtAchTimer = setTimeout(refreshAchievementsRealtime, 2500);
+  const later = () => { _rtAchTimer = (state.isBuzzed && !state.resultAreaVisible) || isAnsweringNow() ? setTimeout(later, 500) : null; if (!_rtAchTimer) refreshAchievementsRealtime(); };
+  _rtAchTimer = setTimeout(later, 2500);
 }
 
 // A plugin's icons win (map, then function — e.g. "Achievement Glyphs" brings
@@ -10726,14 +10894,16 @@ function emblemSvg(o) {
 // EMBLEM END
 const trialEmblem = (key, level, size) => emblemSvg({ level, hue: trialHue(key), glyph: TRIAL_GLYPH[(trialMeta(key) || {}).cat || key], ribbon: ROMAN[level] || String(level), size });
 // badges in two sections (15.58): the categories (and event badges) on top, then a line, then the subcategories'
+// Each row has its own XP: the categories' trials, and the subcategories' (two counters, never one sum)
 function trialBadgesHtml(trials, extra) {
-  const best = trialBadges(trials), subs = subTrialBadges(trials), xp = trialXpOf(trials);
+  const best = trialBadges(trials), subs = subTrialBadges(trials), xp = trialXpSum(trials, false), subXp = trialXpSum(trials, true);
   const order = (b) => Object.keys(b).sort((x, y) => b[y] - b[x]);
   const keys = order(best), subKeys = order(subs);
-  if (!keys.length && !subKeys.length && !extra && !xp) return "";
+  if (!keys.length && !subKeys.length && !extra && !xp && !subXp) return "";
   const emb = (k, lv, size) => `<button type="button" class="tr-emb lv${lv}" data-badge="${k}" data-lv="${lv}" title="${escapeHtml(trialName(k, lv))}" aria-label="${escapeHtml(trialName(k, lv))} badge">${trialEmblem(k, lv, size)}<span class="tr-emb-name">${escapeHtml(trialName(k, lv))}</span></button>`;
-  return `<div class="tr-badge-sets"><div class="tr-badges" aria-label="Category badges">${xp ? `<span class="tr-xp-pill num" title="Trial XP">${fmtXp(xp)}</span>` : ""}${extra || ""}${keys.map((k) => emb(k, best[k], 62)).join("")}</div>` +
-    (subKeys.length ? `<div class="tr-badges tr-badges-sub" aria-label="Subcategory badges">${subKeys.map((k) => emb(k, subs[k], 46)).join("")}</div>` : "") + `</div>`;
+  return `<div class="tr-badge-sets">` +
+    (keys.length || extra || xp ? `<div class="tr-badges" aria-label="Category badges">${xp ? `<span class="tr-xp-pill num" title="Category trial XP">${fmtXp(xp)}</span>` : ""}${extra || ""}${keys.map((k) => emb(k, best[k], 62)).join("")}</div>` : "") +
+    (subKeys.length || subXp ? `<div class="tr-badges tr-badges-sub" aria-label="Subcategory badges">${subXp ? `<span class="tr-xp-pill num" title="Subcategory trial XP">${fmtXp(subXp)}</span>` : ""}${subKeys.map((k) => emb(k, subs[k], 46)).join("")}</div>` : "") + `</div>`;
 }
 // a badge's details: the emblem big, when it was won, the road through the ten, and (your own) the next level
 function wireBadges(container, trials, own) {
@@ -11395,10 +11565,10 @@ function openAchievementDetail(ach, ctx) {
       (groups.length && topics.length ? `<p>${ach.either ? "Either a question in the topic or one whose answer is on the list counts." : "The question has to be in the topic and its answer on the list."}</p>` : "") +
       (groups.length ? `<p class="achd-fine">Only the main answer counts, and a surname is enough${within.length ? ` (in ${within.map((w) => escapeHtml(achPathLabel(w))).join(" or ")})` : ""}.</p>` : "");
     // (a limited one counts only powers inside its window, as its progress does)
-    const recs = (ctx.records || []).filter((r) => (!ach.during || (r.t >= ach.during[0] && r.t < ach.during[1])) && achRecordHit(ach, r) >= 0);
+    const recs = (ctx.records || []).filter((r) => (!ach.during || (r.t >= ach.during[0] && r.t < ach.during[1])) && achRecordHitKept(ach, r) >= 0);
     if (topics.length) what += `<div class="achd-topics">${topics.map((t) => `<span class="achd-topic">${escapeHtml(achPathLabel(t))}</span>`).join("")}</div>`;
     if (groups.length) {
-      const hit = new Set(recs.map((r) => achRecordHit(ach, r)));
+      const hit = new Set(recs.map((r) => achRecordHitKept(ach, r)));
       const show = (g) => { const lead = achList(ach.answers[groups.indexOf(g)])[0]; return String(lead || g[0].t).replace(/^@/, ""); };
       what += chips(groups.map((g, i) => [show(g), hit.has(i)]));
     }
@@ -11567,7 +11737,11 @@ function maybeShowAchievementPopups(achData, pluginAchs, profileKey) {
   for (const a of nowEarned) {
     if (!all.has(a.id)) {
       all.add(a.id);
-      if (!firstRun) fresh.push(a);
+      // one already dated (the dates sync with the account) was earned, and shown, on another device or window: it
+      // isn't news here. Before this, an app or browser unused for a while popped up everything the account had
+      // earned elsewhere since
+      const dated = achData[a.id] && Number(achData[a.id].at) > 0;
+      if (!firstRun && !dated) fresh.push(a);
     }
   }
   _saveEarnedAchIds(all, profileKey);
@@ -14309,7 +14483,7 @@ const _lb = { tab: "global", period: "week", friends: null, kind: "individuals" 
 // and organizations ranked by average points per active member)
 function lbKindSeg() {
   return '<div class="lb-kinds"><div class="seg" role="group" aria-label="Leaderboard">' + [["individuals", "Individuals"], ["teams", "Teams"], ["orgs", "Organizations"]].map(([k, l]) =>
-    `<button type="button" data-lb-kind="${k}" aria-pressed="${_lb.kind === k}">${l}</button>`).join("") + "</div>" + (_lb.kind !== "individuals" && window.QBClubs ? window.QBClubs.groupsTip() : "") + "</div>";
+    `<button type="button" data-lb-kind="${k}" aria-pressed="${_lb.kind === k}">${l}</button>`).join("") + "</div>" +  "</div>";
 }
 function wireLbKinds(c) {
   c.querySelectorAll("[data-lb-kind]").forEach((b) => b.onclick = () => { if (_lb.kind === b.dataset.lbKind) return; _lb.kind = b.dataset.lbKind; renderLeaderboards(); });
@@ -14641,10 +14815,11 @@ async function paintLeaderboards(c, d, board, note) {
   const avN = (h, n) => `<span class="fr-av"${avatarStyle(n)}>${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${avN(r.displayName || r.handle, r.neon)}` +
     `<span class="fr-name"><b>${neonName(r.displayName || r.handle, r.neon)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
-    `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small>${(SEASONS.find((e) => e.key === _lb.period) || { unit: "points" }).unit}</small></span>` +
-    `<span class="fr-stat"><b class="num">${Number(r.questions || 0).toLocaleString()}</b><small>questions</small></span>` +
-    `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small>powers</small></span>` +
-    `<span class="fr-stat"><b class="num">${r.accuracy == null ? "—" : r.accuracy + "%"}</b><small>accuracy</small></span>` +
+    // NAQT's abbreviations (15.61): PTS points, TUH tossups heard, 15 powers; ACC the share of tossups answered right
+    `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small title="Points">${(SEASONS.find((e) => e.key === _lb.period) || { unit: "PTS" }).unit}</small></span>` +
+    `<span class="fr-stat"><b class="num">${Number(r.tuh != null ? r.tuh : r.questions || 0).toLocaleString()}</b><small title="${r.tuh != null ? "Tossups heard" : "Questions"}">${r.tuh != null ? "TUH" : "Q"}</small></span>` +
+    `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small title="Powers">15</small></span>` +
+    `<span class="fr-stat"><b class="num">${r.accuracy == null ? "—" : r.accuracy + "%"}</b><small title="Tossups answered right">ACC</small></span>` +
     `<span class="fr-act">${removable && !r.you ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-lb-remove="${escapeHtml(r.handle)}" title="Remove from this leaderboard" aria-label="Remove @${escapeHtml(r.handle)}">${ic("trash", 15)}</button>` : ""}</span></div>`;
   const invites = (d.invites || []).map((i) => `<div class="fr-req">${av(i.name)}<span class="fr-name"><b>${escapeHtml(i.name)}</b><small>${i.from ? neonName(i.from.displayName, i.from.neon) + " invited you · " : ""}${i.members} ${i.members === 1 ? "member" : "members"}</small></span><button type="button" class="btn btn-sm" data-lb-decline="${escapeHtml(i.id)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-lb-join="${escapeHtml(i.id)}">Join</button></div>`).join("");
   let body;
