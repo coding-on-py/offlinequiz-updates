@@ -1,5 +1,5 @@
 {
-  "version": "15.65",
+  "version": "15.66",
   "renderer": [
     "index.html",
     "style.css",
@@ -150,7 +150,7 @@
     }
   ],
   "main": true,
-  "notes": "bug fixes and improvements",
+  "notes": "minor bug fixes",
   "files": {
     "renderer/index.html": "cdc88be26de8b475b88604eb9a2372cb96197a8996d33178b095454b004dcfcd",
     "renderer/style.css": "4ee33d2219b56e83dd18867ca0c1696fff42103e674173aa4aa42824d7d5ad5f",
@@ -159,7 +159,7 @@
     "renderer/app.js": "489cf132ecae86a2212707f76b42c1e4549d46d27cd6ddd19e209589f217e701",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "2045adc1f28cce88d56d2fbdf1f074283325597bb090d90d51a1773d6811c392",
-    "plugins/answer-notes.zip": "3be2634c6ea60d9c727bd320a8292523918425503b4163ed23b4447c24150cbc",
+    "plugins/answer-notes.zip": "bdac7548f7ffe6c20c2930c750e2377ca698e56c462f8708ee01aeb5641adb89",
     "plugins/buzz-tracker.zip": "317d3a5b3016cf0c985051d7c219b874bd5f9da74939fc8dc27db71ce8e97cde",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
     "plugins/canon-tracker.zip": "e98de9e23e33b6bff0ee1f912ec67126833205b716599c3e978870f4f5844810",
@@ -169,7 +169,7 @@
     "plugins/first-lines.zip": "90edb36b59d5fcaaa3ed7fee7fa2438b8a7af38bf524374f7bb99800baaee0e0",
     "plugins/flashcards.zip": "78814adfed06bfd506e5bddee08feef570c3e763676553d8e5905d1dd781db3b",
     "plugins/folders.zip": "c6b3b1c2a9723af244dae0913eb8847178ae767cbfcfbb4a8ffad7276979faf6",
-    "plugins/gap-finder.zip": "c5faef165da1eeb4a1ef0bdd14e6a7c8370a85c94f4a7a693e5433388f59ee1b",
+    "plugins/gap-finder.zip": "338db961bed495e14235757e3b3ccdbe0e27909c3a64376f54192886934bbdc6",
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/kokoro-voice.zip": "b7413479fe4814db8486d9bac75a20417cc63fbc6dc3edb0adfda68e9aeac982",
     "plugins/layout-customizer.zip": "424d14afe3734231ec42cdc190cf8b003a8e171f097465faf9bce43f5c143c29",
@@ -182,9 +182,9 @@
     "plugins/pyramid-check.zip": "91f1b891dec018854b8121253044f052b1a0e5b8c945175d1c0c5e12e647f1e1",
     "plugins/quotations.zip": "5af4097b1244b7c1f2bcef766a003596f7ee4ec2f2645014ff4301e9abbbb1f4",
     "plugins/rival.zip": "4f877aee3c1a874e5d788ffb1877e15e9cc7b46c76996c208e4e576871e5e0fe",
-    "plugins/tournament-prep.zip": "c036edf902dd5bd9b831082abc9a0a9c675068decc4f29c97449430cb09e8e04",
+    "plugins/tournament-prep.zip": "5e055d15dd1362b4ab2834112ec6263bbd6d0348bd18c161cffa15070528b40c",
     "plugins/voice-answers.zip": "542f34c1b49716491fbc20501e5c6a6a40b5366bcec392d1e5b5e25bbf0d219d",
     "plugins/weekly-plan.zip": "7f532ecd809fe583f4515a745acd06534082c6cbe675f3ce1cff5f5d946cdceb"
   },
-  "signature": "7Krv4rNiSX5osNTq2fUYQqz7CYMGa6UbcKTs9SacTOfNGyTDFPZILv04mhuo0zRz3rNfQdxQtP2Q7Omxklp/CQ=="
+  "signature": "ahGKGaVQ+p3XzAoMM/j3XN5pM1ifUdyeTyveomYuNbvA9InPXikK16rm6hoEiHOVjNgHgzh5+e2oumrOVKPGBw=="
 }
