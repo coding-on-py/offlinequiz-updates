@@ -1,5 +1,5 @@
 {
-  "version": "15.61",
+  "version": "15.62",
   "renderer": [
     "index.html",
     "style.css",
@@ -14,6 +14,26 @@
       "file": "achievement-glyphs.zip"
     },
     {
+      "id": "answer-clusters",
+      "name": "Answer Clusters",
+      "file": "answer-clusters.zip"
+    },
+    {
+      "id": "answer-notes",
+      "name": "Answer Notes",
+      "file": "answer-notes.zip"
+    },
+    {
+      "id": "bonus-parts",
+      "name": "Bonus Parts",
+      "file": "bonus-parts.zip"
+    },
+    {
+      "id": "buzz-tracker",
+      "name": "Buzz Tracker",
+      "file": "buzz-tracker.zip"
+    },
+    {
       "id": "buzz-words",
       "name": "Buzzwords",
       "file": "buzz-words.zip"
@@ -24,14 +44,29 @@
       "file": "canon-tracker.zip"
     },
     {
+      "id": "challenge",
+      "name": "Challenge",
+      "file": "challenge.zip"
+    },
+    {
       "id": "coach-mode",
       "name": "Coach Mode",
       "file": "coach-mode.zip"
     },
     {
+      "id": "difficulty-ladder",
+      "name": "Difficulty Ladder",
+      "file": "difficulty-ladder.zip"
+    },
+    {
       "id": "fact-sheet",
       "name": "Fact Sheet",
       "file": "fact-sheet.zip"
+    },
+    {
+      "id": "first-lines",
+      "name": "First Lines",
+      "file": "first-lines.zip"
     },
     {
       "id": "flashcards",
@@ -44,33 +79,118 @@
       "file": "folders.zip"
     },
     {
+      "id": "gap-finder",
+      "name": "Gap Finder",
+      "file": "gap-finder.zip"
+    },
+    {
       "id": "keyword-freq",
       "name": "Keyword Frequency",
       "file": "keyword-freq.zip"
     },
     {
+      "id": "lightning",
+      "name": "Lightning",
+      "file": "lightning.zip"
+    },
+    {
+      "id": "listen",
+      "name": "Listen",
+      "file": "listen.zip"
+    },
+    {
+      "id": "missed-clues",
+      "name": "Missed Clues",
+      "file": "missed-clues.zip"
+    },
+    {
+      "id": "moderator",
+      "name": "Moderator",
+      "file": "moderator.zip"
+    },
+    {
+      "id": "neg-check",
+      "name": "Neg Check",
+      "file": "neg-check.zip"
+    },
+    {
       "id": "packet-builder",
       "name": "Packet Builder",
       "file": "packet-builder.zip"
+    },
+    {
+      "id": "pyramid-check",
+      "name": "Pyramid Check",
+      "file": "pyramid-check.zip"
+    },
+    {
+      "id": "quotations",
+      "name": "Quotations",
+      "file": "quotations.zip"
+    },
+    {
+      "id": "rival",
+      "name": "Rival",
+      "file": "rival.zip"
+    },
+    {
+      "id": "set-series",
+      "name": "Set Series",
+      "file": "set-series.zip"
+    },
+    {
+      "id": "tournament-prep",
+      "name": "Tournament Prep",
+      "file": "tournament-prep.zip"
+    },
+    {
+      "id": "voice-answers",
+      "name": "Voice Answers",
+      "file": "voice-answers.zip"
+    },
+    {
+      "id": "weekly-plan",
+      "name": "Weekly Plan",
+      "file": "weekly-plan.zip"
     }
   ],
   "main": true,
-  "notes": "bug fixes and improvements",
+  "notes": "new plugins and improvements",
   "files": {
-    "renderer/index.html": "aebd68b975dbffc6b55a3f0680da82e647a4d93ca0c0f2d521e7001e8b4e3471",
-    "renderer/style.css": "f30ea9a02e28c0776c3ed2c1988834165b7f8c8edd7b8d7bf339af4329e11c2c",
+    "renderer/index.html": "de575a88ec811242b8b2b79cbcc60f235d51a3194d07b010dc03ec90f2a191a2",
+    "renderer/style.css": "ecc9abf27d9420375f2f2777ae3f5950657e938ed896dc3dd7df723274a9a962",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "8b9d6bea3ac828944c56d41d996f6d8b913dad75e7c28eac1e20310bd1544665",
-    "renderer/app.js": "27b4023a6f091bd862c7fb308cae287b402585a6df5eb067e317f9d2b625ddb8",
+    "renderer/extensions.js": "8484aaee1f5f7389a09f6970f321e49c47ebe89e360dc45def59ad7bd7bb080f",
+    "renderer/app.js": "b35aab92783dff12380dbe878a9f96bf03367d882a3da243686eca4967bed987",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
+    "plugins/answer-clusters.zip": "076c124b062f04e986d577edff205900996d1021bbeea8b241ec9148d2aee7f2",
+    "plugins/answer-notes.zip": "143d4e4952198acc91b714fcb06fe2fcb19370f395ff4d45f8ab87a733a6ca44",
+    "plugins/bonus-parts.zip": "c34a1cfb8f3e98eb9b51efccbe5d5792e7b3a10db2b7c8469a769d7738850bef",
+    "plugins/buzz-tracker.zip": "ef3fae4309b127b87ce58d9d8321c2281f2b49cbadaa7c3ddce559984acffbf3",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
     "plugins/canon-tracker.zip": "e98de9e23e33b6bff0ee1f912ec67126833205b716599c3e978870f4f5844810",
+    "plugins/challenge.zip": "ef0eb345730c1f5517e73fe98f82f6c23cda0b684e221a41890a7570abbd0989",
     "plugins/coach-mode.zip": "e23183227fe3dec730e3f37e43906ee5e1d6c0e74b063c9a4e8a2da77a623fad",
+    "plugins/difficulty-ladder.zip": "7e96e3e35e24470e2e2a86bbf9969bf2dc99744d2db33e044ec07dad665f7eff",
     "plugins/fact-sheet.zip": "e317174cc88cda1b451b6ed006cf6a6e295fe2e087689ff44d634edc2309b74e",
+    "plugins/first-lines.zip": "4bd4945b18e1878cf7942affc9dd299b456fd6da90539e25f95f2e476215edf3",
     "plugins/flashcards.zip": "b7d9c887a1d181db2511ccd595d63a013c2f0e15694a889b2b7499d7219b8bdc",
     "plugins/folders.zip": "c6b3b1c2a9723af244dae0913eb8847178ae767cbfcfbb4a8ffad7276979faf6",
+    "plugins/gap-finder.zip": "44765dbc29df43ba966db71781d7f6bd3b008950eaa2dd8ed9ea3f88237adef7",
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
-    "plugins/packet-builder.zip": "1932c45fc046b949267be9e7960939222ba0b9929ba6716fbe7626c5a7f7a9c6"
+    "plugins/lightning.zip": "b430b9d5b310c4710be80e39c9641549eac3f84c5f6116e6d1b0e572f4dba40e",
+    "plugins/listen.zip": "810ede8a733aab7dd8c456fe590652e55aba851fa80ec1f3247d8bac496a1a45",
+    "plugins/missed-clues.zip": "a4db353f4b7ae53eae9ba305c29ceb24e3dda12d84fcfff94912de1a069799b9",
+    "plugins/moderator.zip": "85fd3e9826c8279a26fa162071bff2e7bcda286c8672b41600ab79724cb81e62",
+    "plugins/neg-check.zip": "9d4e3b8ea5a635b87aa01e7fcc8a88fdfeb4a4b439d59593a8d0621b1fb6225d",
+    "plugins/packet-builder.zip": "1932c45fc046b949267be9e7960939222ba0b9929ba6716fbe7626c5a7f7a9c6",
+    "plugins/pyramid-check.zip": "a3a090b5bf89023c26c85d75caffbc33dd814f1ddcb14dd16577f92d070cf1f0",
+    "plugins/quotations.zip": "1fac06537b1f477252ee59275ce0474bc37ff42197139ebceeb673239f62c174",
+    "plugins/rival.zip": "fc9878b82a141c8c0fff7140c0265b84ac6d63d88331e396f976ef5d96fccd18",
+    "plugins/set-series.zip": "ccbe94d26e5dd7d73b759e48020300c1fe33dce8b3716c8539d8597339a29f49",
+    "plugins/tournament-prep.zip": "6737ab8f6446bc5f9707e58a331c5889b18fe3f3bf656ffaa4838cb379332e5e",
+    "plugins/voice-answers.zip": "aacd1eddfea1c311be241ad105434c35692f7360523fd47ce829c1e107ae2914",
+    "plugins/weekly-plan.zip": "d38309d67f33d229506937b3f7c00b281ab23d2185a7cbeaf40275c891ce7eda"
   },
-  "signature": "rowgg5hmDhnQHQb9rH0SrqzV9wsNrLcso2IbQMSerCHr45HkLfDvtyyHNQE0Saj6eIGM99jAp9/8OGtXNqUlDw=="
+  "signature": "dfS8u+1Wn7Gm9meAqYFL/p5C2oAOh11NHLgFrLJ4iLHlzmNZXHaXsyn2km872Gvaz6o8ut75usqbP27mZuYpBQ=="
 }

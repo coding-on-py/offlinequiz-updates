@@ -3865,7 +3865,11 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .mp-avatar { display: inline-block; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; font-size: 11px; opacity: 0.85; margin-right: 3px; }
 /* a room has its own answer time / buzz window (Game rules); Reading speed and Strictness stay */
 .mp-borrowed #sec-timing .slider-group:has(#panel-buzz-timer), .mp-borrowed #sec-timing .slider-group:has(#panel-buzz-window), .mp-borrowed #sec-timing .slider-group:has(#panel-bonus-timer) { display: none; }
-.mp-borrowed label:has(#filter-starred), .mp-borrowed label:has(#opt-allow-rebuzzes), .mp-borrowed label:has(#opt-stop-on-power), .mp-borrowed label:has(#opt-allow-skips) { display: none; }
+.mp-borrowed label:has(#filter-starred), .mp-borrowed label:has(#opt-allow-rebuzzes), .mp-borrowed label:has(#opt-stop-on-power), .mp-borrowed label:has(#opt-allow-skips), .mp-borrowed label:has(#opt-bonus-after) { display: none; }
+/* a room reads on its own clock: Read aloud is practice only */
+.mp-borrowed .checkbox-row-wrap:has(#opt-read-aloud), .mp-borrowed #read-voice-row, .mp-borrowed #read-hide-row { display: none !important; }
+.mp-borrowed .mp-room-checks { margin-top: 12px; }
+.mp-borrowed #mp-status:empty { display: none; }
 .mp-borrowed #ext-practice-section { display: none; }
 .mp-borrowed .fp-count { visibility: hidden; }
 .mp-borrowed .mp-injected .slider-group { display: grid; grid-template-columns: 112px minmax(0, 1fr) 52px; align-items: center; gap: 10px; margin-top: 6px; }
@@ -6536,6 +6540,10 @@ html:not(.topics-on) .topics-only { display: none !important; }
 .canon-row input[type="checkbox"] { position: absolute; width: 1px; height: 1px; min-width: 0; margin: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 .canon-row:has(input:checked) { background: var(--accent-strong); color: var(--on-accent); font-weight: 700; }
 .canon-row:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Setup panel: Canon fills the row like Difficulty above it */
+.filters-panel .canon-checks { display: flex; flex-wrap: nowrap; width: 100%; }
+.filters-panel .canon-row { flex: 1 1 0; min-width: 0; padding: 0 4px; }
+.filters-panel .canon-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tt-na { color: var(--muted); font-size: 12.5px; }
 /* a question's topics: About, Themes, Mentions, each a labelled row of chips */
 .topics { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -6794,3 +6802,11 @@ html.tb-nocrumb .tb-crumb { display: none; }
 @media (max-width: 600px) { .mp-lobby-main > .mp-who { align-self: stretch; } .mp-who input { width: 100%; min-width: 0; } .mp-who-txt { flex: 1; min-width: 0; } }
 /* phones: periods that wrap start on the left (the last one sat alone in the middle) */
 @media (max-width: 600px) { .lb-periods { justify-content: flex-start; } }
+
+/* Read aloud with the text hidden (15.62, app.js setReadHidden): what's been read shows as bars until the result */
+#question-area.read-hidden :is(#question-text, .bonus-part-text), #question-area.read-hidden :is(#question-text, .bonus-part-text) * { color: transparent !important; text-shadow: none !important; }
+#question-area.read-hidden :is(#question-text, .bonus-part-text) .revealed { background: color-mix(in srgb, var(--muted) 22%, transparent); border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; user-select: none; }
+#question-area.read-hidden :is(#question-text, .bonus-part-text) .revealed * { background: none; }
+#read-hide-row[hidden] { display: none; }
+/* guides and notes stay hidden while Read aloud is on (their switches locked on) */
+.locked-by-read { opacity: .55; }

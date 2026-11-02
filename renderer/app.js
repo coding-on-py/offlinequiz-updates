@@ -404,6 +404,7 @@ const state = {
     stopOnPower: localStorage.getItem("qb-stop-on-power") === "true",
     readAloud: localStorage.getItem("qb-read-aloud") === "true",
     voice: localStorage.getItem("qb-voice") || "",
+    readHide: localStorage.getItem("qb-read-hide") === "true",
     allowSkips: localStorage.getItem("qb-allow-skips") !== "false",
     showQuestionMeta: localStorage.getItem("qb-show-qmeta") !== "false",
     hidePronunciations: localStorage.getItem("qb-hide-pron") === "true",
@@ -1435,18 +1436,8 @@ function refreshDrawerCount() {
 document.getElementById("filters-panel")?.addEventListener("change", () => { if (isSetupDrawerOpen()) refreshDrawerCount(); }, true);
 document.getElementById("filters-panel")?.addEventListener("input", () => { if (isSetupDrawerOpen()) refreshDrawerCount(); }, true);
 
-// ── practice Tags (the \ field in the setup drawer; saved per mode like the
-//    other filters, mirrored to multiplayer through the panel snapshot) ──
-let _practiceTagField = null;
-function practiceTagFieldInit() {
-  const host = document.getElementById("practice-tagfield");
-  if (!host || _practiceTagField) return;
-  _practiceTagField = TagField({
-    host, small: true, icon: "tag", ariaLabel: "Add a tag", chips: state._pendingPracticeTags || [],
-    onChange: () => { host.dispatchEvent(new Event("change", { bubbles: true })); debounceSaveFilters(); },
-  });
-  state._pendingPracticeTags = null;
-}
+// ── practice Tags: the setup drawer's tag field was removed in 15.62, so practice has no tag filter (tags a
+//    player saved before, or a room's old snapshot, are ignored). Search keeps its own tags. ──
 function cleanTagList(list) {
   return (Array.isArray(list) ? list : []).filter((t) => t && t.f && t.v)
     .map((t) => (t.id ? { f: t.f, v: String(t.v), x: !!t.x, id: String(t.id), p: String(t.p || ""), ...(t.k ? { k: String(t.k) } : {}) } : { f: String(t.f), v: String(t.v), x: !!t.x }));
@@ -1465,12 +1456,8 @@ function practiceCanon() {
 }
 function canonPicked() { return [...document.querySelectorAll("#canon-filters .canon-checkbox:checked")].map((cb) => cb.value); }
 function setCanonPicked(list) { const want = Array.isArray(list) ? list : []; document.querySelectorAll("#canon-filters .canon-checkbox").forEach((cb) => { cb.checked = want.includes(cb.value); }); }
-function practiceTags() { return cleanTagList(_practiceTagField ? _practiceTagField.chips : state._pendingPracticeTags); }
-function setPracticeTags(list) {
-  const clean = cleanTagList(list);
-  if (_practiceTagField) _practiceTagField.setChips(clean); else state._pendingPracticeTags = clean;
-}
-practiceTagFieldInit();
+function practiceTags() { return []; }
+function setPracticeTags() {}
 
 // ── practice sidebar: the last few answers of this session ──
 function renderSessionMini() {
@@ -1562,7 +1549,7 @@ document.getElementById("opt-tags-show")?.addEventListener("change", (e) => { se
 document.getElementById("opt-topic-tags")?.addEventListener("change", (e) => window.QBTopics?.setWanted(e.target.checked));
 // topic tags on or off (15.29): every view that shows or uses them follows
 window.QBTopics?.onChange((on) => {
-  try { if (_practiceTagField) _practiceTagField.setChips(_practiceTagField.chips); if (_searchTagField && _searchTagField.field.isConnected) _searchTagField.setChips(_searchTagField.chips); } catch (e) {}
+  try { if (_searchTagField && _searchTagField.field.isConnected) _searchTagField.setChips(_searchTagField.chips); } catch (e) {}
   if (document.querySelector("#database-screen.active")) {
     if (state.dbTab === "topics" && !on) { state.dbTab = "search"; syncDbTabActive(); }
     if (["search", "frequency", "topics"].includes(state.dbTab || "search")) renderDbTab();
@@ -1601,7 +1588,7 @@ function refreshDom() {
    "buzz-area","buzz-input","result-area","result-banner","result-answer",
    "btn-next","power-mark","bonus-parts-area","btn-submit-bonus",
    "history-panel","history-list","btn-db-home",
-   "category-filters","difficulty-filters","filter-standard","title-status","title-greeting",
+   "category-filters","difficulty-filters","title-status","title-greeting",
   ].forEach(id => { _dom[id] = document.getElementById(id); });
 }
 
@@ -1692,34 +1679,57 @@ const Sound = {
   },
 };
 
-// ── Read aloud (15.61): the system's voice reads the question, and the text on screen follows it word by word ──
-// speak(text, from, onPos, onEnd): onPos(index) as each word is said (the index after it), onEnd() once it's done
-// (never after stop(), which a buzz, Pause, a new question or leaving calls). Pronunciation guides aren't said (they
-// become spaces of the same length, so indexes still line up). The reading speed sets how fast it talks.
+// ── Read aloud (15.61): a voice reads the question, and the text on screen follows it word by word ──
+// speak(text, from, onPos, onEnd, raw): onPos(index) as each word is said (the index after it), onEnd() once it's done
+// (never after stop(), which a buzz, Pause, a new question or leaving calls). The voice says speechScript's words for
+// the text (math, formulas and the question's own reading guides put into words, 15.62), each mapped back to where it
+// sits in the text. The reading speed sets how fast it talks.
+// Voices (15.62): only Google's English voices are offered (the browser's other ones sound poor). Where there are none
+// (the app, Safari, Firefox) the best English voice there is reads, with no choice shown.
 const Speech = (() => {
   const ok = typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
   let seq = 0;
   const voices = () => { try { return window.speechSynthesis.getVoices() || []; } catch (e) { return []; } };
   const english = (v) => /^en\b|^en[-_]/i.test(v.lang || "");
+  const choices = () => voices().filter((v) => english(v) && /^Google\b/i.test(v.name || "")).sort((a, b) => (/US/.test(b.name) - /US/.test(a.name)) || String(a.name).localeCompare(String(b.name)));
+  function fallback() {
+    const score = (v) => (/natural|neural|online/i.test(v.name) ? 40 : 0) + (/enhanced|premium|siri/i.test(v.name) ? 30 : 0) +
+      (/^(samantha|ava|allison|susan|daniel|karen|moira|serena|tom|alex)\b/i.test(v.name) ? 10 : 0) + (/en[-_]US/i.test(v.lang) ? 5 : 0) + (v.default ? 2 : 0);
+    return voices().filter(english).sort((a, b) => score(b) - score(a))[0] || null;
+  }
   function voice() {
-    const vs = voices(), want = state.settings.voice;
-    return (want && vs.find((v) => v.voiceURI === want)) || vs.find((v) => v.default && english(v)) || vs.find((v) => english(v) && v.localService) || vs.find(english) || null;
+    const g = choices(), want = state.settings.voice;
+    return g.length ? (g.find((v) => v.voiceURI === want) || g[0]) : fallback();
   }
   function stop() { seq++; try { if (ok) window.speechSynthesis.cancel(); } catch (e) {} }
   function rate() { const ms = Number(state.settings.revealSpeed) || 0; return ms > 0 ? Math.max(0.6, Math.min(2.4, 70 / ms)) : 1; }
-  // said a sentence at a time (one long utterance stops partway on some voices, with no end event), each piece's
-  // word positions shifted to where it sits in the text
-  function speak(text, from, onPos, onEnd) {
+  // pieces of at most ~160 characters, ending at a sentence (a long utterance stops partway on some voices, Google's
+  // after about 15 seconds, with no end event), else at a comma or a space
+  function piecesOf(said) {
+    const out = [], MAX = 160;
+    let at = 0;
+    while (at < said.length) {
+      let end = said.length;
+      if (end - at > MAX) {
+        const win = said.slice(at, at + MAX);
+        let cut = -1;
+        for (const re of [/[.?!;]["”’)]*\s/g, /[,:]\s/g, /\s/g]) { let m; while ((m = re.exec(win))) cut = m.index + m[0].length; if (cut > 40) break; cut = -1; }
+        end = at + (cut > 0 ? cut : MAX);
+      }
+      out.push({ at, t: said.slice(at, end) });
+      at = end;
+    }
+    return out.filter((p) => p.t.trim());
+  }
+  function speak(text, from, onPos, onEnd, raw) {
     stop();
     if (!ok) return false;
-    const my = seq, said = String(text).slice(from).replace(/\((?:“[^”]*”|"[^"]*")\)/g, (m) => " ".repeat(m.length));
-    const pieces = [], re = /[^.?!;]+(?:[.?!;]+["”’)]*\s*|$)/g;
-    let m, cur = null;
-    while ((m = re.exec(said)) && m[0]) {
-      if (cur && cur.t.length + m[0].length <= 220) cur.t += m[0]; else pieces.push(cur = { at: m.index, t: m[0] });
-      if (re.lastIndex >= said.length) break;
-    }
-    const todo = pieces.filter((p) => p.t.trim());
+    const my = seq, sc = speechScript(String(text), raw);
+    let start = 0;
+    while (start < sc.map.length && sc.map[start] < from) start++;
+    const said = sc.spoken.slice(start);
+    const at = (k) => (k > 0 ? sc.map[start + k - 1] + 1 : from);   // the text index after spoken character k-1
+    const todo = piecesOf(said);
     if (!todo.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return true; }
     const v = voice();
     todo.forEach((p, k) => {
@@ -1729,23 +1739,179 @@ const Speech = (() => {
       u.onboundary = (e) => {
         if (my !== seq || (e.name && e.name !== "word")) return;
         const ci = e.charIndex || 0, len = e.charLength || (/^\S*/.exec(p.t.slice(ci)) || [""])[0].length;
-        onPos(from + p.at + ci + len);
+        onPos(at(p.at + ci + len));
       };
-      u.onend = () => { if (my !== seq) return; onPos(from + p.at + p.t.length); if (k === todo.length - 1) onEnd(); };
+      u.onend = () => { if (my !== seq) return; onPos(at(p.at + p.t.length)); if (k === todo.length - 1) onEnd(); };
       u.onerror = (e) => { if (my === seq && e.error !== "interrupted" && e.error !== "canceled" && k === todo.length - 1) onEnd(); };
       window.speechSynthesis.speak(u);
     });
     return true;
   }
-  // a voice that never says where it is (some don't send word boundaries): the text follows its usual pace
+  // a voice that never says where it is (Google's voices send no word positions): the text follows its usual pace
   const charsPerMs = () => rate() * 0.015;
   const on = () => ok && !!state.settings.readAloud && Number(state.settings.revealSpeed) > 0;
-  return { ok, on, voices, speak, stop, charsPerMs };
+  return { ok, on, voices, choices, voice, rate, speak, stop, charsPerMs };
 })();
+
+// ── What the voice says for a question's text (15.62) ──
+// The voice reads symbols badly ("x^2" as "x caret 2", "CO2" as "co-two"). A question's own reading guides come first:
+// "x^2*y+1 [read x squared times y plus 1]", "10^-34 ["10 to the negative-34"]", "Louis XIV [fourteenth]" — the guide is
+// said in place of what it follows (the screen hides guides while Read aloud is on). Math without a guide is put into
+// words (exponents, operators, fractions, f(x), dy/dx, Greek letters), chemical formulas and ions are spelled out
+// ("H 2 O", "F E 3 plus"), and sub- and superscript characters become plain ones. Returns { spoken, map }, where
+// spoken[i] stands for text[map[i]] (a replaced stretch maps to its last character).
+const SAY_SYM = { "×": "times", "·": "times", "÷": "divided by", "±": "plus or minus", "∓": "minus or plus", "−": "minus", "√": "square root of", "∛": "cube root of",
+  "∞": "infinity", "≤": "less than or equal to", "≥": "greater than or equal to", "≠": "not equal to", "≈": "approximately", "≡": "is equivalent to", "∝": "is proportional to",
+  "∫": "the integral of", "∮": "the contour integral of", "∑": "the sum of", "∏": "the product of", "∂": "partial", "∇": "del", "→": "to", "⇌": "is in equilibrium with",
+  "∈": "in", "∉": "not in", "⊂": "subset of", "⊆": "subset of", "∪": "union", "∩": "intersect", "∅": "the empty set", "∀": "for all", "∃": "there exists", "¬": "not",
+  "∧": "and", "∨": "or", "⊕": "x or", "⊗": "tensor", "ℏ": "h bar", "°": " degrees", "′": " prime", "″": " double prime", "‰": " per mille",
+  "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "ζ": "zeta", "η": "eta", "θ": "theta", "ι": "iota", "κ": "kappa", "λ": "lambda", "μ": "mu",
+  "ν": "nu", "ξ": "xi", "π": "pi", "ρ": "rho", "σ": "sigma", "ς": "sigma", "τ": "tau", "υ": "upsilon", "φ": "phi", "ϕ": "phi", "χ": "chi", "ψ": "psi", "ω": "omega",
+  "Γ": "gamma", "Δ": "delta", "∆": "delta", "Θ": "theta", "Λ": "lambda", "Ξ": "xi", "Π": "pi", "Σ": "sigma", "Φ": "phi",
+  "Ψ": "psi", "Ω": "omega", "ℓ": "l", "ℝ": "R", "ℕ": "N", "ℤ": "Z", "ℚ": "Q", "ℂ": "C" };
+const SUP = { "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁺": "+", "⁻": "-", "ⁿ": "n", "ⁱ": "i", "ˣ": "x" };
+const SUB = { "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9", "₊": "+", "₋": "-", "ₙ": "n", "ₓ": "x", "ᵢ": "i" };
+const SAY_FN = { sin: "sine", cos: "cosine", tan: "tangent", sec: "secant", csc: "cosecant", cot: "cotangent", ln: "the natural log of", log: "log", exp: "exp", lim: "the limit",
+  det: "the determinant of", max: "max", min: "min", mod: "mod", pi: "pi", arcsin: "arc sine", arccos: "arc cosine", arctan: "arc tangent", sinh: "hyperbolic sine",
+  cosh: "hyperbolic cosine", tanh: "hyperbolic tangent", sqrt: "the square root of", e: "e", i: "i" };
+const SAY_FRAC = { "1/2": "one half", "1/3": "one third", "2/3": "two thirds", "1/4": "one quarter", "3/4": "three quarters" };
+function sayLetters(t) { return t.toUpperCase().split("").join(" "); }
+// one math token in words, or null when it isn't math
+function sayMath(t) {
+  let m;
+  t = t.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿⁱˣ]+/g, (x) => "^" + (x.length > 1 ? "(" : "") + [...x].map((c) => SUP[c]).join("") + (x.length > 1 ? ")" : "")).replace(/[₀-₉₊₋ₙₓᵢ]/g, (c) => SUB[c]);
+  // chemistry: a formula or an ion with a number in it (H2O, C6H12O6, NH4+, Fe3+, SN2), an orbital (sp3, sp3d2)
+  if (/^(?:[A-Z][a-z]?\d*){1,8}(?:\d*[+-])?$/.test(t) && /\d/.test(t) && !/^[A-Z][a-z]\d*$/.test(t.replace(/\d+[+-]?$/, "") + "x") && t.length <= 14) {
+    const charge = /(\d*)([+-])$/.exec(t), core = charge ? t.slice(0, -charge[0].length) : t;
+    return core.replace(/([A-Z][a-z]?)(\d*)/g, (x, el, n) => sayLetters(el) + (n ? " " + n : "") + " ").trim() +
+      (charge ? (charge[1] ? " " + charge[1] : "") + (charge[2] === "+" ? " plus" : " minus") : "");
+  }
+  if (/^[spdf]{1,3}\d(?:[spdf]\d)*$/.test(t)) return t.replace(/([a-z])(\d)/g, "$1 $2 ").trim().replace(/([a-z])(?=[a-z])/g, "$1 ");
+  if ((m = /^d([a-zA-Z])\/d([a-zA-Z])$/.exec(t))) return "d " + m[1] + " d " + m[2];
+  if (/^mc2$/i.test(t)) return "M C squared";
+  if ((m = /^[−-]([a-z]|\d+(?:\.\d+)?)$/.exec(t))) return "negative " + (/\d/.test(m[1]) ? m[1] : sayLetters(m[1]));
+  if (/^-[A-Z][A-Za-z0-9]*$/.test(t)) return sayMath(t.slice(1)) || sayLetters(t.slice(1));   // a group: -OH, -COOH
+  if (/^\*+$/.test(t)) return " ";
+  if ((m = /^([A-Za-z])\*$/.exec(t))) return m[1].toUpperCase() + " star";   // A* search
+  if ((m = /^([A-Za-z]{2,})\*+$/.exec(t))) return m[1];
+  if (/^[<>]|[<>]$/.test(t) && t.length > 1) return null;   // <this author>
+  if (/^\d{1,3}\/\d{1,3}$/.test(t)) return null;   // a fraction or a time signature: speechScript decides by what's around it   // E = mc2, its superscript lost
+  if ((m = /^([a-zA-Z])\(([^()]+)\)$/.exec(t))) return sayLetters(m[1]) + " of " + m[2].split(",").map((x) => (/^[a-z]$/i.test(x) ? sayLetters(x) : sayMath(x) || x)).join(" and ");
+  if (!/[\^=+*]|[A-Za-z0-9.)][<>]=?[A-Za-z0-9.(-]/.test(t) && !(/\//.test(t) && /\d/.test(t)) && !/[A-Za-z]\d|\d[A-Za-z]/.test(t.replace(/^\d+(st|nd|rd|th|s)$/, ""))) return null;
+  if (/^[a-z]+$/i.test(t) || /^\d+(\.\d+)?$/.test(t) || /^\d{4}s?$/.test(t)) return null;
+  if (/[A-Za-z]\d|\d[A-Za-z]/.test(t) && !/[\^=+*<>\/]/.test(t)) {
+    // letters and numbers alone (2x, 3D, B12, COVID19): only short algebra like 2x or x2 is math
+    if (!/^(\d+[a-z]{1,2}|[a-z]\d)$/.test(t)) return null;
+  }
+  const toks = t.match(/\d+(?:\.\d+)?|[A-Za-z]+|\^|[=+*\/<>()-]|[^\s]/g) || [];
+  const word = (x) => (/^\d/.test(x) ? x : SAY_FN[x.toLowerCase()] && x.length > 1 ? SAY_FN[x.toLowerCase()] : /^[A-Za-z]{1,4}$/.test(x) ? sayLetters(x) : SAY_SYM[x] || x);
+  const out = [];
+  for (let i = 0; i < toks.length; i++) {
+    const x = toks[i], prev = toks[i - 1];
+    if (x === "^") {
+      let exp = toks[i + 1], neg = false;
+      if (exp === "-" || exp === "−") { neg = true; i++; exp = toks[i + 1]; }
+      if (exp === "(") {
+        const inner = []; let depth = 0; i++;
+        for (i++; i < toks.length; i++) { if (toks[i] === "(") depth++; if (toks[i] === ")" && depth-- === 0) break; inner.push(toks[i]); }
+        out.push("to the " + (neg ? "negative " : "") + (sayMath(inner.join("")) || inner.map(word).join(" ")));
+        continue;
+      }
+      i++;
+      if (!neg && exp === "2") out.push("squared"); else if (!neg && exp === "3") out.push("cubed");
+      else if (exp != null) out.push("to the " + (neg ? "negative " : "") + word(exp));
+      continue;
+    }
+    if (x === "-") { out.push(!prev || /^[=+*\/<>(^]$/.test(prev) ? "negative" : "minus"); continue; }
+    if (x === "/" && /^\d/.test(prev || "") && /^\d/.test(toks[i + 1] || "")) continue;   // Arp2/3: "2 3"
+    const say = { "=": "equals", "+": "plus", "*": "times", "/": "over", "<": "is less than", ">": "is greater than", "(": "", ")": "" }[x];
+    if (say != null) { if (say) out.push(say); continue; }
+    out.push(word(x));
+  }
+  return out.join(" ").replace(/\s+/g, " ").trim() || null;
+}
+function speechScript(text, raw) {
+  text = String(text || "");
+  const spans = [];
+  const free = (a, b) => !spans.some((s) => a < s.b && b > s.a);
+  const put = (a, b, say) => { if (a < b && free(a, b)) spans.push({ a, b, say }); };
+  // the question's own reading guides: [read …], ["…"], [word] or ("…") right after some math, a formula or a Roman
+  // numeral; the guide stands for every math-like token before it ("T(n) = 4T(n/4) + 1 ["T of n equals …"]")
+  const mathy = (tok) => /[\d^_*=+<>√∫∑×·÷±⁰-⁹₀-₉\/()−]/.test(tok) || /^[a-zA-Z]$/.test(tok) || /^[IVXLC]{2,}$/.test(tok) || !!SAY_FN[tok.toLowerCase()] || tok === "-";
+  const GUIDE = /\[\s*(?:read\s*:?\s*(?:as\s+)?)?["“‘']?([^\[\]"“”]{1,90}?)["”’']?\s*\]|\(\s*["“]([^()"“”]{1,90})["”]\s*\)/g;
+  let cursor = 0, m;
+  for (const src of [raw, text]) {
+    if (!src) continue;
+    const str = String(src);
+    GUIDE.lastIndex = 0;
+    while ((m = GUIDE.exec(str))) {
+      const guide = (m[1] || m[2] || "").trim();
+      if (!/[A-Za-z]/.test(guide) || /pronounc|slowly|emphasi|pause|moderator|sic\b/i.test(guide)) continue;
+      const before = str.slice(0, m.index).replace(/\s+$/, "");
+      const toks = before.split(/\s+/);
+      let n = 0;
+      while (n < toks.length && n < 14 && mathy(toks[toks.length - 1 - n].replace(/[,;:]+$/, ""))) n++;
+      if (!n) continue;
+      const expr = toks.slice(toks.length - n).join(" ").replace(/^["“‘'(\[]+/, "").replace(/[,;:]+$/, "");
+      if (!/[\d^_*=+<>√∫∑×·÷±⁰-⁹₀-₉\/−]/.test(expr) && !/^[IVXLC]{2,}$/.test(expr)) continue;
+      const exprIn = (hay, from) => { const i = hay.indexOf(expr, from); if (i >= 0) return { i, len: expr.length }; const flat = expr.replace(/\s+/g, ""), j = hay.indexOf(flat, from); return j >= 0 ? { i: j, len: flat.length } : null; };
+      const hit = exprIn(text, src === text ? Math.max(0, m.index - before.length + before.length - expr.length - 2) : cursor);
+      if (!hit) continue;
+      let end = hit.i + hit.len;
+      const tail = /^[,;:]?\s*(?:\[[^\]]*\]|\([^)]*\))/.exec(text.slice(end));   // the guide itself, when the screen still shows it
+      if (tail && tail[0].includes(guide.slice(0, 6))) end += tail[0].length;
+      put(hit.i, end, " " + guide.replace(/(\w)-(?=\w)/g, "$1 ") + " ");
+      if (src === raw) cursor = hit.i + hit.len;
+    }
+  }
+  // what's never said: the power and bonus-value marks, quoted pronunciations still on screen
+  for (const re of [/\(\*\)|\(\+\)/g, /\((?:“[^”]*”|"[^"]*")\)/g]) { re.lastIndex = 0; while ((m = re.exec(text))) put(m.index, m.index + m[0].length, " "); }
+  // math, formulas, sub- and superscripts, one token at a time; a short run of letters beside an operator is a
+  // variable or two ("PV = nRT", "a = bq + r") and is spelled out
+  const TOK = /\S+/g, toks = [];
+  while ((m = TOK.exec(text))) {
+    const lead = /^[("“‘'\[]*/.exec(m[0])[0];
+    let core = m[0].slice(lead.length).replace(/["”’'\],.;:!?]+$/, "");
+    // a closing parenthesis is the token's only when it opened one: "f(x)" keeps it, "(H2O)" loses it
+    while (core.endsWith(")") && (core.match(/\(/g) || []).length < (core.match(/\)/g) || []).length) core = core.slice(0, -1).replace(/["”’'\],.;:!?]+$/, "");
+    toks.push({ a: m.index + lead.length, core });
+  }
+  const OP = /^(?:=+|[+×÷<>≤≥≠≈−-]|:=)$/, NOT_VAR = new Set("is of to in on at by or an and the for as if so be we it no not any all its".split(" "));
+  const gcd = (x, y) => (y ? gcd(y, x % y) : x);
+  toks.forEach((t, k) => {
+    if (!t.core) return;
+    let say = sayMath(t.core);
+    const fr = /^(\d{1,3})\/(\d{1,3})$/.exec(t.core);
+    if (fr && !/^(9\/11|24\/7|50\/50|20\/20)$/.test(t.core)) {
+      // a time signature ("in 6/8", "3/4 time") is said "six eight"; a fraction "one half", "4 over 3"
+      const n = +fr[1], d = +fr[2], nx = ((toks[k + 1] && toks[k + 1].core) || "").toLowerCase(), pv = ((toks[k - 1] && toks[k - 1].core) || "").toLowerCase();
+      const mathNear = [toks[k - 1], toks[k + 1]].some((o) => o && (OP.test(o.core) || /\^|[a-z]\d|^[a-zA-Z]$/.test(o.core) || !!SAY_FN[o.core.toLowerCase()]));
+      const meterish = [2, 4, 8, 16].includes(d) && (n >= d || d >= 8 || gcd(n, d) > 1 || pv === "in");
+      const meter = /^(time|meter|metre|signature|signatures|rhythm)$/.test(nx) || (meterish && !mathNear && nx !== "of");
+      say = meter ? n + " " + d : SAY_FRAC[t.core] || n + " over " + d;
+    }
+    if (!say && /^[A-Za-z]{1,3}$/.test(t.core) && !NOT_VAR.has(t.core.toLowerCase()) && !SAY_FN[t.core.toLowerCase()] &&
+      ((toks[k - 1] && OP.test(toks[k - 1].core)) || (toks[k + 1] && OP.test(toks[k + 1].core)))) say = sayLetters(t.core);
+    if (say && say !== t.core) put(t.a, t.a + t.core.length, " " + say + " ");
+  });
+  // single symbols and Greek letters anywhere
+  for (let i = 0; i < text.length; i++) if (SAY_SYM[text[i]] && free(i, i + 1)) put(i, i + 1, " " + SAY_SYM[text[i]] + " ");
+  spans.sort((x, y) => x.a - y.a);
+  let spoken = "", last = 0;
+  const map = [];
+  for (const sp of spans) {
+    for (let i = last; i < sp.a; i++) { spoken += text[i]; map.push(i); }
+    for (let k = 0; k < sp.say.length; k++) { spoken += sp.say[k]; map.push(sp.b - 1); }
+    last = sp.b;
+  }
+  for (let i = last; i < text.length; i++) { spoken += text[i]; map.push(i); }
+  return { spoken, map };
+}
 // the reader follows the voice: speak `text` from `from`, call show(index) as it goes (the voice's own word
 // positions, or its usual pace when it gives none or stalls), and done() at the end; live() false stops following.
-// A voice that never says it's done ends a moment after its pace reaches the end
-function followVoice(text, from, show, done, live) {
+// A voice that never says it's done ends a moment after its pace reaches the end. raw: the record's own text (its
+// reading guides; speechScript)
+function followVoice(text, from, show, done, live, raw) {
   let raf = 0, pos = from, lastAt = performance.now(), ended = false;
   const len = String(text).length, quit = () => { if (raf) cancelAnimationFrame(raf); raf = 0; };
   const finish = () => { if (ended) return; ended = true; quit(); Speech.stop(); if (live()) done(); };
@@ -1759,7 +1925,7 @@ function followVoice(text, from, show, done, live) {
     }
     raf = requestAnimationFrame(pace);
   };
-  Speech.speak(text, from, (i) => { if (!live() || ended) return; if (i > pos) { pos = i; lastAt = performance.now(); show(i); } }, finish);
+  Speech.speak(text, from, (i) => { if (!live() || ended) return; if (i > pos) { pos = i; lastAt = performance.now(); show(i); } }, finish, raw);
   raf = requestAnimationFrame(pace);
   return quit;
 }
@@ -2904,14 +3070,12 @@ function saveFilterState() {
   const prev = loadFilterBlob()[bucket] || null;
   const filterState = {
     catTree: catStateFromDom(),
-    standard: $("#filter-standard")?.checked,
     difficulties: cv ? cv.prevDiffs.slice() : getSelectedDifficulties(),
     mode: cv ? cv.prevMode : ($("#mode-select")?.value || "random"),
     setName: $("#mode-set-name")?.value || "",
     packet: $("#mode-packet")?.value || "",
     starredOnly: $("#filter-starred")?.checked,
     powermarkOnly: $("#filter-powermark")?.checked,
-    cleanOnly: !!$("#filter-clean")?.checked,
     yearMin: $("#year-min")?.value,
     yearMax: $("#year-max")?.value,
     tags: practiceTags(),
@@ -2928,6 +3092,7 @@ function applyModeSettings(saved) {
   if (!saved || typeof saved.settings !== "object") return;
   for (const k of PER_MODE_SETTING_KEYS) if (k in saved.settings) state.settings[k] = saved.settings[k];
   try { initGameplayControls(); } catch (e) {}
+  if (state.settings.readAloud) try { syncVoiceRow(); } catch (e) {}   // read aloud keeps guides and notes hidden
   try { setRevealSpeed(state.settings.revealSpeed); } catch (e) {}
 }
 
@@ -2936,13 +3101,10 @@ function restoreFilterState() {
     const saved = getModeFilters();
     if (!saved) return false;
     if (_filtersEarly) return saved;   // the panel already shows this, plus a change of the player's
-    if (saved.standard !== undefined && $("#filter-standard"))
-      $("#filter-standard").checked = saved.standard;
     if (saved.starredOnly !== undefined && $("#filter-starred"))
       $("#filter-starred").checked = saved.starredOnly;
     if (saved.powermarkOnly !== undefined && $("#filter-powermark"))
       $("#filter-powermark").checked = saved.powermarkOnly;
-    if ($("#filter-clean")) $("#filter-clean").checked = !!saved.cleanOnly;
     if (Array.isArray(saved.difficulties)) {
       $$("#difficulty-filters .diff-checkbox").forEach((cb) => {
         cb.checked = saved.difficulties.includes(parseInt(cb.value));
@@ -3287,7 +3449,6 @@ function resetPracticeFiltersToDefaults() {
   setBuzzWindow(10);
   const strict = $("#strictness-slider");
   if (strict) { strict.value = 10; state.settings.strictness = 10; lsSet("qb-strictness", "10"); const lbl = $("#strictness-label"); if (lbl) lbl.textContent = "10"; }
-  const std = $("#filter-standard"); if (std) std.checked = false;
   const pm = $("#filter-powermark"); if (pm) pm.checked = true;
   const st = $("#filter-starred"); if (st) st.checked = false;
   const ymin = $("#year-min"); if (ymin) ymin.value = 2010;
@@ -3336,8 +3497,7 @@ function getFilterSelectionSnapshot() {
     yearMin: Math.min(_ya, _yb),
     yearMax: Math.max(_ya, _yb),
     powermarkOnly: !!$("#filter-powermark")?.checked,
-    cleanOnly: !!$("#filter-clean")?.checked,
-    standard: !!$("#filter-standard")?.checked,
+    cleanOnly: true,
     starredOnly: !!$("#filter-starred")?.checked,
     tags: practiceTags(),
     canon: canonPicked(),
@@ -3400,8 +3560,6 @@ async function _applySnapshotInner(snap, gen) {
   if (snap.yearMax != null) { const e = $("#year-max"); if (e) e.value = snap.yearMax; }
   updateYearLabel();
   if (snap.powermarkOnly != null) { const e = $("#filter-powermark"); if (e) e.checked = !!snap.powermarkOnly; }
-  if (snap.cleanOnly != null) { const e = $("#filter-clean"); if (e) e.checked = !!snap.cleanOnly; }
-  if (snap.standard != null) { const e = $("#filter-standard"); if (e) e.checked = !!snap.standard; }
   if (snap.starredOnly != null) { const e = $("#filter-starred"); if (e) e.checked = !!snap.starredOnly; }
   if (Array.isArray(snap.tags)) setPracticeTags(snap.tags);
   if (Array.isArray(snap.canon)) setCanonPicked(snap.canon);
@@ -3642,11 +3800,10 @@ function getActiveFilters(opts) {
 
   const filters = {
     difficulties,
-    standard: $("#filter-standard")?.checked ? 1 : undefined,
     random: true,
     starredOnly: $("#filter-starred")?.checked || false,
     powermarkOnly: $("#filter-powermark")?.checked || false,
-    cleanOnly: $("#filter-clean")?.checked || false,
+    cleanOnly: true,   // every player gets clean questions only (no toggle since 15.62); set standard-ness doesn't matter
     yearMin,
     yearMax,
   };
@@ -3717,7 +3874,7 @@ $("#category-filters")?.addEventListener("change", (e) => {
 });
 $("#year-min")?.addEventListener("input", () => { clampYearDual("min"); debounceSaveFilters(); });
 $("#year-max")?.addEventListener("input", () => { clampYearDual("max"); debounceSaveFilters(); });
-["#filter-starred", "#filter-powermark", "#filter-standard", "#filter-clean"].forEach((sel) => {
+["#filter-starred", "#filter-powermark"].forEach((sel) => {
   $(sel)?.addEventListener("change", debounceSaveFilters);
 });
 
@@ -3966,7 +4123,7 @@ function CatPicker(model) {
     self._hits = hits;
     const findPop = q.length >= 2 ? `<div class="cp-find-pop" role="listbox">${hits.length ? hits.map((n, i) => `<button type="button" class="cp-hit${i === v.findHi ? " hi" : ""}" data-cp="reveal" data-id="${escapeHtml(n.id)}"><span class="r1"><b>${escapeHtml(n.name)}</b><span class="tile-n">${fmt(n.count)}</span></span><span class="r2">${escapeHtml(String(n.path).split(" > ").slice(0, -1).join(" \u203a "))}</span></button>`).join("") : '<div class="sugg-empty">No topic matches</div>'}</div>` : "";
     const units = model.unitCount();
-    const head = units ? `${fmt(model.total())} ${model.noun} \u00b7 ${units} ${units === 1 ? "pick" : "picks"}` : "Everything";
+    const head = units ? `${fmt(model.total())} ${model.noun}` : "Everything";
     const presets = model.presets();
     const presetHtml = presets.map((p, i) => `<button type="button" class="chip${p.active ? " on" : ""}" data-cp="preset" data-i="${i}">${escapeHtml(p.name)}${p.user ? `<span class="cp-preset-x" data-cp="preset-del" data-i="${i}" title="Delete preset" aria-label="Delete preset">\u00d7</span>` : ""}</button>`).join("");
     const saveHtml = v.saving
@@ -4618,27 +4775,59 @@ $("#opt-allow-rebuzzes")?.addEventListener("change", (e) => { state.settings.all
 $("#opt-stop-on-power")?.addEventListener("change", (e) => { state.settings.stopOnPower = e.target.checked; lsSet("qb-stop-on-power", e.target.checked); });
 // Read aloud: on, the question being read now is said from where it is; off, the voice stops and the text reads on
 $("#opt-read-aloud")?.addEventListener("change", (e) => {
-  state.settings.readAloud = e.target.checked; lsSet("qb-read-aloud", e.target.checked); syncVoiceRow();
+  state.settings.readAloud = e.target.checked; lsSet("qb-read-aloud", e.target.checked);
+  // the voice never says guides or notes: they're hidden while it reads, and put back as they were after
+  if (e.target.checked) lsSet("qb-read-prev", JSON.stringify({ pron: !!state.settings.hidePronunciations, notes: !!state.settings.hideNotes }));
+  else {
+    let prev = null; try { prev = JSON.parse(localStorage.getItem("qb-read-prev") || "null"); } catch (err) {}
+    try { localStorage.removeItem("qb-read-prev"); } catch (err) {}
+    if (prev) { syncVoiceRow(); if (!!state.settings.hidePronunciations !== prev.pron) setHidePron(prev.pron); if (!!state.settings.hideNotes !== prev.notes) setHideNotes(prev.notes); }
+  }
+  syncVoiceRow();
+  if (!e.target.checked) setReadHidden(false);
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
   Speech.stop();
   if (state.mode === "tossups") resumeReveal(); else if (state._bonusReader) state._bonusReader.resume();
 });
 $("#opt-voice")?.addEventListener("change", (e) => { state.settings.voice = e.target.value; lsSet("qb-voice", e.target.value); });
-// the voices this computer has, English first (they arrive a moment after the page loads)
+$("#opt-read-hide")?.addEventListener("change", (e) => {
+  state.settings.readHide = e.target.checked; lsSet("qb-read-hide", e.target.checked);
+  if (!e.target.checked) setReadHidden(false);
+  else if (Speech.on() && state.sessionActive && !state.resultAreaVisible) setReadHidden(true);
+});
+// Google's English voices (15.62: the only ones offered), US first; they arrive a moment after the page loads
 function fillVoices() {
   const sel = document.getElementById("opt-voice"); if (!sel) return;
-  const en = (v) => /^en\b|^en[-_]/i.test(v.lang || "");
-  const vs = Speech.voices().slice().sort((a, b) => (en(b) - en(a)) || String(a.name).localeCompare(String(b.name)));
-  const want = state.settings.voice || "";
-  sel.innerHTML = `<option value="">System voice</option>` + vs.map((v) => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} (${escapeHtml(v.lang)})</option>`).join("");
-  sel.value = vs.some((v) => v.voiceURI === want) ? want : "";
+  const vs = Speech.choices(), want = state.settings.voice || "";
+  const label = (v) => String(v.name).replace(/^Google\s+/i, "").replace(/\s+(Female|Male)$/i, (m, g) => ", " + g.toLowerCase());
+  sel.innerHTML = vs.map((v) => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(label(v))}</option>`).join("");
+  sel.value = vs.some((v) => v.voiceURI === want) ? want : (vs[0] ? vs[0].voiceURI : "");
+  syncVoiceRow();
 }
+// Read aloud's own options show while it's on (a voice choice only where Google's voices are), and it keeps
+// pronunciation guides and moderator notes hidden (their switches locked on)
 function syncVoiceRow() {
-  const row = document.getElementById("read-voice-row"); if (row) row.hidden = !(Speech.ok && state.settings.readAloud);
+  const on = Speech.ok && !!state.settings.readAloud;
+  const row = document.getElementById("read-voice-row"); if (row) row.hidden = !(on && Speech.choices().length > 1);
+  const hide = document.getElementById("read-hide-row"); if (hide) hide.hidden = !on;
+  const hb = document.getElementById("opt-read-hide"); if (hb) hb.checked = !!state.settings.readHide;
   const box = document.getElementById("opt-read-aloud"); if (box) { box.checked = !!state.settings.readAloud; box.disabled = !Speech.ok; }
+  if (on) {
+    if (!state.settings.hidePronunciations && typeof setHidePron === "function") setHidePron(true);
+    if (!state.settings.hideNotes && typeof setHideNotes === "function") setHideNotes(true);
+  }
+  ["filter-hide-pron", "filter-hide-notes", "opt-hide-pron", "opt-hide-notes"].forEach((id) => {
+    const b = document.getElementById(id); if (!b) return;
+    b.disabled = on;
+    const row = b.closest(".checkbox-row, .setting-row"); if (row) { row.classList.toggle("locked-by-read", on); row.title = on ? "Always on while Read aloud is on" : ""; }
+  });
 }
-if (Speech.ok) { fillVoices(); try { window.speechSynthesis.addEventListener("voiceschanged", fillVoices); } catch (e) {} }
-syncVoiceRow();
+// Read aloud with the text hidden: the words read so far show as bars (the question's shape, not its words) until
+// the result is up
+function setReadHidden(on) { document.getElementById("question-area")?.classList.toggle("read-hidden", !!on); }
+// after the whole script has loaded (syncVoiceRow may switch guides and notes off through setHidePron / setHideNotes)
+if (Speech.ok) { setTimeout(fillVoices, 0); try { window.speechSynthesis.addEventListener("voiceschanged", fillVoices); } catch (e) {} }
+setTimeout(syncVoiceRow, 0);
 window.QB?.on?.("screen:change", () => Speech.stop());
 $("#opt-allow-skips")?.addEventListener("change", (e) => { state.settings.allowSkips = e.target.checked; lsSet("qb-allow-skips", e.target.checked); });
 $("#strictness-slider")?.addEventListener("input", (e) => {
@@ -4846,6 +5035,7 @@ function suspendSession() {
 }
 
 function endSession() {
+  setReadHidden(false);
   if (_trial && !_trial.done) trialEnd("left", true);
   endCustom();
   state.sessionActive = false;
@@ -5577,6 +5767,7 @@ function bonusDisplay(q) {
 }
 
 function renderTossup(q) {
+  setReadHidden(Speech.on() && state.settings.readHide);
   const { displayText, prePowerEnd } = tossupDisplay(q);
   state.currentDisplayText = displayText;
 
@@ -5615,6 +5806,7 @@ function renderTossup(q) {
 }
 
 async function renderBonus(q) {
+  setReadHidden(Speech.on() && state.settings.readHide);
   const { leadin, parts, texts: partTexts } = bonusDisplay(q);
   try {
     state.bonusAnswers = JSON.parse(q.answers_sanitized || q.answers || "[]");
@@ -5689,7 +5881,7 @@ function readBonusText(el, text, done, kind) {
   r.finish = (callDone = true) => {
     if (r.raf) cancelAnimationFrame(r.raf); r.raf = 0;
     if (state._bonusReader === r) state._bonusReader = null;
-    el.textContent = r.text;
+    el.innerHTML = '<span class="revealed">' + escapeHtml(r.text) + "</span>";   // a span, so a hidden read (read-hidden) shows it as bars
     if (callDone && r.done) { const d = r.done; r.done = null; d(); }
   };
   const step = (t) => {
@@ -5714,7 +5906,9 @@ function readBonusText(el, text, done, kind) {
     const live = () => state._bonusReader === r && !state.isPaused && state.currentQuestion === q && state.mode === "bonuses";
     const fin = r.finish;
     r.finish = (callDone = true) => { Speech.stop(); fin(callDone); };
-    r.resume = () => followVoice(r.text, r.idx, (i) => { const n = Math.min(r.text.length, i); if (n > r.idx) { r.idx = n; paint(); followReading(el.querySelector(".revealed"), q && q.id); } }, () => r.finish(), live);
+    let raw = q ? q.leadin_sanitized || "" : "";   // the bonus's own text, for its reading guides (speechScript)
+    try { raw += " " + JSON.parse((q && q.parts_sanitized) || "[]").join(" "); } catch (e) {}
+    r.resume = () => followVoice(r.text, r.idx, (i) => { const n = Math.min(r.text.length, i); if (n > r.idx) { r.idx = n; paint(); followReading(el.querySelector(".revealed"), q && q.id); } }, () => r.finish(), live, raw);
     r.resume();
     return;
   }
@@ -6107,7 +6301,7 @@ function revealText(text) {
       $("#question-text").innerHTML = formatQuestionText(text, text.length, state.prePowerEnd);
       state.questionFullyRead = true;
       startBuzzWindow();
-    }, live);
+    }, live, state.currentQuestion && state.currentQuestion.question_sanitized);
     return;
   }
 
@@ -6186,7 +6380,7 @@ function markDeadQuestion(text) {
   answerDiv.innerHTML = `<div class="ra-row"><span class="ra-k">Answer</span><span class="actual">${answerLineHtml(state.currentQuestion?.answer, state.currentQuestion?.answer_sanitized || "")}</span></div>`;
   renderResultTags(state.currentQuestion);
   $("#buzz-area").classList.add("hidden");
-  state.resultAreaVisible = true;
+  state.resultAreaVisible = true; setReadHidden(false);
   state.lastResult = { correct: false, isPower: false, points: 0, celerity: 1, answer: state.currentQuestion?.answer_sanitized, userAnswer: "", questionId: state.currentQuestion?.id, buzzPosition: state.buzzPosition, origBuzzPosition: displayPosToOriginal(state.buzzPosition || 0), category: state.currentQuestion?.category };
 
   state.sessionHistory.push({
@@ -6563,7 +6757,7 @@ function reconcileTossup(q, was, srv) {
 
 async function submitTossupAnswer(answer) {
   if (!state.currentQuestion || state.mode !== "tossups") return;
-  state.resultAreaVisible = true;
+  state.resultAreaVisible = true; setReadHidden(false);
   stopBuzzTimer();
 
   try {
@@ -8025,7 +8219,7 @@ function displayBonusResult(result, userAnswers) {
   const answerDiv = $("#result-answer");
   const area = $("#result-area");
   area.classList.remove("hidden");
-  state.resultAreaVisible = true;
+  state.resultAreaVisible = true; setReadHidden(false);
 
   banner.className = "result-banner";
   banner.classList.add(bonusBannerClass(result));
@@ -12220,7 +12414,6 @@ function renderSearchTab() {
         '<label class="f"><span>Set</span><select id="db-set-filter"><option value="">All sets</option></select></label>' +
         '<label class="f"><span>Packet</span><select id="db-packet-filter" disabled><option value="">All packets</option></select></label>' +
         '<div class="checks">' +
-          `<label class="checkbox-row"><input type="checkbox" id="db-standard"${q.standard ? " checked" : ""}> Standard sets only</label>` +
           `<label class="checkbox-row" id="db-powermark-lbl" title="Tossups that have a power mark (*)"><input type="checkbox" id="db-powermark"${q.powermark ? " checked" : ""}> Powermarked tossups</label>` +
           `<label class="checkbox-row"><input type="checkbox" id="db-starred"${q.starred ? " checked" : ""}> Starred only</label>` +
           `<label class="checkbox-row" title="Match word beginnings: symphon matches symphony, symphonies"><input type="checkbox" id="db-prefix"${q.prefix ? " checked" : ""}> Word starts</label>` +
@@ -12280,7 +12473,7 @@ function renderSearchTab() {
   g("db-exclude").addEventListener("input", (e) => { _dbq.exclude = e.target.value; dbSearchSoon(true); });
   g("db-set-filter").addEventListener("change", (e) => { _dbq.set = e.target.value; _dbq.packet = ""; dbSearchSoon(true); });
   g("db-packet-filter").addEventListener("change", (e) => { _dbq.packet = e.target.value; dbSearchSoon(true); });
-  [["db-standard", "standard"], ["db-powermark", "powermark"], ["db-starred", "starred"], ["db-prefix", "prefix"]].forEach(([id, key]) => g(id).addEventListener("change", (e) => { _dbq[key] = e.target.checked; dbSearchSoon(true); }));
+  [["db-powermark", "powermark"], ["db-starred", "starred"], ["db-prefix", "prefix"]].forEach(([id, key]) => g(id).addEventListener("change", (e) => { _dbq[key] = e.target.checked; dbSearchSoon(true); }));
   // Hiding answers is instant — a CSS cover over each answer, no re-query.
   g("db-hide-ans").addEventListener("change", (e) => {
     _dbq.hideAns = e.target.checked;
@@ -12383,7 +12576,7 @@ function dbYearsLabel() {
 }
 function dbMoreCount() {
   const q = _dbq;
-  const n = [q.set, q.packet, String(q.exclude || "").trim(), q.standard, q.powermark && q.qtype !== "bonus", q.starred, q.prefix, q.hideAns, q.match !== "phrase",
+  const n = [q.set, q.packet, String(q.exclude || "").trim(), q.powermark && q.qtype !== "bonus", q.starred, q.prefix, q.hideAns, q.match !== "phrase",
     (q.canon || []).length && window.QBTopics && QBTopics.enabled(),
     q.field && q.field !== "all" && !!document.querySelector("#db-more #db-search-type")].filter(Boolean).length;   // (Search in sits in More on a phone)
   const el = document.getElementById("db-more-count"); if (el) el.textContent = n ? String(n) : "";
@@ -12507,7 +12700,7 @@ function dbSearchPlan(q, sets, pkt) {
   const diffs = q.diffs.slice();
   const yearMin = q.yearMin || 2000, yearMax = q.yearMax || 2026;
   const sort = q.sort || "relevance";
-  const std = !!q.standard;
+  const std = false;   // set standard-ness doesn't matter (no toggle since 15.62)
   const pm = !!q.powermark && qtype !== "bonus";
   const starred = !!q.starred;
   const setRaw = q.set || "";
@@ -12842,7 +13035,7 @@ async function renderSetsTab() {
     const list = _dbSets.filter((s) => !term || (s.name || "").toLowerCase().includes(term));
     const n = document.getElementById("db-set-n"); if (n) n.textContent = list.length.toLocaleString() + " sets";
     document.getElementById("db-set-list").innerHTML = list.map((s) =>
-      `<div class="list-row clickable db-row" data-set="${escapeHtml(s.name)}"><span class="lr-name">${escapeHtml(s.name)}</span>${yearBadgeHtml(s.year)}<span class="lr-diff">${escapeHtml(DIFF_FULL[s.difficulty] || "")}</span><span class="lr-std">${s.standard ? '<span class="qtag">Standard</span>' : '<span class="qtag" style="opacity:.6">non-standard</span>'}</span></div>`
+      `<div class="list-row clickable db-row" data-set="${escapeHtml(s.name)}"><span class="lr-name">${escapeHtml(s.name)}</span>${yearBadgeHtml(s.year)}<span class="lr-diff">${escapeHtml(DIFF_FULL[s.difficulty] || "")}</span></div>`
     ).join("") || '<div class="db-empty" style="border:0">No sets</div>';
     document.querySelectorAll("#db-set-list .db-row").forEach((r) => {
       r.addEventListener("click", () => openSet(r.dataset.set));
@@ -13476,6 +13669,10 @@ function init() {
         filterSummary: describeActiveFilters({ real: true }),
       }),
       stripPronunciations: (t) => stripPronunciations(t),
+      // read aloud (15.62): what the voice says for a text (its math, formulas and the record's reading guides put into
+      // words; raw = the record's own text), and the voice practice reads with (Google's English one where there is one)
+      speechText: (text, raw) => speechScript(text, raw).spoken,
+      ttsVoice: () => (Speech.ok ? Speech.voice() : null),
       // ── new question database helpers (category tree, text, N-part bonuses) ──
       // Nested category tree [{id,name,path,label,depth,leaf,count,definition,children}].
       getCategoryTree: (type) => fetchCatTree(type === "bonuses" ? "bonuses" : "tossups").then((t) => t.roots),

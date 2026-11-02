@@ -169,10 +169,6 @@
             <div class="filter-label">Categories</div>
             <button type="button" class="btn btn-full cat-open-btn" id="btn-open-categories" aria-haspopup="dialog" aria-controls="cat-ovl"><span class="cat-sum" id="cat-summary">All</span><svg class="cat-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
           </div>
-          <div class="filter-section packet-disable" id="sec-tags">
-            <div class="filter-label">Tags <span class="qb-info" data-tip="Type \ to add a tag. Click a tag to require or skip it.">i</span></div>
-            <div class="tagfield-host" id="practice-tagfield"></div>
-          </div>
           <div class="filter-section" id="sec-difficulty">
             <div class="filter-label">Difficulty</div>
             <div class="filter-body">
@@ -213,14 +209,13 @@
             <div class="filter-label">Options</div>
             <div class="fp-checks">
               <label class="checkbox-row packet-disable"><input type="checkbox" id="filter-powermark" checked> Powermarked only</label>
-              <span class="checkbox-row-wrap packet-disable"><label class="checkbox-row"><input type="checkbox" id="filter-clean"> Clean questions only</label><span class="qb-info" data-tip="Skips questions flagged as garbled, merged or incomplete.">i</span></span>
-              <label class="checkbox-row"><input type="checkbox" id="filter-standard"> Standard sets only</label>
               <label class="checkbox-row packet-disable"><input type="checkbox" id="filter-starred"> Starred only</label>
               <label class="checkbox-row"><input type="checkbox" id="opt-bonus-after"> Bonus after a correct tossup</label>
               <label class="checkbox-row"><input type="checkbox" id="opt-allow-rebuzzes"> Allow rebuzzes</label>
               <label class="checkbox-row"><input type="checkbox" id="opt-stop-on-power"> Stop on power</label>
               <span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="opt-read-aloud"> Read aloud</label><span class="qb-info" data-tip="A voice reads each question to you and the text follows it. Reading speed sets how fast it talks.">i</span></span>
-              <div class="slider-group read-voice-row" id="read-voice-row" hidden><span class="sg-label">Voice</span><select id="opt-voice" class="mode-input" aria-label="Voice"><option value="">System voice</option></select></div>
+              <div class="slider-group read-voice-row" id="read-voice-row" hidden><span class="sg-label">Voice</span><select id="opt-voice" class="mode-input" aria-label="Voice"></select></div>
+              <span class="checkbox-row-wrap" id="read-hide-row" hidden><label class="checkbox-row"><input type="checkbox" id="opt-read-hide"> Hide the text while it's read</label><span class="qb-info" data-tip="Listen like a real game. Bars show how far it has read, and the text comes back with the answer.">i</span></span>
               <label class="checkbox-row"><input type="checkbox" id="opt-allow-skips" checked> Allow skips</label>
               <label class="checkbox-row"><input type="checkbox" id="filter-hide-pron"> Hide pronunciation guides</label>
               <label class="checkbox-row"><input type="checkbox" id="filter-hide-notes"> Hide moderator notes</label>

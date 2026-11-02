@@ -1971,9 +1971,14 @@ QB.registerTheme({
     "packet-builder": "Tools", "folders": "Tools",
     "keyword-freq": "Analysis", "buzz-words": "Analysis", "fact-sheet": "Analysis", "canon-tracker": "Analysis",
     "achievement-glyphs": "Extras",
+    // 15.62
+    "rival": "Play", "challenge": "Play", "difficulty-ladder": "Play", "lightning": "Play", "voice-answers": "Play",
+    "first-lines": "Study", "quotations": "Study", "missed-clues": "Study", "listen": "Study", "answer-notes": "Study",
+    "buzz-tracker": "Analysis", "gap-finder": "Analysis", "neg-check": "Analysis", "bonus-parts": "Analysis", "answer-clusters": "Analysis",
+    "weekly-plan": "Tools", "tournament-prep": "Tools", "set-series": "Tools", "pyramid-check": "Tools", "moderator": "Tools",
   };
-  const GROUP_ORDER = ["Study", "Tools", "Analysis", "Extras", "Other"];
-  const GROUP_COLOR = { Study: "#3fb950", Tools: "#58a6ff", Analysis: "#bc8cff", Extras: "#8b949e", Other: "#8b949e" };
+  const GROUP_ORDER = ["Play", "Study", "Tools", "Analysis", "Extras", "Other"];
+  const GROUP_COLOR = { Play: "#f0883e", Study: "#3fb950", Tools: "#58a6ff", Analysis: "#bc8cff", Extras: "#8b949e", Other: "#8b949e" };
   const groupOf = (id) => PLUGIN_GROUP[id] || "Other";
   const mono = (name) => String(name || "?").replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
   const ICO = {
@@ -2235,6 +2240,14 @@ QB.registerTheme({
     "keyword-freq": ["Analysis", "Clues", "Words"], "buzz-words": ["Analysis", "Clues", "Power"],
     "fact-sheet": ["Analysis", "Answers", "Study"], "canon-tracker": ["Analysis", "Canon", "Progress"],
     "achievement-glyphs": ["Extras", "Achievements", "Icons"],
+    "rival": ["Play", "Buzzing", "Adaptive"], "challenge": ["Play", "Friends", "Compare"], "difficulty-ladder": ["Play", "Difficulty", "Adaptive"],
+    "lightning": ["Play", "Speed", "Recall"], "voice-answers": ["Play", "Voice", "Tournament"],
+    "first-lines": ["Study", "Power", "Clues"], "quotations": ["Study", "Literature", "Quotes"], "missed-clues": ["Study", "Review", "Memory"],
+    "listen": ["Study", "Audio", "Hands free"], "answer-notes": ["Study", "Notes", "Answers"],
+    "buzz-tracker": ["Analysis", "Buzzing", "Progress"], "gap-finder": ["Analysis", "Distribution", "Practice"], "neg-check": ["Analysis", "Negs", "Patterns"],
+    "bonus-parts": ["Analysis", "Bonuses", "Drill"], "answer-clusters": ["Analysis", "Answers", "Mix-ups"],
+    "weekly-plan": ["Tools", "Plan", "Goals"], "tournament-prep": ["Tools", "Tournaments", "Plan"], "set-series": ["Tools", "Sets", "Packets"],
+    "pyramid-check": ["Tools", "Writing", "Clues"], "moderator": ["Tools", "Club", "Reading"],
   };
   const fmtCount = (n) => { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1).replace(/\.0$/, "") + "K" : String(n); };
   const SICO = {
@@ -3204,7 +3217,7 @@ function __qbMain(ctx) {
     // under the same name continues where they left off; abandon their bonus.
     function hostPeerGone(id) {
       var p = players[id];
-      if (p && !p.off) { p.off = true; sysChat(p.name + " disconnected. Their seat and score are saved"); pushState(); }
+      if (p && !p.off) { p.off = true; sysChat(p.name + " left"); pushState(); }
       if (bonusState && id === bonusState.winner) {
         bonusState = null; stopBonusTimer();
         sysChat("Bonus dropped because the answerer left.");
@@ -3883,7 +3896,7 @@ function __qbMain(ctx) {
       if (!paused && !pendingBuzzer && !ended) beginReveal();
     }
     function describeSetting(key, val) {
-      var label = key === "answerSeconds" ? "Answer Time" : key === "buzzWindow" ? "Buzz Window" : key === "rebuzz" ? "Rebuzzes" : key === "bonusEvery" ? "Bonus after every question" : key === "stopPower" ? "Stop on power" : key === "allowSkips" ? "Skips" : key === "locked" ? "Room lock" : key === "public" ? "Public room" : key === "tournament" ? "Tournament mode" : key;
+      var label = key === "answerSeconds" ? "Answer time" : key === "buzzWindow" ? "Buzz window" : key === "rebuzz" ? "Rebuzzes" : key === "bonusEvery" ? "Bonus after a correct tossup" : key === "stopPower" ? "Stop on power" : key === "allowSkips" ? "Skips" : key === "locked" ? "Room lock" : key === "public" ? "Public room" : key === "tournament" ? "Tournament mode" : key;
       return "changed " + label + " to " + val;
     }
 
@@ -4187,7 +4200,7 @@ function __qbMain(ctx) {
       if (b) {
         b.hidden = !officialRoom;
         if (officialRoom) b.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' + esc(officialRoom.name) +
-          ' <span class="qb-info" data-tip="' + esc("An official room for " + (filterSummary || officialRoom.name) + ". It resets after an hour with no activity.") + '">i</span>';
+          ' <span class="qb-info" data-tip="' + esc("An official room for " + officialRoom.name + ". It resets after an hour with no activity.") + '">i</span>';
       }
     }
     // ── rendering ──
@@ -4322,7 +4335,7 @@ function __qbMain(ctx) {
         var roomRow = function (r, name) {
           var who = countText(r.online == null ? { players: r.players, online: r.players } : r);
           var state = [r.spectators ? r.spectators + " watching" : "", r.official ? "" : r.questions ? "Q" + r.questions : "waiting"].filter(Boolean).join(" · ");
-          return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + (r.summary ? ' title="' + esc(r.summary) + '"' : "") + '><b class="mp-rcode">' + esc(name) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
+          return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + '><b class="mp-rcode">' + esc(name) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
         };
         var osec = body.querySelector("#mp-official");
         if (osec) {
@@ -4839,38 +4852,42 @@ function __qbMain(ctx) {
       return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
     }
 
-    // MP-specific controls injected into the (borrowed) filter panel — kept to
-    // just TWO sections (Lobby + Game) to avoid heading clutter.
+    // MP-specific controls in the (borrowed) filter panel: the room's name and team (with Public room and Lock
+    // room) at the top, and the room's rules placed among the practice panel's own toggles and sliders, each
+    // where its practice twin sits (that twin is hidden while the room holds the panel, ui.css)
     function lobbySectionHtml() {
-      // Lobby info + your name/team in one section.
       return '<div class="filter-section mp-injected">' +
         '<div class="filter-label">Room ' + esc(String(lobby).toUpperCase()) + (isHost ? ' <span class="badge rh-host">Host</span>' : "") + "</div>" +
         '<label class="mode-field"><span>Your name</span><input id="mp-myname" class="mode-input" autocomplete="off"></label>' +
         (mySpec ? '<div class="text-muted" style="font-size:11px">Spectating</div>'
                 : '<label class="mode-field"><span>Team</span><input id="mp-myteam" class="mode-input" placeholder="(none)" autocomplete="off"></label>') +
+        '<div class="fp-checks mp-room-checks">' +
+          // public rooms are listed in everyone's lobby (game server rooms only — the relay has no list)
+          (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-public"' + (settings.public !== false ? " checked" : "") + '> Public room</label><span class="qb-info" data-tip="Listed under Public rooms for everyone who opens Multiplayer, so anyone can join. Off: only people with the code or link.">i</span></span>' : "") +
+          '<label class="checkbox-row"><input type="checkbox" id="mp-lock"' + (settings.locked ? " checked" : "") + "> Lock room</label>" +
+        "</div>" +
         '<div class="text-muted" id="mp-status" style="font-size:11px;min-height:14px;margin-top:4px"></div>' +
-        '<div class="text-muted" id="mp-filter-summary" style="font-size:11px;margin-top:2px"></div>' +
         "</div>";
     }
-    function controlsSectionsHtml() {
-      // One "GAME" section. The answer timer + rebuzz toggle are editable by
-      // EVERY player and kept in sync (clients send setSetting to the host, which
-      // re-broadcasts state). Reading the next question is open to everyone too:
-      // the host honours reqNext from any non-spectator.
-      var tour = !!settings.tournament;
-      return '<div class="filter-section mp-injected"><div class="filter-label">Game rules</div>' +
-        // tournament: two teams play one packet with its bonuses (game-server rooms keep the scoresheet)
-        (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-tourney"' + (tour ? " checked" : "") + '> Tournament</label><span class="qb-info" data-tip="Two teams play one packet in order. Pick the packet in Setup and join a team in Players. A correct tossup earns that team the bonus, and a neg locks the team out.">i</span></span>' : "") +
-        '<div class="slider-group"><span style="font-size:11px;min-width:78px" title="Time to type an answer after buzzing">Answer time</span><input type="range" id="mp-ans" min="3" max="30" step="1" value="' + (settings.answerSeconds) + '"><span class="slider-value" id="mp-ans-val">' + (settings.answerSeconds) + "s</span></div>" +
-        '<div class="slider-group" style="margin-top:6px"><span style="font-size:11px;min-width:78px" title="Time to buzz once the question finishes reading">Buzz window</span><input type="range" id="mp-bwin" min="3" max="30" step="1" value="' + (settings.buzzWindow || 10) + '"><span class="slider-value" id="mp-bwin-val">' + (settings.buzzWindow || 10) + "s</span></div>" +
-        '<label class="checkbox-row"><input type="checkbox" id="mp-rebuzz" ' + (settings.rebuzz ? "checked" : "") + (tour ? " disabled" : "") + "> Allow rebuzzes</label>" +
-        '<label class="checkbox-row" title="After every correct tossup, the winner answers a random bonus"><input type="checkbox" id="mp-bonusevery" ' + (settings.bonusEvery ? "checked" : "") + (tour ? " disabled" : "") + "> Bonus after every question</label>" +
-        '<label class="checkbox-row"><input type="checkbox" id="mp-stoppow"' + (settings.stopPower ? " checked" : "") + "> Stop on power</label>" +
-        '<label class="checkbox-row"><input type="checkbox" id="mp-skips"' + (settings.allowSkips !== false ? " checked" : "") + (tour ? " disabled" : "") + "> Allow skips</label>" +
-        // public rooms are listed in everyone's lobby (game server rooms only — the relay has no list)
-        (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-public"' + (settings.public !== false ? " checked" : "") + '> Public room</label><span class="qb-info" data-tip="Listed under Public rooms for everyone who opens Multiplayer, so anyone can join. Off: only people with the code or link.">i</span></span>' : "") +
-        '<label class="checkbox-row" title="When on, new players cannot join this lobby"><input type="checkbox" id="mp-lock"' + (settings.locked ? " checked" : "") + "> Lock room</label>" +
-        "</div>";
+    // The room's rules, edited by every player and kept in sync (clients send setSetting to the host, which
+    // re-broadcasts state). Each goes right after the practice control it stands in for.
+    function injectRoomRules(panel) {
+      var chk = function (id, on, label) { return '<label class="checkbox-row mp-injected"><input type="checkbox" id="' + id + '"' + (on ? " checked" : "") + "> " + label + "</label>"; };
+      var sld = function (id, label, tip, v) {
+        return '<div class="slider-group mp-injected"><span class="sg-label">' + label + ' <span class="qb-info" data-tip="' + esc(tip) + '">i</span></span>' +
+          '<input type="range" id="' + id + '" min="3" max="30" step="1" value="' + v + '" aria-label="' + esc(label) + '"><span class="slider-value" id="' + id + '-val">' + v + "s</span></div>";
+      };
+      var after = function (realId, html) {
+        var real = panel.querySelector("#" + realId); if (!real) return;
+        var row = real.closest(".checkbox-row-wrap, .checkbox-row, .slider-group") || real;
+        row.insertAdjacentHTML("afterend", html);
+      };
+      after("opt-bonus-after", chk("mp-bonusevery", settings.bonusEvery, "Bonus after a correct tossup"));
+      after("opt-allow-rebuzzes", chk("mp-rebuzz", settings.rebuzz, "Allow rebuzzes"));
+      after("opt-stop-on-power", chk("mp-stoppow", settings.stopPower, "Stop on power"));
+      after("opt-allow-skips", chk("mp-skips", settings.allowSkips !== false, "Allow skips"));
+      after("panel-buzz-window", sld("mp-bwin", "Buzz window", "Seconds to buzz once the question finishes reading.", settings.buzzWindow || 10));
+      after("panel-buzz-timer", sld("mp-ans", "Answer time", "Seconds to type an answer after buzzing, and for each bonus part.", settings.answerSeconds || 10));
     }
 
     // A diagnostic room's settings: only Reading & timers (reading speed, strictness) and the two
@@ -4889,7 +4906,7 @@ function __qbMain(ctx) {
           slider("mp-dx-speed", "Reading speed", "How fast this room reads, for everyone. 1 is the slowest and 50 the fastest. Past 50 the whole question shows at once.", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
           slider("mp-dx-strict", "Strictness", "How close answers must be, for everyone in this room. Higher is stricter.", 0, 20, strict, String(strict)) +
         "</div>" +
-        '<p class="mp-off-note mp-injected">This room always plays ' + esc(filterSummary || o.name || "") + '. These settings are the room\u2019s.</p>';
+        '<p class="mp-off-note mp-injected">This room always plays ' + esc(o.name || "") + '. These settings are the room\u2019s.</p>';
     }
     function diagSectionsHtml() {
       var s = (dxInfo && dxInfo.settings) || {};
@@ -5422,8 +5439,6 @@ function __qbMain(ctx) {
       if (lk) lk.addEventListener("change", function (e) { changeSetting("locked", e.target.checked); });
       var pub = body.querySelector("#mp-public");
       if (pub) pub.addEventListener("change", function (e) { changeSetting("public", e.target.checked); });
-      var tny = body.querySelector("#mp-tourney");
-      if (tny) tny.addEventListener("change", function (e) { changeSetting("tournament", e.target.checked); });
       var nx = body.querySelector("#mp-next"); if (nx) nx.onclick = function () { requestNext(); };
       // a diagnostic room's reading speed (a level on the slider, ms per character in the room) and strictness
       var dsp = body.querySelector("#mp-dx-speed");
@@ -5498,8 +5513,7 @@ function __qbMain(ctx) {
       var top = document.createElement("div"); top.innerHTML = lobbySectionHtml();
       var head = panel.querySelector(":scope > .fp-head"), at = head ? head.nextSibling : panel.firstChild;
       while (top.firstChild) panel.insertBefore(top.firstChild, at);
-      var bottom = document.createElement("div"); bottom.innerHTML = controlsSectionsHtml();
-      while (bottom.firstChild) panel.appendChild(bottom.firstChild);
+      injectRoomRules(panel);
       wireControls();
       // Log the host's filter changes (categories, difficulty, year, strictness…)
       // to chat and re-sync the summary to everyone.
@@ -5532,7 +5546,6 @@ function __qbMain(ctx) {
       if (t.id === "strictness-slider") return "changed strictness to " + t.value;
       if (t.id === "panel-speed-slider") return "changed reading speed to " + (window.qbSpeedLabel && window.qbSpeedMs ? window.qbSpeedLabel(window.qbSpeedMs(t.value)) : t.value);
       if (t.id === "enable-cat-weights") return "changed weights to " + (t.checked ? "true" : "false");
-      if (t.id === "filter-standard") return "changed standard-only to " + (t.checked ? "true" : "false");
       if (t.id === "filter-powermark") return "changed powermarked-only to " + (t.checked ? "true" : "false");
       if (t.id === "mode-select") return "changed mode to " + t.value;
       if (t.id === "mode-set-name") return "changed set to " + (t.value || "(none)");
@@ -5561,7 +5574,6 @@ function __qbMain(ctx) {
       _applyingRemote = true;
       try {
         var pm = document.getElementById("filter-powermark"); if (pm) pm.checked = !!f.powermarkOnly;
-        var st = document.getElementById("filter-standard"); if (st) st.checked = !!f.standard;
         var so = document.getElementById("filter-starred"); if (so) so.checked = !!f.starredOnly;
         if (f.yearMin != null) { var ym = document.getElementById("year-min"); if (ym) ym.value = f.yearMin; }
         if (f.yearMax != null) { var yx = document.getElementById("year-max"); if (yx) yx.value = f.yearMax; }
@@ -5736,9 +5748,6 @@ function __qbMain(ctx) {
       var sk3 = body.querySelector("#mp-skips"); if (sk3) sk3.checked = settings.allowSkips !== false;
       var lk3 = body.querySelector("#mp-lock"); if (lk3) lk3.checked = !!settings.locked;
       var pb3 = body.querySelector("#mp-public"); if (pb3) pb3.checked = settings.public !== false;
-      var tour = !!settings.tournament;
-      var tn3 = body.querySelector("#mp-tourney"); if (tn3) tn3.checked = tour;
-      ["#mp-rebuzz", "#mp-bonusevery", "#mp-skips"].forEach(function (sel) { var x = body.querySelector(sel); if (x) x.disabled = tour; });
       renderScoresheet();
     }
 
