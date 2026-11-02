@@ -1689,26 +1689,61 @@ const Sound = {
 // Voices (15.62): only Google's English voices are offered (the browser's other ones sound poor). Where there are none
 // (the app, Safari, Firefox) the best English voice there is reads, with no choice shown.
 const Speech = (() => {
-  const ok = typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
+  const synthOk = typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
+  const audioOk = !!(window.AudioContext || window.webkitAudioContext);
   let seq = 0;
-  const voices = () => { try { return window.speechSynthesis.getVoices() || []; } catch (e) { return []; } };
+  const voices = () => { if (!synthOk) return []; try { return window.speechSynthesis.getVoices() || []; } catch (e) { return []; } };
   const english = (v) => /^en\b|^en[-_]/i.test(v.lang || "");
-  const choices = () => voices().filter((v) => english(v) && /^Google\b/i.test(v.name || "")).sort((a, b) => (/US/.test(b.name) - /US/.test(a.name)) || String(a.name).localeCompare(String(b.name)));
+  const google = () => voices().filter((v) => english(v) && /^Google\b/i.test(v.name || "")).sort((a, b) => (/US/.test(b.name) - /US/.test(a.name)) || String(a.name).localeCompare(String(b.name)));
+  // a plugin's voices (ctx.registerVoice, 15.63: Kokoro), made here and played through Web Audio
+  const pluginVoices = () => {
+    const out = [];
+    if (audioOk) for (const v of (window.QB && window.QB._voices) || []) for (const x of v.voices) out.push({ voiceURI: "plugin:" + v.pluginId + ":" + v.id + ":" + x.id, name: v.name + ", " + x.name, plugin: v, vid: x.id });
+    return out;
+  };
+  // what the Voice popover offers: Google's English voices, then plugins' (with the browser's own voice first where
+  // there's no Google one, so it can still be picked)
+  const choices = () => {
+    const g = google(), pv = pluginVoices();
+    return pv.length && !g.length && synthOk ? [{ voiceURI: "", name: "Built-in voice", builtin: true }].concat(pv) : g.concat(pv);
+  };
   function fallback() {
     const score = (v) => (/natural|neural|online/i.test(v.name) ? 40 : 0) + (/enhanced|premium|siri/i.test(v.name) ? 30 : 0) +
       (/^(samantha|ava|allison|susan|daniel|karen|moira|serena|tom|alex)\b/i.test(v.name) ? 10 : 0) + (/en[-_]US/i.test(v.lang) ? 5 : 0) + (v.default ? 2 : 0);
     return voices().filter(english).sort((a, b) => score(b) - score(a))[0] || null;
   }
+  // the voice that reads: the one picked (a plugin's once it's ready; until then it gets ready and the browser reads)
+  const loading = { on: null, pct: 0 };
   function voice() {
-    const g = choices(), want = state.settings.voice;
+    const want = state.settings.voice || "";
+    if (want.startsWith("plugin:")) {
+      const p = pluginVoices().find((v) => v.voiceURI === want);
+      if (p && p.plugin.ready()) return p;
+      if (p) prepare(p);
+    }
+    const g = google();
     return g.length ? (g.find((v) => v.voiceURI === want) || g[0]) : fallback();
+  }
+  function prepare(p) {
+    if (loading.on === p.plugin) return;
+    loading.on = p.plugin; loading.pct = 0; paintLoad();
+    p.plugin.load((f) => { loading.pct = Math.max(loading.pct, Math.round(100 * (Number(f) || 0))); paintLoad(); })
+      .then(() => { loading.on = null; paintLoad(); }, () => { loading.on = null; loading.err = p.plugin.name; paintLoad(); });
+  }
+  function paintLoad() {
+    const el = document.getElementById("vp-status"); if (!el) return;
+    const t = loading.on ? "Getting " + loading.on.name + " ready " + loading.pct + "%. The built-in voice reads until then." : loading.err ? loading.err + " couldn't start. The built-in voice reads instead." : "";
+    el.textContent = t; el.hidden = !t;
   }
   // silent at once: pause() cuts the sound off where cancel() alone can let a network voice finish its word, and
   // resume() so the next question doesn't start paused
   let keep = 0;
+  let actx = null, playing = [], timers = [];
   function stop() {
     seq++; clearInterval(keep); keep = 0;
-    if (!ok) return;
+    playing.forEach((s) => { try { s.stop(); } catch (e) {} }); playing = [];
+    timers.forEach(clearTimeout); timers = [];
+    if (!synthOk) return;
     const ss = window.speechSynthesis;
     try { ss.pause(); } catch (e) {}
     try { ss.cancel(); } catch (e) {}
@@ -1738,7 +1773,7 @@ const Speech = (() => {
   // whole word the buzz cut). onPos(i, sync): i the text index heard up to; sync when a piece starts sounding
   function speak(text, from, onPos, onEnd, raw) {
     stop();
-    if (!ok) return false;
+    if (!Speech.ok) return false;
     text = String(text);
     while (from > 0 && from < text.length && /\S/.test(text[from - 1])) from--;
     const my = seq, sc = speechScript(text, raw);
@@ -1747,6 +1782,8 @@ const Speech = (() => {
     const said = sc.spoken.slice(start);
     const at = (k) => (k > 0 ? sc.map[start + k - 1] + 1 : from);   // the text index after spoken character k-1
     const v = voice(), net = !!(v && v.localService === false);
+    if (v && v.plugin) { speakPlugin(v, said, at, onPos, onEnd, my); return true; }
+    if (!synthOk) return false;
     const todo = piecesOf(said, net);
     if (!todo.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return true; }
     // Chrome has stopped a network voice partway through a long utterance; pausing and resuming it now and then
@@ -1768,10 +1805,54 @@ const Speech = (() => {
     });
     return true;
   }
+  // A plugin's voice: a sentence or two at a time (the first comes quickly), each made while the one before plays and
+  // started where it ends, so there's no gap; the text follows each piece's sound across its length
+  function speakPlugin(v, said, at, onPos, onEnd, my) {
+    const pieces = [];
+    for (let i = 0; i < said.length;) {
+      let end = said.length;
+      if (end - i > (pieces.length ? 260 : 140)) {
+        const win = said.slice(i, i + (pieces.length ? 260 : 140)); let cut = -1, m; const re = /[.?!;]["”’)]*\s/g;
+        while ((m = re.exec(win))) cut = m.index + m[0].length;
+        if (cut < 30) { cut = -1; const re2 = /[,:]\s|\s/g; while ((m = re2.exec(win))) cut = m.index + m[0].length; }
+        end = i + (cut > 0 ? cut : win.length);
+      }
+      if (said.slice(i, end).trim()) pieces.push({ at: i, t: said.slice(i, end) });
+      i = end;
+    }
+    if (!pieces.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return; }
+    if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; actx = new AC(); }
+    const ac = actx; if (ac.state === "suspended") ac.resume().catch(() => {});
+    const speed = Math.max(0.5, Math.min(2, rate())), jobs = [];
+    const job = (k) => jobs[k] || (jobs[k] = Promise.resolve().then(() => v.plugin.synth(pieces[k].t, { voice: v.vid, speed })).catch(() => null));
+    let next = 0;
+    (async () => {
+      for (let k = 0; k < pieces.length; k++) {
+        const r = await job(k);
+        if (my !== seq) return;
+        if (k + 1 < pieces.length) job(k + 1);
+        if (!r || !r.samples || !r.samples.length) continue;
+        const buf = ac.createBuffer(1, r.samples.length, r.rate || 24000); buf.copyToChannel(r.samples, 0);
+        const src = ac.createBufferSource(); src.buffer = buf; src.connect(ac.destination);
+        const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k];
+        src.start(startAt); playing.push(src); next = startAt + dur;
+        const t0 = performance.now() + (startAt - ac.currentTime) * 1000;
+        const tick = (first) => {
+          if (my !== seq) return;
+          const f = Math.min(1, (performance.now() - t0) / (dur * 1000));
+          onPos(at(p.at + Math.round(p.t.length * f)), first);
+          if (f < 1) timers.push(setTimeout(() => tick(false), 60));
+        };
+        timers.push(setTimeout(() => tick(true), Math.max(0, t0 - performance.now())));
+      }
+      if (my !== seq) return;
+      timers.push(setTimeout(() => { if (my === seq) onEnd(); }, Math.max(0, (next - ac.currentTime) * 1000) + 60));
+    })();
+  }
   // a voice that never says where it is (Google's voices send no word positions): the text follows its usual pace
   const charsPerMs = () => rate() * 0.015;
-  const on = () => ok && (!!state.settings.readAloud || !!pageRules().readAloud) && Number(state.settings.revealSpeed) > 0;
-  return { ok, on, voices, choices, voice, rate, speak, stop, charsPerMs };
+  const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud) && Number(state.settings.revealSpeed) > 0;
+  return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, paintLoad, pluginVoices };
 })();
 
 // ── What the voice says for a question's text (15.62) ──
@@ -4891,7 +4972,12 @@ $("#opt-read-aloud")?.addEventListener("change", (e) => {
   Speech.stop();
   if (state.mode === "tossups") resumeReveal(); else if (state._bonusReader) state._bonusReader.resume();
 });
-$("#opt-voice")?.addEventListener("change", (e) => { state.settings.voice = e.target.value; lsSet("qb-voice", e.target.value); });
+$("#opt-voice")?.addEventListener("change", (e) => {
+  state.settings.voice = e.target.value; lsSet("qb-voice", e.target.value);
+  const p = Speech.pluginVoices().find((v) => v.voiceURI === e.target.value);   // a plugin's voice gets ready now, not at the next question
+  if (p && !p.plugin.ready()) Speech.prepare(p);
+  Speech.paintLoad();
+});
 $("#opt-read-hide")?.addEventListener("change", (e) => {
   state.settings.readHide = e.target.checked; lsSet("qb-read-hide", e.target.checked);
   if (!e.target.checked) setReadHidden(false);
@@ -4901,7 +4987,7 @@ $("#opt-read-hide")?.addEventListener("change", (e) => {
 function fillVoices() {
   const sel = document.getElementById("opt-voice"); if (!sel) return;
   const vs = Speech.choices(), want = state.settings.voice || "";
-  const label = (v) => String(v.name).replace(/^Google\s+/i, "").replace(/\s+(Female|Male)$/i, (m, g) => ", " + g.toLowerCase());
+  const label = (v) => (v.plugin || v.builtin ? String(v.name) : String(v.name).replace(/^Google\s+/i, "").replace(/\s+(Female|Male)$/i, (m, g) => ", " + g.toLowerCase()));
   sel.innerHTML = vs.map((v) => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(label(v))}</option>`).join("");
   sel.value = vs.some((v) => v.voiceURI === want) ? want : (vs[0] ? vs[0].voiceURI : "");
   syncVoiceRow();
@@ -4930,7 +5016,9 @@ function syncVoiceRow() {
 // the result is up
 function setReadHidden(on) { document.getElementById("question-area")?.classList.toggle("read-hidden", !!on); }
 // after the whole script has loaded (syncVoiceRow may switch guides and notes off through setHidePron / setHideNotes)
-if (Speech.ok) { setTimeout(fillVoices, 0); try { window.speechSynthesis.addEventListener("voiceschanged", fillVoices); } catch (e) {} }
+setTimeout(fillVoices, 0);
+try { window.speechSynthesis.addEventListener("voiceschanged", fillVoices); } catch (e) {}
+window.QB?.on?.("voices:changed", () => setTimeout(fillVoices, 0));   // a plugin's voice came or went
 setTimeout(syncVoiceRow, 0);
 window.QB?.on?.("screen:change", () => { Speech.stop(); closeVoicePop(); });
 // ── The Voice button (15.63): Read aloud, its voice, hiding the text and plugins' voice settings (Voice Answers) in a

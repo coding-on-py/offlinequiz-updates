@@ -273,6 +273,7 @@
     _textTransforms: [],
     _questionFilters: [],
     _resultPanels: [],
+    _voices: [],          // plugin voices for Read aloud (ctx.registerVoice, 15.63)
     _answerRules: [],
     _scoringRules: [],
     _settingsSections: [],
@@ -781,6 +782,20 @@
         const rec = { pluginId: ext.id, fn };
         QB._questionFilters.push(rec);
         subs.push(() => { QB._questionFilters = QB._questionFilters.filter((x) => x !== rec); });
+        return rec;
+      },
+      // a voice for Read aloud (15.63; Kokoro): { id, name, voices: [{ id, name }], ready(), load(onProgress(0..1)),
+      // synth(text, { voice, speed }) → { samples: Float32Array, rate } }. It's offered in the Voice popover.
+      registerVoice(v) {
+        if (!v || typeof v.synth !== "function" || !Array.isArray(v.voices) || !v.voices.length) return null;
+        const rec = { pluginId: ext.id, id: String(v.id || ext.id), name: String(v.name || ext.name), voices: v.voices.map((x) => ({ id: String(x.id), name: String(x.name || x.id) })),
+          ready: () => { try { return !!(v.ready && v.ready()); } catch (e) { return false; } },
+          load: (onProgress) => Promise.resolve(v.load ? v.load(onProgress) : null),
+          synth: (text, o) => v.synth(text, o || {}) };
+        QB._voices.push(rec);
+        const changed = () => { try { QB._emit("voices:changed"); } catch (e) {} };
+        subs.push(() => { QB._voices = QB._voices.filter((x) => x !== rec); changed(); });
+        changed();
         return rec;
       },
       registerResultPanel(p) {
@@ -1991,7 +2006,7 @@ QB.registerTheme({
     "rival": "Play", "challenge": "Play", "difficulty-ladder": "Play", "lightning": "Play", "voice-answers": "Play",
     "first-lines": "Study", "quotations": "Study", "missed-clues": "Study", "listen": "Study", "answer-notes": "Study",
     "buzz-tracker": "Analysis", "gap-finder": "Analysis", "neg-check": "Analysis", "answer-clusters": "Analysis",
-    "weekly-plan": "Tools", "tournament-prep": "Tools", "pyramid-check": "Tools", "moderator": "Tools",
+    "weekly-plan": "Tools", "tournament-prep": "Tools", "pyramid-check": "Tools", "moderator": "Tools", "layout-customizer": "Tools", "kokoro-voice": "Play",
   };
   const GROUP_ORDER = ["Play", "Study", "Tools", "Analysis", "Extras", "Other"];
   const GROUP_COLOR = { Play: "#f0883e", Study: "#3fb950", Tools: "#58a6ff", Analysis: "#bc8cff", Extras: "#8b949e", Other: "#8b949e" };
@@ -2268,7 +2283,7 @@ QB.registerTheme({
     "listen": ["Study", "Audio", "Hands free"], "answer-notes": ["Study", "Notes", "Answers"],
     "buzz-tracker": ["Analysis", "Buzzing", "Progress"], "gap-finder": ["Analysis", "Distribution", "Practice"], "neg-check": ["Analysis", "Negs", "Patterns"], "answer-clusters": ["Analysis", "Answers", "Mix-ups"],
     "weekly-plan": ["Tools", "Plan", "Goals"], "tournament-prep": ["Tools", "Tournaments", "Plan"],
-    "pyramid-check": ["Tools", "Writing", "Clues"], "moderator": ["Tools", "Club", "Reading"],
+    "pyramid-check": ["Tools", "Writing", "Clues"], "moderator": ["Tools", "Club", "Reading"], "layout-customizer": ["Tools", "Layout", "Design"], "kokoro-voice": ["Play", "Voice", "Read aloud"],
   };
   const SICO = {
     down: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',

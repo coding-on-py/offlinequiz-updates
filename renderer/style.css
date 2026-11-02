@@ -6856,3 +6856,5 @@ html.tb-nocrumb .tb-crumb { display: none; }
 .side-plugin[hidden] { display: none; }
 .pause-overlay.page-stop { cursor: pointer; }
 .opp-note { position: absolute; top: 10px; right: 12px; padding: 5px 12px; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line)); border-radius: 99px; background: var(--surface); color: var(--text); font-size: 12.5px; animation: qb-rise 200ms var(--ease-out); }
+.voice-pop .vp-status { margin: 2px 0 6px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.voice-pop .vp-status[hidden] { display: none; }

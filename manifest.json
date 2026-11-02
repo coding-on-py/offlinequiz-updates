@@ -1,5 +1,5 @@
 {
-  "version": "15.63",
+  "version": "15.64",
   "renderer": [
     "index.html",
     "style.css",
@@ -84,6 +84,16 @@
       "file": "keyword-freq.zip"
     },
     {
+      "id": "kokoro-voice",
+      "name": "Kokoro Voice",
+      "file": "kokoro-voice.zip"
+    },
+    {
+      "id": "layout-customizer",
+      "name": "Layout Customizer",
+      "file": "layout-customizer.zip"
+    },
+    {
       "id": "lightning",
       "name": "Lightning",
       "file": "lightning.zip"
@@ -145,13 +155,13 @@
     }
   ],
   "main": true,
-  "notes": "new features and bug fixes",
+  "notes": "new plugins and fixes",
   "files": {
-    "renderer/index.html": "fb49e0ea7f15cf4f8a62a57ce01dd066dab3c906bd99a379d922b114f6050029",
-    "renderer/style.css": "acd57cb6811033f99d913af0dfe4e183d1002bba55cec4dad71354245efa0d5a",
+    "renderer/index.html": "04ab60db62f55fce84d033699258ce2a4285ff96106e7f6cafbee123fd1089e6",
+    "renderer/style.css": "d35dee77fba5a2147d49b5074481d5ae1659ed6e34ebf346631286e756e2aa2b",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "c283374f48e64ae484d10552a1d64b165fb5d5bcc204c01c16d5089cec9bab64",
-    "renderer/app.js": "dbf5d399ad076ad1fd8f9b000b9f5c9b1857b7801ccd13bd4bd7bb08d9904834",
+    "renderer/extensions.js": "e4c5ce76f9c0a3244c00f03b4cfc94b2bf1df5ee009760f63e5ee0a4b1f67e45",
+    "renderer/app.js": "27a92feb80f569986854d10283b4e1dc0621855c731e61c3f4e84bd09ad0665d",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "1786320905ebce6c4ae9c4ad720c651da12400e965635fa84cd97de5db679e4c",
     "plugins/answer-notes.zip": "d4ec33b1ab701b24004055687ee3091f2af05eaae8e792276da180887bde980d",
@@ -167,6 +177,8 @@
     "plugins/folders.zip": "c6b3b1c2a9723af244dae0913eb8847178ae767cbfcfbb4a8ffad7276979faf6",
     "plugins/gap-finder.zip": "cd4a7a47927685d2b10e3d4bdb3987d7b3b24365b47fff7a4852a6118e92a8d1",
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
+    "plugins/kokoro-voice.zip": "5bcd3faccf59abf20ec5c87678c948f88a6a7e5db6a1850cda889f0a43d614ba",
+    "plugins/layout-customizer.zip": "44282c8857d09ae1d4f70819332823be377703098578045d794957a5e2d09f25",
     "plugins/lightning.zip": "5e8aa9e6ad13d7bd4066c9c0f6b86231516dad0b54aaff9c49a20fe901abd046",
     "plugins/listen.zip": "b2268166bd6bfbcdb4e1b3c61952b711127b97d9c46a1754c7892ae8e4c9db99",
     "plugins/missed-clues.zip": "c8a1eba345dd6e3edaa1cc290ce907b7eb0ca89beb7b3ddbe915cab606cb7847",
@@ -180,5 +192,5 @@
     "plugins/voice-answers.zip": "6c94c9579bd7293bea44204949b6644c9da20b24b3c4ddc3f012c8ba9b5c750f",
     "plugins/weekly-plan.zip": "a8355c9b4b87907251f78dcaf700f486b9e343031e895c4c80760af2de8b86ed"
   },
-  "signature": "UIrY11ZnTYzzKJMnaHvyPWvb/JtEQeUv7xcGspRIKQ1uQ96LrYeFWJASQwf45HPOkCr++eJN0vLfZ6olkmjXAQ=="
+  "signature": "JNCcyRY84rj1YkiL/sXPavdxcB26ZNTaSXTpf/GLKB4B2t8IAKIjTpACM991UuQIF/k3psWnYpXpr7jGdqS5Cg=="
 }
