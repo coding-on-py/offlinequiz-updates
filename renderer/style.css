@@ -6885,24 +6885,52 @@ html.tb-nocrumb .tb-crumb { display: none; }
 #btn-voice .vb-wave { opacity: 0.35; transition: opacity 160ms ease, stroke 160ms ease; }
 #btn-voice.on .vb-wave { opacity: 1; stroke: var(--accent); }
 #btn-voice[aria-expanded="true"] { background: var(--raised); border-color: var(--line-strong); color: var(--strong); }
-.voice-pop { position: fixed; z-index: 1200; width: min(330px, calc(100vw - 24px)); padding: 10px 14px 12px; border: 1px solid var(--line); border-radius: var(--r-lg);
-  background: var(--surface); box-shadow: var(--shadow); transition: opacity 160ms ease, transform 200ms var(--ease-out), display 200ms allow-discrete; }
-.voice-pop[hidden] { display: none; opacity: 0; transform: translateY(-6px); }
-@starting-style { .voice-pop:not([hidden]) { opacity: 0; transform: translateY(-6px); } }
-.voice-pop .vp-row { display: flex; align-items: center; gap: 8px; min-height: 34px; }
-.voice-pop .vp-row[hidden] { display: none; }
-.voice-pop .checkbox-row { font-size: 13px; }
-.voice-pop .vp-key { margin-left: auto; }
-.voice-pop .vp-key kbd { display: inline-block; min-width: 20px; padding: 0 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; color: var(--muted); font: 500 11.5px/1.6 var(--font); text-align: center; }
-.voice-pop .read-voice-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; margin: 4px 0; }
-.voice-pop .read-voice-row[hidden] { display: none; }
-.voice-pop .read-voice-row select { width: 100%; }
-#ext-voice-host:not(:empty) { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line-soft); }
+/* ── the Voice panel (15.72): beside the page like Setup, which it takes turns with (one open at a time), with every
+   voice to pick from and hear, the voice's speed and plugins' voice settings ── */
+.voice-panel { position: fixed; z-index: 45; top: calc(var(--topbar-h) + 10px); bottom: 12px; right: 12px; width: min(var(--drawer-w), calc(100vw - 24px));
+  display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 16px; background: var(--surface);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25); animation: fp-pop 220ms var(--ease-out); transform-origin: top right; }
+.voice-panel[hidden] { display: none; }
+html[data-scheme="light"] .voice-panel { box-shadow: 0 20px 50px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.08); }
+html[data-panel-side="left"] .voice-panel { right: auto; left: 12px; transform-origin: top left; }
+@media (max-width: 760px) { .voice-panel { top: calc(var(--topbar-h) + 6px); right: 6px; bottom: 6px; width: calc(100vw - 12px); } html[data-panel-side="left"] .voice-panel { left: 6px; } }
+.voice-panel .vp-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px; flex: 0 0 auto; height: 54px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+.voice-panel .vp-title { margin: 0; flex: 1; font-size: 16px; color: var(--strong); }
+.voice-panel .vp-body { display: flex; flex-direction: column; gap: 20px; padding: 14px 20px 22px; }
+.voice-panel .vp-section[hidden] { display: none; }
+.voice-panel .vp-row { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.voice-panel .vp-row[hidden] { display: none; }
+.voice-panel .checkbox-row { font-size: 14px; }
+.voice-panel .vp-key { margin-left: auto; }
+.voice-panel .vp-key kbd { display: inline-block; min-width: 20px; padding: 0 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; color: var(--muted); font: 500 11.5px/1.6 var(--font); text-align: center; }
+.voice-panel .slider-group { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.voice-panel .filter-label { margin: 0 0 8px; }
+/* each voice: picked by its row, heard with its play button */
+.vp-voices { display: flex; flex-direction: column; gap: 2px; }
+.vv-h { margin: 10px 0 4px 10px; color: var(--muted); font-size: 12px; }
+.vv-h:first-child { margin-top: 0; }
+.vv-row { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 4px 0 10px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; color: var(--text); transition: background 120ms ease, border-color 120ms ease; }
+.vv-row:hover { background: var(--raised); }
+.vv-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vv-row[aria-checked="true"] { border-color: var(--line); background: var(--raised); color: var(--strong); }
+.vv-dot { flex: 0 0 auto; width: 14px; height: 14px; border: 2px solid var(--line-strong); border-radius: 50%; box-sizing: border-box; transition: border 120ms ease; }
+.vv-row[aria-checked="true"] .vv-dot { border: 4px solid var(--accent); }
+.vv-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vv-play { flex: 0 0 auto; }
+.vv-play[aria-pressed="true"] { color: var(--accent); }
+.vp-voices.locked .vv-row { cursor: default; opacity: 0.6; }
+.vp-voices.locked .vv-row:hover { background: none; }
+.vp-voices.locked .vv-row[aria-checked="true"] { background: var(--raised); }
+/* Reading speed while the voice sets the pace */
+.sg-note { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.sg-note[hidden] { display: none; }
+.slider-group.locked-by-read { opacity: 0.5; }
+#ext-voice-host:not(:empty) { padding-top: 14px; border-top: 1px solid var(--line-soft); }
 #ext-voice-host .ext-settings-group { margin: 0; }
 #ext-voice-host .filter-label { margin: 6px 0 2px; }
 #ext-voice-host .fp-checks { grid-template-columns: minmax(0, 1fr); }
 #ext-voice-host .checkbox-row { font-size: 13px; min-height: 34px; }
-@media (prefers-reduced-motion: reduce) { .voice-pop { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .voice-panel { animation: none; } }
 
 /* a plugin's page on the reader (15.63, app.js startPluginPractice): its own box at the top of the side column, its
    stops (First Lines: "next line") and an opponent's missed buzz */
@@ -6911,8 +6939,8 @@ html.tb-nocrumb .tb-crumb { display: none; }
 .pause-overlay.page-stop { cursor: pointer; }
 /* (15.65) under the text, where the answer box was: it covered the flag and star buttons up in the corner */
 .opp-note { display: block; width: fit-content; max-width: 100%; box-sizing: border-box; margin-top: 14px; padding: 6px 14px; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line)); border-radius: 99px; background: var(--surface); color: var(--text); font-size: 13px; animation: qb-rise 200ms var(--ease-out); }
-.voice-pop .vp-status { margin: 2px 0 6px; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.voice-pop .vp-status[hidden] { display: none; }
+.voice-panel .vp-status { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.voice-panel .vp-status[hidden] { display: none; }
 /* an opponent's answer, typed a letter at a time (15.65, app.js opponentBuzz): the answer box's look, in the
    opponent's colour, then green or red once it's judged */
 .opp-answer { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px 16px; max-width: 720px; min-height: 48px; box-sizing: border-box;

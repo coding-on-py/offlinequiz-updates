@@ -404,6 +404,7 @@ const state = {
     stopOnPower: localStorage.getItem("qb-stop-on-power") === "true",
     readAloud: localStorage.getItem("qb-read-aloud") === "true",
     voice: localStorage.getItem("qb-voice") || "",
+    voiceRate: (() => { const v = parseFloat(localStorage.getItem("qb-voice-rate") || "1"); return Number.isFinite(v) && v > 0 ? v : 1; })(),   // Voice speed (15.72)
     readHide: localStorage.getItem("qb-read-hide") === "true",
     allowSkips: localStorage.getItem("qb-allow-skips") !== "false",
     showQuestionMeta: localStorage.getItem("qb-show-qmeta") !== "false",
@@ -1355,6 +1356,7 @@ function isSetupDrawerOpen() { const p = setupDrawerEl(); return !!(p && p.class
 function openSetupDrawer() {
   const p = setupDrawerEl(); if (!p) return;
   closeSettings();
+  if (typeof voicePopOpen === "function" && voicePopOpen()) closeVoicePop();   // one panel at a time (15.72)
   p.classList.add("open");
   if (!p.classList.contains("trial-setup")) tipInto(p, "setup", null, p.querySelector(".fp-head")?.nextElementSibling);   // a trial's Setup has none of what the tip names
   updateYearLabel();
@@ -1372,7 +1374,8 @@ function closeSetupDrawer() {
 // :has(.filters-panel.open) / :has(#cat-ovl:not(.hidden)) rules on every screen they replace restyled the whole page
 // at each keystroke and timer tick (~25 ms on a practice page), which made typing an answer lag
 function syncPanelHost() {
-  const p = document.getElementById("filters-panel"), host = p && p.classList.contains("open") ? p.closest(".screen") : null;
+  const p = document.getElementById("filters-panel"), vp = document.getElementById("voice-pop");
+  const host = p && p.classList.contains("open") ? p.closest(".screen") : vp && !vp.hidden ? document.getElementById("practice-screen") : null;
   for (const s of document.querySelectorAll(".screen.panel-host")) if (s !== host) s.classList.remove("panel-host");
   if (host && !host.classList.contains("panel-host")) host.classList.add("panel-host");
   const co = document.getElementById("cat-ovl"), open = !!(co && !co.classList.contains("hidden"));
@@ -1701,10 +1704,15 @@ const Speech = (() => {
     if (audioOk) for (const v of (window.QB && window.QB._voices) || []) for (const x of v.voices) out.push({ voiceURI: "plugin:" + v.pluginId + ":" + v.id + ":" + x.id, name: v.name + ", " + x.name, plugin: v, vid: x.id });
     return out;
   };
-  // what the Voice popover offers: Google's English voices, then plugins' (with the browser's own voice first where
-  // there's no Google one, so it can still be picked)
+  // the natural voices a browser has besides Google's (15.72): Edge's online Natural voices (Microsoft's, free and
+  // unlimited) and a Mac's Premium and Enhanced voices (Siri's, downloaded in System Settings, Spoken Content). They say
+  // where they are as they read, so the text follows them word for word
+  const natural = () => voices().filter((v) => english(v) && !/^Google\b/i.test(v.name || "") && /natural|neural|premium|enhanced/i.test(v.name || ""))
+    .sort((a, b) => (/US/.test(b.lang) - /US/.test(a.lang)) || String(a.name).localeCompare(String(b.name)));
+  // what the Voice panel offers: Google's English voices, the natural ones, then plugins' (with the browser's own voice
+  // first where there's none of those, so it can still be picked)
   const choices = () => {
-    const g = google(), pv = pluginVoices();
+    const g = google().concat(natural()), pv = pluginVoices();
     return pv.length && !g.length && synthOk ? [{ voiceURI: "", name: "Built-in voice", builtin: true }].concat(pv) : g.concat(pv);
   };
   function fallback() {
@@ -1724,8 +1732,10 @@ const Speech = (() => {
       if (p && p.plugin.ready()) return p;
       if (p) prepare(p);
     }
+    const n = natural().filter((v) => !bad.has(v.voiceURI)), picked = n.find((v) => v.voiceURI === want);
+    if (picked) return picked;
     const g = google().filter((v) => !bad.has(v.voiceURI));
-    return g.length ? (g.find((v) => v.voiceURI === want) || g[0]) : fallback();
+    return g.length ? (g.find((v) => v.voiceURI === want) || g[0]) : n[0] || fallback();
   }
   // the plugin's voice picked, while it's usable (not set aside after failing)
   function wantedPlugin() {
@@ -1760,10 +1770,11 @@ const Speech = (() => {
   // when the voice last made a sound (15.70): Voice Answers keeps it out of an answer. pluginEnd: when a plugin voice's
   // last piece ends, on the page's clock
   let talkedAt = 0, pluginEnd = 0;
+  let tracking = 0;   // a browser voice's piece whose place is being estimated (followVoice leaves it be)
   let actx = null, playing = [], timers = [], meter = null, meterBuf = null, talk = null;
   function stop() {
     quietFor();   // talking up to now, if it was
-    seq++; clearInterval(keep); keep = 0; talk = null; pluginEnd = 0;
+    seq++; clearInterval(keep); keep = 0; talk = null; pluginEnd = 0; tracking = 0;
     if (waiting) { waiting = 0; paintWait(); }
     if (held) { held = null; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
     playing.forEach((s) => { try { s.stop(); } catch (e) {} }); playing = [];
@@ -1774,7 +1785,83 @@ const Speech = (() => {
     try { ss.cancel(); } catch (e) {}
     try { ss.resume(); } catch (e) {}
   }
-  function rate() { const ms = Number(state.settings.revealSpeed) || 0; return ms > 0 ? Math.max(0.6, Math.min(2.4, 70 / ms)) : 1; }
+  // how fast the voice talks: Voice speed in the Voice panel (15.72). It used to follow Reading speed, whose slow end
+  // made a slow voice and whose fast end it couldn't reach; with Read aloud on, Reading speed is off and the voice sets the pace
+  function rate() { const v = Number(state.settings.voiceRate); return Number.isFinite(v) && v > 0 ? Math.max(0.5, Math.min(2, v)) : 1; }
+
+  // ── Where the voice is in what it says (15.72) ──
+  // A voice that says where it is (word boundaries: the browser's local voices) is followed exactly. Google's voices in
+  // Chrome don't, and the text used to go on at a fixed 15 characters a second from the start of a long piece, so it ran
+  // ahead or fell behind. Now each character has a length in syllables (a word's vowel groups, a number's spoken
+  // length, a pause at punctuation), the voice's own pace is learned from how long its pieces take (kept per voice and
+  // speed), and the text goes where that puts it. A plugin's voice (Kokoro) is lined up by its sound: its pauses are
+  // matched to the punctuation, and the words between them go by their syllables (alignPiece).
+  const PAUSE = { ",": 1.2, ";": 1.6, ":": 1.6, ".": 2.4, "?": 2.4, "!": 2.4, "\u2014": 1, "\u2013": 0.8, "(": 0.5, ")": 0.5 };
+  // c[i]: syllables said before character i
+  function sayUnits(t) {
+    t = String(t); const n = t.length, c = new Float32Array(n + 1), L = /[A-Za-z\u00C0-\u024F'\u2019]/;
+    let i = 0, acc = 0;
+    while (i < n) {
+      let j = i + 1, syl;
+      if (L.test(t[i])) {
+        while (j < n && L.test(t[j])) j++;
+        const w = t.slice(i, j).toLowerCase();
+        syl = (w.match(/[aeiouy\u00e0-\u00ff]+/g) || []).length; if (syl > 1 && /[^aeiouy]e$/.test(w)) syl--;
+        syl = Math.max(1, syl);
+      } else if (/[0-9]/.test(t[i])) {
+        while (j < n && (/[0-9]/.test(t[j]) || (/[.,]/.test(t[j]) && /[0-9]/.test(t[j + 1] || "")))) j++;
+        syl = 1 + 1.3 * t.slice(i, j).replace(/[^0-9]/g, "").length;
+      } else syl = PAUSE[t[i]] != null ? PAUSE[t[i]] : /\s/.test(t[i]) ? 0.08 : 0.3;
+      for (let k = i; k < j; k++) { c[k] = acc; acc += syl / (j - i); }
+      i = j;
+    }
+    c[n] = acc;
+    return c;
+  }
+  // the characters said after u syllables
+  function atUnits(c, u) { let lo = 0, hi = c.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (c[m] <= u) lo = m; else hi = m - 1; } return lo; }
+  // syllables a millisecond, learned per voice and speed (a voice's piece: what it said over how long it took)
+  let paces = {}; try { paces = JSON.parse(localStorage.getItem("qb-voice-pace") || "{}") || {}; } catch (e) {}
+  const paceKey = (v) => String((v && (v.voiceURI || v.name)) || "") + "@" + rate().toFixed(2);
+  const unitsPerMs = (v) => paces[paceKey(v)] || 0.0046 * rate();
+  function learnPace(v, units, ms) {
+    if (!(ms > 1500) || !(units > 6)) return;
+    const k = paceKey(v), seen = Math.max(0.001, Math.min(0.02, units / ms));
+    paces[k] = paces[k] ? paces[k] * 0.5 + seen * 0.5 : seen;
+    try { localStorage.setItem("qb-voice-pace", JSON.stringify(paces)); } catch (e) {}
+  }
+  // a plugin voice's piece lined up by its sound: quiet stretches of 80 ms or more are its pauses, each matched (in order)
+  // to the punctuation nearest where the syllables put it; between them the words go by their syllables
+  function alignPiece(t, samples, sr) {
+    const c = sayUnits(t), total = c[t.length] || 1, dur = samples.length / sr;
+    const F = Math.max(1, Math.round(sr * 0.01)), nf = Math.floor(samples.length / F), e = new Float32Array(nf);
+    let peak = 0;
+    for (let f = 0; f < nf; f++) { let a = 0; for (let k = f * F; k < (f + 1) * F; k++) a += samples[k] * samples[k]; e[f] = Math.sqrt(a / F); if (e[f] > peak) peak = e[f]; }
+    const thr = peak * 0.06, marks = [], anchors = [[0, 0]];
+    for (let i = 0; i < t.length; i++) if (PAUSE[t[i]] >= 1) marks.push(i + 1);
+    let mi = 0;
+    for (let f = 4; f < nf - 4;) {
+      if (e[f] >= thr) { f++; continue; }
+      let g = f; while (g < nf && e[g] < thr) g++;
+      if (g - f >= 8 && g < nf - 4) {
+        const want = (f / nf) * total; let best = -1, bd = Infinity;
+        for (let j = mi; j < marks.length; j++) { const d = Math.abs(c[marks[j]] - want); if (d < bd) { bd = d; best = j; } }
+        if (best >= 0 && bd < total * 0.18) { anchors.push([f * 0.01, marks[best]], [g * 0.01, marks[best]]); mi = best + 1; }
+      }
+      f = g;
+    }
+    anchors.push([dur, t.length]);
+    return (sec) => {
+      let a = 0; while (a < anchors.length - 2 && anchors[a + 1][0] <= sec) a++;
+      const [s0, i0] = anchors[a], [s1, i1] = anchors[a + 1];
+      if (s1 <= s0 || i1 <= i0) return i1;
+      const f = Math.min(1, Math.max(0, (sec - s0) / (s1 - s0)));
+      return atUnits(c, c[i0] + (c[i1] - c[i0]) * f);
+    };
+  }
+  // while held by Pause, time doesn't pass for the estimate
+  let holdAt = 0, heldMs = 0;
+  const heldNow = () => heldMs + (holdAt ? performance.now() - holdAt : 0);
   // How loud the voice is now, 0 to 1, for the Reading box's bars (15.65). A plugin's voice is measured as it plays. The
   // browser's voices can't be heard by the page: one talking counts as speech, and as quiet once it has said where it
   // is and no word has come for a moment (a pause at a comma or a full stop), and when it stops.
@@ -1853,18 +1940,36 @@ const Speech = (() => {
     // Chrome has stopped a network voice partway through a long utterance; pausing and resuming it now and then
     // keeps it going
     if (net) keep = setInterval(() => { const ss = window.speechSynthesis; if (my !== seq) return; if (ss.speaking && !ss.paused) { try { ss.pause(); ss.resume(); } catch (e) {} } }, 12000);
+    let bounded = false;   // the voice says where it is: no estimate
     todo.forEach((p, k) => {
       const u = new SpeechSynthesisUtterance(p.t);
       if (v) { u.voice = v; u.lang = v.lang; }
       u.rate = rate();
-      u.onstart = () => { if (my !== seq) return; talk = { my, at: performance.now(), words: talk && talk.my === my ? talk.words : 0 }; onPos(at(p.at), true); };
+      p.c = sayUnits(p.t);
+      const est = () => {
+        if (my !== seq || p.done || bounded) return;
+        const ms = performance.now() - p.t0 - (heldNow() - p.h0);
+        if (!(held && held.my === seq)) onPos(at(p.at + atUnits(p.c, ms * unitsPerMs(v))));
+        timers.push(setTimeout(est, 60));
+      };
+      u.onstart = () => {
+        if (my !== seq) return; talk = { my, at: performance.now(), words: talk && talk.my === my ? talk.words : 0 }; onPos(at(p.at), true);
+        p.t0 = performance.now(); p.h0 = heldNow(); tracking = my; est();
+      };
       u.onboundary = (e) => {
         if (my !== seq || (e.name && e.name !== "word")) return;
+        bounded = true;
         if (talk && talk.my === my) { talk.at = performance.now(); talk.words++; }
         const ci = e.charIndex || 0, len = e.charLength || (/^\S*/.exec(p.t.slice(ci)) || [""])[0].length;
         onPos(at(p.at + ci + len));
       };
-      u.onend = () => { if (my !== seq) return; onPos(at(p.at + p.t.length)); if (k === todo.length - 1) { clearInterval(keep); keep = 0; talk = null; talkedAt = performance.now(); onEnd(); } };
+      u.onend = () => {
+        if (my !== seq) return;
+        p.done = true;
+        if (!bounded && p.t0) learnPace(v, p.c[p.t.length], performance.now() - p.t0 - (heldNow() - p.h0));
+        onPos(at(p.at + p.t.length));
+        if (k === todo.length - 1) { clearInterval(keep); keep = 0; talk = null; tracking = 0; talkedAt = performance.now(); onEnd(); }
+      };
       u.onerror = (e) => { if (my === seq && e.error !== "interrupted" && e.error !== "canceled") fail(e.error || "error"); };
       window.speechSynthesis.speak(u);
     });
@@ -1944,7 +2049,7 @@ const Speech = (() => {
         if (!samples.length) continue;
         const buf = ac.createBuffer(1, samples.length, sr); buf.copyToChannel(samples, 0);
         const src = ac.createBufferSource(); src.buffer = buf; src.connect(meter);
-        const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k];
+        const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k], where = alignPiece(p.t, samples, sr);
         src.start(startAt); playing.push(src); next = startAt + dur;
         pluginEnd = performance.now() + (next - ac.currentTime) * 1000;
         // the text follows the sound by the audio clock, which stands still while the voice is paused (15.69)
@@ -1952,9 +2057,9 @@ const Speech = (() => {
           if (my !== seq) return;
           const t = ac.currentTime;
           if (t < startAt) { timers.push(setTimeout(() => tick(first), 40)); return; }
-          const f = Math.min(1, (t - startAt) / dur);
-          onPos(at(p.at + Math.round(p.t.length * f)), first);
-          if (f < 1) timers.push(setTimeout(() => tick(false), 60));
+          const sec = Math.min(dur, t - startAt);
+          onPos(at(p.at + where(sec)), first);
+          if (sec < dur) timers.push(setTimeout(() => tick(false), 40));
         };
         tick(true);
       }
@@ -1971,13 +2076,14 @@ const Speech = (() => {
     if (waiting) { stop(); return false; }
     if (playing.length && actx && actx.state === "running") { held = { my: seq }; actx.suspend().catch(() => {}); return true; }
     if (synthOk && talk && talk.my === seq && window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-      held = { my: seq }; clearInterval(keep); keep = 0;
+      held = { my: seq }; clearInterval(keep); keep = 0; holdAt = performance.now();
       try { window.speechSynthesis.pause(); return true; } catch (e) { held = null; }
     }
     stop(); return false;
   }
   function resumeHeld() {
     const h = held; held = null;
+    if (holdAt) { heldMs += performance.now() - holdAt; holdAt = 0; }
     if (!h || h.my !== seq) return false;
     if (playing.length && actx) { actx.resume().catch(() => {}); return true; }
     if (!synthOk) return false;
@@ -1989,9 +2095,33 @@ const Speech = (() => {
   }
   // a voice that never says where it is (Google's voices send no word positions): the text follows its usual pace
   const charsPerMs = () => rate() * 0.015;
-  const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud) && Number(state.settings.revealSpeed) > 0;
+  // a voice heard on its own, from the Voice panel (15.72): a line of a question in that voice, at the voice speed. It
+  // stops whatever was reading; onDone when it ends (not when it's stopped)
+  const SAMPLE = "This French chemist discovered polonium and radium with her husband. For ten points, name this first woman to win a Nobel Prize.";
+  let previewing = null;
+  function preview(uri, onDone) {
+    stop();
+    const my = seq, end = () => { if (previewing && previewing.my === my) { previewing = null; if (onDone) onDone(); } };
+    previewing = { uri, my };
+    const pv = pluginVoices().find((x) => x.voiceURI === uri);
+    if (pv) {
+      const go = () => { if (my === seq) speakPlugin(pv, SAMPLE, (k) => k, () => {}, end, my, end); };
+      if (pv.plugin.ready()) go(); else { prepare(pv); pv.plugin.load().then(go, end); }
+      return true;
+    }
+    if (!synthOk) { end(); return false; }
+    const v = voices().find((x) => x.voiceURI === uri) || fallback();
+    const u = new SpeechSynthesisUtterance(SAMPLE);
+    if (v) { u.voice = v; u.lang = v.lang; }
+    u.rate = rate(); u.onend = end; u.onerror = end;
+    try { window.speechSynthesis.speak(u); } catch (e) { end(); return false; }
+    return true;
+  }
+  function stopPreview() { if (previewing) { previewing = null; stop(); } }
+  const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud);
   return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level, quietFor, warm,
-    pause, resumeHeld, get waiting() { return !!waiting; } };
+    pause, resumeHeld, get waiting() { return !!waiting; }, preview, stopPreview, get previewing() { return previewing && previewing.uri; },
+    get tracking() { return !!tracking; }, _alignPiece: alignPiece, _sayUnits: sayUnits };   // (the last two for tests)
 })();
 
 // ── What the voice says for a question's text (15.62) ──
@@ -2160,7 +2290,7 @@ function followVoice(text, from, show, done, live, raw, trouble) {
     raf = 0; if (!live() || ended) return;
     if (Speech.waiting) { lastAt = performance.now(); raf = requestAnimationFrame(pace); return; }   // the voice is loading: nothing moves
     const now = performance.now(), quiet = now - lastAt;
-    if (quiet > 900) {   // no word heard lately: go on at the voice's usual pace from the last one
+    if (quiet > 900 && !Speech.tracking) {   // no word heard lately (and no estimate of its own): go on at the voice's usual pace
       const est = pos + Math.floor((quiet - 600) * Speech.charsPerMs());
       if (est >= len) { if (quiet > 900 + (len - pos) / Speech.charsPerMs()) { finish(); return; } }
       else show(est);
@@ -4969,13 +5099,14 @@ window.addEventListener("keydown", (e) => {
 // Reading speed shows as 1 (slowest) … 50 (fastest — almost instant), then Instant; underneath
 // it is still milliseconds per character (100 … 0.3, 0 = instant) — the reading code, rooms,
 // saved settings and plugins all use that. The sliders hold the LEVEL (1 … 50, 51 = Instant).
-// Not linear: log(ms) falls a little per level at the slow end and a lot at the top
-// (~4% faster per level at 1, ~18% at 50), two significant figures.
+// Not linear: the speed goes up a little per level at the slow end and a lot at the top. Since 15.72 the speeds people
+// read at get most of the slider (what was 1 to 10 is now about 1 to 22, under 2% faster a level) and the very fast ones
+// take big steps (40% a level at 50, still 0.3 ms): log(100 / ms) = 0.85 x + b x^k, with 25 at 60 ms and 50 at 0.3 ms
 const SPEED_LEVELS = 50;
-const SPEED_MS = Array.from({ length: SPEED_LEVELS }, (_, i) => {
-  const x = i / (SPEED_LEVELS - 1);
-  return +(100 * Math.pow(0.003, 0.3 * x + 0.7 * x * x)).toPrecision(2);
-});
+const SPEED_MS = (() => {
+  const a = 0.85, top = Math.log(100 / 0.3), mid = Math.log(100 / 60), xm = 24 / 49, b = top - a, k = Math.log((mid - a * xm) / b) / Math.log(xm);
+  return Array.from({ length: SPEED_LEVELS }, (_, i) => { const x = i / (SPEED_LEVELS - 1); return +(100 * Math.exp(-(a * x + b * Math.pow(x, k)))).toPrecision(x < 0.7 ? 3 : 2); });
+})();
 // ms per character → slider level (the nearest one; 0 = Instant → SPEED_LEVELS + 1)
 function speedLevel(ms) {
   ms = Number(ms) || 0;
@@ -5202,25 +5333,79 @@ $("#opt-read-aloud")?.addEventListener("change", (e) => {
   Speech.stop();
   if (state.mode === "tossups") resumeReveal(); else if (state._bonusReader) state._bonusReader.resume();
 });
-$("#opt-voice")?.addEventListener("change", (e) => {
-  if (voiceLocked()) { e.target.value = state.settings.voice || ""; syncVoiceRow(); return; }
-  state.settings.voice = e.target.value; lsSet("qb-voice", e.target.value);
-  const p = Speech.pluginVoices().find((v) => v.voiceURI === e.target.value);   // a plugin's voice gets ready now, not at the next question
+// a voice picked in the Voice panel (not while a question is up: voiceLocked)
+function pickVoice(uri) {
+  if (voiceLocked()) return;
+  state.settings.voice = uri; lsSet("qb-voice", uri);
+  const p = Speech.pluginVoices().find((v) => v.voiceURI === uri);   // a plugin's voice gets ready now, not at the next question
   if (p && !p.plugin.ready()) Speech.prepare(p);
   Speech.paintLoad();
+  document.querySelectorAll("#vp-voices .vv-row").forEach((r) => { const on = r.dataset.v === uri; r.setAttribute("aria-checked", String(on)); r.tabIndex = on ? 0 : -1; });
+}
+// a voice heard on its own (15.72): its play button plays a line of a question, and stops it
+function paintPreview() {
+  const cur = Speech.previewing;
+  document.querySelectorAll("#vp-voices .vv-play").forEach((b) => { const on = cur != null && b.dataset.play === cur; b.setAttribute("aria-pressed", String(on)); b.innerHTML = on ? VV_STOP : VV_PLAY; b.title = on ? "Stop" : "Hear it"; });
+}
+const VV_PLAY = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
+const VV_STOP = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>';
+document.getElementById("vp-voices")?.addEventListener("click", (e) => {
+  const play = e.target.closest(".vv-play");
+  if (play) {
+    e.stopPropagation();
+    if (play.disabled) return;
+    if (Speech.previewing === play.dataset.play) Speech.stopPreview(); else Speech.preview(play.dataset.play, paintPreview);
+    paintPreview();
+    return;
+  }
+  const row = e.target.closest(".vv-row"); if (row) pickVoice(row.dataset.v);
 });
+document.getElementById("vp-voices")?.addEventListener("keydown", (e) => {
+  const row = e.target.closest(".vv-row"); if (!row || e.target.closest(".vv-play")) return;
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickVoice(row.dataset.v); return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const rows = [...document.querySelectorAll("#vp-voices .vv-row")], i = rows.indexOf(row), to = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
+    if (to) { to.focus(); if (!voiceLocked()) pickVoice(to.dataset.v); }
+  }
+});
+// Voice speed (15.72): how fast the voice talks, 0.7 to 1.6 times
+function setVoiceRate(v) {
+  v = Math.max(0.7, Math.min(1.6, Math.round((Number(v) || 1) * 20) / 20));
+  state.settings.voiceRate = v; lsSet("qb-voice-rate", String(v));
+  const r = document.getElementById("opt-voice-rate"); if (r && Number(r.value) !== v) r.value = v;
+  const l = document.getElementById("opt-voice-rate-label"); if (l) l.textContent = v.toFixed(2).replace(/0$/, "") + "×";
+}
+document.getElementById("opt-voice-rate")?.addEventListener("input", (e) => setVoiceRate(e.target.value));
+// a new speed takes from the next sentence: the voice says the rest of this one as it was
+document.getElementById("opt-voice-rate")?.addEventListener("change", () => {
+  if (Speech.previewing != null) { const u = Speech.previewing; Speech.preview(u, paintPreview); paintPreview(); return; }
+  if (!state.sessionActive || !Speech.on() || state.isPaused || state.isBuzzed) return;
+  if (state.mode === "tossups" && !state.resultAreaVisible && !state.questionFullyRead) { if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; } Speech.stop(); resumeReveal(); }
+});
+setTimeout(() => setVoiceRate(state.settings.voiceRate), 0);
 $("#opt-read-hide")?.addEventListener("change", (e) => {
   state.settings.readHide = e.target.checked; lsSet("qb-read-hide", e.target.checked);
   if (!e.target.checked) setReadHidden(false);
   else if (Speech.on() && state.sessionActive && !state.resultAreaVisible) setReadHidden(true);
 });
-// Google's English voices (15.62: the only ones offered), US first; they arrive a moment after the page loads
+// Google's English voices (15.62: the only ones offered), US first; they arrive a moment after the page loads. Then a
+// plugin's (Kokoro), under its name. A list in the Voice panel (15.72), each with a play button to hear it; it was a
+// dropdown, whose menu the row under it showed through
 function fillVoices() {
-  const sel = document.getElementById("opt-voice"); if (!sel) return;
-  const vs = Speech.choices(), want = state.settings.voice || "";
-  const label = (v) => (v.plugin || v.builtin ? String(v.name) : String(v.name).replace(/^Google\s+/i, "").replace(/\s+(Female|Male)$/i, (m, g) => ", " + g.toLowerCase()));
-  sel.innerHTML = vs.map((v) => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(label(v))}</option>`).join("");
-  sel.value = vs.some((v) => v.voiceURI === want) ? want : (vs[0] ? vs[0].voiceURI : "");
+  const box = document.getElementById("vp-voices"); if (!box) return;
+  const vs = Speech.choices(), want = state.settings.voice || "", cur = vs.some((v) => v.voiceURI === want) ? want : (vs[0] ? vs[0].voiceURI : "");
+  const plainName = (n) => String(n).replace(/^Microsoft\s+/i, "").replace(/\s+Online\b.*?\)/i, "").replace(/\s+-\s+English\s+\((.+?)\)$/i, (m, c) => ", " + c.replace("United States", "US").replace("United Kingdom", "UK"));
+  const label = (v) => /^Microsoft\b/i.test(v.name || "") ? plainName(v.name) : v.plugin ? String(v.name).replace(new RegExp("^" + String(v.plugin.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ",\\s*"), "") : v.builtin ? String(v.name) : String(v.name).replace(/^Google\s+/i, "").replace(/\s+(Female|Male)$/i, (m, g) => ", " + g.toLowerCase());
+  const groups = [];
+  const groupOf = (v) => v.plugin ? v.plugin.name : v.builtin ? "This browser" : /^Google\b/i.test(v.name) ? "Google" : /^Microsoft\b/i.test(v.name) ? "Microsoft, natural" : "This computer";
+  for (const v of vs) { const g = groupOf(v); let G = groups.find((x) => x.g === g); if (!G) groups.push(G = { g, vs: [] }); G.vs.push(v); }
+  box.innerHTML = groups.map((G) => (groups.length > 1 ? '<div class="vv-h">' + escapeHtml(G.g) + "</div>" : "") + G.vs.map((v) => {
+    const on = v.voiceURI === cur, name = label(v);
+    return '<div class="vv-row" role="radio" aria-checked="' + on + '" tabindex="' + (on ? 0 : -1) + '" data-v="' + escapeHtml(v.voiceURI) + '"><span class="vv-dot" aria-hidden="true"></span><span class="vv-name">' + escapeHtml(name) + "</span>" +
+      '<button type="button" class="btn btn-ghost btn-icon vv-play" data-play="' + escapeHtml(v.voiceURI) + '" aria-label="Hear ' + escapeHtml(name) + '" aria-pressed="false" title="Hear it">' + VV_PLAY + "</button></div>";
+  }).join("")).join("");
+  paintPreview();
   syncVoiceRow();
 }
 function voiceLocked() { return !!(state.sessionActive && state.currentQuestion && !state.resultAreaVisible && (state.mode === "tossups" || state.mode === "bonuses")); }
@@ -5232,10 +5417,20 @@ function syncVoiceRow() {
   const vb = document.getElementById("btn-voice"); if (vb) { vb.classList.toggle("on", on); vb.title = on ? "Read aloud is on" : ""; }
   const vk = document.getElementById("vp-key"); if (vk) { const k = keyDisplay("read-aloud"); vk.innerHTML = k && k !== "Not Set" ? "<kbd>" + escapeHtml(k) + "</kbd>" : ""; }
   const row = document.getElementById("read-voice-row"); if (row) row.hidden = !(on && Speech.choices().length > 1);
-  // not while a question is up (15.70): one voice reads it start to end; the next question takes the new one
-  const sel = document.getElementById("opt-voice"), mid = voiceLocked();
-  if (sel && sel.disabled !== mid) sel.disabled = mid;   // QBSelect follows the attribute
+  const rr = document.getElementById("vp-rate-row"); if (rr) rr.hidden = !on;
+  // not while a question is up (15.70): one voice reads it start to end; the next question takes the new one. Nor is
+  // a voice heard on its own then (it would stop the reading)
+  const list = document.getElementById("vp-voices"), mid = voiceLocked();
+  if (list) { list.classList.toggle("locked", mid); list.querySelectorAll(".vv-play").forEach((b) => { b.disabled = mid; }); }
+  if (mid && Speech.previewing != null) { Speech.stopPreview(); paintPreview(); }
   const lk = document.getElementById("vp-lock"); if (lk) lk.hidden = !(on && mid && row && !row.hidden);
+  // Reading speed is the voice's while it reads (15.72): it can't read at the fast end, and the text follows it anyway
+  ["panel-speed-slider", "speed-slider"].forEach((id) => {
+    const r = document.getElementById(id); if (!r) return;
+    r.disabled = on;
+    const g = r.closest(".slider-group"); if (g) { g.classList.toggle("locked-by-read", on); g.title = on ? "The voice sets the pace while Read aloud is on" : ""; }
+  });
+  document.querySelectorAll("[data-read-note]").forEach((n) => { n.hidden = !on; });
   const hide = document.getElementById("read-hide-row"); if (hide) hide.hidden = !on;
   const hb = document.getElementById("opt-read-hide"); if (hb) hb.checked = !!state.settings.readHide;
   const box = document.getElementById("opt-read-aloud"); if (box) { box.checked = !!state.settings.readAloud; box.disabled = !Speech.ok; }
@@ -5286,31 +5481,35 @@ try { window.speechSynthesis.addEventListener("voiceschanged", fillVoices); } ca
 window.QB?.on?.("voices:changed", () => setTimeout(() => { fillVoices(); Speech.preloadPicked(); }, 0));   // a plugin's voice came or went (the picked one gets ready now)
 setTimeout(syncVoiceRow, 0);
 window.QB?.on?.("screen:change", () => { Speech.stop(); closeVoicePop(); });
-// ── The Voice button (15.63): Read aloud, its voice, hiding the text and plugins' voice settings (Voice Answers) in a
-// popover beside Setup; R turns Read aloud on or off ──
+// ── The Voice button (15.63): Read aloud, its voice, hiding the text and plugins' voice settings (Voice Answers). Since
+// 15.72 a panel beside the page like Setup (it pushes the page aside the same way, syncPanelHost), and only one of the
+// two is open at a time; R turns Read aloud on or off ──
 function voicePopOpen() { const p = document.getElementById("voice-pop"); return !!p && !p.hidden; }
-function placeVoicePop() {
-  const b = document.getElementById("btn-voice"), p = document.getElementById("voice-pop"); if (!b || !p) return;
-  const r = b.getBoundingClientRect(), w = p.offsetWidth || 320;
-  p.style.top = Math.round(r.bottom + 6) + "px";
-  p.style.left = Math.round(Math.max(12, Math.min(window.innerWidth - w - 12, r.right - w))) + "px";
-}
 function openVoicePop() {
   const p = document.getElementById("voice-pop"); if (!p) return;
   if (p.parentElement !== document.body) document.body.appendChild(p);   // fixed to the window, whatever the header does
+  if (isSetupDrawerOpen()) closeSetupDrawer();
   window.QB?.renderVoiceSettings?.(document.getElementById("ext-voice-host"));
-  syncVoiceRow();
-  p.hidden = false; placeVoicePop();
+  fillVoices();
+  p.hidden = false;
   document.getElementById("btn-voice")?.setAttribute("aria-expanded", "true");
+  syncPanelHost();
 }
 function closeVoicePop() {
   const p = document.getElementById("voice-pop"); if (!p || p.hidden) return;
+  if (Speech.previewing != null) Speech.stopPreview();
   p.hidden = true;
   document.getElementById("btn-voice")?.setAttribute("aria-expanded", "false");
+  syncPanelHost();
 }
 document.getElementById("btn-voice")?.addEventListener("click", () => (voicePopOpen() ? closeVoicePop() : openVoicePop()));
-document.addEventListener("pointerdown", (e) => { if (voicePopOpen() && !e.target.closest("#voice-pop, #btn-voice")) closeVoicePop(); });
-window.addEventListener("resize", () => { if (voicePopOpen()) placeVoicePop(); });
+document.getElementById("btn-close-voice")?.addEventListener("click", closeVoicePop);
+// Esc closes it (as it does Setup), unless a dropdown in it owns Esc
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !voicePopOpen()) return;
+  if (document.querySelector('.qb-select[data-open="true"]')) return;
+  e.preventDefault(); e.stopPropagation(); closeVoicePop();
+}, true);
 $("#opt-allow-skips")?.addEventListener("change", (e) => { state.settings.allowSkips = e.target.checked; lsSet("qb-allow-skips", e.target.checked); });
 $("#strictness-slider")?.addEventListener("input", (e) => {
   state.settings.strictness = parseInt(e.target.value);
@@ -6287,7 +6486,7 @@ function renderTossup(q) {
   $("#power-mark").classList.add("hidden");
   $("#bonus-parts-area").classList.add("hidden");
 
-  if (state.settings.revealSpeed === 0 && state.settings.autoReveal) {
+  if (state.settings.revealSpeed === 0 && state.settings.autoReveal && !Speech.on()) {   // (read aloud: the voice sets the pace)
     // Instant reveal still honours "Stop on power": hold at the mark, paused;
     // resuming (P) shows the rest instantly (revealText's own speed-0 path).
     if (playSetting("stopOnPower") && state.prePowerEnd > 0) {
@@ -6422,7 +6621,7 @@ function readBonusText(el, text, done, kind) {
     r.raf = requestAnimationFrame(step);
   };
   r.resume = () => { r.last = 0; if (!r.raf) r.raf = requestAnimationFrame(step); };
-  if (!state.settings.revealSpeed || !text) { el.textContent = text; if (done) done(); return; }
+  if ((!state.settings.revealSpeed && !Speech.on()) || !text) { el.textContent = text; if (done) done(); return; }
   state._bonusReader = r;
   paint();
   // read aloud: the part follows the voice; Pause stops it and resuming says the rest
@@ -6779,7 +6978,7 @@ function revealText(text) {
   if (!state.sessionActive || state.isBuzzed || state.isPaused || state._oppBusy) return;
 
   const speed = state.settings.revealSpeed;
-  if (speed === 0) {
+  if (speed === 0 && !(Speech.on() && state.mode === "tossups")) {
     // a plugin page's stop before the power mark: show up to it and wait there
     { const ps = pageStop(); if (ps && !(playSetting("stopOnPower") && state.prePowerEnd > 0 && !state._stoppedAtPower && state.prePowerEnd < ps)) {
       state.revealIndex = ps; state.buzzPosition = ps;

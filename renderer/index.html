@@ -137,16 +137,25 @@
         </div>
         <div class="top-bar-right">
           <button type="button" class="btn" id="btn-voice" aria-expanded="false" aria-haspopup="dialog" aria-controls="voice-pop"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H3v6h3l5 4z"/><path class="vb-wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>Voice</button>
-          <div class="voice-pop" id="voice-pop" role="dialog" aria-label="Voice" hidden>
-            <div class="vp-row"><label class="checkbox-row"><input type="checkbox" id="opt-read-aloud"> Read aloud</label><span class="qb-info" data-tip="A voice reads each question to you and the text follows it. Reading speed sets how fast it talks.">i</span><span class="vp-key" id="vp-key"></span></div>
-            <div class="vp-sub" id="vp-sub">
-              <div class="slider-group read-voice-row" id="read-voice-row" hidden><span class="sg-label">Voice</span><select id="opt-voice" class="mode-input" aria-label="Voice"></select></div>
-              <div class="vp-status" id="vp-lock" hidden>You can change the voice after this question</div>
-              <div class="vp-status" id="vp-status" role="status" hidden></div>
-              <div class="vp-row" id="read-hide-row" hidden><label class="checkbox-row"><input type="checkbox" id="opt-read-hide"> Hide the text while it's read</label><span class="qb-info" data-tip="Listen like a real game. A box says Reading while it reads, and the text comes back with the answer.">i</span></div>
+          <aside class="voice-panel" id="voice-pop" aria-label="Voice" hidden>
+            <div class="vp-head"><h2 class="vp-title">Voice</h2><button type="button" class="btn btn-ghost btn-icon" id="btn-close-voice" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+            <div class="vp-body">
+              <div class="vp-section">
+                <div class="vp-row"><label class="checkbox-row"><input type="checkbox" id="opt-read-aloud"> Read aloud</label><span class="qb-info" data-tip="A voice reads each question to you and the text follows it, word by word.">i</span><span class="vp-key" id="vp-key"></span></div>
+                <div class="vp-row" id="read-hide-row" hidden><label class="checkbox-row"><input type="checkbox" id="opt-read-hide"> Hide the text while it's read</label><span class="qb-info" data-tip="Listen like a real game. A box says Reading while it reads, and the text comes back with the answer.">i</span></div>
+                <div class="vp-status" id="vp-status" role="status" hidden></div>
+              </div>
+              <div class="vp-section" id="vp-rate-row" hidden>
+                <div class="slider-group"><span class="sg-label">Voice speed <span class="qb-info" data-tip="How fast the voice talks. With Read aloud on, the voice sets the pace, so Reading speed in Setup is off.">i</span></span><input type="range" id="opt-voice-rate" min="0.7" max="1.6" step="0.05" value="1" aria-label="Voice speed"><span class="slider-value" id="opt-voice-rate-label">1.0×</span></div>
+              </div>
+              <div class="vp-section" id="read-voice-row" hidden>
+                <div class="filter-label">Voices</div>
+                <div class="vp-voices" id="vp-voices" role="radiogroup" aria-label="Voice"></div>
+                <div class="vp-status" id="vp-lock" hidden>You can change the voice after this question</div>
+              </div>
+              <div id="ext-voice-host"></div>
             </div>
-            <div id="ext-voice-host"></div>
-          </div>
+          </aside>
           <button type="button" class="btn" id="btn-open-setup"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Setup</button>
           <button type="button" class="btn" id="btn-end-session">End</button>
           <button type="button" class="btn btn-ghost" id="btn-home">Back</button>
@@ -236,6 +245,7 @@
               <input type="range" class="speed-range" id="panel-speed-slider" min="1" max="51" step="1" value="13" aria-label="Reading speed">
               <span class="slider-value" id="panel-speed-label">13</span>
             </div>
+            <div class="sg-note" data-read-note hidden>The voice sets the pace while Read aloud is on</div>
             <div class="slider-group">
               <span class="sg-label">Buzz window <span class="qb-info" data-tip="Seconds to buzz after the question finishes.">i</span></span>
               <input type="range" id="panel-buzz-window" min="0" max="30" step="1" value="10" aria-label="Buzz window">
@@ -623,6 +633,7 @@
                   <input type="range" class="speed-range" id="speed-slider" min="1" max="51" step="1" value="13" aria-label="Reading speed">
                   <span class="slider-value" id="speed-slider-label">13</span>
                 </div>
+                <div class="sg-note" data-read-note hidden>The voice sets the pace while Read aloud is on</div>
               </div>
               <div class="setting-row">
                 <span class="setting-label">Answer timer<span class="qb-info" data-tip="Seconds to type your answer after buzzing. 0 means no limit.">i</span></span>
