@@ -313,9 +313,11 @@
   // text (loaded before plugins start: QB.boot), so get() stays synchronous and hands out a
   // fresh copy like localStorage did; set() writes through, a beat later. 14.50 and older kept
   // it in this machine's localStorage ("qb-pl-<plugin>-<key>"): that moves into the profile
-  // once, then goes. Which store plugins are on rides along too ("_qb" / "plugins").
+  // once, then goes. Which store plugins are on rides along too ("_qb" / "plugins-app" or "plugins-web"): since 15.69
+  // the app and the website each keep their own (the account's other app installs follow the app's, other browsers the
+  // website's), and a plugin's data syncs wherever it's installed.
   const PD = { data: null, timers: {}, applying: false };
-  const LIST_ID = "_qb", LIST_KEY = "plugins";
+  const LIST_ID = "_qb", LIST_KEY = !window.qbreader && !!window.QB_WEB ? "plugins-web" : "plugins-app";   // (WEBSITE is declared further down)
   const legacyKey = (id, k) => "qb-pl-" + id + "-" + k;
   function pdGet(id, k) {
     if (PD.data) {
@@ -386,8 +388,9 @@
     gone.forEach((lk) => { try { localStorage.removeItem(lk); } catch {} });
   }
   // Which store plugins are on, kept with the profile: turning one on or off here turns it
-  // on or off on the account's other devices (a plugin they don't have yet is added there
-  // from the Store / the app's update; nothing is ever removed, only turned off).
+  // on or off on the account's other devices of the same kind (app or website; a plugin they
+  // don't have yet is added there from the Store / the app's update; nothing is ever removed,
+  // only turned off). A device with no list of its kind yet starts one from what it has.
   const listable = (p) => !!(p && !p._builtin && PLUGIN_GROUP[p.id]);   // the Store's plugins (an imported one of your own stays on this machine)
   function localList() { return QB._plugins.filter((p) => listable(p) && p.enabled).map((p) => p.id).sort(); }
   function pluginListChanged() {
@@ -6706,6 +6709,16 @@ function __qbMain(ctx) {
     await refresh();
     return r;
   }
+  // a removal shows at once (15.69): what goes folds away before the server answers (it used to stay until then, and
+  // the page jumped when it came), and comes back if the server says no
+  async function actGone(els, path, body, done) {
+    els = els.filter(Boolean);
+    els.forEach((e) => { if (typeof foldAway === "function") foldAway(e); });
+    const r = await act(null, path, body, done);
+    if (!r) els.forEach((e) => { if (typeof unfold === "function") unfold(e); });
+    return r;
+  }
+  const rowsOf = (mid) => [...document.querySelectorAll('#clubs-container [data-cl="remove"][data-mid="' + CSS.escape(mid) + '"]')].map((b) => b.closest("li, tr")).filter(Boolean);
   // ── Teams: one card per team, then who's on none ──
   function teamsHtml() {
     const admin = isAdmin();
@@ -6985,7 +6998,7 @@ function __qbMain(ctx) {
       case "club-link": return shareDialog({ title: "Share " + o.name, note: "Anyone with this link can see " + o.name + ". Signed in, they can join right away.", req: { kind: "club", org } });
       case "team-link": return shareDialog({ title: "Share " + tm.name, note: "Anyone with this link can see " + tm.name + ". Signed in, they can join " + o.name + " on this team right away.", req: { kind: "team", org, team: tid } });
       case "team-rename": return promptDialog("Rename " + tm.name, tm.name, (name) => act(null, "/api/clubs/team/rename", { org, team: tid, name }), { yes: "Save", max: 24 });
-      case "team-delete": return confirmDialog("Delete " + tm.name + "? Its players stay in " + o.name + ".", () => act(null, "/api/clubs/team/delete", { org, team: tid }), { yes: "Delete", danger: true });
+      case "team-delete": return confirmDialog("Delete " + tm.name + "? Its players stay in " + o.name + ".", () => actGone([t.closest(".tcard")], "/api/clubs/team/delete", { org, team: tid }), { yes: "Delete", danger: true });
       case "roster-off": return act(t, "/api/clubs/team/roster", { org, team: tid, mid, on: false });
       case "toggle-team": return act(null, "/api/clubs/team/roster", { org, team: tid, mid, on: !tm.roster.includes(mid) });
       case "add-name": return promptDialog("Add a player by name", "", (name) => act(null, "/api/clubs/member/add-name", { org, name, team: tid }), { placeholder: "Their name", yes: "Add", max: 40 });
@@ -6998,7 +7011,7 @@ function __qbMain(ctx) {
       case "cancel-invite": return act(t, "/api/clubs/invite/cancel", { org, id: t.dataset.id });
       case "role": return act(null, "/api/clubs/member/role", { org, mid, role: t.dataset.role });
       case "transfer": return mid ? confirmTransfer(p) : transferDialog();
-      case "remove": return confirmDialog("Remove " + p.name + " from " + o.name + "?", () => act(null, "/api/clubs/member/remove", { org, mid }), { yes: "Remove", danger: true });
+      case "remove": return confirmDialog("Remove " + p.name + " from " + o.name + "?", () => actGone(rowsOf(mid), "/api/clubs/member/remove", { org, mid }), { yes: "Remove", danger: true });
       case "leave": return confirmDialog("Leave " + o.name + "?", () => act(null, "/api/clubs/leave", { org }, () => { S.org = null; ls.set("qb-club-org", ""); S.orgId = ""; }), { yes: "Leave", danger: true });
       case "rename-org": case "settings": return settingsDialog();
       case "delete-org": return confirmDialog("Delete " + o.name + " for everyone? Its teams, invites and reports are deleted too.", () => act(null, "/api/clubs/delete", { org }, () => { S.org = null; S.orgId = ""; ls.set("qb-club-org", ""); }), { yes: "Delete", danger: true });
@@ -7010,7 +7023,7 @@ function __qbMain(ctx) {
       case "new-code": return confirmDialog("Make a new code? The old one stops working.", () => act(null, "/api/clubs/code", { org }), { yes: "New code" });
       case "req-yes": case "req-no": return act(t, "/api/clubs/request", { org, handle: t.dataset.h, accept: a === "req-yes" }, (r) => { if (r && r.invited) msg("@" + t.dataset.h + " is in another organization now, so they got an invite to choose."); });
       case "release": return confirmDialog("Release the report now? Anyone who hasn't finished is scored on what they read.", () => act(null, "/api/diag/release", { id: t.dataset.id }), { yes: "Release now", danger: true });
-      case "dx-delete": return confirmDialog(t.dataset.done ? "Delete this report for everyone? It can't be brought back." : "Delete this diagnostic for everyone?", () => act(null, "/api/diag/delete", { id: t.dataset.id }), { yes: "Delete", danger: true });
+      case "dx-delete": return confirmDialog(t.dataset.done ? "Delete this report for everyone? It can't be brought back." : "Delete this diagnostic for everyone?", () => actGone([t.closest(".dg-row")], "/api/diag/delete", { id: t.dataset.id }), { yes: "Delete", danger: true });
     }
   }
   // a name-only player → an account: an invite that carries the player's place

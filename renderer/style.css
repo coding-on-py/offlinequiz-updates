@@ -6864,6 +6864,19 @@ html.tb-nocrumb .tb-crumb { display: none; }
 #question-area.read-hidden:not(:has(:is(#question-text, .bonus-part-text) > .unrevealed:not(:empty))) .rb-bars i,
 #question-area.read-hidden:has(#question-text > .buzz-marker) .rb-bars i { transform: scaleY(.12); opacity: .55; }
 @media (max-width: 600px) { #question-area.read-hidden .read-box { min-height: 150px; padding: 24px 16px; } .rb-bars { height: 56px; } .rb-bars i { height: 56px; width: 10px; } }
+/* a plugin's voice (Kokoro) getting ready (15.69): reading waits for it, and the box says how far it's got, the text
+   (when it shows) waiting under it */
+#question-area.voice-wait .read-box {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; width: 100%; min-height: 188px; margin: 6px 0 10px;
+  padding: 30px 24px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+#question-area.voice-wait :is(#question-text, .bonus-part-text) { display: none !important; }
+#question-area.voice-wait .rb-label::before { content: "Loading voice" !important; color: var(--text) !important; }
+#question-area.voice-wait .rb-label::after { content: attr(data-pct); margin-left: 8px; font: 600 15px/1.2 var(--font); color: var(--muted); font-variant-numeric: tabular-nums; }
+#question-area.voice-wait .rb-bars i { opacity: 1 !important; animation: rb-wait 1.3s ease-in-out infinite; }
+#question-area.voice-wait .rb-bars i:nth-child(2) { animation-delay: .18s; }
+#question-area.voice-wait .rb-bars i:nth-child(3) { animation-delay: .36s; }
+@keyframes rb-wait { 0%, 100% { transform: scaleY(.14); } 50% { transform: scaleY(.5); } }
+@media (prefers-reduced-motion: reduce) { #question-area.voice-wait .rb-bars i { animation: none; transform: scaleY(.3); } }
 /* guides and notes stay hidden while Read aloud is on (their switches locked on) */
 .locked-by-read { opacity: .55; }
 

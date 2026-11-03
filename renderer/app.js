@@ -1712,7 +1712,7 @@ const Speech = (() => {
       (/^(samantha|ava|allison|susan|daniel|karen|moira|serena|tom|alex)\b/i.test(v.name) ? 10 : 0) + (/en[-_]US/i.test(v.lang) ? 5 : 0) + (v.default ? 2 : 0);
     return voices().filter(english).sort((a, b) => score(b) - score(a))[0] || null;
   }
-  // the voice that reads: the one picked (a plugin's once it's ready; until then it gets ready and the browser reads)
+  // the voice that reads: the one picked (a plugin's once it's ready: speak() waits for it, 15.69)
   const loading = { on: null, pct: 0 };
   // A voice that fails (Google's when the network does, a plugin's that breaks) is set aside for the rest of the visit
   // and the next in line reads: the picked one, then Google's, then the best one on this computer (15.65)
@@ -1727,23 +1727,41 @@ const Speech = (() => {
     const g = google().filter((v) => !bad.has(v.voiceURI));
     return g.length ? (g.find((v) => v.voiceURI === want) || g[0]) : fallback();
   }
+  // the plugin's voice picked, while it's usable (not set aside after failing)
+  function wantedPlugin() {
+    const want = state.settings.voice || "";
+    if (!want.startsWith("plugin:") || bad.has(want)) return null;
+    return pluginVoices().find((v) => v.voiceURI === want) || null;
+  }
   function prepare(p) {
-    if (loading.on === p.plugin) return;
-    loading.on = p.plugin; loading.pct = 0; paintLoad();
-    p.plugin.load((f) => { loading.pct = Math.max(loading.pct, Math.round(100 * (Number(f) || 0))); paintLoad(); })
+    if (loading.on === p.plugin || p.plugin.ready()) return;
+    loading.on = p.plugin; loading.pct = 0; loading.err = null; paintLoad();
+    p.plugin.load((f) => { loading.pct = Math.max(loading.pct, Math.min(99, Math.round(100 * (Number(f) || 0)))); paintLoad(); paintWait(); }, { voice: p.vid })
       .then(() => { loading.on = null; paintLoad(); }, () => { loading.on = null; loading.err = p.plugin.name; paintLoad(); });
   }
+  // at launch, and when Read aloud goes on: the picked plugin voice gets ready in the background, so it's there at the
+  // first question
+  function preloadPicked() { const w = wantedPlugin(); if (w && state.settings.readAloud) prepare(w); }
   function paintLoad() {
     const el = document.getElementById("vp-status"); if (!el) return;
-    const t = loading.on ? "Getting " + loading.on.name + " ready " + loading.pct + "%. The built-in voice reads until then." : loading.err ? loading.err + " couldn't start. The built-in voice reads instead." : "";
+    const t = loading.on ? "Getting " + loading.on.name + " ready " + loading.pct + "%. Reading waits for it." : loading.err ? loading.err + " couldn't start. The built-in voice reads instead." : "";
     el.textContent = t; el.hidden = !t;
+  }
+  // a question waiting for the voice: the reading box says "Loading voice" and how far it's got (ui.css .voice-wait)
+  let waiting = 0;
+  function paintWait() {
+    const qa = document.getElementById("question-area"); if (!qa) return;
+    qa.classList.toggle("voice-wait", !!waiting);
+    const lb = qa.querySelector(".rb-label"); if (lb) lb.dataset.pct = waiting ? loading.pct + "%" : "";
   }
   // silent at once: pause() cuts the sound off where cancel() alone can let a network voice finish its word, and
   // resume() so the next question doesn't start paused
-  let keep = 0;
+  let keep = 0, curNet = false, held = null;
   let actx = null, playing = [], timers = [], meter = null, meterBuf = null, talk = null;
   function stop() {
     seq++; clearInterval(keep); keep = 0; talk = null;
+    if (waiting) { waiting = 0; paintWait(); }
+    if (held) { held = null; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
     playing.forEach((s) => { try { s.stop(); } catch (e) {} }); playing = [];
     timers.forEach(clearTimeout); timers = [];
     if (!synthOk) return;
@@ -1757,6 +1775,7 @@ const Speech = (() => {
   // browser's voices can't be heard by the page: one talking counts as speech, and as quiet once it has said where it
   // is and no word has come for a moment (a pause at a comma or a full stop), and when it stops.
   function level() {
+    if (held && held.my === seq) return 0;
     if (playing.length && meter) {
       const b = meterBuf || (meterBuf = new Float32Array(meter.fftSize)); meter.getFloatTimeDomainData(b);
       let s = 0; for (let i = 0; i < b.length; i++) s += b[i] * b[i];
@@ -1803,7 +1822,18 @@ const Speech = (() => {
     while (start < sc.map.length && sc.map[start] < from) start++;
     const said = sc.spoken.slice(start);
     const at = (k) => (k > 0 ? sc.map[start + k - 1] + 1 : from);   // the text index after spoken character k-1
+    // the voice picked is a plugin's still getting ready: reading waits for it, the loading shown in the reading box
+    // (15.69: another voice used to say the start in the meantime). If it can't start, the next in line reads
+    const w = wantedPlugin();
+    if (w && !w.plugin.ready()) {
+      const mine = seq;
+      prepare(w); waiting = mine; paintWait();
+      const again = () => { if (mine !== seq) return; waiting = 0; paintWait(); speak(text, from, onPos, onEnd, raw, onFail); };
+      w.plugin.load().then(again, () => { if (mine !== seq) return; bad.add(w.voiceURI); again(); });
+      return true;
+    }
     const v = voice(), net = !!(v && v.localService === false);
+    curNet = net;
     let failed = false;
     const fail = (why) => {
       if (failed || my !== seq) return; failed = true;
@@ -1881,23 +1911,51 @@ const Speech = (() => {
         const src = ac.createBufferSource(); src.buffer = buf; src.connect(meter);
         const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k];
         src.start(startAt); playing.push(src); next = startAt + dur;
-        const t0 = performance.now() + (startAt - ac.currentTime) * 1000;
+        // the text follows the sound by the audio clock, which stands still while the voice is paused (15.69)
         const tick = (first) => {
           if (my !== seq) return;
-          const f = Math.min(1, (performance.now() - t0) / (dur * 1000));
+          const t = ac.currentTime;
+          if (t < startAt) { timers.push(setTimeout(() => tick(first), 40)); return; }
+          const f = Math.min(1, (t - startAt) / dur);
           onPos(at(p.at + Math.round(p.t.length * f)), first);
           if (f < 1) timers.push(setTimeout(() => tick(false), 60));
         };
-        timers.push(setTimeout(() => tick(true), Math.max(0, t0 - performance.now())));
+        tick(true);
       }
       if (my !== seq) return;
-      timers.push(setTimeout(() => { if (my === seq) onEnd(); }, Math.max(0, (next - ac.currentTime) * 1000) + 60));
+      const ending = () => { if (my !== seq) return; if (ac.currentTime >= next - 0.02) onEnd(); else timers.push(setTimeout(ending, 80)); };
+      ending();
     })();
+  }
+  // Pause (15.69): the voice holds where it is, and Resume goes on from that word. It used to stop and start again from
+  // where the text had got to, which repeated or skipped words with Google's voices (they never say where they are).
+  // A plugin's voice is held by pausing its audio clock; the browser's by speechSynthesis.pause(). Waiting for a voice
+  // to load, or a voice that hasn't started, is stopped instead (and started again on Resume)
+  function pause() {
+    if (waiting) { stop(); return false; }
+    if (playing.length && actx && actx.state === "running") { held = { my: seq }; actx.suspend().catch(() => {}); return true; }
+    if (synthOk && talk && talk.my === seq && window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+      held = { my: seq }; clearInterval(keep); keep = 0;
+      try { window.speechSynthesis.pause(); return true; } catch (e) { held = null; }
+    }
+    stop(); return false;
+  }
+  function resumeHeld() {
+    const h = held; held = null;
+    if (!h || h.my !== seq) return false;
+    if (playing.length && actx) { actx.resume().catch(() => {}); return true; }
+    if (!synthOk) return false;
+    const ss = window.speechSynthesis;
+    try { ss.resume(); } catch (e) { return false; }
+    if (curNet) { const my = seq; keep = setInterval(() => { if (my !== seq) return; if (ss.speaking && !ss.paused) { try { ss.pause(); ss.resume(); } catch (e) {} } }, 12000); }
+    if (talk && talk.my === seq) talk.at = performance.now();
+    return true;
   }
   // a voice that never says where it is (Google's voices send no word positions): the text follows its usual pace
   const charsPerMs = () => rate() * 0.015;
   const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud) && Number(state.settings.revealSpeed) > 0;
-  return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, paintLoad, pluginVoices, level };
+  return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level,
+    pause, resumeHeld, get waiting() { return !!waiting; } };
 })();
 
 // ── What the voice says for a question's text (15.62) ──
@@ -2064,6 +2122,7 @@ function followVoice(text, from, show, done, live, raw, trouble) {
   const finish = () => { if (ended) return; ended = true; quit(); Speech.stop(); if (live()) done(); };
   const pace = () => {
     raf = 0; if (!live() || ended) return;
+    if (Speech.waiting) { lastAt = performance.now(); raf = requestAnimationFrame(pace); return; }   // the voice is loading: nothing moves
     const now = performance.now(), quiet = now - lastAt;
     if (quiet > 900) {   // no word heard lately: go on at the voice's usual pace from the last one
       const est = pos + Math.floor((quiet - 600) * Speech.charsPerMs());
@@ -2081,8 +2140,15 @@ function followVoice(text, from, show, done, live, raw, trouble) {
   });
   go(from);
   raf = requestAnimationFrame(pace);
+  // Pause holds this voice where it is (true when it could), and Resume goes on with it (true when it did); otherwise
+  // the caller starts reading again from where the text is (15.69)
+  _follow = {
+    hold: () => { if (ended) return false; quit(); return Speech.pause(); },
+    go: () => { if (ended || !live() || !Speech.resumeHeld()) return false; lastAt = performance.now(); if (!raf) raf = requestAnimationFrame(pace); return true; },
+  };
   return quit;
 }
+let _follow = null;
 
 (function initGlobalClickSound() {
   const SEL = "button,a,input,select,textarea,label,.btn,.pill,.menu-item,.filter-item," +
@@ -2309,9 +2375,12 @@ function showScreen(name, opts) {
   const mapped = pk ? "practice" : name === "starred" ? "database" : name;
   const screen = $(`#${mapped}-screen`);
   if (screen) screen.classList.add("active");
+  const fromMode = state.mode;
   state.mode = name === "practice-tossups" ? "tossups" : name === "practice-bonuses" ? "bonuses" : pk ? (state._pageType || "tossups") : null;
   // Tossups / Bonuses after a page of its own: that page's session ends and yours comes back
   if (pk && pk !== (state.practiceKind || "own")) enterPracticeKind(pk);
+  // Tossups after Bonuses (or the other way): the other's session is parked, this one's comes back
+  if ((name === "practice-tossups" || name === "practice-bonuses") && (state.practiceKind || "own") === "own") switchOwnMode(state.mode, fromMode);
   // Pin the practice base to the screen being opened — a stale base from an
   // earlier tossup+bonus interleave must never make bonus practice serve tossups.
   if (state.mode) state._practiceBase = state.mode;
@@ -3090,8 +3159,25 @@ function trialNow() { try { return _trial; } catch (e) { return null; } }   // (
 const PRACTICE_SESSION_KEYS = ["sessionActive", "sessionId", "questionCount", "totalPoints", "powers", "negs", "correct", "skips",
   "celerityHistory", "correctCelerityHistory", "incorrectCelerityHistory", "lastResult", "resultOverridden", "histories",
   "_gameSig", "_gameQueue", "_gamePaired", "_gameIdx", "_wantBonus", "_pendingPairedBonus", "_currentPaired", "_bonusFromQ",
-  "_starredQueue", "_starredSig", "_starredIdx"];
+  "_starredQueue", "_starredSig", "_starredIdx", "_practiceBase"];
 let _parkedOwn = null;
+// Tossups and Bonuses share the reader (15.69): opening one while the other's session is going parks that one (it
+// comes back as it was, its question paused) and brings this one's back. A bonus half read with Read aloud used to
+// stay on the Tossups page. from: the mode on the reader before (state.mode is already the new one)
+const _parkedModes = {};
+function switchOwnMode(to, from) {
+  const base = state._practiceBase;
+  if (!base || base === to) return;
+  stopBonusReader(); Speech.stop();
+  if (state.sessionActive) {
+    const now = state.mode; state.mode = from || base;   // the question on screen is the old mode's
+    parkOwnSession(); _parkedModes[base] = _parkedOwn; _parkedOwn = null;
+    state.mode = now;
+  } else freeReader();
+  setReadHidden(false);
+  const p = _parkedModes[to]; delete _parkedModes[to];
+  if (p) { _parkedOwn = p; restoreOwnSession(); }
+}
 function practicePageTitle(mode) {
   const k = state.practiceKind || "own";
   if (k === "own") return mode === "bonuses" ? "Bonuses" : "Tossups";
@@ -5071,6 +5157,7 @@ $("#opt-read-aloud")?.addEventListener("change", (e) => {
     if (prev) { syncVoiceRow(); if (!!state.settings.hidePronunciations !== prev.pron) setHidePron(prev.pron); if (!!state.settings.hideNotes !== prev.notes) setHideNotes(prev.notes); }
   }
   syncVoiceRow();
+  if (e.target.checked) Speech.preloadPicked();
   // off shows the text; on again hides it while there's still something to answer (15.65: it stayed shown)
   setReadHidden(Speech.on() && state.sessionActive && !state.resultAreaVisible && (state.settings.readHide || (state.mode === "tossups" && !!pageRules().readHide)));
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
@@ -5151,7 +5238,7 @@ function readMeter() {
 // after the whole script has loaded (syncVoiceRow may switch guides and notes off through setHidePron / setHideNotes)
 setTimeout(fillVoices, 0);
 try { window.speechSynthesis.addEventListener("voiceschanged", fillVoices); } catch (e) {}
-window.QB?.on?.("voices:changed", () => setTimeout(fillVoices, 0));   // a plugin's voice came or went
+window.QB?.on?.("voices:changed", () => setTimeout(() => { fillVoices(); Speech.preloadPicked(); }, 0));   // a plugin's voice came or went (the picked one gets ready now)
 setTimeout(syncVoiceRow, 0);
 window.QB?.on?.("screen:change", () => { Speech.stop(); closeVoicePop(); });
 // ── The Voice button (15.63): Read aloud, its voice, hiding the text and plugins' voice settings (Voice Answers) in a
@@ -6796,7 +6883,8 @@ function togglePause() {
 
   if (state.isPaused) {
     if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
-    Speech.stop();
+    // the voice holds on its word (Resume goes on from it), or stops when it can't be held
+    if (!(_follow && _follow.hold())) Speech.stop();
     pauseEventTimer();
     // a bonus part's answer box closes while paused: an open box counts as answering, which held every key (P
     // couldn't resume, and typed "p" into it instead); Resume opens it again where it was
@@ -6859,6 +6947,8 @@ function displayPosToOriginal(displayPos) {
 
 function resumeReveal() {
   if (!state.sessionActive || state.isBuzzed || state.isPaused || state._oppBusy) return;
+  // a voice held by Pause goes on from its word, the text following it (15.69)
+  if (_follow && _follow.go()) return;
   // Bonuses: their own reader picks up again (resuming the stale tossup text would
   // paint the previous tossup over the bonus and start a buzz window).
   if (state.mode !== "tossups") { if (state._bonusReader) state._bonusReader.resume(); return; }
@@ -7873,6 +7963,26 @@ function removeOptimistic(rows, run, opts) {
     if (last) failNote(last, text); else confirmDialog(text, () => {}, { yes: "OK", noCancel: true });
     return false;
   });
+}
+// ── Quiet refresh (15.69): a page drawn again after the server answers (a deleted session's totals) is built out of
+// sight, its late parts (topic tags, plugins' sections) included, and swapped in at once, the scroll and what was typed
+// into its filters kept. Drawn in place, it emptied, filled, then grew as the late parts came, and the page jumped.
+function stageFor(el) {
+  const st = document.createElement(el.tagName);
+  st.className = el.className; st.dataset.stage = "1"; st.setAttribute("aria-hidden", "true");
+  st.style.cssText = "position:absolute;left:0;top:0;width:" + el.clientWidth + "px;visibility:hidden;pointer-events:none";
+  (el.parentElement || document.body).appendChild(st);
+  return st;
+}
+function swapIn(el, st, scroller) {
+  const top = scroller ? scroller.scrollTop : 0;
+  el.querySelectorAll("input[id], select[id], textarea[id]").forEach((a) => {
+    const b = st.querySelector("#" + CSS.escape(a.id)); if (!b) return;
+    if (a.type === "checkbox" || a.type === "radio") b.checked = a.checked; else if (a.value !== b.value) b.value = a.value;
+  });
+  el.replaceChildren(...st.childNodes);
+  st.remove();
+  if (scroller) scroller.scrollTop = top;
 }
 function foldAway(el) {
   if (!el || !el.isConnected) return;
@@ -9598,6 +9708,7 @@ async function loadStats(preserveScroll = false) {
   const screen = document.getElementById("stats-screen");
   const keepScroll = preserveScroll && screen ? screen.scrollTop : 0;
   const container = $("#stats-container");
+  const quiet = preserveScroll && !!(container && container.querySelector(".stats-section"));   // a refresh: built out of sight (stageFor)
   if (needsAccount()) { container.innerHTML = accountPanelHtml("Sign in to save your stats and see them here."); return; }
   if (!preserveScroll) container.innerHTML = '<div class="text-muted">Loading stats...</div>';
 
@@ -9893,15 +10004,17 @@ async function loadStats(preserveScroll = false) {
       } catch {}
     }
 
-    container.innerHTML = html;
-    initCollapsibles(container);
-    tipInto(container, "stats");
-    limitList(container.querySelector(".stats-sessions-table"), "tbody > tr", "stats:sessions", 10, 25);
+    const root = quiet ? stageFor(container) : container;
+    root.innerHTML = html;
+    initCollapsibles(root);
+    if (!quiet) tipInto(container, "stats");
+    limitList(root.querySelector(".stats-sessions-table"), "tbody > tr", "stats:sessions", 10, 25);
     // topic tags on (15.29): how you do by canon tier and by topic, under the categories
     if (!sid && window.QBTopics && QBTopics.enabled()) {
-      const tp = document.createElement("div"), cat = container.querySelector('[data-coll="stats:by-category"]');
-      if (cat) cat.after(tp); else container.appendChild(tp);
-      QBTopics.renderStats(tp).then(() => { try { initCollapsibles(container); } catch (e) {} });
+      const tp = document.createElement("div"), cat = root.querySelector('[data-coll="stats:by-category"]');
+      if (cat) cat.after(tp); else root.appendChild(tp);
+      const topics = QBTopics.renderStats(tp).then(() => { try { initCollapsibles(root); } catch (e) {} });
+      if (quiet) await topics.catch(() => {});
     }
 
     if (!sid) {
@@ -9912,11 +10025,12 @@ async function loadStats(preserveScroll = false) {
         sec.innerHTML = `<div class="stats-section-title">${escapeHtml(prov.title.toUpperCase())}</div>`;
         const bodyEl = document.createElement("div");
         sec.appendChild(bodyEl);
-        container.appendChild(sec);
-        initCollapsibles(container);   // wraps bodyEl in .qb-coll-body before the plugin renders into it
+        root.appendChild(sec);
+        initCollapsibles(root);   // wraps bodyEl in .qb-coll-body before the plugin renders into it
         try { await prov.render(bodyEl); } catch { bodyEl.innerHTML = '<div class="text-muted" style="font-size:12px">Failed to load.</div>'; }
       }
     }
+    if (quiet) swapIn(container, root, screen);
 
     if (preserveScroll && screen) { screen.scrollTop = keepScroll; requestAnimationFrame(() => { screen.scrollTop = keepScroll; }); }
 
@@ -9944,6 +10058,7 @@ async function loadStats(preserveScroll = false) {
       const qhCat = qhBtn ? CategoryButton(qhBtn, { live: true, onChange: () => applyQH() }) : null;
       ["qh-fres", "qh-ftype"].forEach((id) => container.querySelector("#" + id)?.addEventListener("change", applyQH));
       container.querySelector("#qh-fq")?.addEventListener("input", applyQH);
+      if (quiet) applyQH();   // the filters kept from before the refresh, applied again
     }
     // Eagerly place the (*) power tick on every tossup row's buzz bar — no
     // click needed to see where the power window ended.
@@ -10061,7 +10176,8 @@ async function loadStats(preserveScroll = false) {
         if (ev.target.querySelector && ev.target.querySelector("canvas") && _statsRedraw) _statsRedraw();
       });
     }
-    setTimeout(() => drawCharts(true), 100);
+    // a refresh draws them in the same moment it's swapped in (no blank charts for a beat)
+    if (quiet) drawCharts(true); else setTimeout(() => drawCharts(true), 100);
   } catch (e) {
     container.innerHTML = `<div class="text-muted">Couldn't load your stats. ${escapeHtml(errSentence(e))}</div>`;
   }
@@ -14032,6 +14148,8 @@ function init() {
       setReadingHold: (v) => { ttsHold = !!v; },
       // (15.65) hold the answer clock while a plugin writes down what was said (Voice Answers), then let it run on
       holdAnswerTime: (on) => { if (_eventTimer.label !== "Answer") return false; if (on) pauseEventTimer(); else resumeEventTimer(); return true; },
+      // buzz on the tossup being read, as the buzz key does (15.69: Voice Answers' clap or shout); false when it can't
+      buzz: () => { if (!state.sessionActive || state.isBuzzed || state.mode !== "tossups" || !state.currentQuestion || state.resultAreaVisible || state._oppBusy) return false; buzz(); return true; },
       // A plugin that must not be interrupted by a page reload (multiplayer in a
       // room) marks itself busy; the question-database switch waits for it.
       setBusy: (key, on) => { if (on) _busyFlags.add(String(key)); else { _busyFlags.delete(String(key)); maybeSwitchDb(); } },
