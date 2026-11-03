@@ -274,6 +274,8 @@
     _questionFilters: [],
     _resultPanels: [],
     _voices: [],          // plugin voices for Read aloud (ctx.registerVoice, 15.63)
+    _downloads: {},       // plugins' files to download (ctx.registerDownload, 15.71), by plugin id
+    _dl: {},              // and how each is going: { f: 0..1, state: "on" | "done" | "failed" }
     _answerRules: [],
     _scoringRules: [],
     _settingsSections: [],
@@ -467,6 +469,28 @@
   QB._emit = (ev, data) => { (QB._events[ev] || []).forEach((fn) => { try { fn(data); } catch (e) { console.error("[QB] handler", ev, e); } }); };
 
   QB.connect = (host) => { QB._host = host || {}; };
+
+  // A plugin's download (15.71: Kokoro's voice, Voice Answers' speech model; ctx.registerDownload). Getting it from the
+  // Store starts it there and then, its card and guide showing how far it's got; a plugin already added whose files
+  // aren't all here yet (a tab closed partway) picks up a moment after it starts. → true once they're all here
+  QB.download = (id) => {
+    const rec = QB._downloads[id]; if (!rec) return Promise.resolve(true);
+    const cur = QB._dl[id];
+    if (cur && cur.p && cur.state !== "failed") return cur.p;
+    const d = QB._dl[id] = { f: 0, state: "" };
+    const set = (state) => { if (QB._downloads[id] !== rec) return; d.state = state; QB._emit("plugin:download", { id, state }); if (document.querySelector("#extensions-container .sc-grid")) QB.renderScreen(); };
+    d.p = rec.done().then((have) => {
+      if (have) { d.state = "done"; return true; }
+      set("on");
+      return Promise.resolve().then(() => rec.start((f) => {
+        d.f = Math.max(d.f, Math.min(0.99, Number(f) || 0));
+        const t = QB.downloadText(id);
+        document.querySelectorAll('[data-dl-for="' + CSS.escape(id) + '"]').forEach((b) => { b.textContent = t; });
+      })).then(() => { set("done"); return true; }, (e) => { console.warn("[QB] download", id, e); set("failed"); return false; });
+    });
+    return d.p;
+  };
+  QB.downloadText = (id) => "Downloading " + Math.round(100 * ((QB._dl[id] && QB._dl[id].f) || 0)) + "%";
 
   // The app has NO popup notifications (the user removed them in 14.28). The
   // toast API stays as a no-op so plugins calling ctx.toast / QB.toast keep
@@ -800,6 +824,18 @@
         const changed = () => { try { QB._emit("voices:changed"); } catch (e) {} };
         subs.push(() => { QB._voices = QB._voices.filter((x) => x !== rec); changed(); });
         changed();
+        return rec;
+      },
+      // files it needs before it's ready, downloaded once (15.71; QB.download): { done() → Promise<true when they're all
+      // here>, start(onProgress(0..1)) → Promise once they are }. Getting the plugin from the Store downloads them right
+      // away, its card showing how far; otherwise a few seconds after it starts, in the background
+      registerDownload(d) {
+        if (!d || typeof d.start !== "function") return null;
+        const rec = { done: () => Promise.resolve().then(() => (d.done ? d.done() : false)).catch(() => false), start: (fn) => d.start(fn) };
+        QB._downloads[ext.id] = rec; delete QB._dl[ext.id];
+        subs.push(() => { if (QB._downloads[ext.id] === rec) { delete QB._downloads[ext.id]; delete QB._dl[ext.id]; } });
+        const now = !!(QB._store && QB._store.busy && QB._store.busy[ext.id]);   // being got from the Store
+        setTimeout(() => { if (QB._downloads[ext.id] === rec) QB.download(ext.id); }, now ? 0 : 3000);
         return rec;
       },
       registerResultPanel(p) {
@@ -2167,8 +2203,9 @@ QB.registerTheme({
         '<div class="pg-actions"></div>' +
         (sections || '<p class="pg-empty">No guide yet.</p>') +
       "</div></div>";
-    const close = () => { document.removeEventListener("keydown", onKey, true); offScreen(); if (QB._host && QB._host.animateRemove) QB._host.animateRemove(el); else el.remove(); };
+    const close = () => { document.removeEventListener("keydown", onKey, true); offScreen(); offDl(); if (QB._host && QB._host.animateRemove) QB._host.animateRemove(el); else el.remove(); };
     const offScreen = QB.on("screen:change", () => close());   // another page opened (a plugin's, from a script)
+    const offDl = QB.on("plugin:download", (e) => { if (e && e.id === id && el.isConnected) actions(); });   // its download began or ended
     const onKey = (ev) => { if (ev.key === "Escape" && el.isConnected) { ev.stopPropagation(); ev.preventDefault(); close(); } };
     document.addEventListener("keydown", onKey, true);
     el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
@@ -2186,11 +2223,16 @@ QB.registerTheme({
       if (!locked && p) h += '<label class="pg-switch"><span>' + (p.enabled ? "On" : "Off") + '</span><span class="ext-switch"><input type="checkbox" data-pg="toggle"' + (p.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(name) + ' on or off"><span class="ext-slider"></span></span></label>';
       else if (!locked && !p && item) h += '<button type="button" class="btn btn-primary btn-sm" data-pg="get"' + (busy ? " disabled" : "") + ">" + (busy ? esc(busy) : "Get") + "</button>";
       if (p && item && verNewer(item.version, p.version)) h += '<button type="button" class="btn btn-sm" data-pg="get"' + (busy ? " disabled" : "") + ">" + (busy ? esc(busy) : "Update") + "</button>";
+      // its download (15.71): how far it's got, or Download again when it stopped
+      const dl = !locked && p && p.enabled ? dlState(id) : "";
+      if (dl === "on") h += '<button type="button" class="btn btn-sm" disabled data-dl-for="' + esc(id) + '">' + esc(QB.downloadText(id)) + "</button>";
+      else if (dl === "failed") h += '<button type="button" class="btn btn-sm" data-pg="dl" title="The download stopped. Try again">Download</button>';
       a.innerHTML = h;
       a.querySelector('[data-pg="open"]')?.addEventListener("click", () => { close(); QB.showPage(page.pluginId + "::" + page.id); });
       a.querySelector("[data-buy-plugin]")?.addEventListener("click", () => { close(); QB._host?.openStore?.(QB.PAID[id]); });
       a.querySelector('[data-pg="toggle"]')?.addEventListener("change", (e) => { QB.togglePlugin(id, e.target.checked); QB.renderScreen(); actions(); });
       a.querySelectorAll('[data-pg="get"]').forEach((b) => b.addEventListener("click", async () => { await storeGet(id); actions(); }));
+      a.querySelector('[data-pg="dl"]')?.addEventListener("click", () => { QB.download(id); });
     };
     actions();
     document.body.appendChild(el);
@@ -2351,6 +2393,8 @@ QB.registerTheme({
       const btn = busy ? '<button type="button" class="btn btn-sm" disabled>' + esc(busy) + "</button>"
         : st.failed[item.id] ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '" title="Couldn\'t add it. Try again">Retry</button>'
         : QB.pluginLocked(item.id) ? buyBtn(item.id)
+        : have && have.enabled && dlState(item.id) === "on" ? '<button type="button" class="btn btn-sm" disabled data-dl-for="' + esc(item.id) + '">' + esc(QB.downloadText(item.id)) + "</button>"
+        : have && have.enabled && dlState(item.id) === "failed" ? '<button type="button" class="btn btn-sm" data-store-dl="' + esc(item.id) + '" title="The download stopped. Try again">Download</button>'
         : !have ? '<button type="button" class="btn btn-sm btn-primary sc-get" data-store-get="' + esc(item.id) + '">' + SICO.down + "Get</button>"
         : verNewer(item.version, have.version) ? '<button type="button" class="btn btn-sm" data-store-get="' + esc(item.id) + '">Update</button>'
         : '<label class="ext-switch" title="' + (have.enabled ? "Turn off" : "Turn on") + '"><input type="checkbox" data-plugin-id="' + esc(have.id) + '"' + (have.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(item.name) + ' on or off"><span class="ext-slider"></span></label>';
@@ -2374,6 +2418,8 @@ QB.registerTheme({
     root.querySelectorAll("[data-store-type]").forEach((b) => { const on = b.dataset.storeType === k; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
     const none = root.querySelector(".sc-none"); if (none) none.hidden = shown > 0;
   }
+  // a plugin's download as the Store shows it: "on" (going), "failed", or "" (none, or all here)
+  function dlState(id) { const d = QB._dl[id]; return d && (d.state === "on" || d.state === "failed") ? d.state : ""; }
   async function storeGet(id) {
     const st = QB._store, item = (st.list || []).find((x) => x.id === id);
     if (!item || st.busy[id]) return;
@@ -2424,6 +2470,7 @@ QB.registerTheme({
     wireSettingControls(root);
     root.querySelectorAll("[data-ext-tab]").forEach((b) => b.addEventListener("click", () => { QB._extTab = b.dataset.extTab; QB.renderScreen(); if (window.qbWebPathSync) window.qbWebPathSync(); }));
     root.querySelectorAll("[data-store-get]").forEach((b) => b.addEventListener("click", () => storeGet(b.dataset.storeGet)));
+    root.querySelectorAll("[data-store-dl]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); QB.download(b.dataset.storeDl); }));
     const ss = root.querySelector("#store-search");
     if (ss) {
       storeFilter(root);
