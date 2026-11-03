@@ -15,7 +15,7 @@ import { join, dirname, normalize, sep, extname } from "node:path";
 import { pickDbPath } from "./updater.js";
 import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { networkInterfaces } from "node:os";
 
@@ -160,7 +160,57 @@ export async function start(env) {
     return f;
   }
 
+  // ── Apple's speech recognizer, for Voice Answers (15.70): the qb-speech helper the Mac installers carry from
+  // openbeta20 (Contents/Resources/bin; native/qb-speech, scripts/build-speech.mjs). JSON lines both ways; the plugin's
+  // microphone sends the sound (app.js host.nativeSpeech). Without the helper (an older installer, Windows, Linux) hello
+  // answers { error }, and so it does when macOS stops it (the dev Electron has no NSSpeechRecognitionUsageDescription):
+  // Voice Answers uses Whisper then ──
+  const speech = (() => {
+    let proc = null, buf = "", dead = false;
+    const waiters = [];
+    const bin = () => {
+      if (process.platform !== "darwin") return null;
+      const p = isDev ? join(appDir, "build", "bin", "qb-speech") : join(process.resourcesPath, "bin", "qb-speech");
+      return existsSync(p) ? p : null;
+    };
+    const emit = (m) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("speech-event", m); } catch (e) {} };
+    function ensure() {
+      if (proc) return true;
+      const b = !dead && bin(); if (!b) return false;
+      try { proc = spawn(b, [], { stdio: ["pipe", "pipe", "ignore"] }); } catch (e) { dead = true; return false; }
+      buf = "";
+      proc.stdout.setEncoding("utf8");
+      proc.stdout.on("data", (d) => {
+        buf += d;
+        for (let i; (i = buf.indexOf("\n")) >= 0;) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 1);
+          let m; try { m = JSON.parse(line); } catch { continue; }
+          if (m && m.t === "hello") waiters.splice(0).forEach((f) => f(m)); else emit(m);
+        }
+      });
+      proc.stdin.on("error", () => {});
+      proc.on("error", () => {});
+      proc.on("exit", (code, sig) => {
+        proc = null;
+        if (sig || code) dead = true;   // stopped by macOS or broken: not again this run
+        waiters.splice(0).forEach((f) => f({ error: "stopped" }));
+        emit({ t: "exit" });
+      });
+      return true;
+    }
+    const send = (m) => { if (!ensure()) return false; try { proc.stdin.write(JSON.stringify(m) + "\n"); return true; } catch (e) { return false; } };
+    return {
+      // the first time, macOS asks the person (as long as they take)
+      hello: () => new Promise((res) => { if (!ensure()) return res({ error: "none" }); waiters.push(res); send({ t: "hello" }); }),
+      send: (m) => { if (m && typeof m === "object" && typeof m.t === "string" && m.t !== "hello" && proc) send(m); },
+      stop: () => { try { if (proc) proc.kill(); } catch (e) {} },
+    };
+  })();
+  try { app.on("will-quit", () => speech.stop()); } catch (e) {}
+
   function registerIpc() {
+    ipcMain.handle("speech-hello", () => speech.hello());
+    ipcMain.on("speech", (_e, m) => speech.send(m));
     // offline rooms: open this computer's room (its addresses and the host's key), close it
     ipcMain.handle("lan-room", async (_e, d = {}) => {
       if (d && d.stop) return lan.stop();

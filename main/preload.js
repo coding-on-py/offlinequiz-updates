@@ -162,6 +162,17 @@ contextBridge.exposeInMainWorld("qbreader", {
     return () => ipcRenderer.removeListener("app-update-progress", handler);
   },
   relaunchApp: () => ipcRenderer.invoke("app-relaunch"),
+  // Apple's speech recognizer through the app's helper (15.70, Voice Answers; runtime.js speech). app.js wraps it as
+  // host.nativeSpeech
+  speech: {
+    hello: () => ipcRenderer.invoke("speech-hello"),
+    send: (m) => ipcRenderer.send("speech", m),
+    on: (cb) => {
+      const handler = (_e, m) => cb(m);
+      ipcRenderer.on("speech-event", handler);
+      return () => ipcRenderer.removeListener("speech-event", handler);
+    },
+  },
   // Real Chromium page zoom — scales layout, vh/vw and canvases coherently,
   // exactly like a browser's Cmd+/- (CSS zoom does not).
   setZoomFactor: (f) => { try { webFrame.setZoomFactor(Number(f) || 1); } catch {} },

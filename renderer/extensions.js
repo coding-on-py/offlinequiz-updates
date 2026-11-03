@@ -787,13 +787,14 @@
         subs.push(() => { QB._questionFilters = QB._questionFilters.filter((x) => x !== rec); });
         return rec;
       },
-      // a voice for Read aloud (15.63; Kokoro): { id, name, voices: [{ id, name }], ready(), load(onProgress(0..1)),
+      // a voice for Read aloud (15.63; Kokoro): { id, name, voices: [{ id, name }], ready(), load(onProgress(0..1), { voice }),
       // synth(text, { voice, speed }) → { samples: Float32Array, rate } }. It's offered in the Voice popover.
       registerVoice(v) {
         if (!v || typeof v.synth !== "function" || !Array.isArray(v.voices) || !v.voices.length) return null;
         const rec = { pluginId: ext.id, id: String(v.id || ext.id), name: String(v.name || ext.name), voices: v.voices.map((x) => ({ id: String(x.id), name: String(x.name || x.id) })),
           ready: () => { try { return !!(v.ready && v.ready()); } catch (e) { return false; } },
-          load: (onProgress) => Promise.resolve(v.load ? v.load(onProgress) : null),
+          // o.voice: the voice picked, which it gets ready with (15.70: it was dropped here, so Kokoro warmed up with its first)
+          load: (onProgress, o) => Promise.resolve(v.load ? v.load(onProgress, o) : null),
           synth: (text, o) => v.synth(text, o || {}) };
         QB._voices.push(rec);
         const changed = () => { try { QB._emit("voices:changed"); } catch (e) {} };
@@ -5823,8 +5824,14 @@ function __qbMain(ctx) {
     // (themeable) color, everyone else's use another.
     function renderWithMarks(text, upTo, marks, powerEnd) {
       var list = (marks || []).filter(function (m) { return m.pos >= 0 && m.pos <= upTo; })
-        // a buzz between two words keeps a space on both sides ("Chapman (#) estimator", not "(#)estimator")
-        .map(function (m) { return { pos: m.pos, html: '<span class="buzz-mark ' + (m.by === myId ? "buzz-self" : "buzz-other") + '">(#)</span>' + (/\s/.test(text.charAt(m.pos - 1)) && /\S/.test(text.charAt(m.pos)) ? " " : "") }; });
+        // between two words with a space on each side, "the wife of (#) Inti" (15.70): one in the middle of a word goes
+        // after it once that's read (it read "of(#) Inti", and "Qui(#)lla")
+        .map(function (m) {
+          var p = m.pos; while (p > 0 && p < text.length && p < upTo && /\S/.test(text.charAt(p - 1)) && /\S/.test(text.charAt(p))) p++;
+          if (/\S/.test(text.charAt(p - 1)) && /\S/.test(text.charAt(p))) p = m.pos;
+          var before = /\S/.test(text.charAt(p - 1)), after = !before && (p === powerEnd || /\S/.test(text.charAt(p)));
+          return { pos: p, html: (before ? " " : "") + '<span class="buzz-mark ' + (m.by === myId ? "buzz-self" : "buzz-other") + '">(#)</span>' + (after ? " " : "") };
+        });
       // Once the question is over, the power mark shows at its real spot.
       if (powerEnd != null && powerEnd > 0 && powerEnd <= upTo) list.push({ pos: powerEnd, rank: 2, html: '<span class="mp-power-mark">(*)</span>' });
       // Question over: everything before the power mark reads in bold, exactly

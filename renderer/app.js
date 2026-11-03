@@ -1740,8 +1740,8 @@ const Speech = (() => {
       .then(() => { loading.on = null; paintLoad(); }, () => { loading.on = null; loading.err = p.plugin.name; paintLoad(); });
   }
   // at launch, and when Read aloud goes on: the picked plugin voice gets ready in the background, so it's there at the
-  // first question
-  function preloadPicked() { const w = wantedPlugin(); if (w && state.settings.readAloud) prepare(w); }
+  // first question. Since 15.70 whether Read aloud is on or not, so turning it on never waits either
+  function preloadPicked() { const w = wantedPlugin(); if (w) prepare(w); }
   function paintLoad() {
     const el = document.getElementById("vp-status"); if (!el) return;
     const t = loading.on ? "Getting " + loading.on.name + " ready " + loading.pct + "%. Reading waits for it." : loading.err ? loading.err + " couldn't start. The built-in voice reads instead." : "";
@@ -1757,9 +1757,13 @@ const Speech = (() => {
   // silent at once: pause() cuts the sound off where cancel() alone can let a network voice finish its word, and
   // resume() so the next question doesn't start paused
   let keep = 0, curNet = false, held = null;
+  // when the voice last made a sound (15.70): Voice Answers keeps it out of an answer. pluginEnd: when a plugin voice's
+  // last piece ends, on the page's clock
+  let talkedAt = 0, pluginEnd = 0;
   let actx = null, playing = [], timers = [], meter = null, meterBuf = null, talk = null;
   function stop() {
-    seq++; clearInterval(keep); keep = 0; talk = null;
+    quietFor();   // talking up to now, if it was
+    seq++; clearInterval(keep); keep = 0; talk = null; pluginEnd = 0;
     if (waiting) { waiting = 0; paintWait(); }
     if (held) { held = null; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
     playing.forEach((s) => { try { s.stop(); } catch (e) {} }); playing = [];
@@ -1860,7 +1864,7 @@ const Speech = (() => {
         const ci = e.charIndex || 0, len = e.charLength || (/^\S*/.exec(p.t.slice(ci)) || [""])[0].length;
         onPos(at(p.at + ci + len));
       };
-      u.onend = () => { if (my !== seq) return; onPos(at(p.at + p.t.length)); if (k === todo.length - 1) { clearInterval(keep); keep = 0; talk = null; onEnd(); } };
+      u.onend = () => { if (my !== seq) return; onPos(at(p.at + p.t.length)); if (k === todo.length - 1) { clearInterval(keep); keep = 0; talk = null; talkedAt = performance.now(); onEnd(); } };
       u.onerror = (e) => { if (my === seq && e.error !== "interrupted" && e.error !== "canceled") fail(e.error || "error"); };
       window.speechSynthesis.speak(u);
     });
@@ -1868,7 +1872,7 @@ const Speech = (() => {
   }
   // A plugin's voice: a sentence or two at a time (the first comes quickly), each made while the one before plays and
   // started where it ends, so there's no gap; the text follows each piece's sound across its length
-  function speakPlugin(v, said, at, onPos, onEnd, my, fail) {
+  function piecesFor(said) {
     const pieces = [];
     for (let i = 0; i < said.length;) {
       let end = said.length;
@@ -1886,12 +1890,43 @@ const Speech = (() => {
       if (said.slice(i, end).trim()) pieces.push({ at: i, t: said.slice(i, end) });
       i = end;
     }
+    return pieces;
+  }
+  // The opening of the next tossup, made while this one's result shows (15.70), so a plugin's voice starts the moment
+  // it's read: it takes Kokoro over half a second to make on a GPU, and seconds without one. A few are kept, each used once
+  const made = new Map();
+  const madeKey = (v, t, speed) => v.voiceURI + "|" + speed + "|" + t;
+  function warm(text, raw) {
+    const v = wantedPlugin();
+    if (!v || !v.plugin.ready() || !state.settings.readAloud || !text) return;
+    const first = piecesFor(speechScript(String(text), raw).spoken)[0]; if (!first) return;
+    const speed = Math.max(0.5, Math.min(2, rate())), k = madeKey(v, first.t, speed);
+    if (made.has(k)) return;
+    made.set(k, Promise.resolve().then(() => v.plugin.synth(first.t, { voice: v.vid, speed })).catch(() => null));
+    while (made.size > 3) made.delete(made.keys().next().value);
+  }
+  function synthOf(v, t, speed) {
+    const k = madeKey(v, t, speed), p = made.get(k);
+    if (p) { made.delete(k); return p.then((r) => r || v.plugin.synth(t, { voice: v.vid, speed })); }
+    return v.plugin.synth(t, { voice: v.vid, speed });
+  }
+  // ms since the voice last made a sound: 0 while it talks, Infinity if it hasn't (15.70). Paused isn't talking
+  function quietFor() {
+    const now = performance.now();
+    if (!(held && held.my === seq)) {
+      if (pluginEnd > now || (synthOk && talk && talk.my === seq && window.speechSynthesis.speaking && !window.speechSynthesis.paused)) talkedAt = now;
+      else if (pluginEnd) talkedAt = Math.max(talkedAt, pluginEnd);
+    }
+    return talkedAt ? Math.max(0, now - talkedAt) : Infinity;
+  }
+  function speakPlugin(v, said, at, onPos, onEnd, my, fail) {
+    const pieces = piecesFor(said);
     if (!pieces.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return; }
     if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; actx = new AC(); }
     const ac = actx; if (ac.state === "suspended") ac.resume().catch(() => {});
     if (!meter) { meter = ac.createAnalyser(); meter.fftSize = 1024; meter.connect(ac.destination); }
     const speed = Math.max(0.5, Math.min(2, rate())), jobs = [];
-    const job = (k) => jobs[k] || (jobs[k] = Promise.resolve().then(() => v.plugin.synth(pieces[k].t, { voice: v.vid, speed })).catch(() => null));
+    const job = (k) => jobs[k] || (jobs[k] = Promise.resolve().then(() => synthOf(v, pieces[k].t, speed)).catch(() => null));
     let next = 0;
     (async () => {
       for (let k = 0; k < pieces.length; k++) {
@@ -1911,6 +1946,7 @@ const Speech = (() => {
         const src = ac.createBufferSource(); src.buffer = buf; src.connect(meter);
         const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k];
         src.start(startAt); playing.push(src); next = startAt + dur;
+        pluginEnd = performance.now() + (next - ac.currentTime) * 1000;
         // the text follows the sound by the audio clock, which stands still while the voice is paused (15.69)
         const tick = (first) => {
           if (my !== seq) return;
@@ -1954,7 +1990,7 @@ const Speech = (() => {
   // a voice that never says where it is (Google's voices send no word positions): the text follows its usual pace
   const charsPerMs = () => rate() * 0.015;
   const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud) && Number(state.settings.revealSpeed) > 0;
-  return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level,
+  return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level, quietFor, warm,
     pause, resumeHeld, get waiting() { return !!waiting; } };
 })();
 
@@ -3351,7 +3387,9 @@ function opponentBuzz(o) {
   if (!state.sessionActive || state.mode !== "tossups" || state.isBuzzed || state.resultAreaVisible || !state.currentQuestion || state._oppBusy) return false;
   const text = state.currentDisplayText || "", q = state.currentQuestion;
   const who = String(o.name || "Your rival").slice(0, 30), said = String(o.answer || "").trim().slice(0, 80);
-  (state.buzzMarks = state.buzzMarks || []).push(state.revealIndex);
+  const at = wordEndAt(text, state.revealIndex);
+  (state.buzzMarks = state.buzzMarks || []).push(at);
+  if (said) state.revealIndex = at;
   const live = () => state.sessionActive && state.currentQuestion === q && !state.isBuzzed;
   const settle = () => {
     state._oppBusy = false;
@@ -5165,6 +5203,7 @@ $("#opt-read-aloud")?.addEventListener("change", (e) => {
   if (state.mode === "tossups") resumeReveal(); else if (state._bonusReader) state._bonusReader.resume();
 });
 $("#opt-voice")?.addEventListener("change", (e) => {
+  if (voiceLocked()) { e.target.value = state.settings.voice || ""; syncVoiceRow(); return; }
   state.settings.voice = e.target.value; lsSet("qb-voice", e.target.value);
   const p = Speech.pluginVoices().find((v) => v.voiceURI === e.target.value);   // a plugin's voice gets ready now, not at the next question
   if (p && !p.plugin.ready()) Speech.prepare(p);
@@ -5184,6 +5223,8 @@ function fillVoices() {
   sel.value = vs.some((v) => v.voiceURI === want) ? want : (vs[0] ? vs[0].voiceURI : "");
   syncVoiceRow();
 }
+function voiceLocked() { return !!(state.sessionActive && state.currentQuestion && !state.resultAreaVisible && (state.mode === "tossups" || state.mode === "bonuses")); }
+["question:render", "answer:result", "bonus:result", "session:end", "screen:change"].forEach((ev) => window.QB?.on?.(ev, () => setTimeout(syncVoiceRow, 0)));
 // Read aloud's own options show while it's on (a voice choice only where Google's voices are), and it keeps
 // pronunciation guides and moderator notes hidden (their switches locked on)
 function syncVoiceRow() {
@@ -5191,6 +5232,10 @@ function syncVoiceRow() {
   const vb = document.getElementById("btn-voice"); if (vb) { vb.classList.toggle("on", on); vb.title = on ? "Read aloud is on" : ""; }
   const vk = document.getElementById("vp-key"); if (vk) { const k = keyDisplay("read-aloud"); vk.innerHTML = k && k !== "Not Set" ? "<kbd>" + escapeHtml(k) + "</kbd>" : ""; }
   const row = document.getElementById("read-voice-row"); if (row) row.hidden = !(on && Speech.choices().length > 1);
+  // not while a question is up (15.70): one voice reads it start to end; the next question takes the new one
+  const sel = document.getElementById("opt-voice"), mid = voiceLocked();
+  if (sel && sel.disabled !== mid) sel.disabled = mid;   // QBSelect follows the attribute
+  const lk = document.getElementById("vp-lock"); if (lk) lk.hidden = !(on && mid && row && !row.hidden);
   const hide = document.getElementById("read-hide-row"); if (hide) hide.hidden = !on;
   const hb = document.getElementById("opt-read-hide"); if (hb) hb.checked = !!state.settings.readHide;
   const box = document.getElementById("opt-read-aloud"); if (box) { box.checked = !!state.settings.readAloud; box.disabled = !Speech.ok; }
@@ -6179,13 +6224,26 @@ function renderQuestion(question) {
 
 // The text a tossup reads as the settings make it (moderator notes, pronunciations,
 // plugin transforms) and where its power mark falls in it.
-function tossupDisplay(q) {
+function tossupText(q) {
   let text = q.question_sanitized || q.question || "";
   text = applyNoteFilter(text, q.question);   // notes first: the HTML locates them in the unstripped text
   if (state.settings.hidePronunciations) text = stripPronunciations(text);
   text = window.QB?.applyTextTransforms?.(text, { type: "tossup", question: q }) ?? text;
-  const powerIdx = text.indexOf("(*)");
-  const full = text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "");
+  return { powerIdx: text.indexOf("(*)"), full: text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "") };
+}
+// the tossup next (a list's or a review's next, the set's next, else the first fresh one fetched ahead): its opening
+// made now (Speech.warm)
+function warmNextTossup() {
+  if (!Speech.on() || state.mode !== "tossups" || !state.sessionActive) return;
+  const warm = (q) => { if (q && state.sessionActive) try { Speech.warm(tossupText(q).full, q.question_sanitized); } catch (e) {} };
+  if (state._resumeQ) return;
+  if (state.reviewIds) { if (state.reviewIds.length) _questionById("tossups", state.reviewIds[0]).then((d) => warm(d && d.tossup)); return; }
+  if (isListPage()) return;
+  warm($("#mode-select")?.value === "set" && state._practiceBase !== "bonuses" ? (state._gameQueue || [])[state._gameIdx || 0]
+    : _prefetch.tossups.find((c) => c && !wasSeen(c, "tossups")));
+}
+function tossupDisplay(q) {
+  const { powerIdx, full } = tossupText(q);
   // a plugin's page may read only part of it (Lightning: the giveaway); positions are mapped back (displayPosToOriginal)
   state._excerptFrom = 0; state._fullDisplayText = null;
   const ex = pageRules().excerpt;
@@ -6314,7 +6372,22 @@ async function renderBonus(q) {
     if (state.currentQuestion !== q0 || state.mode !== "bonuses") return;
     state.bonusAwait = 0;
     showBonusNextHint(0);
+    warmBonusPart(0);
   }, "leadin");
+}
+// the bonus's own text, for its reading guides (speechScript)
+function bonusRaw(q) { let raw = q ? q.leadin_sanitized || "" : ""; try { raw += " " + JSON.parse((q && q.parts_sanitized) || "[]").join(" "); } catch (e) {} return raw; }
+// (15.70, Speech.warm) a bonus part's opening made once the one before it is read, and the next bonus's leadin while
+// this one's result shows
+function warmBonusPart(i) { const q = state.currentQuestion, t = (state._bonusPartTexts || [])[i]; if (q && t && state.mode === "bonuses" && Speech.on()) try { Speech.warm(t, bonusRaw(q)); } catch (e) {} }
+function warmNextBonus() {
+  if (!Speech.on() || state.mode !== "bonuses" || !state.sessionActive) return;
+  const warm = (q) => { if (q && state.sessionActive) try { Speech.warm(bonusDisplay(q).leadin, bonusRaw(q)); } catch (e) {} };
+  if (state._resumeQ) return;
+  if (state.bonusIds) { if (state.bonusIds.length) _questionById("bonuses", state.bonusIds[0]).then((d) => warm(d && d.bonus)); return; }
+  if (isListPage()) return;
+  warm($("#mode-select")?.value === "set" && state._practiceBase === "bonuses" ? (state._gameQueue || [])[state._gameIdx || 0]
+    : _prefetch.bonuses.find((c) => c && !wasSeen(c, "bonuses")));
 }
 
 // A bonus's leadin or part, read at the reading speed (Instant: all at once). The
@@ -6357,8 +6430,7 @@ function readBonusText(el, text, done, kind) {
     const live = () => state._bonusReader === r && !state.isPaused && state.currentQuestion === q && state.mode === "bonuses";
     const fin = r.finish;
     r.finish = (callDone = true) => { Speech.stop(); fin(callDone); };
-    let raw = q ? q.leadin_sanitized || "" : "";   // the bonus's own text, for its reading guides (speechScript)
-    try { raw += " " + JSON.parse((q && q.parts_sanitized) || "[]").join(" "); } catch (e) {}
+    const raw = bonusRaw(q);
     r.resume = () => followVoice(r.text, r.idx, (i) => { const n = Math.min(r.text.length, i); if (n > r.idx) { r.idx = n; paint(); followReading(el.querySelector(".revealed"), q && q.id); } }, () => r.finish(), live, raw, voiceTrouble);
     r.resume();
     return;
@@ -6519,7 +6591,7 @@ function startBonusPart(idx) {
     const t = state.settings.bonusTimer;
     if (t > 0) startEventTimer(t, "Part " + bonusPartLetter(idx), () => bonusPartTimeUp(idx));
   };
-  readBonusText(textEl, (state._bonusPartTexts || [])[idx] != null ? state._bonusPartTexts[idx] : (textEl ? textEl.textContent : ""), startTimer);
+  readBonusText(textEl, (state._bonusPartTexts || [])[idx] != null ? state._bonusPartTexts[idx] : (textEl ? textEl.textContent : ""), () => { startTimer(); if (state.currentQuestion === q) warmBonusPart(idx + 1); });
 }
 
 function bonusPartTimeUp(idx) {
@@ -6965,6 +7037,19 @@ function resumeReveal() {
 function textShape(s) {
   return String(s == null ? "" : s).replace(/[^\s\-\u2010-\u2015\/]/g, "\u00b7");
 }
+// A buzz falls between two words (15.70). Reading goes a letter at a time, so one in the middle of a word counts from
+// its end (that word was being read, as a reader that goes a word at a time shows it), and the mark has a space on
+// each side: "the wife of (#) Inti". It read "of(#) Inti", and "Qui(#)lla" in the middle of a word.
+function wordEndAt(text, i) {
+  text = String(text || "");
+  while (i > 0 && i < text.length && /\S/.test(text[i - 1]) && /\S/.test(text[i])) i++;
+  return i;
+}
+// the (#) at i; next to the power mark (atPower) it keeps a space from that too
+function buzzMarkHtml(text, i, cls, atPower) {
+  const before = /\S/.test(text[i - 1] || ""), after = !before && (atPower || /\S/.test(text[i] || ""));
+  return (before ? " " : "") + '<span class="buzz-mark' + (cls ? " " + cls : "") + '">(#)</span>' + (after ? " " : "");
+}
 function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) {
   const buzzMarks = marks || state.buzzMarks || [];
   // Once the question is over (answered, or read out with nobody buzzing) the
@@ -6975,8 +7060,7 @@ function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) 
   function withMarks(segEnd) {
     const inserts = buzzMarks
       .filter((i) => i >= 0 && i <= segEnd)
-      // a buzz between two words keeps a space on both sides ("Chapman (#) estimator", not "(#)estimator")
-      .map((i) => ({ i, rank: 1, html: '<span class="buzz-mark">(#)</span>' + (/\s/.test(text[i - 1] || "") && /\S/.test(text[i] || "") ? " " : "") }));
+      .map((i) => { const j = wordEndAt(text, i) <= segEnd ? wordEndAt(text, i) : i; return { i: j, rank: 1, html: buzzMarkHtml(text, j, "", showPower && j === _prePowerEnd) }; });
     if (showPower && _prePowerEnd > 0 && _prePowerEnd <= segEnd) {
       inserts.push({ i: _prePowerEnd, rank: 2, html: '<span class="power-mark-inline">(*)</span>' });
     }
@@ -7010,10 +7094,12 @@ function buzz() {
 
   Sound.buzz();
 
+  const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
+  // in the middle of a word: the rest of it shows, the buzz after it (wordEndAt); never past a plugin page's stop
+  { const ps = pageStop(), j = wordEndAt(text, state.revealIndex); state.revealIndex = ps && state.revealIndex <= ps && j > ps ? ps : j; }
   state.buzzPosition = state.revealIndex;
   (state.buzzMarks = state.buzzMarks || []).push(state.revealIndex);
 
-  const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
   $("#question-text").innerHTML = formatQuestionText(text, state.revealIndex, state.prePowerEnd);
 
   // the unread rest isn't laid out while answering (as on a phone): the marker and the answer box come right under
@@ -7364,6 +7450,7 @@ function displayTossupResult(result, userAnswer) {
 
   const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
   $("#question-text").innerHTML = formatQuestionText(text, text.length, state.prePowerEnd, null, true);
+  setTimeout(warmNextTossup, 300);
 
   state.sessionHistory.push({
     id: state.currentQuestion?.id,
@@ -8450,9 +8537,9 @@ function historyQuestionHtml(e) {
   const powerIdx = isTossup ? raw.indexOf("(*)") : -1;
   const text = isTossup ? raw.replace(/\(\*\)/g, "") : raw;
   const marks = [];
-  const pos = isTossup ? strippedBuzzPos(raw, e.buzzPosition || 0) : 0;
+  const pos = isTossup ? wordEndAt(text, strippedBuzzPos(raw, e.buzzPosition || 0)) : 0;
   if (powerIdx >= 0 && powerIdx <= text.length) marks.push({ i: powerIdx, rank: 2, html: '<span class="power-mark-inline">(*)</span>' });
-  if (pos > 0 && pos <= text.length) marks.push({ i: pos, rank: 1, html: '<span class="buzz-mark">(#)</span>' + (/\s/.test(text[pos - 1] || "") && /\S/.test(text[pos] || "") ? " " : "") });
+  if (pos > 0 && pos <= text.length) marks.push({ i: pos, rank: 1, html: buzzMarkHtml(text, pos, "", pos === powerIdx) });
   // A finished question shows its pre-power text in bold here too (history and
   // review cards). No power mark means no bold.
   if (powerIdx >= 0 && powerIdx <= text.length) {
@@ -8713,6 +8800,7 @@ function displayBonusResult(result, userAnswers) {
   const area = $("#result-area");
   area.classList.remove("hidden");
   state.resultAreaVisible = true; setReadHidden(false);
+  setTimeout(warmNextBonus, 300);
 
   banner.className = "result-banner";
   banner.classList.add(bonusBannerClass(result));
@@ -14147,6 +14235,23 @@ function init() {
       refreshTopbar: () => updateTopbar(),
       setReadingHold: (v) => { ttsHold = !!v; },
       // (15.65) hold the answer clock while a plugin writes down what was said (Voice Answers), then let it run on
+      // ms since the read-aloud voice last made a sound: 0 while it talks, Infinity if it hasn't (15.70, Voice Answers)
+      voiceQuietFor: () => Speech.quietFor(),
+      // Apple's speech recognizer in the Mac app (15.70, Voice Answers 4): hello() → { auth, available, onDevice } or
+      // { error }; start(id, words) a new answer biased to those words; audio(id, Float32Array of 16 kHz mono); end(id);
+      // on(fn) its { t: "text", id, text, final } / { t: "error" } / { t: "exit" }. null on the website
+      nativeSpeech: window.qbreader && window.qbreader.speech ? (() => {
+        const sp = window.qbreader.speech;
+        const b64 = (f) => { const u = new Uint8Array(f.buffer, f.byteOffset, f.byteLength); let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+        return {
+          hello: () => Promise.resolve(sp.hello()).catch(() => ({ error: "none" })),
+          start: (id, words, hint) => sp.send({ t: "start", id, words: (words || []).map(String).slice(0, 100), hint: hint || "search" }),
+          audio: (id, f32) => sp.send({ t: "audio", id, pcm: b64(f32) }),
+          end: (id) => sp.send({ t: "end", id }),
+          cancel: () => sp.send({ t: "cancel" }),
+          on: (fn) => sp.on(fn),
+        };
+      })() : null,
       holdAnswerTime: (on) => { if (_eventTimer.label !== "Answer") return false; if (on) pauseEventTimer(); else resumeEventTimer(); return true; },
       // buzz on the tossup being read, as the buzz key does (15.69: Voice Answers' clap or shout); false when it can't
       buzz: () => { if (!state.sessionActive || state.isBuzzed || state.mode !== "tossups" || !state.currentQuestion || state.resultAreaVisible || state._oppBusy) return false; buzz(); return true; },

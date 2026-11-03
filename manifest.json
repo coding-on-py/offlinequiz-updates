@@ -1,5 +1,5 @@
 {
-  "version": "15.69",
+  "version": "15.70",
   "renderer": [
     "index.html",
     "style.css",
@@ -165,13 +165,13 @@
     }
   ],
   "main": true,
-  "notes": "voice and practice fixes",
+  "notes": "voice and reading fixes",
   "files": {
-    "renderer/index.html": "cdc88be26de8b475b88604eb9a2372cb96197a8996d33178b095454b004dcfcd",
+    "renderer/index.html": "9ca9cb0e0fdb43a79cf26b6f3c388961b81d64a5f1d6bc06ee9972f3c8a2db35",
     "renderer/style.css": "fead37e7af7c11ecc713fe20de42047099d67b2f38edc998a20ccd52a075a2bc",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "92e05890f2b8ce8b472f4c703cd08c6a8f180b5f6040d490b1ca48e6e1c2da73",
-    "renderer/app.js": "8454a5a94750da0e4b4341fe08dda12bc58a44f9fc87ce074d834215d9efed13",
+    "renderer/extensions.js": "40b1cb5843946657e1f6f4a8f0273137f3a8d97a1c409beae7b3a5d5b69a8a12",
+    "renderer/app.js": "41bb250cc78c2b4809109172cee9326c150345b3fbb5f623809edc237e6369c0",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "2045adc1f28cce88d56d2fbdf1f074283325597bb090d90d51a1773d6811c392",
     "plugins/answer-notes.zip": "bdac7548f7ffe6c20c2930c750e2377ca698e56c462f8708ee01aeb5641adb89",
@@ -188,7 +188,7 @@
     "plugins/folders.zip": "c6b3b1c2a9723af244dae0913eb8847178ae767cbfcfbb4a8ffad7276979faf6",
     "plugins/gap-finder.zip": "338db961bed495e14235757e3b3ccdbe0e27909c3a64376f54192886934bbdc6",
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
-    "plugins/kokoro-voice.zip": "edfca0dfb1221f28c0e9e490a4b6955550c576af91d123ca3b944932718e4a96",
+    "plugins/kokoro-voice.zip": "c342597cbcb3ec906bce6b6399dda4c4e4452a68c462d1a1289a25d83c02189c",
     "plugins/layout-customizer.zip": "6a570b305addaab7e155bfed166f8778997b0f040225d2fa7dea849831cf429b",
     "plugins/lightning.zip": "b813ea2a61d1b619f5ebf56e2a23f59b763f4e991b956d0abd46b2fb11b71ff2",
     "plugins/listen.zip": "f37922894c6a99b09b96d5f2632ac4e1e073a4d54bf56d087a2a74897d099026",
@@ -201,8 +201,8 @@
     "plugins/reading-style.zip": "53577075b728d9c541e971cd0383efe517f472aeba912c05a50e8289235e2713",
     "plugins/rival.zip": "4f877aee3c1a874e5d788ffb1877e15e9cc7b46c76996c208e4e576871e5e0fe",
     "plugins/tournament-prep.zip": "5e055d15dd1362b4ab2834112ec6263bbd6d0348bd18c161cffa15070528b40c",
-    "plugins/voice-answers.zip": "0928c245b328e66ba403ced67ff9c5c6e38047767d11adc137aad0b68805983f",
+    "plugins/voice-answers.zip": "8093acfc70480366385374a1ba12a3a1db65464930a3a4005ae6e8f9dbdd1f0b",
     "plugins/weekly-plan.zip": "7f532ecd809fe583f4515a745acd06534082c6cbe675f3ce1cff5f5d946cdceb"
   },
-  "signature": "/1i0pGy3G9NH90b4RZRvJ66SegUMyJ1Nqy2oqTMvqDJLbd8LUoVsAYzLkUmCw3oOZJlFJlZsfvWo6er2Dl32Ag=="
+  "signature": "VCqKE4rOsCM+v2heJIUhCQCTZy0h1Vjy762aOdl7L+QRnIBV8TOmhIwjeiLLoM2F2in/XbOUkbMyn+ZfWrliCw=="
 }
