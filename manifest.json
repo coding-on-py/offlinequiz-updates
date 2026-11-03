@@ -1,5 +1,5 @@
 {
-  "version": "15.67",
+  "version": "15.68",
   "renderer": [
     "index.html",
     "style.css",
@@ -165,10 +165,10 @@
     }
   ],
   "main": true,
-  "notes": "new cosmetic plugins",
+  "notes": "layout plugin update and ui fixes",
   "files": {
     "renderer/index.html": "cdc88be26de8b475b88604eb9a2372cb96197a8996d33178b095454b004dcfcd",
-    "renderer/style.css": "3f3489fc79149555b9e6121b6ff36e95e1967d76ee1f85efa9ff5c0811197ee9",
+    "renderer/style.css": "77909abfcf93658ca8ff8663ff0b623cd576119b43dfe45bcbbb1f5f03e9c9f7",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "0fb09e6952eb0553c0529fcd5f1e4731c8d46cc28d4ded6d8b891213394fcefb",
     "renderer/app.js": "d6cf2c6ce4309c78f63f7ab94123d70fb4fd57d0a24813f2004896d5bbb6efa9",
@@ -189,7 +189,7 @@
     "plugins/gap-finder.zip": "338db961bed495e14235757e3b3ccdbe0e27909c3a64376f54192886934bbdc6",
     "plugins/keyword-freq.zip": "2430e45f5293473534a3a4bd3585c37bf2c5a279b000adb599e854a4cdb17dcf",
     "plugins/kokoro-voice.zip": "b7413479fe4814db8486d9bac75a20417cc63fbc6dc3edb0adfda68e9aeac982",
-    "plugins/layout-customizer.zip": "424d14afe3734231ec42cdc190cf8b003a8e171f097465faf9bce43f5c143c29",
+    "plugins/layout-customizer.zip": "6a570b305addaab7e155bfed166f8778997b0f040225d2fa7dea849831cf429b",
     "plugins/lightning.zip": "b813ea2a61d1b619f5ebf56e2a23f59b763f4e991b956d0abd46b2fb11b71ff2",
     "plugins/listen.zip": "f37922894c6a99b09b96d5f2632ac4e1e073a4d54bf56d087a2a74897d099026",
     "plugins/missed-clues.zip": "5baf010a56d50cf7151008c4cd5cffc3a2aa5cc5a0ef9ea50915e4406afbc2f2",
@@ -204,5 +204,5 @@
     "plugins/voice-answers.zip": "542f34c1b49716491fbc20501e5c6a6a40b5366bcec392d1e5b5e25bbf0d219d",
     "plugins/weekly-plan.zip": "7f532ecd809fe583f4515a745acd06534082c6cbe675f3ce1cff5f5d946cdceb"
   },
-  "signature": "7o/P00j1N9colcvZAyWIPyTNj3udOx7vHjfmBeMQYM9QFFdk/ON7qaNe3C3WVPJDR6wtMb2UcF5bozK5TkHhCg=="
+  "signature": "+qfjmVi0FYEqgcE4i4xr8VZbcdz9cykA9xv1/3DgA0O5YG7B/OSGo+Wxfz+5sQ+n4ZO1kQVRU807g948ivM5Cg=="
 }
