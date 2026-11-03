@@ -2001,15 +2001,17 @@ QB.registerTheme({
     "flashcards": "Study", "coach-mode": "Study",
     "packet-builder": "Tools", "folders": "Tools",
     "keyword-freq": "Analysis", "buzz-words": "Analysis", "fact-sheet": "Analysis", "canon-tracker": "Analysis",
-    "achievement-glyphs": "Extras",
+    "achievement-glyphs": "Cosmetic",
     // 15.62
     "rival": "Play", "challenge": "Play", "lightning": "Play", "voice-answers": "Play",
     "first-lines": "Study", "quotations": "Study", "missed-clues": "Study", "listen": "Study", "answer-notes": "Study",
     "buzz-tracker": "Analysis", "gap-finder": "Analysis", "neg-check": "Analysis", "answer-clusters": "Analysis",
     "weekly-plan": "Tools", "tournament-prep": "Tools", "pyramid-check": "Tools", "moderator": "Tools", "layout-customizer": "Tools", "kokoro-voice": "Play",
+    // 15.67: plugins that only change how the app looks
+    "buzz-effects": "Cosmetic", "reading-style": "Cosmetic", "backdrops": "Cosmetic",
   };
-  const GROUP_ORDER = ["Play", "Study", "Tools", "Analysis", "Extras", "Other"];
-  const GROUP_COLOR = { Play: "#f0883e", Study: "#3fb950", Tools: "#58a6ff", Analysis: "#bc8cff", Extras: "#8b949e", Other: "#8b949e" };
+  const GROUP_ORDER = ["Play", "Study", "Tools", "Analysis", "Cosmetic", "Other"];
+  const GROUP_COLOR = { Play: "#f0883e", Study: "#3fb950", Tools: "#58a6ff", Analysis: "#bc8cff", Cosmetic: "#f778ba", Other: "#8b949e" };
   const groupOf = (id) => PLUGIN_GROUP[id] || "Other";
   const mono = (name) => String(name || "?").replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
   const ICO = {
@@ -2276,7 +2278,7 @@ QB.registerTheme({
     "packet-builder": ["Tools", "Packets", "Practice"], "folders": ["Tools", "Organize", "Saved"],
     "keyword-freq": ["Analysis", "Clues", "Words"], "buzz-words": ["Analysis", "Clues", "Power"],
     "fact-sheet": ["Analysis", "Answers", "Study"], "canon-tracker": ["Analysis", "Canon", "Progress"],
-    "achievement-glyphs": ["Extras", "Achievements", "Icons"],
+    "achievement-glyphs": ["Cosmetic", "Achievements", "Icons"],
     "rival": ["Play", "Buzzing", "Adaptive"], "challenge": ["Play", "Friends", "Compare"],
     "lightning": ["Play", "Speed", "Recall"], "voice-answers": ["Play", "Voice", "Tournament"],
     "first-lines": ["Study", "Power", "Clues"], "quotations": ["Study", "Literature", "Quotes"], "missed-clues": ["Study", "Review", "Memory"],
@@ -2284,6 +2286,7 @@ QB.registerTheme({
     "buzz-tracker": ["Analysis", "Buzzing", "Progress"], "gap-finder": ["Analysis", "Distribution", "Practice"], "neg-check": ["Analysis", "Negs", "Patterns"], "answer-clusters": ["Analysis", "Answers", "Mix-ups"],
     "weekly-plan": ["Tools", "Plan", "Goals"], "tournament-prep": ["Tools", "Tournaments", "Plan"],
     "pyramid-check": ["Tools", "Writing", "Clues"], "moderator": ["Tools", "Club", "Reading"], "layout-customizer": ["Tools", "Layout", "Design"], "kokoro-voice": ["Play", "Voice", "Read aloud"],
+    "buzz-effects": ["Cosmetic", "Effects", "Celebrate"], "reading-style": ["Cosmetic", "Fonts", "Reading"], "backdrops": ["Cosmetic", "Background", "Atmosphere"],
   };
   const SICO = {
     down: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
@@ -6801,7 +6804,7 @@ function __qbMain(ctx) {
   function lbRowHtml(r, rank) {
     return '<div class="lb-row' + (r.you ? " lb-you" : "") + '" data-user="' + esc(r.handle || "") + '" data-user-name="' + esc(r.displayName || r.handle || "") + '" data-user-neon="' + esc(r.neon || "") + '"><span class="lb-rank num">' + rank + "</span>" + av({ name: r.displayName || r.handle, neon: r.neon }) +
       '<span class="fr-name"><b>' + neonHtml(esc(r.displayName || r.handle), r.neon) + "</b>" + (r.you ? '<span class="badge cl-you">You</span>' : "") + "<small>@" + esc(r.handle) + (r.teams && r.teams.length ? " · " + esc(r.teams.join(", ")) : "") + "</small></span>" +
-      '<span class="fr-stat"><b class="num">' + fmt(r.points) + '</b><small title="Points">PTS</small></span><span class="fr-stat"><b class="num">' + fmt(r.tuh != null ? r.tuh : r.questions) + '</b><small title="' + (r.tuh != null ? 'Tossups heard">TUH' : 'Questions">Q') + '</small></span><span class="fr-stat"><b class="num">' + fmt(r.powers) + '</b><small title="Powers">15</small></span><span class="fr-stat"><b class="num">' + (r.accuracy == null ? "—" : r.accuracy + "%") + '</b><small title="Tossups answered right">ACC</small></span></div>';
+      '<span class="fr-stat"><b class="num">' + fmt(r.points) + '</b><small title="Points">PTS</small></span><span class="fr-stat"><b class="num">' + fmt(r.tuh != null ? r.tuh : r.questions) + '</b><small title="' + (r.tuh != null ? 'Tossups heard">TUH' : 'Questions">Q') + '</small></span><span class="fr-stat"><b class="num">' + fmt(r.powers) + '</b><small title="Powers">P</small></span><span class="fr-stat"><b class="num">' + (r.accuracy == null ? "—" : r.accuracy + "%") + '</b><small title="Tossups answered right">ACC</small></span></div>';
   }
   function orgLbHtml() {
     if (S.lbTeam !== "all" && !team(S.lbTeam)) S.lbTeam = "all";

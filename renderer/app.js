@@ -15415,10 +15415,10 @@ async function paintLeaderboards(c, d, board, note) {
   const avN = (h, n) => `<span class="fr-av"${avatarStyle(n)}>${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${avN(r.displayName || r.handle, r.neon)}` +
     `<span class="fr-name"><b>${neonName(r.displayName || r.handle, r.neon)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
-    // NAQT's abbreviations (15.61): PTS points, TUH tossups heard, 15 powers; ACC the share of tossups answered right
+    // NAQT's abbreviations (15.61): PTS points, TUH tossups heard, P powers (15.67, was 15); ACC the share of tossups answered right
     `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small title="Points">${(SEASONS.find((e) => e.key === _lb.period) || { unit: "PTS" }).unit}</small></span>` +
     `<span class="fr-stat"><b class="num">${Number(r.tuh != null ? r.tuh : r.questions || 0).toLocaleString()}</b><small title="${r.tuh != null ? "Tossups heard" : "Questions"}">${r.tuh != null ? "TUH" : "Q"}</small></span>` +
-    `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small title="Powers">15</small></span>` +
+    `<span class="fr-stat"><b class="num">${Number(r.powers || 0).toLocaleString()}</b><small title="Powers">P</small></span>` +
     `<span class="fr-stat"><b class="num">${r.accuracy == null ? "—" : r.accuracy + "%"}</b><small title="Tossups answered right">ACC</small></span>` +
     `<span class="fr-act">${removable && !r.you ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-lb-remove="${escapeHtml(r.handle)}" title="Remove from this leaderboard" aria-label="Remove @${escapeHtml(r.handle)}">${ic("trash", 15)}</button>` : ""}</span></div>`;
   const invites = (d.invites || []).map((i) => `<div class="fr-req">${av(i.name)}<span class="fr-name"><b>${escapeHtml(i.name)}</b><small>${i.from ? neonName(i.from.displayName, i.from.neon) + " invited you · " : ""}${i.members} ${i.members === 1 ? "member" : "members"}</small></span><button type="button" class="btn btn-sm" data-lb-decline="${escapeHtml(i.id)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-lb-join="${escapeHtml(i.id)}">Join</button></div>`).join("");
@@ -16360,9 +16360,23 @@ const QBSelect = (() => {
     // the category cascade calls `sel.disabled = false` and rewrites the
     // <option> list in place. Watch the element itself so the trigger cannot
     // be left showing a stale label, or stuck disabled after being re-enabled.
-    const mo = new MutationObserver(() => { sync(); if (!popup.hidden) renderItems(); });
+    // (15.67) In Settings' rows there is room for every choice whole: the box is at least as wide as its longest
+    // one. The width copied from the <select> above is measured in the native control's font, so a label could
+    // come out a few pixels too wide in the trigger's and be cut ("Normal" → "Norm…").
+    const fitLongest = () => {
+      if (!wrap.closest(".ext-setting-row, .setting-row")) return;
+      const vs = getComputedStyle(valueEl), ts = getComputedStyle(trigger);
+      const c = fitLongest.c || (fitLongest.c = document.createElement("canvas").getContext("2d"));
+      c.font = vs.fontStyle + " " + vs.fontWeight + " " + vs.fontSize + " " + vs.fontFamily;
+      let w = 0; for (const o of sel.options) w = Math.max(w, c.measureText(o.textContent).width);
+      const px = (v) => parseFloat(v) || 0;
+      const need = w + px(ts.paddingLeft) + px(ts.paddingRight) + px(ts.borderLeftWidth) + px(ts.borderRightWidth) + px(ts.columnGap || ts.gap) + 18;
+      wrap.style.setProperty("--qbsel-minw", "max(" + (cs.minWidth && cs.minWidth !== "auto" ? cs.minWidth : "0px") + ", " + Math.ceil(need) + "px)");
+    };
+    const mo = new MutationObserver(() => { sync(); fitLongest(); if (!popup.hidden) renderItems(); });
     mo.observe(sel, { attributes: true, attributeFilter: ["disabled", "style", "class", "hidden"], childList: true, subtree: true });
     sync();
+    fitLongest();
   }
 
   function scan(root) {
