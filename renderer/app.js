@@ -5447,7 +5447,9 @@ function limitList(listEl, itemSel, key, first = 10, step = 25) {
   };
   // (15.77) rows taken out on this side (a deleted session): the count says so at once, not when the server answers
   const all = items.slice();
-  listEl._qbMore = { drop: (els) => { items = items.filter((it) => !els.includes(it)); paint(); }, undo: () => { items = all.filter((it) => it.isConnected); paint(); } };
+  // (15.79) shown(): how many it shows now, from its own count (the page's rows can be moved or copied by a plugin)
+  listEl._qbMore = { drop: (els) => { items = items.filter((it) => !els.includes(it)); paint(); }, undo: () => { items = all.filter((it) => it.isConnected); paint(); },
+    shown: () => Math.min(items.length, _moreShown.has(key) ? _moreShown.get(key) : first), first };
   paint();
 }
 
@@ -5781,7 +5783,7 @@ function setMode(mode) {
       $("#category-filters")?.classList.toggle("weights-on", !!state.settings.useWeights);
       refreshCategorySummary();
     }),
-  ]).then(() => { restoreFilterState(); settleEarlyFilters(); applyPendingPacketPlay(); applyCustomView(); clearPrefetch(); warmOrdered(); });   // preload for the restored Setup
+  ]).then(() => { restoreFilterState(); settleEarlyFilters(); applyPendingPacketPlay(); applyCustomView(); clearPrefetch(true); warmOrdered(); });   // preload for the restored Setup
   updateModeFields();
   initGameplayControls();
   updateKeyLabels();
@@ -6069,6 +6071,16 @@ async function nextQuestion() {
     }
   }
 
+  // (15.79) the page's first batch (window.QB_FIRST), when nothing is queued yet: on a first visit Setup is still being
+  // built when the first question is asked for, so the queue hasn't started, and this was a trip to the server
+  if (!question) {
+    const seed = window.QB_FIRST && window.QB_FIRST[state.mode];
+    if (seed && seed.q === params.toString() && seed.rows && seed.rows.length) {
+      window.QB_FIRST[state.mode] = null;
+      for (const q of seed.rows) { if (!q || !fresh(q)) continue; if (!question) question = q; else if (!_plist.some((x) => x && x.id === q.id)) _plist.push(q); }
+    }
+  }
+
   if (!question) {
     let data;
     try {
@@ -6151,10 +6163,20 @@ const _PREFETCH_TARGET = IS_WEB ? 100 : 24;  // in hand + on the way: a held-dow
 const _PREFETCH_BATCH = IS_WEB ? 12 : 8;     // questions per request
 const _PREFETCH_REQS = IS_WEB ? 8 : 3;       // requests in flight at most
 const _prefetch = { tossups: [], bonuses: [], gen: 0, pump: null, waiters: [] };
-function clearPrefetch() {
-  _prefetch.tossups.length = 0;
-  _prefetch.bonuses.length = 0;
-  _prefetch.gen++;
+// (15.79) keepSame: the queue is kept when what it was fetched for is still what's asked. Opening Tossups (setMode)
+// emptied the one the home page had filled. Every other caller is a change of Setup and empties it, as before
+function _prefetchSig() {
+  if (!$("#category-filters .category-group") || state.settings.useWeights) return null;
+  try { const f = getFilters(); return f.starredOnly ? null : state.mode + "|" + _randomQuestionParams(f).toString(); } catch (e) { return null; }
+}
+function clearPrefetch(keepSame) {
+  const sig = _prefetchSig();
+  if (!(keepSame && sig && _prefetch.sig === sig)) {
+    _prefetch.tossups.length = 0;
+    _prefetch.bonuses.length = 0;
+    _prefetch.gen++;
+    _prefetch.sig = sig;
+  }
   schedulePrefetch();
 }
 let _prefetchTimer = null;
@@ -6193,7 +6215,8 @@ function _randomQuestionParams(filters) {
 
 function _prefetchEligible() {
   const mv = $("#mode-select")?.value;
-  const open = state.sessionActive || !!$("#practice-screen")?.classList.contains("active");
+  // (15.79) the home page too: Tossups is a click away from it, so its first questions are on their way already
+  const open = state.sessionActive || !!$("#practice-screen")?.classList.contains("active") || !!$("#title-screen")?.classList.contains("active");
   // never with a half-built panel (getFilters would read no categories at all)
   return open && !!$("#category-filters .category-group") && !state.reviewIds && !state.bonusIds && !state._wantBonus &&
     mv !== "set" && mv !== "custom" &&
@@ -6253,6 +6276,7 @@ function refillPrefetch(force) {
   const list = mode === "tossups" ? _prefetch.tossups : _prefetch.bonuses;
   let p = _prefetch.pump;
   if (!p || p.gen !== gen || p.mode !== mode) p = _prefetch.pump = { gen, mode, expect: 0, reqs: 0, misses: 0, missAt: 0 };
+  if (!_prefetch.sig) _prefetch.sig = _prefetchSig();
   if (p.none || (!force && p.misses >= 3 && Date.now() - p.missAt < 5000)) return;   // none match these filters / nothing new lately
   const endpoint = mode === "tossups" ? "/api/tossups/query" : "/api/bonuses/query";
   const stale = () => gen !== _prefetch.gen || mode !== state.mode;
@@ -6261,7 +6285,11 @@ function refillPrefetch(force) {
     if (!groups.length) break;
     for (const [qs, n] of groups) {
       p.reqs++; p.expect += n;
-      API.get(`${endpoint}?${qs}&limit=${n}`).then((d) => {
+      // (15.79) the website's page brings a first batch for a new visitor's Setup (server.js firstBatch): taken once,
+      // in place of the first request, so the first question shows with no trip to the server
+      const seed = window.QB_FIRST && window.QB_FIRST[mode];
+      const got = seed && seed.q === qs && seed.rows && seed.rows.length ? (window.QB_FIRST[mode] = null, Promise.resolve({ rows: seed.rows, total: seed.total })) : API.get(`${endpoint}?${qs}&limit=${n}`);
+      got.then((d) => {
         if (stale()) return 0;
         if (d && d.total === 0 && !state.settings.useWeights) p.none = true;   // the server says nothing matches at all
         let added = 0;
@@ -8085,10 +8113,15 @@ function apClearAll() {
   }
   _apVars.clear();
 }
+// (15.79) nothing, or something that isn't a color, is null: an unset variable read as black, so the Power and
+// Paused pickers (an optional variable of their own, then the theme's) showed black in every theme
 function cssHex(css) {
   try {
+    if (!css || !String(css).trim()) return null;
     const cv = cssHex._cv || (cssHex._cv = document.createElement("canvas").getContext("2d", { willReadFrequently: true }));
-    cv.clearRect(0, 0, 1, 1); cv.fillStyle = "#000"; cv.fillStyle = css; cv.fillRect(0, 0, 1, 1);
+    cv.fillStyle = "#010203"; cv.fillStyle = css;
+    if (cv.fillStyle === "#010203" && !/^#010203$/i.test(String(css).trim())) return null;
+    cv.clearRect(0, 0, 1, 1); cv.fillRect(0, 0, 1, 1);
     const d = cv.getImageData(0, 0, 1, 1).data;
     return "#" + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, "0")).join("");
   } catch (e) { return null; }
@@ -10202,14 +10235,15 @@ window.addEventListener("resize", () => { clearTimeout(_statsResizeT); _statsRes
 // The row goes at once; the totals catch up when the server has deleted it.
 function deleteSessionRow(id) {
   const rows = [...document.querySelectorAll("#stats-container .session-row")].filter((r) => r.dataset.session === id);
-  // the list keeps the rest as they are, one fewer showing (limitList)
-  const showing = [...document.querySelectorAll("#stats-container .session-row:not(.qb-more-hidden)")].length;
+  // the list keeps the rest as they are, one fewer showing (limitList). (15.79) How many show comes from the list's own
+  // count, never more than before: counted off the page it could come out as all of them, and the list opened up
+  const table = document.querySelector("#stats-container .stats-sessions-table"), lm = table && table._qbMore;
   const had = _moreShown.has("stats:sessions"), was = _moreShown.get("stats:sessions");
-  if (showing) _moreShown.set("stats:sessions", Math.max(0, showing - (rows.some((r) => !r.classList.contains("qb-more-hidden")) ? 1 : 0)));
+  const before = lm ? lm.shown() : had ? was : 10;
+  _moreShown.set("stats:sessions", Math.max(0, before - (rows.some((r) => !r.classList.contains("qb-more-hidden")) ? 1 : 0)));
   // (15.77) the count under the list and the number in its heading change now too, so when the server's totals come
   // the list has nothing left to change
-  const table = document.querySelector("#stats-container .stats-sessions-table");
-  if (table && table._qbMore) table._qbMore.drop(rows);
+  if (lm) lm.drop(rows);
   const head = document.querySelector('#stats-container [data-coll="stats:sessions"] .stats-section-title');
   const tw = head && document.createTreeWalker(head, NodeFilter.SHOW_TEXT); let tn = tw && tw.nextNode();
   while (tn && !/\(\d+\)/.test(tn.nodeValue)) tn = tw.nextNode();

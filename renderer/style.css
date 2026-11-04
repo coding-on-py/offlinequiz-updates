@@ -6870,8 +6870,9 @@ html.tb-nocrumb .tb-crumb { display: none; }
 @media (max-width: 600px) { .lb-periods { justify-content: flex-start; } }
 
 /* Read aloud with the text hidden (15.63, app.js setReadHidden; 15.65 wide, its bars following the voice): the words
-   give way to a box that says "Reading" while the voice reads (some text still to come), "Buzzed" after a buzz, and
-   "Hidden" once it's all been said, until the result shows the text. --rb1..3 (app.js readMeter) size the bars. */
+   give way to a box that says "Loading" until the voice says its first word (its bars rocking), "Reading" while it
+   reads, "Buzzed" after a buzz, and "Done reading" once it's all been said, until the result shows the text (15.79:
+   it said "Hidden" before the first word and after the last). --rb1..3 (app.js readMeter) size the bars. */
 .read-box { display: none; }
 #question-area.read-hidden :is(#question-text, .bonus-part-text) { display: none !important; }
 #question-area.read-hidden .read-box {
@@ -6882,8 +6883,10 @@ html.tb-nocrumb .tb-crumb { display: none; }
 #question-area.read-hidden .rb-bars i:nth-child(1) { transform: scaleY(var(--rb1, .12)); }
 #question-area.read-hidden .rb-bars i:nth-child(2) { transform: scaleY(var(--rb2, .12)); }
 #question-area.read-hidden .rb-bars i:nth-child(3) { transform: scaleY(var(--rb3, .12)); }
-.rb-label::before { content: "Hidden"; font: 600 15px/1.2 var(--font); color: var(--muted); letter-spacing: .01em; }
-#question-area.read-hidden:has(:is(#question-text, .bonus-part-text) > .unrevealed:not(:empty)):not(:has(#question-text > .buzz-marker)) .rb-label::before { content: "Reading"; color: var(--text); }
+.rb-label::before { content: "Loading"; font: 600 15px/1.2 var(--font); color: var(--muted); letter-spacing: .01em; }
+#question-area.read-hidden:has(:is(#question-text, .bonus-part-text) > .revealed:not(:empty)) .rb-label::before { content: "Done reading"; }
+#question-area.read-hidden:has(:is(#question-text, .bonus-part-text) > .revealed:not(:empty)):has(:is(#question-text, .bonus-part-text) > .unrevealed:not(:empty)):not(:has(#question-text > .buzz-marker)) .rb-label::before { content: "Reading"; color: var(--text); }
+#question-area.read-hidden:not(:has(:is(#question-text, .bonus-part-text) > .revealed:not(:empty))):not(:has(#question-text > .buzz-marker)) .rb-bars i { opacity: .8; animation: rb-wait 1.3s ease-in-out infinite; }
 #question-area.read-hidden:has(#question-text > .buzz-marker) .rb-label::before { content: "Buzzed"; color: var(--text); }
 #question-area.read-hidden:not(:has(:is(#question-text, .bonus-part-text) > .unrevealed:not(:empty))) .rb-bars i,
 #question-area.read-hidden:has(#question-text > .buzz-marker) .rb-bars i { transform: scaleY(.12); opacity: .55; }
