@@ -81,12 +81,12 @@ const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3, SUB_LEN = 5;
 export const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
 // 15.12 regrades: bump when a checker fix (or a corrected database) should look at old wrong answers again. A run is
 // keyed by this and the question database's build, so a new database re-runs it too (only answers still wrong).
-export const REGRADE_V = "15.61";   // 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME); 15.61: subcategory trials refunded (_trialRepair)
+export const REGRADE_V = "15.77";   // 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME); 15.61: subcategory trials refunded (_trialRepair); 15.77: a misspelled extra word, exact hidden accepts first
 // two refund summaries as one window (an admin's refund and a regrade, or two refunds): their sums, their trials
 export function mergeRegrade(a, b) {
   const n = (x) => Number(x) || 0;
   return { ok: true, regraded: n(a.regraded) + n(b.regraded), points: n(a.points) + n(b.points), negs: n(a.negs) + n(b.negs), powers: n(a.powers) + n(b.powers),
-    xp: n(a.xp) + n(b.xp), trials: [...(a.trials || []), ...(b.trials || [])], manual: !!(a.manual && b.manual) };
+    xp: n(a.xp) + n(b.xp), trials: [...(a.trials || []), ...(b.trials || [])], manual: !!(a.manual && b.manual), system: !!(a.system && b.system) };
 }
 export const trialXp = (level, powers) => { const p = Math.max(0, Math.min(TRIAL_LEN, parseInt(powers, 10) || 0)); return Math.round(p * 10 * level * (p >= 10 ? 2.5 : p >= 6 ? 1.5 : p >= 5 ? 1.25 : 1)); };
 // a subcategory trial (15.58): 10 × the level a power, ×1.25 for 4 and ×2 for all five (level I perfect 100, X 1,000)
@@ -1447,7 +1447,7 @@ export class App {
   // tossup gets the points a right answer earns at its buzz (a power before the mark), and a trial it ended counts
   // it as powered, as a regrade does; a bonus gets one more part right (its value). The window says so
   // (refund_note, synced, so the app shows it too). → { ok, regraded, points, negs, powers, trials, xp, manual }
-  manualRefund({ type = "tossup", qid = "", before = Date.now(), text = "" } = {}) {
+  manualRefund({ type = "tossup", qid = "", before = Date.now(), text = "", system = false } = {}) {
     const U = this.userData, pid = U.getActiveProfileId();
     type = type === "bonus" ? "bonus" : "tossup";
     const row = U.attemptRow(type, qid, before, text);
@@ -1456,7 +1456,8 @@ export class App {
     let done = []; try { done = JSON.parse(U.getConfig(doneKey) || "[]") || []; } catch {}
     if (!Array.isArray(done)) done = [];
     if (done.includes(key)) return { error: "That answer was refunded already." };
-    const out = { ok: true, regraded: 1, points: 0, negs: 0, powers: 0, trials: [], xp: 0, manual: true };
+    // (15.77: or the refund scan, after the question or the checker was fixed: `system`, said so in the window)
+    const out = { ok: true, regraded: 1, points: 0, negs: 0, powers: 0, trials: [], xp: 0, manual: true, ...(system ? { system: true } : {}) };
     const attempt = { at: Number(row.timestamp) || 0, text: String(row.given_answer || "") };   // which one (other reports about it)
     if (type === "bonus") {
       let b = null; try { b = this.questionDb.getBonus(qid); } catch {}

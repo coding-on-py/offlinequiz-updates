@@ -282,7 +282,7 @@ export async function start(env) {
       return { bonus: qbApp.getBonus(id) };
     });
 
-    ipcMain.handle("check-tossup", (_e, { questionId, answer, buzzPosition, sessionId, fullyRead, strictness, overriding, allowPrompt, record, previous, correct: ovrCorrect, isPower: ovrPower, points: ovrPoints, celerity: ovrCelerity }) => {
+    ipcMain.handle("check-tossup", (_e, { questionId, answer, buzzPosition, sessionId, fullyRead, strictness, overriding, allowPrompt, record, previous, promptedFrom, correct: ovrCorrect, isPower: ovrPower, points: ovrPoints, celerity: ovrCelerity }) => {
       const tossup = qbApp.getTossup(questionId);
       if (!tossup) return { error: "Question not found" };
 
@@ -320,6 +320,8 @@ export async function start(env) {
           buzz_position: result.buzzPosition,
           given_answer: answer || "",
         };
+        // 15.77: the reply to a prompt that didn't end right: the row keeps the answer that was prompted, and the reply
+        if (promptedFrom != null) { entry.given_answer = String(promptedFrom); entry.prompt_reply = String(answer || ""); }
         if (overriding) qbApp.recordOverride(entry); else qbApp.addSessionEntry(entry);
       }
 

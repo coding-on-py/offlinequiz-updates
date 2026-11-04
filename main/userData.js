@@ -168,6 +168,11 @@ export class UserData {
     if (!sCol.some(c => c.name === "given_answer")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN given_answer TEXT");
     }
+    // 15.77: a tossup answer that was prompted and didn't end right: what was said at the prompt ("" for nothing).
+    // given_answer keeps the answer that was prompted (a regrade judges that one); null = not prompted
+    if (!sCol.some(c => c.name === "prompt_reply")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN prompt_reply TEXT");
+    }
     const stCol = this.db.prepare("PRAGMA table_info(starred)").all();
     if (!stCol.some(c => c.name === "profile_id")) {
       this.db.exec("ALTER TABLE starred ADD COLUMN profile_id TEXT DEFAULT 'default'");
@@ -271,7 +276,7 @@ export class UserData {
     const p = { pid, since, n: limit + 1 };
     const all = [
       ...this.db.prepare(`SELECT session_id, type, question_id, category, subcategory, difficulty, correct, points, celerity, buzz_position,
-          bonus_parts_correct, given_answer, timestamp, mtime, seq, src FROM sessions WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n`).all(p).map((r) => ({ k: "s", ...r })),
+          bonus_parts_correct, given_answer, prompt_reply, timestamp, mtime, seq, src FROM sessions WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n`).all(p).map((r) => ({ k: "s", ...r })),
       ...this.db.prepare("SELECT question_id, type, starred_at, mtime, seq, src FROM starred WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n").all(p).map((r) => ({ k: "r", ...r })),
       ...this.db.prepare("SELECT kind, key, mtime, seq, src FROM sync_tomb WHERE profile_id = :pid AND seq > :since ORDER BY seq LIMIT :n").all(p).map((r) => ({ k: "t", ...r })),
       ...this.db.prepare(`SELECT m.key, m.mtime, m.seq, m.src, c.value FROM sync_meta m JOIN config c ON c.key = m.key
@@ -322,16 +327,19 @@ export class UserData {
           if (tomb && tomb.mtime >= mt) continue;
           const row = { sid: String(c.session_id).slice(0, 200), type: c.type, qid: str(c.question_id, 100), cat: str(c.category, 300) || "", sub: str(c.subcategory, 300) || "",
             diff: num(c.difficulty) || 0, cor: c.correct ? 1 : 0, pts: num(c.points) || 0, cel: num(c.celerity), bp: num(c.buzz_position), bpc: num(c.bonus_parts_correct),
-            ga: str(c.given_answer, 1000), ts: Number(c.timestamp), mt, seq: seqOf(), src, pid };
+            ga: str(c.given_answer, 1000), ts: Number(c.timestamp), mt, seq: seqOf(), src, pid,
+            // (an older app sends no prompt_reply: the row keeps what it had)
+            prk: c.prompt_reply === undefined ? 0 : 1, pr: str(c.prompt_reply, 1000) };
           const ex = findSession.get(pid, row.sid, row.type, row.qid || "", row.ts);
           if (ex) {
             if ((ex.mtime || 0) >= mt) continue;
             this.db.prepare(`UPDATE sessions SET category = :cat, subcategory = :sub, difficulty = :diff, correct = :cor, points = :pts, celerity = :cel, buzz_position = :bp,
-              bonus_parts_correct = :bpc, given_answer = :ga, mtime = :mt, seq = :seq, src = :src WHERE id = :id`).run({
-              cat: row.cat, sub: row.sub, diff: row.diff, cor: row.cor, pts: row.pts, cel: row.cel, bp: row.bp, bpc: row.bpc, ga: row.ga, mt, seq: row.seq, src, id: ex.id });
+              bonus_parts_correct = :bpc, given_answer = :ga, prompt_reply = CASE WHEN :prk THEN :pr ELSE prompt_reply END, mtime = :mt, seq = :seq, src = :src WHERE id = :id`).run({
+              cat: row.cat, sub: row.sub, diff: row.diff, cor: row.cor, pts: row.pts, cel: row.cel, bp: row.bp, bpc: row.bpc, ga: row.ga, prk: row.prk, pr: row.pr, mt, seq: row.seq, src, id: ex.id });
           } else {
             this.db.prepare(`INSERT INTO sessions (session_id, type, question_id, category, subcategory, difficulty, correct, points, celerity, buzz_position,
-              bonus_parts_correct, given_answer, timestamp, profile_id, mtime, seq, src) VALUES (:sid, :type, :qid, :cat, :sub, :diff, :cor, :pts, :cel, :bp, :bpc, :ga, :ts, :pid, :mt, :seq, :src)`).run(row);
+              bonus_parts_correct, given_answer, prompt_reply, timestamp, profile_id, mtime, seq, src) VALUES (:sid, :type, :qid, :cat, :sub, :diff, :cor, :pts, :cel, :bp, :bpc, :ga, :pr, :ts, :pid, :mt, :seq, :src)`).run(
+              { sid: row.sid, type: row.type, qid: row.qid, cat: row.cat, sub: row.sub, diff: row.diff, cor: row.cor, pts: row.pts, cel: row.cel, bp: row.bp, bpc: row.bpc, ga: row.ga, pr: row.pr, ts: row.ts, pid, mt, seq: row.seq, src });
           }
           if (tomb) dropTomb.run(pid, "s", key);
           applied++;
@@ -685,9 +693,9 @@ export class UserData {
     const pid = this.getActiveProfileId();
     const stmt = this.db.prepare(`
       INSERT INTO sessions (session_id, type, question_id, category, subcategory,
-        difficulty, correct, points, celerity, buzz_position, bonus_parts_correct, given_answer, timestamp, profile_id, mtime, seq)
+        difficulty, correct, points, celerity, buzz_position, bonus_parts_correct, given_answer, prompt_reply, timestamp, profile_id, mtime, seq)
       VALUES (:session_id, :type, :question_id, :category, :subcategory,
-        :difficulty, :correct, :points, :celerity, :buzz_position, :bonus_parts_correct, :given_answer, :timestamp, :profile_id, :mtime, :seq)
+        :difficulty, :correct, :points, :celerity, :buzz_position, :bonus_parts_correct, :given_answer, :prompt_reply, :timestamp, :profile_id, :mtime, :seq)
     `);
     return stmt.run({
       session_id: entry.session_id || "default",
@@ -702,6 +710,7 @@ export class UserData {
       buzz_position: entry.buzz_position != null ? entry.buzz_position : null,
       bonus_parts_correct: entry.bonus_parts_correct != null ? entry.bonus_parts_correct : null,
       given_answer: entry.given_answer != null ? String(entry.given_answer) : null,
+      prompt_reply: entry.prompt_reply != null ? String(entry.prompt_reply) : null,
       timestamp: entry.timestamp || Date.now(),
       profile_id: pid,
       mtime: Date.now(),
@@ -782,12 +791,13 @@ export class UserData {
   // (a tossup) or { points, partsCorrect, at } (a bonus: its parts' answers aren't kept), or null
   lastAttempt(type, qid, before = Date.now()) {
     type = type === "bonus" ? "bonus" : "tossup";
-    const rows = this.db.prepare(`SELECT given_answer, correct, points, buzz_position, bonus_parts_correct, timestamp FROM sessions
+    const rows = this.db.prepare(`SELECT given_answer, prompt_reply, correct, points, buzz_position, bonus_parts_correct, timestamp FROM sessions
       WHERE profile_id = ? AND type = ? AND question_id = ? AND timestamp <= ? AND COALESCE(given_answer, '') <> '(skipped)'
       ORDER BY timestamp DESC, id DESC LIMIT 20`).all(this.getActiveProfileId(), type, String(qid || ""), Number(before) + 60000);
     for (const r of rows) {
       if (type === "bonus") return { points: r.points, partsCorrect: r.bonus_parts_correct, at: r.timestamp };
-      if (String(r.given_answer || "").trim()) return { text: r.given_answer, correct: !!r.correct, points: r.points, buzz: r.buzz_position, at: r.timestamp };
+      if (String(r.given_answer || "").trim()) return { text: r.given_answer, correct: !!r.correct, points: r.points, buzz: r.buzz_position, at: r.timestamp,
+        ...(r.prompt_reply != null ? { prompted: true, reply: r.prompt_reply } : {}) };
     }
     return null;
   }

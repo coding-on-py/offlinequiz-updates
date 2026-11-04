@@ -137,7 +137,7 @@ const API = IS_LAN ? LAN_API : isElectron
       },
       post(url, data) {
         const path = url.split("?")[0];
-        if (path === "/api/check-tossup") return window.qbreader.checkTossup(data.questionId, data.answer, data.buzzPosition, data.sessionId, { fullyRead: data.fullyRead, strictness: data.strictness, overriding: data.overriding, allowPrompt: data.allowPrompt, record: data.record, previous: data.previous, correct: data.correct, isPower: data.isPower, points: data.points, celerity: data.celerity });
+        if (path === "/api/check-tossup") return window.qbreader.checkTossup(data.questionId, data.answer, data.buzzPosition, data.sessionId, { fullyRead: data.fullyRead, strictness: data.strictness, overriding: data.overriding, allowPrompt: data.allowPrompt, record: data.record, previous: data.previous, correct: data.correct, isPower: data.isPower, points: data.points, celerity: data.celerity, promptedFrom: data.promptedFrom });
         if (path === "/api/evaluate-tossup") return window.qbreader.evaluateTossup(data.questionId, data.answer, data.strictness, data.buzzPosition, data.previous);
         if (path === "/api/evaluate-bonus-part") return window.qbreader.evaluateBonusPart(data.questionId, data.part, data.answer, data.strictness, data.previous);
         if (path === "/api/evaluate-answer") return window.qbreader.evaluateAnswerLine(data.answerline, data.sanitized, data.answer, data.strictness, data.previous);
@@ -7686,7 +7686,7 @@ function judgeTossupHere(answer) {
   const r = window.QBJudge.scoreTossupResult(answer, q, origPos, fullyRead, strictness, previous);
   if (needsServer(r)) return null;
   const result = { correct: !!r.isCorrect, points: r.points || 0, isPower: !!r.isPower, celerity: r.celerity, answer: q.answer_sanitized, unsure: !r.isCorrect && !!r.unsure };
-  recordInBackground("/api/check-tossup", { questionId: q.id, answer, buzzPosition: origPos, sessionId: state.sessionId, fullyRead, strictness, allowPrompt: false, previous })
+  recordInBackground("/api/check-tossup", { questionId: q.id, answer, buzzPosition: origPos, sessionId: state.sessionId, fullyRead, strictness, allowPrompt: false, previous, ...promptedRecord(r.isCorrect) })
     .then((srv) => { if (srv && !srv.error && !srv.prompted && (!!srv.correct !== result.correct || (srv.points || 0) !== result.points)) reconcileTossup(q, result, srv); });
   return result;
 }
@@ -7707,8 +7707,12 @@ function reconcileTossup(q, was, srv) {
   updateSessionStats(null);
 }
 
+// 15.77: a reply to a prompt that doesn't end right is saved as prompted: the row keeps the answer that was prompted
+// (a regrade or a refund judges that one) and the reply, and history and reports say "Prompted", not "Wrong"
+function promptedRecord(correct) { return state.promptActive && !correct && state._promptFrom != null ? { promptedFrom: state._promptFrom } : {}; }
 async function submitTossupAnswer(answer) {
   if (!state.currentQuestion || state.mode !== "tossups") return;
+  const promptedFrom = state.promptActive ? state._promptFrom : null;
   state.resultAreaVisible = true;   // (the hidden text stays hidden through a prompt or a rebuzz: displayTossupResult shows it)
   stopBuzzTimer();
 
@@ -7724,8 +7728,10 @@ async function submitTossupAnswer(answer) {
         strictness: playSetting("strictness"),
         allowPrompt: !state.promptActive,
         previous: state.promptActive ? state._promptFrom : null,
+        ...(state.promptActive && state._promptFrom != null ? { promptedFrom: state._promptFrom } : {}),
       });
     if (!result) return;
+    if (promptedFrom != null && !result.prompted && !result.correct) result.promptedFrom = promptedFrom;
 
     if (result.prompted) {
       state.promptActive = true;
@@ -7825,6 +7831,7 @@ async function judgeWithPluginRules(answer) {
       sessionId: state.sessionId,
       overriding: true,
       correct, isPower, points, celerity,
+      ...promptedRecord(correct),
     });
     return { correct, points, isPower, celerity, answer: rec.answer || q.answer_sanitized, unsure: !correct && !!verdict.unsure };
   } catch (e) {
@@ -7852,7 +7859,8 @@ function displayTossupResult(result, userAnswer) {
     id: state.currentQuestion?.id,
     type: "tossup",
     question: state.currentQuestion,
-    userAnswer,
+    userAnswer: result.promptedFrom != null ? result.promptedFrom : userAnswer,
+    ...(result.promptedFrom != null ? { promptReply: userAnswer || "" } : {}),
     correct: result.correct,
     isPower: result.isPower,
     points: result.points,
@@ -7878,7 +7886,8 @@ function displayTossupResult(result, userAnswer) {
     points: result.points,
     celerity: result.celerity,
     answer: result.answer,
-    userAnswer,
+    userAnswer: result.promptedFrom != null ? result.promptedFrom : userAnswer,
+    ...(result.promptedFrom != null ? { promptReply: userAnswer || "" } : {}),
     questionId: state.currentQuestion?.id,
     buzzPosition: state.buzzPosition,
     origBuzzPosition: displayPosToOriginal(state.buzzPosition || 0),
@@ -8049,10 +8058,11 @@ function applyLayoutPrefs() {
     if (v === vals[0]) root.removeAttribute(attr); else root.setAttribute(attr, v);
   }
   // the font works with any theme: Default gives back whatever font was there before
-  const font = DEFAULT_APPEARANCE.fonts[state.settings.appFont], st = root.style;
+  let font = DEFAULT_APPEARANCE.fonts[state.settings.appFont]; const st = root.style;
   if (font) {
     if (applyLayoutPrefs._mine == null) applyLayoutPrefs._prev = st.getPropertyValue("--font");
-    st.setProperty("--font", font); applyLayoutPrefs._mine = font;
+    // (the Mac's key symbols keep coming from its own font, 15.77)
+    font = '"QB Keys", ' + font; st.setProperty("--font", font); applyLayoutPrefs._mine = font;
   } else if (applyLayoutPrefs._mine != null) {
     if (st.getPropertyValue("--font") === applyLayoutPrefs._mine) { if (applyLayoutPrefs._prev) st.setProperty("--font", applyLayoutPrefs._prev); else st.removeProperty("--font"); }
     applyLayoutPrefs._mine = null;
@@ -8605,7 +8615,7 @@ function reportAnswerOnScreen(question, type) {
   if (type === "tossup") {
     const r = state.lastResult;
     if (!r || r.questionId !== question.id || !String(r.userAnswer || "").trim()) return null;
-    return { text: r.userAnswer, correct: !!r.correct, points: r.points, buzz: r.origBuzzPosition, at: Date.now() };
+    return { text: r.userAnswer, correct: !!r.correct, points: r.points, buzz: r.origBuzzPosition, at: Date.now(), ...(r.promptReply != null ? { prompted: true, reply: r.promptReply } : {}) };
   }
   const n = state.bonusPartCount || (state.bonusUserAnswers || []).length, typed = Array.from({ length: n }, (_, i) => (state.bonusUserAnswers || [])[i] || "");
   const res = state._bonusResult;
@@ -9034,7 +9044,7 @@ function renderHistoryPanel() {
           ? '<span class="pill pill-green">+' + pts + '</span>'
           : (pts < 0
             ? '<span class="pill pill-red">' + pts + '</span>'
-            : '<span class="pill">' + pts + '</span>'))
+            : e.promptReply != null ? '<span class="pill" title="Prompted">Prompted</span>' : '<span class="pill">' + pts + '</span>'))
       : '<span class="pill pill-green">' + pts + '</span>';
     // celerity only for a buzz (a skip, a dead tossup or a room's no-buzz has none)
     const buzzed = isTossup && e.buzzPosition != null && e.userAnswer !== "(skipped)" && e.userAnswer !== "(no buzz)";
@@ -9058,7 +9068,7 @@ function renderHistoryPanel() {
       bodyHtml: `
         <div class="qcard-text">${historyQuestionHtml(e)}</div>
         <div class="qcard-foot">Your answer:
-          <strong style="color:${e.correct ? "var(--green)" : "var(--red)"}">${escapeHtml(yourAnswer || "(no answer)")}</strong>
+          <strong style="color:${e.correct ? "var(--green)" : e.promptReply != null ? "var(--yellow)" : "var(--red)"}">${escapeHtml(yourAnswer || "(no answer)")}</strong>${e.promptReply != null ? `<span class="qcard-note">\u00b7 prompted, ${String(e.promptReply).trim() ? "then \u201c" + escapeHtml(e.promptReply) + "\u201d" : "no answer after"}</span>` : ""}
           ${e.question?.set_name ? `<span class="qcard-note">\u00b7 ${escapeHtml(e.question.set_name)}</span>` : ""}
         </div>`,
     });
@@ -10422,6 +10432,7 @@ async function loadStats(preserveScroll = false) {
         else if (en.points >= 15) { cls = "qh-power"; label = "POWER"; }
         else if (en.correct) { cls = "qh-correct"; label = "CORRECT"; }
         else if (en.points < 0) { cls = "qh-neg"; label = "NEG"; }
+        else if (en.prompt_reply != null) { cls = "qh-prompt"; label = "PROMPTED"; }   // (15.77) prompted, and it didn't end right
         const cel = Math.max(0, Math.min(1, en.celerity == null ? 1 : en.celerity));
         const buzzBar = isBonus ? "" :
           '<div class="qh-buzzbar" title="Buzzed ' + Math.round(cel * 100) + '% into the question">' +
@@ -14401,7 +14412,7 @@ function showRegrade(r) {
       <p class="rg-kicker">${ic("sparkle", 13)}${r.manual ? "Your report" : "Answer checker fixes"}</p>
       <h2 class="rg-title" id="rg-title">Your points have been refunded!</h2>
       <div class="rg-big"><b class="num" id="rg-points" data-to="${Number(r.points) || 0}">+${num(r.points)}</b><span>${Number(r.points) === 1 ? "point" : "points"} back</span></div>
-      <p class="rg-sub">${r.manual ? "An admin looked at your report, and your answer counts now." : "Answers that were marked wrong by mistake count now."}</p>
+      <p class="rg-sub">${r.system ? "That question was fixed, and your answer counts now." : r.manual ? "An admin looked at your report, and your answer counts now." : "Answers that were marked wrong by mistake count now."}</p>
     </div>
     ${facts.length ? `<div class="rg-facts" style="--n:${facts.length}">${facts.map(([v, l, icon, tone]) => `<div class="rg-fact" style="--tone:${tone}"><span class="rg-fic">${ic(icon, 15)}</span><b class="num">${num(v)}</b><small>${escapeHtml(l)}</small></div>`).join("")}</div>` : ""}
     ${trialRows ? `<section class="rg-trials-sec" aria-label="Trials"><div class="rg-trials-head"><span>Trials</span><b class="num">+${num(r.xp)} XP</b></div><ul class="rg-trials">${trialRows}</ul></section>` : ""}
@@ -16398,20 +16409,25 @@ function adminReportAnswerHtml(r) {
     const score = !parts && a.partsCorrect != null ? `<span class="adm-rmine-text">${a.partsCorrect} part${a.partsCorrect === 1 ? "" : "s"} right</span>` : "";
     return `<div class="adm-rmine"><div class="adm-rmine-head"><span class="adm-rmine-k">Their answer</span>${score}${total}${when}</div>${rows ? `<ol class="adm-rmine-parts">${rows}</ol>` : ""}</div>`;
   }
-  const v = a.correct == null ? "" : a.correct ? (a.points > 10 ? "Power" : "Correct") : a.points < 0 ? "Neg" : "Wrong";
-  const verdict = v ? `<span class="adm-rv ${a.correct ? "ok" : "bad"}">${v}${a.points != null ? " " + pts(a.points) : ""}</span>` : "";
+  const v = a.correct == null ? "" : a.correct ? (a.points > 10 ? "Power" : "Correct") : a.prompted ? "Prompted" : a.points < 0 ? "Neg" : "Wrong";
+  const verdict = v ? `<span class="adm-rv ${a.correct ? "ok" : a.prompted ? "mid" : "bad"}">${v}${a.points != null ? " " + pts(a.points) : ""}</span>` : "";
   // where they buzzed: a neg at the very end was a buzz on the last word; a wrong answer there came after the reading
   const b = a.buzzAt, last = b && b.words ? ` after \u201c\u2026${escapeHtml(b.words)}\u201d` : "";
   const buzz = !b ? "" : !b.end ? `buzzed at ${b.pct}%,${last}` : a.points < 0 ? `buzzed on the last words,${last}` : "answered after the question ended";
+  // (15.77) prompted, then what they said to the prompt
+  const reply = a.prompted ? (String(a.reply || "").trim() ? `prompted, then \u201c${escapeHtml(a.reply)}\u201d` : "prompted, and no answer after") : "";
   return `<div class="adm-rmine"><div class="adm-rmine-head"><span class="adm-rmine-k">Their answer</span><span class="adm-rmine-text">${escapeHtml(a.text)}</span>${verdict}${when}</div>` +
-    (buzz ? `<p class="adm-rmine-buzz">${buzz}</p>` : "") + "</div>";
+    (buzz || reply ? `<p class="adm-rmine-buzz">${[buzz, reply].filter(Boolean).join(", ")}</p>` : "") + "</div>";
 }
 // 15.20: refund the reporter's answer by hand (a typo, a form the answer line missed): a button while their answer
 // doesn't count, then what it gave back
 function adminRefundHtml(r) {
   if (r.refund) {
     const f = r.refund, extra = [f.xp ? "+" + f.xp + " trial XP" : "", ...(f.passed || []).map((x) => x + " passed")].filter(Boolean).join(", ");
-    return `<span class="adm-rrefunded">${ic("check", 13)}Refunded ${f.points > 0 ? "+" : ""}${Number(f.points) || 0}${extra ? ", " + escapeHtml(extra) : ""}${f.by ? ` <small>by @${escapeHtml(f.by)}</small>` : ""}</span>`;
+    // (15.77) the refund scan after a database or checker update: "by the system"; one their own regrade got to
+    // first just says it counts now
+    if (f.system && f.regraded) return `<span class="adm-rrefunded">${ic("check", 13)}Counts now <small>regraded by the system</small></span>`;
+    return `<span class="adm-rrefunded">${ic("check", 13)}Refunded ${f.points > 0 ? "+" : ""}${Number(f.points) || 0}${extra ? ", " + escapeHtml(extra) : ""}${f.system ? " <small>by the system</small>" : f.by ? ` <small>by @${escapeHtml(f.by)}</small>` : ""}</span>`;
   }
   const a = r.answer;
   if (!a || (r.kind !== "bonus" && a.correct) || (r.kind === "bonus" && a.got && a.got.length && a.got.every(Boolean))) return "";

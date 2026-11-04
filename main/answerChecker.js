@@ -3094,12 +3094,26 @@ function isAccountedTok(t, form, ctx, pool, i, T) {
     if (poolHas(pool, x)) return true;
     if (ctx.qWords && ctx.qWords.has(x)) return true;
   }
-  for (const w of form.words) {
-    if (w.kind !== "O" || x.length < 5 || /\d/.test(x)) continue;
-    const bud = budgetFor(Math.max(w.t.length, x.length), ctx);
-    if (bud && osa(w.t, x, bud) <= bud) return true;
-  }
+  if (nearLineWord(x, form, pool, ctx)) return true;
   return x.length === 1 && /[a-z]/.test(x) && i > 0 && i < T.length - 1;
+}
+// (brief §8.0, 2026-11-04) an extra word a letter or so off a word of the line, required or not, is that word
+// misspelled and counts as it: "ann frank" on Annelies Marie “Anne” Frank, "bil clinton", "ralp emerson" (it used to
+// be compared with the form's optional words only, from 5 letters, so a given name with a letter dropped sank a right
+// answer as "another given name"). The J10 budget, with one edit from 4 letters (the brief's own examples drop a
+// letter from a 4-letter name, which J10's 0-edit band never reaches), and never a different first letter or a digit
+function nearLineWord(x, form, pool, ctx) {
+  if (x.length < 3 || /\d/.test(x) || NEVER_ACCOUNTED.has(x)) return false;
+  const near = (c) => {
+    if (!c || c === x || c.length < 4 || c[0] !== x[0] || /\d/.test(c)) return false;
+    const bud = Math.max(1, budgetFor(Math.max(c.length, x.length), ctx));
+    return Math.abs(c.length - x.length) <= bud && osa(c, x, bud) <= bud;
+  };
+  // (this form's required words are left to J10's own typo budget: a word near one of them is that word, not an
+  // extra one, so the partial-answer rule never reads "pyramide du louvre" as "louvre" alone)
+  for (const w of form.words) if (w.kind === "O" && near(w.t)) return true;
+  if (pool) for (const c of pool) if (near(c)) return true;
+  return false;
 }
 
 // initial-letter spans in a row (<u>U</u>nited <u>S</u>tates, <u>S</u>tudent <u>N</u>onviolent …) may be given as the acronym (J§4.4)
@@ -3528,6 +3542,20 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     // onto: "hudsons bay company" isn't the rejected "Hudson Bay Company" (brief §8.0)
     if (w.poss) protect.add(w.t + "s");
   }
+  const hidden = opts.hidden && typeof opts.hidden === "object" && !Array.isArray(opts.hidden) ? opts.hidden : null;
+  const hTok = (list) => (Array.isArray(list) ? list : []).map((e) => respTokens(String(e), plain)).filter((t) => t.length);
+  const H = hidden ? { accept: hTok(hidden.accept), prompt: hTok(hidden.prompt), antiprompt: hTok(hidden.antiprompt), reject: hTok(hidden.reject) } : null;
+  // ---- (brief §8.0, 2026-11-04) the whole response is one of the release's hidden accepts, folded as J1 folds and
+  // nothing more (no fuzzy match, no extra words): right, before J4 and the line's partial-prompt rules (J9, J11, J12)
+  // could catch it ("keyboard concerto" on "piano concerto [prompt on concerto]"). A response that IS one of the line's
+  // own prompt or reject entries keeps that verdict (the packet wins there). Fuzzy hidden matches stay at J13
+  if (H && H.accept.length) {
+    const ha = H.accept.find((t) => strictEq(t, T, true));
+    const lineSays = () => F.rejects.some((r) => live(r) && r.terms.some((t) => strictEq(t, T, false)))
+      // (the entry itself, folded as J1 folds: "Saint Constantine" isn't the prompt "Constantine", "Abs" is "Ab")
+      || F.prompts.concat(F.antis).some((f) => live(f) && f.words.length > 0 && strictEq(f.words.map((w) => ({ t: w.t, num: w.num })), T, true));
+    if (ha && !lineSays()) return verdict("accept", { rule: "J5", via: "hidden", matchedAnswer: ha.map((t) => t.orig).join(" ") });
+  }
   // ---- J4 strict reject (and hidden rejects, G1); on a multi-answer line one rejected answer rejects the whole
   const pieces = [T];
   if (multiLine) {
@@ -3553,9 +3581,6 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     if (hit && c.without && c.without.length && containsRun(T, c.without)) hit = false;
     if (hit && !wholeAccept() && !excepted(T)) return out("reject", null, "J4");
   }
-  const hidden = opts.hidden && typeof opts.hidden === "object" && !Array.isArray(opts.hidden) ? opts.hidden : null;
-  const hTok = (list) => (Array.isArray(list) ? list : []).map((e) => respTokens(String(e), plain)).filter((t) => t.length);
-  const H = hidden ? { accept: hTok(hidden.accept), prompt: hTok(hidden.prompt), antiprompt: hTok(hidden.antiprompt), reject: hTok(hidden.reject) } : null;
   // the line's own prompt on this response wins over the hidden list's reject (the hidden lists are the release's
   // extra names, the line is what's read out): "russia" was a neg on a Soviet Union line that says prompt on "Russia"
   const linePrompts = () => F.prompts.some((f) => { if (!live(f)) return false; const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, F.promptPool); return !!(m && m.full && m.cost === 0); })
