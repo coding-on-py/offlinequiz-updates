@@ -6887,7 +6887,7 @@ html.tb-nocrumb .tb-crumb { display: none; }
 #question-area.read-hidden:has(:is(#question-text, .bonus-part-text) > .revealed:not(:empty)) .rb-label::before { content: "Done reading"; }
 #question-area.read-hidden:has(:is(#question-text, .bonus-part-text) > .revealed:not(:empty)):has(:is(#question-text, .bonus-part-text) > .unrevealed:not(:empty)):not(:has(#question-text > .buzz-marker)) .rb-label::before { content: "Reading"; color: var(--text); }
 #question-area.read-hidden:not(:has(:is(#question-text, .bonus-part-text) > .revealed:not(:empty))):not(:has(#question-text > .buzz-marker)) .rb-bars i { opacity: .8; animation: rb-wait 1.3s ease-in-out infinite; }
-#question-area.read-hidden:has(#question-text > .buzz-marker) .rb-label::before { content: "Buzzed"; color: var(--text); }
+#question-area.read-hidden:has(:is(#question-text, .bonus-part-text) > .buzz-marker:not(:empty)) .rb-label::before { content: "Buzzed"; color: var(--text); }
 #question-area.read-hidden:not(:has(:is(#question-text, .bonus-part-text) > .unrevealed:not(:empty))) .rb-bars i,
 #question-area.read-hidden:has(#question-text > .buzz-marker) .rb-bars i { transform: scaleY(.12); opacity: .55; }
 @media (max-width: 600px) { #question-area.read-hidden .read-box { min-height: 150px; padding: 24px 16px; } .rb-bars { height: 56px; } .rb-bars i { height: 56px; width: 10px; } }
@@ -7000,3 +7000,9 @@ html[data-panel-side="left"] .voice-panel { right: auto; left: 12px; transform-o
 .opp-answer.opp-wrong .opp-live { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--red) 70%, transparent); }
 .buzz-marker.opp-marker { color: var(--yellow); letter-spacing: 1px; }
 #live-stats .side-stats[hidden] { display: none !important; }
+
+/* (15.79) a list's page (Starred, Review, a plugin's list): Setup without the filters that pick questions (app.js
+   updateModeFields), only how it's played */
+#filters-panel.fp-list :is(#sec-mode, #sec-categories, #sec-difficulty, #sec-canon, #sec-year, .checkbox-row.packet-disable, #fp-count) { display: none !important; }
+/* (15.79) a question's own superscripts and subscripts (app.js fmtText): sized down, and no taller line for them */
+:is(#question-text, .bonus-part-text, .qcard-text, .qcard-part, .qh-qtext, .qh-part) :is(sup, sub) { font-size: .72em; line-height: 0; }

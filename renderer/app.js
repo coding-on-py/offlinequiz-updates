@@ -1866,15 +1866,39 @@ const Speech = (() => {
     c[n] = acc;
     return c;
   }
+  // (15.80) Google's voices say nothing of where they are, and read a whole question as one piece (a new piece waits
+  // about 0.9 s for the network), so the text went by syllables alone for 30 s or more and drifted further behind as the
+  // question went on: they run 19% faster than that pace and stop 0.95 s at a full stop. c[i]: the ms before character i,
+  // fit on Google US English reading 40 real tossup sentences (a word 81 ms, a syllable 71, a consonant 33, a digit 185,
+  // a comma 33, a full stop 950); 5% off a sentence on average, left out of the fit
+  function sayMs(t) {
+    t = String(t); const n = t.length, c = new Float32Array(n + 1), L = /[A-Za-zÀ-ɏ'’]/;
+    let i = 0, acc = 0;
+    while (i < n) {
+      let j = i + 1, ms;
+      if (L.test(t[i])) {
+        while (j < n && L.test(t[j])) j++;
+        const w = t.slice(i, j).toLowerCase();
+        let syl = (w.match(/[aeiouyà-ÿ]+/g) || []).length; if (syl > 1 && /[^aeiouy]e$/.test(w)) syl--;
+        ms = 81 + 71 * Math.max(1, syl) + 33 * w.replace(/[aeiouy'’à-ÿ]/g, "").length;
+      } else if (/[0-9]/.test(t[i])) { while (j < n && /[0-9]/.test(t[j])) j++; ms = 185 * (j - i); }
+      else ms = /[.?!]/.test(t[i]) && (i + 1 >= n || /[\s"”’)]/.test(t[i + 1])) ? 950 : /[,;:]/.test(t[i]) ? 33 : 0;
+      for (let k = i; k < j; k++) { c[k] = acc; acc += ms / (j - i); }
+      i = j;
+    }
+    c[n] = acc;
+    return c;
+  }
   // the characters said after u syllables
   function atUnits(c, u) { let lo = 0, hi = c.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (c[m] <= u) lo = m; else hi = m - 1; } return lo; }
   // syllables a millisecond, learned per voice and speed (a voice's piece: what it said over how long it took)
   let paces = {}; try { paces = JSON.parse(localStorage.getItem("qb-voice-pace") || "{}") || {}; } catch (e) {}
-  const paceKey = (v) => String((v && (v.voiceURI || v.name)) || "") + "@" + rate().toFixed(2);
-  const unitsPerMs = (v) => paces[paceKey(v)] || 0.0046 * rate();
+  // (a network voice's pieces are timed by sayMs, so its pace is that model's ms a real ms, about the speed set)
+  const paceKey = (v) => String((v && (v.voiceURI || v.name)) || "") + "@" + rate().toFixed(2) + (v && v.localService === false ? "#ms" : "");
+  const unitsPerMs = (v) => paces[paceKey(v)] || (v && v.localService === false ? rate() : 0.0046 * rate());
   function learnPace(v, units, ms) {
     if (!(ms > 1500) || !(units > 6)) return;
-    const k = paceKey(v), seen = Math.max(0.001, Math.min(0.02, units / ms));
+    const net = v && v.localService === false, k = paceKey(v), seen = net ? Math.max(0.3, Math.min(4, units / ms)) : Math.max(0.001, Math.min(0.02, units / ms));
     paces[k] = paces[k] ? paces[k] * 0.5 + seen * 0.5 : seen;
     try { localStorage.setItem("qb-voice-pace", JSON.stringify(paces)); } catch (e) {}
   }
@@ -2072,7 +2096,7 @@ const Speech = (() => {
       const u = new SpeechSynthesisUtterance(p.t);
       if (v) { u.voice = v; u.lang = v.lang; }
       u.rate = rate();
-      p.c = sayUnits(p.t);
+      p.c = net ? sayMs(p.t) : sayUnits(p.t);
       const est = () => {
         if (my !== seq || p.done || bounded) return;
         const ms = performance.now() - p.t0 - (heldNow() - p.h0);
@@ -2086,9 +2110,23 @@ const Speech = (() => {
       u.onboundary = (e) => {
         if (my !== seq || (e.name && e.name !== "word")) return;
         bounded = true;
-        if (talk && talk.my === my) { talk.at = performance.now(); talk.words++; }
+        const now = performance.now();
+        if (talk && talk.my === my) { talk.at = now; talk.words++; }
         const ci = e.charIndex || 0, len = e.charLength || (/^\S*/.exec(p.t.slice(ci)) || [""])[0].length;
-        onPos(at(p.at + ci + len));
+        // (15.79) a letter at a time: the voice says when each word starts, and its letters go across the time the
+        // word should take at the pace it has kept between the words before (it showed the whole word at once)
+        if (p.lb != null && ci > p.lb) { const du = p.c[ci] - p.c[p.lb], dt = now - p.lbt; if (du > 0 && dt > 40 && dt < 4000) p.upm = p.upm ? p.upm * 0.6 + (du / dt) * 0.4 : du / dt; }
+        p.lb = ci; p.lbt = now;
+        onPos(at(p.at + ci));
+        const upm = p.upm || unitsPerMs(v), u0 = p.c[ci], end = ci + len, word = p.word = (p.word || 0) + 1;
+        const step = () => {
+          if (my !== seq || p.done || p.word !== word) return;
+          if (held && held.my === seq) { timers.push(setTimeout(step, 60)); return; }
+          const k = Math.min(end, atUnits(p.c, u0 + (performance.now() - now) * upm));
+          if (k > ci) onPos(at(p.at + k));
+          if (k < end) timers.push(setTimeout(step, 30));
+        };
+        step();
       };
       u.onend = () => {
         if (my !== seq) return;
@@ -2176,6 +2214,9 @@ const Speech = (() => {
   function speakPlugin(v, said, at, onPos, onEnd, my, fail) {
     const pieces = piecesFor(said, v.plugin.first);
     if (!pieces.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return; }
+    // (15.79) its place comes from its sound: while a piece is still being made (Chatterbox takes a second or two for its
+    // first), followVoice doesn't move the text on at a guessed pace, which showed words before any were said
+    tracking = my;
     if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; actx = new AC(); }
     const ac = actx; if (ac.state === "suspended") ac.resume().catch(() => {});
     if (!meter) { meter = ac.createAnalyser(); meter.fftSize = 1024; meter.connect(ac.destination); }
@@ -2412,6 +2453,9 @@ function speechScript(text, raw) {
   // what's never said: the power, superpower and bonus-value marks, quoted pronunciations still on screen. (15.73: the
   // superpower mark "(#)" mid-sentence was given to the voice, which paused at its brackets as if at a comma)
   for (const re of [/\(\*\)|\(\+\)|\(#\)/g, /\((?:“[^”]*”|"[^"]*")\)/g]) { re.lastIndex = 0; while ((m = re.exec(text))) put(m.index, m.index + m[0].length, " "); }
+  // (15.79) an accent printed beside its letter ("R¨ok stone" was "R double dot ok stone"): said as the letter with it
+  const FM = typeof fmtOf === "function" ? fmtOf(text) : null;
+  if (FM) for (let i = 0; i < text.length; i++) if (FM.disp[i] === "") { let j = i; while (j < text.length && FM.disp[j] === "") j++; if (FM.disp[j]) put(i, j + 1, FM.disp[j]); i = j; }
   // math, formulas, sub- and superscripts, one token at a time; a short run of letters beside an operator is a
   // variable or two ("PV = nRT", "a = bq + r") and is spelled out
   const TOK = /\S+/g, toks = [];
@@ -2424,9 +2468,32 @@ function speechScript(text, raw) {
   }
   const OP = /^(?:=+|[+×÷<>≤≥≠≈−-]|:=)$/, NOT_VAR = new Set("is of to in on at by or an and the for as if so be we it no not any all its".split(" "));
   const gcd = (x, y) => (y ? gcd(y, x % y) : x);
+  // (15.79) superscripts and subscripts from the record (a<sup>2</sup>): a token's characters in them become the
+  // superscript and subscript characters sayMath reads ("a squared plus b squared"), or ^( ) round anything else
+  const SUPC = { 0: "⁰", 1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶", 7: "⁷", 8: "⁸", 9: "⁹", "+": "⁺", "-": "⁻", "−": "⁻", n: "ⁿ", i: "ⁱ", x: "ˣ" };
+  const SUBC = { 0: "₀", 1: "₁", 2: "₂", 3: "₃", 4: "₄", 5: "₅", 6: "₆", 7: "₇", 8: "₈", 9: "₉", "+": "₊", "-": "₋" };
+  const coreOf = (t) => {
+    if (!FM) return { core: t.core, sup: false };
+    let out = "", run = "", sup = false;
+    const flush = () => { if (!run) return; out += [...run].every((c) => SUPC[c]) ? [...run].map((c) => SUPC[c]).join("") : "^(" + run + ")"; run = ""; };
+    for (let k = 0; k < t.core.length; k++) {
+      const f = FM.flags[t.a + k] || 0, c = t.core[k];
+      if (f & FMT_BIT.sup) { run += c; sup = true; continue; }
+      flush(); out += f & FMT_BIT.sub && SUBC[c] ? SUBC[c] : c;
+    }
+    flush();
+    return { core: out, sup };
+  };
+  // what a superscript says when sayMath doesn't take the whole token: "squared", "cubed", "to the n"
+  const supWords = (core) => core.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿⁱˣ]+|\^\(([^)]*)\)/g, (x, inner) => {
+    const e = inner != null ? inner : [...x].map((c) => Object.keys(SUPC).find((k) => SUPC[k] === c) || c).join("");
+    return e === "2" ? " squared " : e === "3" ? " cubed " : " to the " + e.replace(/^[−-]/, "negative ") + " ";
+  });
   toks.forEach((t, k) => {
     if (!t.core) return;
-    let say = sayMath(t.core);
+    const cf = coreOf(t);
+    let say = sayMath(cf.core);
+    if (!say && cf.sup) say = supWords(cf.core).replace(/\s+/g, " ").trim();
     const fr = /^(\d{1,3})\/(\d{1,3})$/.exec(t.core);
     if (fr && !/^(9\/11|24\/7|50\/50|20\/20)$/.test(t.core)) {
       // a time signature ("in 6/8", "3/4 time") is said "six eight"; a fraction "one half", "4 over 3"
@@ -2442,6 +2509,14 @@ function speechScript(text, raw) {
   });
   // single symbols and Greek letters anywhere
   for (let i = 0; i < text.length; i++) if (SAY_SYM[text[i]] && free(i, i + 1)) put(i, i + 1, " " + SAY_SYM[text[i]] + " ");
+  // (15.79) symbols a voice would say by name ("you slash made me love"): a slash between words is a line break in a
+  // quoted poem, a short pause; the rest are left unsaid
+  for (let i = 0; i < text.length; i++) {
+    if (!free(i, i + 1)) continue;
+    const c = text[i];
+    if (c === "/" && /\s/.test(text[i - 1] || "") && /\s/.test(text[i + 1] || "")) put(i, i + 1, ",");
+    else if (/[\\|*#~_•·¨´ˆ˜{}^@¶§†‡]/.test(c)) put(i, i + 1, " ");
+  }
   spans.sort((x, y) => x.a - y.a);
   let spoken = "", last = 0;
   const map = [];
@@ -3422,8 +3497,9 @@ async function openReviewViewer(items) {
       try { parts = JSON.parse(q.parts_sanitized || "[]"); } catch {}
       try { answers = JSON.parse(q.answers_sanitized || "[]"); } catch {}
       try { raws = JSON.parse(q.answers || "[]"); } catch {}
-      const body = `<div class="qcard-text">${escapeHtml(q.leadin_sanitized || "")}</div>` +
-        parts.map((pt, k) => `<div class="qcard-part">[${bonusPartValues(q).values[k] || 10}] ${escapeHtml(pt)}<br><span class="ans">ANSWER: ${answerLineHtml(raws[k], answers[k] || "")}</span></div>`).join("");
+      const fb = fmtBonusTexts(q);
+      const body = `<div class="qcard-text">${fb.leadin}</div>` +
+        parts.map((pt, k) => `<div class="qcard-part">[${bonusPartValues(q).values[k] || 10}] ${fb.parts[k] != null ? fb.parts[k] : escapeHtml(pt)}<br><span class="ans">ANSWER: ${answerLineHtml(raws[k], answers[k] || "")}</span></div>`).join("");
       return qcardHtml({
         compact: false, question: q, tagsWhere: "starred", category: q.category, subcategory: q.subcategory, year: q.set_year, difficulty: q.difficulty,
         attrs: dataAttrs,
@@ -4375,6 +4451,9 @@ function updateModeFields() {
     el.querySelectorAll(".filter-body").forEach((b) => { b.inert = isCustom; });
   });
   if (packetMode || isCustom) closeCategoryOverlay();
+  // (15.79) a list's page (Starred, Review, a plugin's list) plays the list: the filters that pick questions are left
+  // off its Setup (ui.css .fp-list), not just greyed, so only what changes how it's played is there to choose
+  $("#filters-panel")?.classList.toggle("fp-list", isCustom);
   $$(".packet-disable").forEach((el) => el.classList.toggle("filter-disabled", packetMode));
   clampDualRange($("#year-min"), $("#year-max"));
   ["#year-min", "#year-max", "#filter-powermark", "#filter-starred"].forEach((sel) => {
@@ -6651,7 +6730,9 @@ function tossupText(q) {
   text = applyNoteFilter(text, q.question);   // notes first: the HTML locates them in the unstripped text
   if (state.settings.hidePronunciations) text = stripPronunciations(text);
   text = window.QB?.applyTextTransforms?.(text, { type: "tossup", question: q }) ?? text;
-  return { powerIdx: text.indexOf("(*)"), full: text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "") };
+  const full = text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "");
+  fmtSource(full, q.question);
+  return { powerIdx: text.indexOf("(*)"), full };
 }
 // the tossup next (a list's or a review's next, the set's next, else the first fresh one fetched ahead): its opening
 // made now (Speech.warm)
@@ -6691,14 +6772,18 @@ function bonusDisplay(q) {
     let s = p || `Part ${i + 1}`;
     s = applyNoteFilter(s, partsHtml[i]);
     if (state.settings.hidePronunciations) s = stripPronunciations(s);
-    return window.QB?.applyTextTransforms?.(s, { type: "bonus-part", question: q, part: i }) ?? s;
+    s = window.QB?.applyTextTransforms?.(s, { type: "bonus-part", question: q, part: i }) ?? s;
+    fmtSource(s, partsHtml[i], true);
+    return s;
   });
+  fmtSource(leadin, q.leadin, true);
   return { leadin, parts, texts };
 }
 
 function renderTossup(q) {
   setReadHidden(Speech.on() && (state.settings.readHide || !!pageRules().readHide));
   const { displayText, prePowerEnd } = tossupDisplay(q);
+  fmtSource(displayText, q.question);
   state.currentDisplayText = displayText;
   { const st = pageRules().stops; let a = null; try { a = st ? st(q, displayText) : null; } catch (e) { console.error(e); } state._pageStops = Array.isArray(a) ? a.filter((i) => i > 0).sort((x, y) => x - y) : null; }
 
@@ -6823,11 +6908,11 @@ function readBonusText(el, text, done, kind) {
   const q = state.currentQuestion;
   // r.text: what it reads (retextLive swaps it mid-read when notes / pronunciations are switched)
   const r = { el, text, idx: 0, last: 0, raf: 0, done, kind: kind || "part" };
-  const paint = r.paint = () => { el.innerHTML = '<span class="revealed">' + escapeHtml(r.text.slice(0, r.idx)) + '</span><span class="unrevealed" aria-hidden="true">' + escapeHtml(textShape(r.text.slice(r.idx))) + "</span>"; };
+  const paint = r.paint = () => { el.innerHTML = '<span class="revealed">' + fmtText(r.text, 0, r.idx) + '</span><span class="unrevealed" aria-hidden="true">' + fmtText(r.text, r.idx, r.text.length, { shape: true }) + "</span>"; };
   r.finish = (callDone = true) => {
     if (r.raf) cancelAnimationFrame(r.raf); r.raf = 0;
     if (state._bonusReader === r) state._bonusReader = null;
-    el.innerHTML = '<span class="revealed">' + escapeHtml(r.text) + "</span>";   // a span, so a hidden read (read-hidden) shows its box
+    el.innerHTML = '<span class="revealed">' + fmtText(r.text, 0, r.text.length) + "</span>";   // a span, so a hidden read (read-hidden) shows its box
     if (callDone && r.done) { const d = r.done; r.done = null; d(); }
   };
   const step = (t) => {
@@ -7473,6 +7558,113 @@ function buzzMarkHtml(text, i, cls, atPower) {
   const before = /\S/.test(text[i - 1] || ""), after = !before && (atPower || /\S/.test(text[i] || ""));
   return (before ? " " : "") + '<span class="buzz-mark' + (cls ? " " + cls : "") + '">(#)</span>' + (after ? " " : "");
 }
+// ── (15.79) The question's own formatting (brief §3.1): italics, underline, superscripts and subscripts, and the
+// record's bold, drawn over the plain text the reader works in, a character at a time, so every position (a buzz, the
+// power mark, where the voice is) stays the plain text's. The record's bold in a tossup is its power: it shows once the
+// question is over, with the reader's own (showPower). The HTML is lined up with the text the reader shows (notes,
+// pronunciations and the power mark may be gone from it) by matching characters, quotes of either kind alike.
+// Also the accents some records carry beside their letter ("R¨ok", "Ciss´e", 173 tossups) are drawn on the letter. ──
+const FMT_BIT = { b: 1, i: 2, u: 4, sup: 8, sub: 16 };
+const _fmtSrc = new Map(), _fmtMemo = new Map();
+// what a text was made from (its record's HTML field); bonus text shows the record's bold all along
+function fmtSource(text, html, boldAlways) {
+  if (!text || !html || !/<\/?(?:b|i|u|sup|sub)>|&(?:lt|gt|amp|quot|#39);|[\u201c\u201d\u2018\u2019]/i.test(html)) return;
+  const was = _fmtSrc.get(text);
+  if (was && was.html === html && was.boldAlways === !!boldAlways) return;
+  if (_fmtSrc.size > 400) _fmtSrc.delete(_fmtSrc.keys().next().value);
+  _fmtSrc.set(text, { html, boldAlways: !!boldAlways });
+  _fmtMemo.delete(text);
+}
+function htmlChars(html) {
+  const cs = [], fs = []; const open = { b: 0, i: 0, u: 0, sup: 0, sub: 0 };
+  const ENT = { lt: "<", gt: ">", amp: "&", quot: '"', "#39": "'", nbsp: " " };
+  for (let k = 0; k < html.length;) {
+    if (html[k] === "<") { const m = /^<(\/?)(b|i|u|sup|sub)>/i.exec(html.slice(k, k + 7)); if (m) { const t = m[2].toLowerCase(); open[t] = Math.max(0, open[t] + (m[1] ? -1 : 1)); k += m[0].length; continue; } }
+    let ch = html[k], step = 1;
+    if (ch === "&") { const m = /^&(lt|gt|amp|quot|#39|nbsp);/.exec(html.slice(k, k + 7)); if (m) { ch = ENT[m[1]]; step = m[0].length; } }
+    let f = 0; for (const t in open) if (open[t]) f |= FMT_BIT[t];
+    cs.push(ch); fs.push(f); k += step;
+  }
+  return { cs, fs };
+}
+// (quotes of either kind alike, and a letter alike with or without its accent: "Heiorún" in the record, "Heiorun" shown)
+const _qEq = (a, b) => a === b || ("'\u2018\u2019`".includes(a) && "'\u2018\u2019`".includes(b)) || ('"\u201c\u201d'.includes(a) && '"\u201c\u201d'.includes(b))
+  || (!!a && !!b && a > "\u007f" !== b > "\u007f" && /\p{L}/u.test(a) && a.normalize("NFD")[0] === b.normalize("NFD")[0]);
+// a spacing accent just before its letter, and what that letter is with it
+const ACC_MARK = { "\u00a8": "\u0308", "\u00b4": "\u0301", "`": "\u0300", "\u02c6": "\u0302", "\u02dc": "\u0303" };
+function fmtOf(text) {
+  text = String(text || "");
+  if (_fmtMemo.has(text)) return _fmtMemo.get(text);
+  const n = text.length, flags = new Uint8Array(n), disp = new Array(n);
+  let any = false;
+  const src = _fmtSrc.get(text);
+  if (src) {
+    const { cs, fs } = htmlChars(src.html);
+    // two characters agreeing in a row, so a skip doesn't latch onto a lone space
+    const okAt = (i, j) => _qEq(cs[i], text[j]) && (j + 1 >= n || i + 1 >= cs.length || _qEq(cs[i + 1], text[j + 1]));
+    let i = 0, j = 0;
+    while (i < cs.length && j < n) {
+      if (_qEq(cs[i], text[j])) { flags[j] = fs[i]; if (cs[i] !== text[j]) disp[j] = cs[i]; i++; j++; continue; }
+      if (cs[i] === "\u2026" && text.startsWith("...", j)) { flags[j] = flags[j + 1] = flags[j + 2] = fs[i]; i++; j += 3; continue; }
+      let si = -1, sj = -1;
+      for (let k = 1; k <= 600 && i + k < cs.length; k++) if (okAt(i + k, j)) { si = k; break; }
+      for (let k = 1; k <= 600 && j + k < n; k++) if (okAt(i, j + k)) { sj = k; break; }
+      if (si > 0 && (sj < 0 || si <= sj)) i += si;
+      else if (sj > 0) { for (let k = 0; k < sj; k++) flags[j + k] = fs[i] & ~FMT_BIT.b; j += sj; }
+      else { i++; j++; }
+    }
+    any = true;
+    src.flags = flags;
+  }
+  // "R¨ok" → "Rök": the accent draws as nothing and its letter with it ("´'e", a diaeresis written \"e, likewise)
+  const AR = /([\u00a8\u00b4`\u02c6\u02dc])(['"]?)([A-Za-z])/g; let m;
+  while ((m = AR.exec(text))) {
+    if (m[1] === "`" && !/[A-Za-z]/.test(text[m.index - 1] || "")) continue;   // a backtick that opens a quote
+    const mark = m[2] && m[1] === "\u00b4" ? "\u0308" : ACC_MARK[m[1]];
+    for (let k = 0; k < m[0].length - 1; k++) disp[m.index + k] = "";
+    disp[m.index + m[0].length - 1] = (m[3] + mark).normalize("NFC");
+    any = true;
+  }
+  const out = any ? { flags, disp, boldAlways: !!(src && src.boldAlways) } : null;
+  if (_fmtMemo.size > 400) _fmtMemo.delete(_fmtMemo.keys().next().value);
+  _fmtMemo.set(text, out);
+  return out;
+}
+const _fmtWrap = (s, f) => { let o = "", c = ""; for (const t of ["b", "i", "u", "sup", "sub"]) if (f & FMT_BIT[t]) { o += "<" + t + ">"; c = "</" + t + ">" + c; } return o + s + c; };
+// text[a, b) as HTML: escaped, with its formatting (bold: the record's bold too; shape: the unread stand-in, its letters
+// "·" but sized as they'll show)
+function fmtText(text, a, b, o) {
+  text = String(text || "");
+  const F = fmtOf(text), shape = !!(o && o.shape);
+  if (!F) return escapeHtml(shape ? textShape(text.substring(a, b)) : text.substring(a, b));
+  const bold = !shape && !!((o && o.bold) || F.boldAlways);
+  let out = "", run = "", cur = 0;
+  for (let j = a; j < b; j++) {
+    let ch = F.disp[j] !== undefined ? F.disp[j] : text[j];
+    if (shape && ch) ch = textShape(ch);
+    const f = bold ? F.flags[j] : F.flags[j] & ~FMT_BIT.b;
+    if (f !== cur) { if (run) out += _fmtWrap(run, cur); run = ""; cur = f; }
+    run += escapeHtml(ch);
+  }
+  if (run) out += _fmtWrap(run, cur);
+  return out;
+}
+// a whole question's text, formatted (the question cards, history). A tossup's: its power in bold up to the (*), the
+// way colorizePowerMarks shows it, split in the plain text so no tag is cut in two
+function fmtWhole(text, html, boldAlways) { fmtSource(text, html, boldAlways); return fmtText(text, 0, String(text || "").length, { bold: true }); }
+function fmtTossupHtml(q) {
+  const text = String((q && q.question_sanitized) || ""); fmtSource(text, q && q.question);
+  const i = text.indexOf("(*)"), mark = '<span class="power-mark-inline">(*)</span>';
+  if (i < 0) return fmtText(text, 0, text.length);
+  return '<strong class="pre-power">' + fmtText(text, 0, i) + "</strong>" + mark + fmtText(text, i + 3, text.length).replace(/\(\*\)/g, mark);
+}
+// a bonus's leadin and parts, formatted
+function fmtBonusTexts(q) {
+  let parts = [], html = [];
+  try { parts = JSON.parse((q && q.parts_sanitized) || "[]"); } catch (e) {}
+  try { html = JSON.parse((q && q.parts) || "[]"); } catch (e) {}
+  return { leadin: fmtWhole((q && q.leadin_sanitized) || "", q && q.leadin, true), parts: parts.map((p, k) => fmtWhole(p || "", html[k], true)) };
+}
 function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) {
   const buzzMarks = marks || state.buzzMarks || [];
   // Once the question is over (answered, or read out with nobody buzzing) the
@@ -7493,12 +7685,12 @@ function formatQuestionText(text, revealedUpTo, _prePowerEnd, marks, showPower) 
     }
     inserts.sort((a, b) => a.i - b.i || a.rank - b.rank);
     let out = "", last = 0;
-    for (const m of inserts) { out += escapeHtml(text.substring(last, m.i)) + m.html; last = m.i; }
-    out += escapeHtml(text.substring(last, segEnd));
+    for (const m of inserts) { out += fmtText(text, last, m.i, { bold: showPower }) + m.html; last = m.i; }
+    out += fmtText(text, last, segEnd, { bold: showPower });
     return out;
   }
   const pre = withMarks(revealedUpTo);
-  const post = escapeHtml(textShape(text.substring(revealedUpTo)));
+  const post = fmtText(text, revealedUpTo, text.length, { shape: true });
   return `<span class="revealed">${pre}</span><span class="unrevealed" aria-hidden="true">${post}</span>`;
 }
 
@@ -10222,10 +10414,11 @@ function qhDetailHtml(q, type) {
     try { answers = JSON.parse(q.answers_sanitized || "[]"); } catch (e) {}
     try { raws = JSON.parse(q.answers || "[]"); } catch (e) {}
     try { parts = JSON.parse(q.parts_sanitized || "[]"); } catch (e) {}
-    return '<div class="qh-qtext">' + escapeHtml(q.leadin_sanitized || "") + "</div>" +
-      parts.map((p, k) => '<div class="qh-part">[' + (bonusPartValues(q).values[k] || 10) + '] ' + escapeHtml(p) + '<br><span class="qh-ans">ANSWER: ' + answerLineHtml(raws[k], answers[k] || "") + "</span></div>").join("");
+    const fb = fmtBonusTexts(q);
+    return '<div class="qh-qtext">' + fb.leadin + "</div>" +
+      parts.map((p, k) => '<div class="qh-part">[' + (bonusPartValues(q).values[k] || 10) + '] ' + (fb.parts[k] != null ? fb.parts[k] : escapeHtml(p)) + '<br><span class="qh-ans">ANSWER: ' + answerLineHtml(raws[k], answers[k] || "") + "</span></div>").join("");
   }
-  return '<div class="qh-qtext">' + escapeHtml(q.question_sanitized || "") + "</div>" +
+  return '<div class="qh-qtext">' + fmtWhole(q.question_sanitized || "", q.question) + "</div>" +
     '<div class="qh-ans">Answer: ' + answerLineHtml(q.answer, q.answer_sanitized || "") + "</div>";
 }
 let _statsRedraw = null;
@@ -13967,7 +14160,7 @@ function renderSearchResult(q, where) {
   if (isTossup) {
     title = escapeHtml(primaryAnswerText(q.answer_sanitized || "") || "?");
     kind = "Tossup" + diff;
-    body = `<div class="qcard-text">${colorizePowerMarks(escapeHtml(q.question_sanitized || ""))}</div>` +
+    body = `<div class="qcard-text">${fmtTossupHtml(q)}</div>` +
       `<div class="qcard-answer"><span class="ra-k">Answer</span> <span class="ans-toggle"><span class="ans">${answerLineHtml(q.answer, q.answer_sanitized || "?")}</span></span></div>`;
   } else {
     let parts = [], answers = [], rawAnswers = [];
@@ -13976,9 +14169,10 @@ function renderSearchResult(q, where) {
     try { rawAnswers = JSON.parse(q.answers || "[]"); } catch {}
     title = answers.map((a) => escapeHtml(primaryAnswerText(a))).filter(Boolean).join(" / ") || "?";
     kind = `Bonus · ${parts.length} part${parts.length === 1 ? "" : "s"}` + diff;
-    body = `<div class="qcard-text">${escapeHtml(q.leadin_sanitized || "")}</div>` +
+    const fb = fmtBonusTexts(q);
+    body = `<div class="qcard-text">${fb.leadin}</div>` +
       parts.map((p, i) =>
-        `<div class="qcard-part">[${bonusPartValues(q).values[i] || 10}] ${escapeHtml(p)}<br><span class="ans-toggle"><span class="ans">ANSWER: ${answerLineHtml(rawAnswers[i], answers[i] || "")}</span></span></div>`).join("");
+        `<div class="qcard-part">[${bonusPartValues(q).values[i] || 10}] ${fb.parts[i] != null ? fb.parts[i] : escapeHtml(p)}<br><span class="ans-toggle"><span class="ans">ANSWER: ${answerLineHtml(rawAnswers[i], answers[i] || "")}</span></span></div>`).join("");
   }
   const src = q.set_name ? q.set_name + (q.packet_number ? " · packet " + q.packet_number : "") : "";
   return qcardHtml({
@@ -14563,7 +14757,8 @@ async function renderStarredTab() {
   const actions = (window.QB && window.QB.getStarredActions) ? window.QB.getStarredActions() : [];
   // The registered starred actions (Flashcards, Coach) play tossups only.
   const hasTossups = items.some((it) => (it.type || "tossup") === "tossup");
-  const actionBtns = actions.map((a, i) => '<button class="btn btn-sm" data-star-action="' + i + '"' + (hasTossups ? "" : " disabled") + ">" + escapeHtml(a.label) + "</button>").join("");
+  // (15.79) the same size as Play beside them (they were the small buttons, a row of two heights)
+  const actionBtns = actions.map((a, i) => '<button class="btn" data-star-action="' + i + '"' + (hasTossups ? "" : " disabled") + ">" + escapeHtml(a.label) + "</button>").join("");
   c.innerHTML =
     '<div class="db-page">' +
       '<div class="db-toolbar">' +
