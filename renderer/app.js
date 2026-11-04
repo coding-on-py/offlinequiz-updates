@@ -1736,7 +1736,7 @@ const Sound = {
 const Speech = (() => {
   const synthOk = typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
   const audioOk = !!(window.AudioContext || window.webkitAudioContext);
-  let seq = 0;
+  let seq = 0, clipAudio = null;   // (a voice's sample line playing, Speech.preview)
   const voices = () => { if (!synthOk) return []; try { return window.speechSynthesis.getVoices() || []; } catch (e) { return []; } };
   const english = (v) => /^en\b|^en[-_]/i.test(v.lang || "");
   const google = () => voices().filter((v) => english(v) && /^Google\b/i.test(v.name || "")).sort((a, b) => (/US/.test(b.name) - /US/.test(a.name)) || String(a.name).localeCompare(String(b.name)));
@@ -1751,12 +1751,12 @@ const Speech = (() => {
   // where they are as they read, so the text follows them word for word
   const natural = () => voices().filter((v) => english(v) && !/^Google\b/i.test(v.name || "") && /natural|neural|premium|enhanced/i.test(v.name || ""))
     .sort((a, b) => (/US/.test(b.lang) - /US/.test(a.lang)) || String(a.name).localeCompare(String(b.name)));
-  // what the Voice panel offers: Google's English voices, the natural ones, then plugins' (with the browser's own voice
-  // first where there's none of those, so it can still be picked)
-  const choices = () => {
-    const g = google().concat(natural()), pv = pluginVoices();
-    return pv.length && !g.length && synthOk ? [{ voiceURI: "", name: "Built-in voice", builtin: true }].concat(pv) : g.concat(pv);
-  };
+  // what the Voice panel offers: the system voice first (15.77: the computer's own, as set in its settings), then
+  // Google's English voices, the natural ones, then plugins'
+  const SYSTEM = { voiceURI: "system", name: "System voice", system: true };
+  const choices = () => (synthOk ? [SYSTEM] : []).concat(google(), natural(), pluginVoices());
+  // the computer's own voice: its default where that reads English, else the best English one it has
+  function systemVoice() { return voices().find((v) => v.default && english(v)) || fallback(); }
   function fallback() {
     const score = (v) => (bad.has(v.voiceURI) ? -100 : 0) + (/natural|neural|online/i.test(v.name) ? 40 : 0) + (/enhanced|premium|siri/i.test(v.name) ? 30 : 0) +
       (/^(samantha|ava|allison|susan|daniel|karen|moira|serena|tom|alex)\b/i.test(v.name) ? 10 : 0) + (/en[-_]US/i.test(v.lang) ? 5 : 0) + (v.default ? 2 : 0);
@@ -1769,6 +1769,7 @@ const Speech = (() => {
   const bad = new Set();
   function voice() {
     const want = state.settings.voice || "";
+    if (want === "system") { const sv = systemVoice(); if (sv && !bad.has(sv.voiceURI)) return sv; }
     if (want.startsWith("plugin:") && !bad.has(want)) {
       const p = pluginVoices().find((v) => v.voiceURI === want);
       if (p && p.plugin.ready()) return p;
@@ -1822,6 +1823,7 @@ const Speech = (() => {
     if (waiting) { waiting = 0; paintWait(); }
     if (held) { held = null; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
     playing.forEach((s) => { try { s.stop(); } catch (e) {} }); playing = [];
+    if (clipAudio) { try { clipAudio.a.onended = clipAudio.a.onerror = null; clipAudio.a.pause(); } catch (e) {} URL.revokeObjectURL(clipAudio.url); clipAudio = null; }
     timers.forEach(clearTimeout); timers = [];
     // a plugin's voice stops making the pieces that were to come (15.73: one slow to make kept the next question waiting)
     for (const pv of (window.QB && window.QB._voices) || []) if (pv.cancel) pv.cancel();
@@ -2254,16 +2256,39 @@ const Speech = (() => {
     const pv = pluginVoices().find((x) => x.voiceURI === uri);
     if (pv) {
       const go = () => { if (my === seq) speakPlugin(pv, SAMPLE, (k) => k, () => {}, end, my, end); };
-      if (pv.plugin.ready()) go(); else { prepare(pv); pv.plugin.load().then(go, end); }
+      const live = () => { if (my !== seq) return; if (pv.plugin.ready()) go(); else { prepare(pv); pv.plugin.load().then(go, end); } };
+      // (15.77) the line made ahead, which plays at once (kept by its plugin); made now where there's none
+      Promise.resolve(pv.plugin.clip ? pv.plugin.clip(pv.vid) : null).then((b) => { if (my !== seq) return; if (b) playClip(b, my, end, live); else live(); }, live);
       return true;
     }
     if (!synthOk) { end(); return false; }
-    const v = voices().find((x) => x.voiceURI === uri) || fallback();
+    const v = uri === "system" ? systemVoice() : voices().find((x) => x.voiceURI === uri) || fallback();
     const u = new SpeechSynthesisUtterance(SAMPLE);
     if (v) { u.voice = v; u.lang = v.lang; }
     u.rate = rate(); u.onend = end; u.onerror = end;
     try { window.speechSynthesis.speak(u); } catch (e) { end(); return false; }
     return true;
+  }
+  // a sample line made ahead, at the voice speed (the browser keeps its pitch); otherwise() if it won't play
+  function playClip(bytes, my, end, otherwise) {
+    // at its own speed, through the audio already set up (a media player takes a moment to start the first time)
+    if (audioOk && Math.abs(rate() - 1) < 0.03) {
+      if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; actx = new AC(); }
+      const ac = actx; if (ac.state === "suspended") ac.resume().catch(() => {});
+      ac.decodeAudioData(bytes.slice(0)).then((buf) => {
+        if (my !== seq) return;
+        const src = ac.createBufferSource(); src.buffer = buf; src.connect(ac.destination);
+        src.onended = () => { if (my === seq) end(); };
+        src.start(); playing.push(src);
+      }, () => { if (my === seq) otherwise(); });
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: "audio/webm" })), a = new Audio(url);
+    const done = (ok) => { if (clipAudio && clipAudio.a === a) clipAudio = null; URL.revokeObjectURL(url); if (my !== seq) return; if (ok) end(); else otherwise(); };
+    clipAudio = { a, url };
+    a.preservesPitch = true; a.playbackRate = Math.max(0.5, Math.min(2, rate()));
+    a.onended = () => done(true); a.onerror = () => done(false);
+    a.play().catch(() => done(false));
   }
   // stopped (its button, closing the panel, a question coming up): onDone too, so its button never stays on Stop
   function stopPreview() { if (previewing) { const d = previewing.done; previewing = null; stop(); if (d) d(); } }
@@ -5391,7 +5416,7 @@ document.addEventListener("click", (e) => {
 const _moreShown = new Map();
 function limitList(listEl, itemSel, key, first = 10, step = 25) {
   if (!listEl || !listEl.parentNode) return;
-  const items = [...listEl.querySelectorAll(itemSel)];
+  let items = [...listEl.querySelectorAll(itemSel)];
   const isTable = listEl.tagName === "TABLE";
   let foot = isTable ? listEl.nextElementSibling : listEl.lastElementChild;
   if (!foot || !foot.classList.contains("qb-more")) {
@@ -5420,6 +5445,9 @@ function limitList(listEl, itemSel, key, first = 10, step = 25) {
     paint();
     if (act === "less") foot.scrollIntoView({ block: "nearest" });
   };
+  // (15.77) rows taken out on this side (a deleted session): the count says so at once, not when the server answers
+  const all = items.slice();
+  listEl._qbMore = { drop: (els) => { items = items.filter((it) => !els.includes(it)); paint(); }, undo: () => { items = all.filter((it) => it.isConnected); paint(); } };
   paint();
 }
 
@@ -5550,17 +5578,18 @@ $("#opt-read-hide")?.addEventListener("change", (e) => {
 // dropdown, whose menu the row under it showed through
 function fillVoices() {
   const box = document.getElementById("vp-voices"); if (!box) return;
-  const vs = Speech.choices(), want = state.settings.voice || "", cur = vs.some((v) => v.voiceURI === want) ? want : (vs[0] ? vs[0].voiceURI : "");
+  // the one that reads is shown picked: the one chosen, or (none chosen yet) the one it falls back to
+  const vs = Speech.choices(), want = state.settings.voice || "", now = Speech.voice(), cur = vs.some((v) => v.voiceURI === want) ? want : now && vs.some((v) => v.voiceURI === now.voiceURI) ? now.voiceURI : (vs[0] ? vs[0].voiceURI : "");
   const plainName = (n) => String(n).replace(/^Microsoft\s+/i, "").replace(/\s+Online\b.*?\)/i, "").replace(/\s+-\s+English\s+\((.+?)\)$/i, (m, c) => ", " + c.replace("United States", "US").replace("United Kingdom", "UK"));
-  const label = (v) => /^Microsoft\b/i.test(v.name || "") ? plainName(v.name) : v.plugin ? String(v.name).replace(new RegExp("^" + String(v.plugin.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ",\\s*"), "") : v.builtin ? String(v.name) : String(v.name).replace(/^Google\s+/i, "").replace(/\s+(Female|Male)$/i, (m, g) => ", " + g.toLowerCase());
+  const label = (v) => /^Microsoft\b/i.test(v.name || "") ? plainName(v.name) : v.plugin ? String(v.name).replace(new RegExp("^" + String(v.plugin.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ",\\s*"), "") : v.system ? String(v.name) : String(v.name).replace(/^Google\s+/i, "").replace(/\s+(Female|Male)$/i, (m, g) => ", " + g.toLowerCase());
   const groups = [];
-  const groupOf = (v) => v.plugin ? v.plugin.name : v.builtin ? "This browser" : /^Google\b/i.test(v.name) ? "Google" : /^Microsoft\b/i.test(v.name) ? "Microsoft, natural" : "This computer";
+  const groupOf = (v) => v.plugin ? v.plugin.name : v.system ? "" : /^Google\b/i.test(v.name) ? "Google" : /^Microsoft\b/i.test(v.name) ? "Microsoft, natural" : "This computer";
   for (const v of vs) { const g = groupOf(v); let G = groups.find((x) => x.g === g); if (!G) groups.push(G = { g, vs: [] }); G.vs.push(v); }
   // a few of each group (and the one picked), the rest behind More (15.73: Kokoro has 28)
   const FEW = 3;
   box.innerHTML = groups.map((G) => {
     const open = _vvOpen.has(G.g), shown = open ? G.vs : G.vs.filter((v, i) => i < FEW || v.voiceURI === cur), rest = G.vs.length - shown.length;
-    return (groups.length > 1 ? '<div class="vv-h">' + escapeHtml(G.g) + "</div>" : "") + shown.map((v) => {
+    return (groups.length > 1 && G.g ? '<div class="vv-h">' + escapeHtml(G.g) + "</div>" : "") + shown.map((v) => {
       const on = v.voiceURI === cur, name = label(v);
       return '<div class="vv-row" role="radio" aria-checked="' + on + '" tabindex="' + (on ? 0 : -1) + '" data-v="' + escapeHtml(v.voiceURI) + '"><span class="vv-dot" aria-hidden="true"></span><span class="vv-name">' + escapeHtml(name) + "</span>" +
         '<button type="button" class="btn btn-ghost btn-icon vv-play" data-play="' + escapeHtml(v.voiceURI) + '" aria-label="Hear ' + escapeHtml(name) + '" aria-pressed="false" title="Hear it">' + VV_PLAY + "</button></div>";
@@ -5569,6 +5598,8 @@ function fillVoices() {
   }).join("");
   paintPreview();
   syncVoiceRow();
+  // each plugin voice's sample line, fetched now (kept by its plugin), so its play button plays at once
+  for (const v of vs) if (v.plugin && v.plugin.clip) v.plugin.clip(v.vid);
 }
 function voiceLocked() { return !!(state.sessionActive && state.currentQuestion && !state.resultAreaVisible && (state.mode === "tossups" || state.mode === "bonuses")); }
 ["question:render", "answer:result", "bonus:result", "session:end", "screen:change"].forEach((ev) => window.QB?.on?.(ev, () => setTimeout(syncVoiceRow, 0)));
@@ -10163,9 +10194,25 @@ function deleteSessionRow(id) {
   const rows = [...document.querySelectorAll("#stats-container .session-row")].filter((r) => r.dataset.session === id);
   // the list keeps the rest as they are, one fewer showing (limitList)
   const showing = [...document.querySelectorAll("#stats-container .session-row:not(.qb-more-hidden)")].length;
+  const had = _moreShown.has("stats:sessions"), was = _moreShown.get("stats:sessions");
   if (showing) _moreShown.set("stats:sessions", Math.max(0, showing - (rows.some((r) => !r.classList.contains("qb-more-hidden")) ? 1 : 0)));
+  // (15.77) the count under the list and the number in its heading change now too, so when the server's totals come
+  // the list has nothing left to change
+  const table = document.querySelector("#stats-container .stats-sessions-table");
+  if (table && table._qbMore) table._qbMore.drop(rows);
+  const head = document.querySelector('#stats-container [data-coll="stats:sessions"] .stats-section-title');
+  const tw = head && document.createTreeWalker(head, NodeFilter.SHOW_TEXT); let tn = tw && tw.nextNode();
+  while (tn && !/\(\d+\)/.test(tn.nodeValue)) tn = tw.nextNode();
+  const count = (d) => { if (tn) tn.nodeValue = tn.nodeValue.replace(/\((\d+)\)/, (m, n) => "(" + Math.max(0, Number(n) + d) + ")"); };
+  count(-1);
   removeOptimistic(rows, () => API.delete("/api/sessions/" + encodeURIComponent(id)), { failText: "Couldn't delete that session. Try again." })
-    .then((ok) => { if (ok) { if (state.statsSessionId === id) state.statsSessionId = null; loadStats(true); refreshReviewBadge(); } });
+    .then((ok) => {
+      if (ok) { if (state.statsSessionId === id) state.statsSessionId = null; loadStats(true); refreshReviewBadge(); return; }
+      // it couldn't be deleted: it's back where it was (with its note), the count and the heading too
+      if (had) _moreShown.set("stats:sessions", was); else _moreShown.delete("stats:sessions");
+      if (table && table._qbMore) table._qbMore.undo();
+      count(1);
+    });
 }
 // what Statistics asks for, as it stands (warmReads fetches the same ahead)
 function statsUrl(sid) {
@@ -10210,6 +10257,8 @@ async function loadStats(preserveScroll = false) {
   const quiet = preserveScroll && !!(container && container.querySelector(".stats-section"));   // a refresh: built out of sight (stageFor)
   if (needsAccount()) { container.innerHTML = accountPanelHtml("Sign in to save your stats and see them here."); return; }
   if (!preserveScroll) container.innerHTML = '<div class="text-muted">Loading stats...</div>';
+  // a fresh look at Statistics shows the first ten again; one fewer after a delete holds only until then (15.77)
+  if (!preserveScroll) _moreShown.delete("stats:sessions");
 
   const sid = state.statsSessionId || null;
   const since = sid ? 0 : statsSinceMs();
@@ -15481,7 +15530,7 @@ async function cloudSyncNow() {
       if (r.pulled) {
         window.QB?.reloadPluginData?.();   // folders, decks, saved words … from the website / other devices
         loadStarredIds();
-        if (document.querySelector("#stats-screen.active")) loadStats();
+        if (document.querySelector("#stats-screen.active")) loadStats(true);   // built out of sight and swapped in (15.77)
         if (document.querySelector("#player-screen.active")) loadPlayer();
       }
     } else if (r) {

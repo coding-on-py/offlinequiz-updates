@@ -824,7 +824,10 @@
           // for what was reading (not those made ahead, o.ahead)
           first: Math.max(0, Number(v.first) || 0), cancel: () => { try { if (v.cancel) v.cancel(); } catch (e) {} },
           // (15.73) a line about how it's doing, for the Voice panel ("" for none): Kokoro when it's slower than speech
-          note: () => { try { return v.note ? String(v.note() || "") : ""; } catch (e) { return ""; } } };
+          note: () => { try { return v.note ? String(v.note() || "") : ""; } catch (e) { return ""; } },
+          // (15.77) clip(id): the voice reading the Voice panel's sample line, made ahead (an ArrayBuffer, or null), so its
+          // play button plays at once
+          clip: (id) => { try { return v.clip ? Promise.resolve(v.clip(id)).catch(() => null) : Promise.resolve(null); } catch (e) { return Promise.resolve(null); } } };
         QB._voices.push(rec);
         const changed = () => { try { QB._emit("voices:changed"); } catch (e) {} };
         subs.push(() => { QB._voices = QB._voices.filter((x) => x !== rec); changed(); });
