@@ -3765,6 +3765,13 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   #stats-screen .page-head #btn-stats-home { order: 1; margin-left: auto; }
   #stats-screen .page-head::after { content: ""; order: 2; flex-basis: 100%; }
   #stats-screen .page-head .top-bar-right > :not(#btn-stats-home) { order: 3; }
+  /* (15.81) the practice pages the same: Voice, Setup and End on their own line, Back up beside the title (it wrapped to
+     a line of its own under them) */
+  #practice-screen .page-head { row-gap: 8px; justify-content: flex-start; }
+  #practice-screen .page-head .top-bar-right { display: contents; }
+  #practice-screen .page-head #btn-home { order: 1; margin-left: auto; }
+  #practice-screen .page-head::after { content: ""; order: 2; flex-basis: 100%; }
+  #practice-screen .page-head .top-bar-right > :not(#btn-home) { order: 3; }
 }
 /* phones: the top bar fits (it pushed the account avatar off the edge) */
 @media (max-width: 560px) {

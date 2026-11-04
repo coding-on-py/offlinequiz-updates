@@ -3619,12 +3619,14 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     if (v) return v;
   }
   // ---- J6 / J7 named prompt and anti-prompt
+  // (15.80) of the prompts a response fits, the one naming most of it, then one with a question of its own: "Central
+  // America" fit "prompt on America" too (its "Central" from the line's other prompt) and got that bare prompt, not
+  // "prompt on Central America … by asking, “What larger transnational region is that a part of?”"
+  const reqN = (f) => f.words.filter((w) => w.kind !== "O").length;
+  const bestPrompt = (fs) => fs.reduce((b, f) => (!b || reqN(f) > reqN(b) || (reqN(f) === reqN(b) && f.ask && !b.ask) ? f : b), null);
   if (!noPrompt) {
-    for (const f of F.prompts) {
-      if (!live(f)) continue;
-      const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, F.promptPool);
-      if (m && m.full && m.cost === 0) return out("prompt", f, "J6");
-    }
+    const hits = F.prompts.filter((f) => { if (!live(f)) return false; const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, F.promptPool); return m && m.full && m.cost === 0; });
+    if (hits.length) return out("prompt", bestPrompt(hits), "J6");
     for (const f of F.antis) {
       if (!live(f)) continue;
       const m = matchForm(f, T, ctx, { fuzzy: false, extraOk: false }, F.promptPool);
@@ -3762,14 +3764,19 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     const ok = c.slots.every((alts) => alts.some((t) => containsWordsLoose(T, t)));
     if (ok && !(c.without && containsRun(T, c.without))) return verdict("accept", { rule: "J10", via: "line", matchedAnswer: c.text });
   }
-  // ---- J11 loose prompt
+  // ---- J11 loose prompt (the closest fit first: fewest extra words, then the most named)
   if (!noPrompt) {
+    const fits = [];
     for (const f of F.prompts.concat(F.antis)) {
       if (!live(f)) continue;
       const m = matchForm(f, T, ctx, { fuzzy: !exact, extraOk }, F.promptPool);
       if (!m || !m.full) continue;
       if (m.cost > 0 && collides(f, T, m, F, opts)) continue;
       if (m.left.length && !extraWordsOk(T, m, opts, f, P.text)) continue;
+      fits.push({ f, left: m.left.length });
+    }
+    if (fits.length) {
+      const min = Math.min(...fits.map((x) => x.left)), f = bestPrompt(fits.filter((x) => x.left === min).map((x) => x.f));
       const anti = F.antis.includes(f);
       const v = out("prompt", f, "J11", anti ? { antiprompt: true } : {});
       if (anti) v.prompt.ask = f.ask || "Can you be less specific?";

@@ -22,6 +22,7 @@ export function computeStats(entries) {
     tossupPowers: 0,
     tossupNegs: 0,
     tossupAvgCelerity: 0,
+    tossupCelerity: 0,
     totalTossupPoints: 0,
     bonusTotalPoints: 0,
     bonusPartsCorrect: 0,
@@ -49,6 +50,7 @@ export function computeStats(entries) {
   let tossupCorrect = 0;
   let totalCelerity = 0;
   let celerityCount = 0;
+  let rightLeft = 0, rightCount = 0;   // (15.81) how much was left to hear when a right answer came
 
   for (const t of tossups) {
     if (t.correct) {
@@ -64,6 +66,7 @@ export function computeStats(entries) {
     if (t.celerity !== null && t.celerity !== undefined) {
       totalCelerity += t.celerity;
       celerityCount++;
+      if (t.correct) { rightLeft += 1 - t.celerity; rightCount++; }
 
       // what the Statistics page reads of each (its zone's count, celerity by difficulty), not the whole answer:
       // 100,000 answers made the overall stats 43 MB
@@ -119,6 +122,9 @@ export function computeStats(entries) {
   if (celerityCount > 0) {
     stats.tossupAvgCelerity = totalCelerity / celerityCount;
   }
+  // celerity as practice shows it (the share of the question still to come at the buzz, right answers only): the
+  // Statistics page showed the share heard, over every buzz, so 92% in practice was 7% there
+  stats.tossupCelerity = rightCount > 0 ? rightLeft / rightCount : 0;
 
   return stats;
 }
@@ -229,6 +235,7 @@ export function emptyStats() {
     tossupPowers: 0,
     tossupNegs: 0,
     tossupAvgCelerity: 0,
+    tossupCelerity: 0,
     totalTossupPoints: 0,
     bonusTotalPoints: 0,
     bonusPartsCorrect: 0,

@@ -2194,13 +2194,13 @@ const Speech = (() => {
     const speed = Math.max(0.5, Math.min(2, rate())), k = madeKey(v, first.t, speed);
     if (made.has(k)) return;
     // ahead: kept when reading stops (the voice's cancel drops only what was being read)
-    made.set(k, Promise.resolve().then(() => v.plugin.synth(first.t, { voice: v.vid, speed, ahead: true })).catch(() => null));
+    made.set(k, Promise.resolve().then(() => v.plugin.synth(first.t, { voice: v.vid, speed: askSpeed(v, speed), ahead: true })).catch(() => null));
     while (made.size > 3) made.delete(made.keys().next().value);
   }
   function synthOf(v, t, speed) {
     const k = madeKey(v, t, speed), p = made.get(k);
-    if (p) { made.delete(k); return p.then((r) => r || v.plugin.synth(t, { voice: v.vid, speed })); }
-    return v.plugin.synth(t, { voice: v.vid, speed });
+    if (p) { made.delete(k); return p.then((r) => r || v.plugin.synth(t, { voice: v.vid, speed: askSpeed(v, speed) })); }
+    return v.plugin.synth(t, { voice: v.vid, speed: askSpeed(v, speed) });
   }
   // ms since the voice last made a sound: 0 while it talks, Infinity if it hasn't (15.70). Paused isn't talking
   function quietFor() {
@@ -2210,6 +2210,47 @@ const Speech = (() => {
       else if (pluginEnd) talkedAt = Math.max(talkedAt, pluginEnd);
     }
     return talkedAt ? Math.max(0, now - talkedAt) : Infinity;
+  }
+  // (15.81) a voice's own speeds stop at 1.35 (Kokoro's model, and Chatterbox's own stretching), so the slider's higher
+  // speeds read no faster than 1.35, and Kokoro's own speed isn't what it's asked: its sounds last whole 25 ms frames,
+  // so 1.2 reads at 1.13, 1.3 at 1.24, and 1.35 jumps to 1.46 as two-frame sounds become one (measured on three
+  // sentences). So it's asked for 1.3 at most, its real speed known (KOKORO), and the rest made up here: the sound
+  // squeezed the way Chatterbox does it (WSOLA: overlapped slices, so the pitch stays) and its word times with it. A
+  // plugin may say the speed it reached (r.speed)
+  const KOKORO = [[0, 0], [1, 1], [1.1, 1.068], [1.2, 1.132], [1.25, 1.18], [1.3, 1.236]];
+  const askSpeed = (v, speed) => (v.plugin.id === "kokoro" ? Math.min(speed, 1.3) : v.plugin.id === "chatterbox" ? Math.max(0.7, Math.min(1.35, speed)) : speed);
+  const reached = (v, ask) => {
+    if (v.plugin.id !== "kokoro" || ask <= 1) return ask;
+    for (let i = 1; i < KOKORO.length; i++) if (ask <= KOKORO[i][0]) { const [a, ea] = KOKORO[i - 1], [b, eb] = KOKORO[i]; return ea + (eb - ea) * (ask - a) / (b - a); }
+    return KOKORO[KOKORO.length - 1][1];
+  };
+  function wsola(x, speed) {
+    if (!(speed > 0) || Math.abs(speed - 1) < 0.02 || x.length < 4000) return x;
+    const N = 720, H = 360, A = Math.round(H * speed), tol = 180, win = new Float32Array(N);
+    for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+    const L = Math.ceil(x.length / speed) + N, y = new Float32Array(L), wt = new Float32Array(L);
+    let prev = 0;
+    for (let k = 0, at = 0, o = 0; at + N + tol < x.length && o + N < L; k++, at += A, o += H) {
+      let best = 0;
+      if (k) {
+        const ref = prev + H; let top = -Infinity;
+        for (let d = -tol; d <= tol; d += 2) { const st = at + d; if (st < 0) continue; let c = 0; for (let j = 0; j < N; j += 3) c += x[st + j] * x[ref + j]; if (c > top) { top = c; best = d; } }
+      }
+      const st = Math.max(0, at + best);
+      for (let j = 0; j < N; j++) { y[o + j] += x[st + j] * win[j]; wt[o + j] += win[j]; }
+      prev = st;
+    }
+    let end = L; while (end > 0 && wt[end - 1] < 1e-3) end--;
+    for (let i = 0; i < end; i++) if (wt[i] > 1e-3) y[i] /= wt[i];
+    return y.subarray(0, end);
+  }
+  function atSpeed(v, r, speed) {
+    if (!r || !r.samples) return r;
+    const did = Number(r.speed) || reached(v, askSpeed(v, speed)), more = speed / did;
+    if (Math.abs(more - 1) < 0.02) return r;
+    const out = Object.assign({}, r, { samples: wsola(r.samples, more) });
+    if (r.marks) { out.marks = new Float32Array(r.marks); for (let k = 0; k < out.marks.length; k += 2) out.marks[k] /= more; }
+    return out;
   }
   function speakPlugin(v, said, at, onPos, onEnd, my, fail) {
     const pieces = piecesFor(said, v.plugin.first);
@@ -2221,7 +2262,7 @@ const Speech = (() => {
     const ac = actx; if (ac.state === "suspended") ac.resume().catch(() => {});
     if (!meter) { meter = ac.createAnalyser(); meter.fftSize = 1024; meter.connect(ac.destination); }
     const speed = Math.max(0.5, Math.min(2, rate())), jobs = [];
-    const job = (k) => jobs[k] || (jobs[k] = Promise.resolve().then(() => synthOf(v, pieces[k].t, speed)).catch(() => null));
+    const job = (k) => jobs[k] || (jobs[k] = Promise.resolve().then(() => synthOf(v, pieces[k].t, speed)).then((r) => atSpeed(v, r, speed)).catch(() => null));
     let next = 0;
     (async () => {
       for (let k = 0; k < pieces.length; k++) {
@@ -2542,7 +2583,8 @@ function followVoice(text, from, show, done, live, raw, trouble) {
     const now = performance.now(), quiet = now - lastAt;
     if (quiet > 900 && !Speech.tracking) {   // no word heard lately (and no estimate of its own): go on at the voice's usual pace
       const est = pos + Math.floor((quiet - 600) * Speech.charsPerMs());
-      if (est >= len) { if (quiet > 900 + (len - pos) / Speech.charsPerMs()) { finish(); return; } }
+      // (15.81) never while the voice is still to be heard: the guess reaching the end stopped it, its last words cut
+      if (est >= len) { if (quiet > 900 + (len - pos) / Speech.charsPerMs() && Speech.quietFor() > 0) { finish(); return; } }
       else show(est);
     }
     raf = requestAnimationFrame(pace);
@@ -3411,6 +3453,9 @@ function openReviewMenu(items) {
   });
   rmC.addEventListener("change", () => { const was = rmP.checked; if (rmC.checked) rmP.checked = false; saveRemove(); if (was !== rmP.checked) reread(); });
   rmP.addEventListener("change", () => { if (rmP.checked) rmC.checked = false; saveRemove(); reread(); });
+  // (15.81) what was kept is shown at once, then the list as it is now: it was only read on the home page, so going
+  // straight from practice to Review said "0 to review" after two negs
+  reread();
 
   el.querySelector("#rv-play").onclick = () => {
     const ids = matching().filter((it) => (it.type || "tossup") === "tossup").map((it) => it.id);
@@ -5993,6 +6038,7 @@ function suspendSession() {
 
 function endSession() {
   setReadHidden(false);
+  setTimeout(() => refreshReviewBadge(), 600);   // (15.81) its misses are due for review now
   if (_trial && !_trial.done) trialEnd("left", true);
   endCustom();
   state.sessionActive = false;
@@ -9081,9 +9127,11 @@ function cutNotesUsingHtml(text, html) {
 }
 // Applied wherever question or answer text is shown, gated on the setting.
 // html = the record's HTML field for this text (question / leadin / part).
+// (15.81) a question's text (html given: a question, leadin or part) also loses the packet's own number left on its
+// front ("20. This instrument represents…": 677 bonuses and 232 tossups)
 function applyNoteFilter(text, html) {
-  if (!state.settings.hideNotes) return text;
-  return stripModeratorNotes(html ? cutNotesUsingHtml(text, html) : text);
+  const out = !state.settings.hideNotes ? text : stripModeratorNotes(html ? cutNotesUsingHtml(text, html) : text);
+  return html !== undefined && typeof out === "string" ? out.replace(/^\s*\d{1,2}\.\s+(?=["“A-Z])/, "") : out;
 }
 
 const PRON_KEEP_WORDS = new Set(("a an the and or but nor so yet of in on at to for with by from as is are was were be been being am " +
@@ -9488,7 +9536,8 @@ function updateSessionStats(result) {
 
 function updateLiveStats() {
   const n = Math.max(1, state.questionCount);
-  const active = state.sessionActive && state.questionCount > 0;
+  // (15.81) and after the session ends, what it came to (Points and Heard stayed; the rest went to dashes)
+  const active = state.questionCount > 0;
   // skipped questions aren't attempts: accuracy is over the rest
   const answered = state.questionCount - (state.skips || 0);
   $("#stat-acc").textContent = active && answered > 0 ? `${((state.correct / answered) * 100).toFixed(0)}%` : "\u2014";
@@ -10225,7 +10274,7 @@ function drawDiffAccuracy(canvas, stats) {
 function drawDiffCelerity(canvas, stats) {
   const t = chartTheme();
   const all = ["power", "early", "mid", "late", "end"].reduce((acc, z) => acc.concat(stats.celerityDistribution?.[z] || []), []);
-  const byD = {}; all.forEach((e) => { (byD[e.difficulty] = byD[e.difficulty] || []).push(e.celerity || 0); });
+  const byD = {}; all.forEach((e) => { (byD[e.difficulty] = byD[e.difficulty] || []).push(1 - (e.celerity || 0)); });   // (15.81) what was left, as practice says
   const bars = Object.keys(byD).sort((a, b) => a - b).map((k) => ({ label: k, value: (byD[k].reduce((s, x) => s + x, 0) / byD[k].length) * 100, color: t.accent }));
   barChart(canvas, bars, { title: "Avg Celerity by Difficulty", fmt: (v) => Math.round(v) + "%", yMax: 100, empty: "No celerity data yet" });
 }
@@ -10592,7 +10641,7 @@ async function loadStats(preserveScroll = false) {
           <div class="stat-card-label">Negs (-5)</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card-value">${view.tossupsCorrect ? (view.tossupAvgCelerity * 100).toFixed(1) + "%" : "\u2014"}</div>
+          <div class="stat-card-value">${view.tossupsCorrect ? ((view.tossupCelerity != null ? view.tossupCelerity : 1 - view.tossupAvgCelerity) * 100).toFixed(1) + "%" : "\u2014"}</div>
           <div class="stat-card-label">Avg Celerity</div>
         </div>
       </div>
