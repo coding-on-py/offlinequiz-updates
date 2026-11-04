@@ -1755,7 +1755,8 @@ const Speech = (() => {
   function preloadPicked() { const w = wantedPlugin(); if (w) prepare(w); }
   function paintLoad() {
     const el = document.getElementById("vp-status"); if (!el) return;
-    const t = loading.on ? "Getting " + loading.on.name + " ready " + loading.pct + "%. Reading waits for it." : loading.err || "";
+    const w = !loading.on && !loading.err ? wantedPlugin() : null, note = w && w.plugin.note ? w.plugin.note() : "";
+    const t = loading.on ? "Getting " + loading.on.name + " ready " + loading.pct + "%. Reading waits for it." : loading.err || note || "";
     el.textContent = t; el.hidden = !t;
   }
   // a question waiting for the voice: the reading box says "Loading voice" and how far it's got (ui.css .voice-wait)
@@ -1833,9 +1834,69 @@ const Speech = (() => {
     paces[k] = paces[k] ? paces[k] * 0.5 + seen * 0.5 : seen;
     try { localStorage.setItem("qb-voice-pace", JSON.stringify(paces)); } catch (e) {}
   }
-  // a plugin voice's piece lined up by its sound: quiet stretches of 80 ms or more are its pauses, each matched (in order)
-  // to the punctuation nearest where the syllables put it; between them the words go by their syllables
+  // (15.73) a plugin voice's piece lined up by its sound, for a voice that doesn't say when its words are (Chatterbox):
+  // a small forced alignment. Each word's speech (10 ms frames with sound) should be as long as its spelling says
+  // (wordLen: fit by least squares on Kokoro's own word times, about 0.1 s a syllable and 0.04 s a consonant), and
+  // words meet where the sound dips; dynamic programming finds the best boundaries over the piece, and the text moves
+  // only while there's sound. Measured against Kokoro's word times on 30 pieces of real tossups: word ends 0.19 s out on
+  // average (alignByPauses, before it: 0.78 s, a voice's breath taken for the final full stop let the text run ahead)
+  function wordLen(s) {
+    const l = s.toLowerCase(), letters = l.replace(/[^a-zà-ɏ]/g, "").length, digits = l.replace(/[^0-9]/g, "").length;
+    const vg = (l.match(/[aeiouyà-ÿ]+/g) || []).length, syl = letters ? Math.max(1, vg - (/[^aeiouy]e$/.test(l) && l.length > 3 ? 1 : 0)) : 0;
+    const cons = l.replace(/[^bcdfghjklmnpqrstvwxz]/g, "").length;
+    return Math.max(0.05, 0.103 * syl + 0.038 * cons + 0.17 * digits + (/^[A-Z]/.test(s) ? 0.04 : 0) - (letters && letters <= 3 ? 0.06 : 0));
+  }
   function alignPiece(t, samples, sr) {
+    const F = Math.max(1, Math.round(sr * 0.01)), nf = Math.floor(samples.length / F), e = new Float32Array(nf);
+    let peak = 0;
+    for (let f = 0; f < nf; f++) { let a = 0; for (let k = f * F; k < (f + 1) * F; k++) a += samples[k] * samples[k]; e[f] = Math.sqrt(a / F); if (e[f] > peak) peak = e[f]; }
+    const thr = peak * 0.06, sp = new Float32Array(nf + 1), sm = new Float32Array(nf);
+    for (let f = 0; f < nf; f++) sp[f + 1] = sp[f] + (e[f] >= thr ? 1 : 0);
+    for (let f = 0; f < nf; f++) { let a = 0, n = 0; for (let k = Math.max(0, f - 2); k <= Math.min(nf - 1, f + 2); k++) { a += e[k]; n++; } sm[f] = Math.sqrt(a / n / (peak || 1)); }
+    const words = []; const re = /\S+/g; let m;
+    while ((m = re.exec(t))) { const core = m[0].replace(/^[^A-Za-z0-9À-ɏ]+|[^A-Za-z0-9À-ɏ'’]+$/g, ""); words.push({ a: m.index, b: m.index + m[0].length, d: wordLen(core || m[0]), p: /[,.;:!?—]["”’)]*$/.test(m[0]) }); }
+    const W = words.length;
+    let f0 = 0; while (f0 < nf && e[f0] < thr) f0++; let f1 = nf; while (f1 > f0 && e[f1 - 1] < thr) f1--;
+    if (!W || f1 - f0 < 5) return alignByPauses(t, samples, sr);
+    // the predicted speech scaled to what's there
+    const totalPred = words.reduce((a, w) => a + w.d, 0), scale = (sp[f1] - sp[f0]) / 100 / totalPred;
+    const LAM = 1.6, INF = 1e18, D = [], B = [];
+    // the frame where a count of speech frames is reached
+    const fOf = new Int32Array(Math.ceil(sp[nf]) + 2); for (let f = nf; f >= 0; f--) fOf[Math.round(sp[f])] = f;
+    let cum = 0;
+    for (let k = 0; k < W; k++) {
+      const d = words[k].d * scale, sig = 0.05 + 0.25 * d; cum += d;
+      const Dk = new Float64Array(nf + 1).fill(INF), Bk = new Int32Array(nf + 1).fill(-1);
+      const want = fOf[Math.min(fOf.length - 1, Math.round(sp[f0] + cum * 100))], lo = Math.max(f0 + 1, Math.floor(want - 220)), hi = Math.min(f1, Math.ceil(want + 220));
+      for (let f = lo; f <= hi; f++) {
+        if (k === W - 1 && f !== f1) continue;
+        const bcost = k === W - 1 ? 0 : LAM * (sm[Math.min(nf - 1, f)] + (words[k].p && e[Math.min(nf - 1, f)] >= thr ? 0.4 : 0));
+        if (k === 0) { const sd = (sp[f] - sp[f0]) / 100; Dk[f] = ((sd - d) / sig) ** 2 + bcost; Bk[f] = f0; continue; }
+        const Dp = D[k - 1];
+        for (let g = Math.max(f0, f - 260); g <= f - 2; g++) {
+          if (Dp[g] >= INF) continue;
+          const sd = (sp[f] - sp[g]) / 100, c = Dp[g] + ((sd - d) / sig) ** 2 + bcost;
+          if (c < Dk[f]) { Dk[f] = c; Bk[f] = g; }
+        }
+      }
+      D.push(Dk); B.push(Bk);
+    }
+    // back from the end: each word's frames
+    const bnd = new Int32Array(W + 1); bnd[W] = f1; let f = f1;
+    for (let k = W - 1; k >= 0; k--) { const g = B[k][f]; bnd[k] = g < 0 ? f0 : g; f = bnd[k]; }
+    if (D[W - 1][f1] >= INF) return alignByPauses(t, samples, sr);
+    return (sec) => {
+      const fr = Math.max(0, Math.min(nf, Math.floor(sec * 100)));
+      let k = 0; while (k < W - 1 && bnd[k + 1] <= fr) k++;
+      const g = bnd[k], h = bnd[k + 1], tot = sp[h] - sp[g], done = sp[fr] - sp[g];
+      if (fr < bnd[0]) return 0;
+      if (fr >= f1) return t.length;
+      return Math.round(words[k].a + (words[k].b - words[k].a) * (tot > 0 ? Math.min(1, done / tot) : 1));
+    };
+  }
+  // (before 15.73, and when the alignment finds no fit) quiet stretches of 80 ms or more are its pauses, each matched (in order)
+  // to the punctuation nearest where the syllables put it; between them the words go by their syllables
+  function alignByPauses(t, samples, sr) {
     const c = sayUnits(t), total = c[t.length] || 1, dur = samples.length / sr;
     const F = Math.max(1, Math.round(sr * 0.01)), nf = Math.floor(samples.length / F), e = new Float32Array(nf);
     let peak = 0;
@@ -1862,6 +1923,20 @@ const Speech = (() => {
       return atUnits(c, c[i0] + (c[i1] - c[i0]) * f);
     };
   }
+  // (15.73) a voice that says when each word is said (Kokoro: its own durations, plugins/kit/kokoro-voice wordMarks):
+  // [start s, first character, end s, after the last, …] from the start of its sound; off: what was trimmed from it.
+  // The text goes through a word as it's said and waits at its end through a pause
+  function marksWhere(mk, off) {
+    const n = mk.length >> 2;
+    return (sec) => {
+      const t = sec + off; let k = 0;
+      while (k < n && mk[4 * k + 2] <= t) k++;
+      if (k >= n) return mk[4 * (n - 1) + 3];
+      const s0 = mk[4 * k], a0 = mk[4 * k + 1], e0 = mk[4 * k + 2], b0 = mk[4 * k + 3];
+      if (t < s0) return k ? mk[4 * (k - 1) + 3] : 0;
+      return Math.round(a0 + (b0 - a0) * Math.min(1, (t - s0) / Math.max(0.001, e0 - s0)));
+    };
+  }
   // while held by Pause, time doesn't pass for the estimate
   let holdAt = 0, heldMs = 0;
   const heldNow = () => heldMs + (holdAt ? performance.now() - holdAt : 0);
@@ -1886,8 +1961,13 @@ const Speech = (() => {
   // Each utterance a network voice (Google's) is given takes it a second or two to start, so the text goes in long
   // pieces, about 40 seconds of speech, cut only between sentences (a cut mid-sentence was an odd pause); a sentence
   // longer than that is cut at a comma, else a space. Other voices start at once and take a few sentences at a time.
+  // (15.73) on a Mac, Chrome reads a network voice's long utterance to the end (a 940-character tossup, 55 s, was read
+  // through with no help), so a question goes as one: no break a second long every 40 s, and no pause and resume every
+  // 12 s to keep it going (that was for Chrome elsewhere, which stopped them partway). Utterances of a sentence each
+  // were tried: 0.4 to 0.7 s between them and a second of silence inside each
+  const LONG_OK = /Mac/.test(navigator.platform || navigator.userAgent || "");
   function piecesOf(said, net) {
-    const out = [], MAX = net ? Math.max(240, Math.round(40000 * charsPerMs())) : 400;
+    const out = [], MAX = net ? (LONG_OK ? 1e6 : Math.max(240, Math.round(40000 * charsPerMs()))) : 400;
     let at = 0;
     while (at < said.length) {
       let end = said.length;
@@ -1942,7 +2022,7 @@ const Speech = (() => {
     if (!todo.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return true; }
     // Chrome has stopped a network voice partway through a long utterance; pausing and resuming it now and then
     // keeps it going
-    if (net) keep = setInterval(() => { const ss = window.speechSynthesis; if (my !== seq) return; if (ss.speaking && !ss.paused) { try { ss.pause(); ss.resume(); } catch (e) {} } }, 12000);
+    if (net && !LONG_OK) keep = setInterval(() => { const ss = window.speechSynthesis; if (my !== seq) return; if (ss.speaking && !ss.paused) { try { ss.pause(); ss.resume(); } catch (e) {} } }, 12000);
     let bounded = false;   // the voice says where it is: no estimate
     todo.forEach((p, k) => {
       const u = new SpeechSynthesisUtterance(p.t);
@@ -1987,13 +2067,25 @@ const Speech = (() => {
     for (let i = 0; i < said.length;) {
       let end = said.length;
       // the first piece short, ending at a comma or a full stop (a clause, so the voice starts in under a second); the
-      // rest a sentence or two. A bare space is the last resort: the voice drops its pitch at the end of each piece
+      // rest a sentence or two. Each piece is made on its own and ends as a phrase ends, so a cut where the text
+      // doesn't pause is a pause where none belongs (15.73): past the length it may run on to the next comma or full
+      // stop, and a bare space is the last resort, before a word that starts a phrase ("and", "which", "of") if it can
       const max = first > 0 ? Math.min(260, first * 2 ** pieces.length) : pieces.length ? 260 : 100;
       if (end - i > max) {
         const win = said.slice(i, i + max); let cut = -1, m;
-        for (const re of pieces.length ? [/[.?!;]["”’)]*\s/g, /[,:]\s/g, /\s/g] : [/[.?!;,:]["”’)]*\s/g, /\s/g]) {
+        for (const re of pieces.length ? [/[.?!;]["”’)]*\s/g, /[,:\u2014]["”’)]*\s/g] : [/[.?!;,:\u2014]["”’)]*\s/g]) {
           while ((m = re.exec(win))) cut = m.index + m[0].length;
           if (cut >= 25) break; cut = -1;
+        }
+        if (cut < 0) {
+          const more = said.slice(i, i + Math.min(Math.round(max * 1.7), max + 140)), mm = /[.?!;,:\u2014]["”’)]*\s/g;
+          mm.lastIndex = max; const n = mm.exec(more);
+          if (n) cut = n.index + n[0].length;
+        }
+        if (cut < 0) {
+          const re = /\s(?=(?:and|but|or|nor|which|who|whom|whose|that|where|when|while|after|before|because|since|although|though|as|if|in|on|at|for|from|with|without|by|of|to|into|than|until)\b)/gi;
+          while ((m = re.exec(win))) if (m.index >= 25) cut = m.index + 1;
+          if (cut < 0) { const sp = win.lastIndexOf(" "); cut = sp >= 25 ? sp + 1 : -1; }
         }
         end = i + (cut > 0 ? cut : win.length);
       }
@@ -2001,6 +2093,13 @@ const Speech = (() => {
       i = end;
     }
     return pieces;
+  }
+  // the pause after a piece, as the voices make it inside one (measured on Kokoro and Chatterbox: about 0.6 s at a full
+  // stop, 0.15 to 0.4 s at a comma): a piece's own silence is trimmed off and this put after it, at the voice's speed
+  function pauseAfter(t, last, speed) {
+    const s = String(t).trimEnd();
+    const sec = last ? 0.3 : /[.?!]["”’)]*$/.test(s) ? 0.55 : /[;:\u2014]["”’)]*$/.test(s) ? 0.34 : /,["”’)]*$/.test(s) ? 0.24 : 0.02;
+    return sec / Math.max(0.5, speed || 1);
   }
   // The opening of the next tossup, made while this one's result shows (15.70), so a plugin's voice starts the moment
   // it's read: it takes Kokoro over half a second to make on a GPU, and seconds without one. A few are kept, each used once
@@ -2046,17 +2145,18 @@ const Speech = (() => {
         // a piece it couldn't make: the voice is set aside and the next one reads on from here
         if (!r || !r.samples || !r.samples.length) { onPos(at(pieces[k].at)); fail("plugin voice failed"); return; }
         if (k + 1 < pieces.length) job(k + 1);
+        if (k < 3) paintLoad();   // a voice that's slower than speech says so in the Voice panel (its note)
         // the silence a piece is made with at each end, trimmed to a breath, so one runs into the next
         let a = 0, b = r.samples.length; const sr = r.rate || 24000, q = 0.004;
         while (a < b && Math.abs(r.samples[a]) < q) a++;
         while (b > a && Math.abs(r.samples[b - 1]) < q) b--;
-        a = Math.max(0, a - Math.round(sr * 0.02)); b = Math.min(r.samples.length, b + Math.round(sr * (k === pieces.length - 1 ? 0.3 : 0.09)));
+        a = Math.max(0, a - Math.round(sr * 0.015)); b = Math.min(r.samples.length, b + Math.round(sr * 0.04));   // a breath of fade each side
         const samples = r.samples.subarray(a, b);
         if (!samples.length) continue;
         const buf = ac.createBuffer(1, samples.length, sr); buf.copyToChannel(samples, 0);
         const src = ac.createBufferSource(); src.buffer = buf; src.connect(meter);
-        const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k], where = alignPiece(p.t, samples, sr);
-        src.start(startAt); playing.push(src); next = startAt + dur;
+        const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k], where = r.marks && r.marks.length >= 4 ? marksWhere(r.marks, a / sr) : alignPiece(p.t, samples, sr);
+        src.start(startAt); playing.push(src); next = startAt + dur + pauseAfter(p.t, k === pieces.length - 1, speed);
         pluginEnd = performance.now() + (next - ac.currentTime) * 1000;
         // the text follows the sound by the audio clock, which stands still while the voice is paused (15.69)
         const tick = (first) => {
@@ -2095,7 +2195,7 @@ const Speech = (() => {
     if (!synthOk) return false;
     const ss = window.speechSynthesis;
     try { ss.resume(); } catch (e) { return false; }
-    if (curNet) { const my = seq; keep = setInterval(() => { if (my !== seq) return; if (ss.speaking && !ss.paused) { try { ss.pause(); ss.resume(); } catch (e) {} } }, 12000); }
+    if (curNet && !LONG_OK) { const my = seq; keep = setInterval(() => { if (my !== seq) return; if (ss.speaking && !ss.paused) { try { ss.pause(); ss.resume(); } catch (e) {} } }, 12000); }
     if (talk && talk.my === seq) talk.at = performance.now();
     return true;
   }
@@ -2127,7 +2227,7 @@ const Speech = (() => {
   function stopPreview() { if (previewing) { const d = previewing.done; previewing = null; stop(); if (d) d(); } }
   const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud);
   return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level, quietFor, warm,
-    pause, resumeHeld, get waiting() { return !!waiting; }, preview, stopPreview, get previewing() { return previewing && previewing.uri; },
+    pause, resumeHeld, get waiting() { return !!waiting; }, preview, stopPreview, get previewing() { return previewing && previewing.uri; }, _marksWhere: marksWhere, _piecesFor: piecesFor,
     get tracking() { return !!tracking; }, _alignPiece: alignPiece, _sayUnits: sayUnits };   // (the last two for tests)
 })();
 
@@ -2242,8 +2342,9 @@ function speechScript(text, raw) {
       if (src === raw) cursor = hit.i + hit.len;
     }
   }
-  // what's never said: the power and bonus-value marks, quoted pronunciations still on screen
-  for (const re of [/\(\*\)|\(\+\)/g, /\((?:“[^”]*”|"[^"]*")\)/g]) { re.lastIndex = 0; while ((m = re.exec(text))) put(m.index, m.index + m[0].length, " "); }
+  // what's never said: the power, superpower and bonus-value marks, quoted pronunciations still on screen. (15.73: the
+  // superpower mark "(#)" mid-sentence was given to the voice, which paused at its brackets as if at a comma)
+  for (const re of [/\(\*\)|\(\+\)|\(#\)/g, /\((?:“[^”]*”|"[^"]*")\)/g]) { re.lastIndex = 0; while ((m = re.exec(text))) put(m.index, m.index + m[0].length, " "); }
   // math, formulas, sub- and superscripts, one token at a time; a short run of letters beside an operator is a
   // variable or two ("PV = nRT", "a = bq + r") and is spelled out
   const TOK = /\S+/g, toks = [];
@@ -7909,7 +8010,10 @@ const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const hexLum = (h) => { const [r, g, b] = hexRgb(h); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 function hexMix(a, b, t) { const A = hexRgb(a), B = hexRgb(b); return "#" + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, "0")).join(""); }
 // custom colors: the page, the panels and the text bring the shades made from them
-const CUSTOM_COLOR_VAR = { bg: "--bg", panel: "--bg-secondary", text: "--text", power: "--yellow", correct: "--green", neg: "--red" };
+// each of More colors and the variable it sets (15.73: Powers no longer sets the pause sign and the stars too; each has
+// its own). A list: the first that has a value is the color in use when none is picked
+const CUSTOM_COLOR_VAR = { bg: ["--bg"], panel: ["--bg-secondary"], text: ["--text"], power: ["--c-power", "--yellow"], correct: ["--green"], neg: ["--red"],
+  muted: ["--text-secondary"], border: ["--border"], paused: ["--c-paused", "--yellow"], star: ["--star"], buzz: ["--buzz-mark"] };
 function applyCustomColors(withBg) {
   const C = state.settings.appColors || {}, root = document.documentElement;
   const cur = (name, fb) => cssHex(getComputedStyle(root).getPropertyValue(name).trim() || fb) || fb;
@@ -7929,7 +8033,12 @@ function applyCustomColors(withBg) {
     apSet("--text", C.text); apSet("--text-secondary", hexMix(C.text, bgRef, 0.38)); apSet("--text-muted", hexMix(C.text, bgRef, 0.62));
     apSet("--strong", hexMix(C.text, lightBg ? "#000000" : "#ffffff", 0.45));
   }
-  if (isHex6(C.power)) { apSet("--yellow", C.power); apSet("--yellow-dim", C.power + "33"); apSet("--power-mark", C.power); apSet("--star", C.power); }
+  if (isHex6(C.power)) { apSet("--c-power", C.power); apSet("--power-mark", C.power); }
+  if (isHex6(C.paused)) apSet("--c-paused", C.paused);
+  if (isHex6(C.star)) apSet("--star", C.star);
+  if (isHex6(C.buzz)) { apSet("--buzz-mark", C.buzz); apSet("--buzz-mark-self", C.buzz); }
+  if (isHex6(C.muted)) { apSet("--text-secondary", C.muted); apSet("--text-muted", hexMix(C.muted, bgRef, 0.3)); }
+  if (isHex6(C.border)) { apSet("--border", C.border); apSet("--border-light", hexMix(C.border, bgRef, 0.4)); }
   if (isHex6(C.correct)) { apSet("--green", C.correct); apSet("--green-dim", C.correct + "33"); apSet("--go", C.correct); apSet("--go-strong", hexMix(C.correct, "#000000", 0.3)); }
   if (isHex6(C.neg)) { apSet("--red", C.neg); apSet("--red-dim", C.neg + "33"); apSet("--error", C.neg); }
 }
@@ -7938,7 +8047,7 @@ function syncColorPickers() {
   const C = state.settings.appColors || {}, cs = getComputedStyle(document.documentElement);
   document.querySelectorAll(".app-color[data-color]").forEach((inp) => {
     const k = inp.dataset.color;
-    inp.value = isHex6(C[k]) ? C[k] : (cssHex(cs.getPropertyValue(CUSTOM_COLOR_VAR[k]).trim()) || "#000000");
+    inp.value = isHex6(C[k]) ? C[k] : ((CUSTOM_COLOR_VAR[k] || []).map((n) => cssHex(cs.getPropertyValue(n).trim())).find(Boolean) || "#000000");
     inp.closest(".ap-sw")?.style.setProperty("--sw", inp.value);
     inp.closest(".ap-mc")?.classList.toggle("on", isHex6(C[k]));
   });

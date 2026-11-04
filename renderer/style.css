@@ -2964,7 +2964,7 @@ html[data-scheme="light"] .hcard { box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08
 .practice-side .stat-score { grid-column: span 2; }
 .practice-side .stat-heard { grid-column: span 2; }
 .practice-side .stat-score .stat-value { color: var(--accent); }
-.practice-side .stat-pwr { color: var(--yellow); }
+.practice-side .stat-pwr { color: var(--c-power, var(--yellow)); }
 .practice-side .stat-neg { color: var(--red); }
 .side-hist { display: flex; flex-direction: column; gap: 8px; }
 .session-mini { display: flex; flex-direction: column; gap: 6px; }
@@ -2991,7 +2991,7 @@ html[data-scheme="light"] .hcard { box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08
 #live-stats .sb-cap { font-size: 11px; color: var(--muted); margin-top: 4px; }
 #live-stats .sb-bar { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--line-soft); }
 #live-stats .sb-bar > i { display: block; min-width: 4px; transition: flex-grow 240ms var(--ease-out); }
-#live-stats .k-pwr { --k: var(--yellow); }
+#live-stats .k-pwr { --k: var(--c-power, var(--yellow)); }
 #live-stats .k-get { --k: var(--green); }
 #live-stats .k-part { --k: color-mix(in srgb, var(--green) 50%, var(--line-strong)); }
 #live-stats .k-neg { --k: var(--red); }
@@ -3071,7 +3071,7 @@ html[data-panel-side="left"] #app > .screen.panel-host { margin-right: 0; margin
   border: 1px solid currentColor; border-radius: var(--r-lg); background: color-mix(in srgb, currentColor 12%, transparent);
 }
 .result-banner.correct { color: var(--green); }
-.result-banner.power { color: var(--yellow); }
+.result-banner.power { color: var(--c-power, var(--yellow)); }
 .result-banner.incorrect { color: var(--red); }
 .result-banner.dead { color: var(--muted); }
 .result-answer { font-size: 14px; line-height: 1.7; color: var(--text); }
@@ -3613,6 +3613,13 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .ext-switch input:checked + .ext-slider { background: var(--accent-strong); border: 0; }
 .ext-switch input:checked + .ext-slider::before { transform: translate(18px, -50%); background: #fff; }
 .ext-settings-group-title { font-size: 11px; color: var(--muted); font-weight: 500; }
+/* (15.73) a plugin's settings in Settings: a box of their own under the plugin's icon and name */
+.ext-settings-group.esg-card { margin: 16px 0 4px; padding: 4px 14px 8px; border: 1px solid var(--line); border-radius: var(--r-lg, 10px); background: color-mix(in srgb, var(--surface) 55%, transparent); }
+.esg-card > .ext-settings-group-title { display: flex; align-items: center; gap: 9px; margin: 0 -14px 4px; padding: 10px 14px; border-bottom: 1px solid var(--line-soft); color: var(--strong); font-size: 14px; font-weight: 700; }
+.esg-card > .ext-settings-group-title .esg-kind { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 500; }
+.esg-ico { display: inline-grid; flex: none; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-size: 10px; font-weight: 800; }
+.esg-label { display: flex; align-items: center; gap: 7px; color: var(--strong); }
+.esg-label .esg-ico { width: 20px; height: 20px; border-radius: 6px; }
 
 /* ═══ Overlays reused from before (review, history, confirm, hotkey sheet) ═══ */
 .hotkey-sheet, .review-viewer, .confirm-overlay { background: color-mix(in srgb, #010409 72%, transparent); }
@@ -4928,7 +4935,7 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
 .pf-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .pf-tile { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
 .pf-tile b { color: var(--strong); font-size: 26px; font-weight: 800; line-height: 1.1; }
-.pf-tile b.pf-pwr { color: var(--yellow); } .pf-tile b.pf-neg { color: var(--red); }
+.pf-tile b.pf-pwr { color: var(--c-power, var(--yellow)); } .pf-tile b.pf-neg { color: var(--red); }
 .pf-tile span { color: var(--muted); font-size: 12px; }
 .pf-ach { padding: 20px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
 .pf-ach-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
@@ -6930,6 +6937,9 @@ html[data-panel-side="left"] .voice-panel { right: auto; left: 12px; transform-o
 .vp-voices.locked .vv-row[aria-checked="true"] { background: var(--raised); }
 /* Reading speed while the voice sets the pace */
 .sg-note { margin-top: 6px; color: var(--muted); font-size: 12px; }
+/* in a Settings row (label | slider) the note takes a line of its own under the slider, not a third column over its value */
+.set-pane .setting-row:has(> .sg-note:not([hidden])) { flex-wrap: wrap; }
+.set-pane .setting-row > .sg-note { flex: 1 1 100%; margin: -4px 0 0; text-align: right; }
 .sg-note[hidden] { display: none; }
 .slider-group.locked-by-read { opacity: 0.5; }
 #ext-voice-host:not(:empty) { padding-top: 14px; border-top: 1px solid var(--line-soft); }
@@ -6944,6 +6954,7 @@ html[data-panel-side="left"] .voice-panel { right: auto; left: 12px; transform-o
 .side-plugin { margin-bottom: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
 .side-plugin[hidden] { display: none; }
 .pause-overlay.page-stop { cursor: pointer; }
+.pause-overlay { color: var(--c-paused, var(--yellow)); }   /* its own color in More colors (15.73) */
 /* (15.65) under the text, where the answer box was: it covered the flag and star buttons up in the corner */
 .opp-note { display: block; width: fit-content; max-width: 100%; box-sizing: border-box; margin-top: 14px; padding: 6px 14px; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line)); border-radius: 99px; background: var(--surface); color: var(--text); font-size: 13px; animation: qb-rise 200ms var(--ease-out); }
 .voice-panel .vp-status { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }

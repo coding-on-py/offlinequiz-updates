@@ -822,7 +822,9 @@
           synth: (text, o) => v.synth(text, o || {}),
           // (15.73) first: its first piece's length in characters (0: the app's); cancel(): drop the pieces being made
           // for what was reading (not those made ahead, o.ahead)
-          first: Math.max(0, Number(v.first) || 0), cancel: () => { try { if (v.cancel) v.cancel(); } catch (e) {} } };
+          first: Math.max(0, Number(v.first) || 0), cancel: () => { try { if (v.cancel) v.cancel(); } catch (e) {} },
+          // (15.73) a line about how it's doing, for the Voice panel ("" for none): Kokoro when it's slower than speech
+          note: () => { try { return v.note ? String(v.note() || "") : ""; } catch (e) { return ""; } } };
         QB._voices.push(rec);
         const changed = () => { try { QB._emit("voices:changed"); } catch (e) {} };
         subs.push(() => { QB._voices = QB._voices.filter((x) => x !== rec); changed(); });
@@ -1984,8 +1986,10 @@ QB.registerTheme({
       ).join("");
       if (!inner && !sectionHtml) return;
       // Setup's own sections: a sentence-case label ("Voice answers") over the rows
-      if (location === "practice" || location === "voice") html += '<div class="ext-settings-group ext-practice-group"><div class="filter-label">' + esc(sentenceCase(ext.name)) + '</div><div class="fp-checks">' + (inner || "") + "</div>" + sectionHtml + "</div>";
-      else html += '<div class="ext-settings-group"><div class="ext-settings-group-title">' + esc(ext.name) + "</div>" + (inner || "") + sectionHtml + "</div>";
+      // (15.73) each under its plugin's icon and name, so which settings are whose is plain at a glance
+      const ico = '<span class="esg-ico" aria-hidden="true">' + (iconSvg(ext.icon || (ext._manifest && ext._manifest.icon), 14) || esc(mono(ext.name))) + "</span>";
+      if (location === "practice" || location === "voice") html += '<div class="ext-settings-group ext-practice-group"><div class="filter-label esg-label">' + ico + esc(sentenceCase(ext.name)) + '</div><div class="fp-checks">' + (inner || "") + "</div>" + sectionHtml + "</div>";
+      else html += '<div class="ext-settings-group esg-card"><div class="ext-settings-group-title">' + ico + "<span>" + esc(ext.name) + '</span><span class="esg-kind">' + (ext.type === "theme" || QB._themes.includes(ext) ? "Theme" : "Plugin") + "</span></div>" + (inner || "") + sectionHtml + "</div>";
     });
     container.innerHTML = html;
     container.style.display = html ? "" : "none";
