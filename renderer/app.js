@@ -1743,18 +1743,19 @@ const Speech = (() => {
     if (!want.startsWith("plugin:") || bad.has(want)) return null;
     return pluginVoices().find((v) => v.voiceURI === want) || null;
   }
+  // a voice that can't run here (Chatterbox without a GPU) says why: its error's userMessage (15.73)
   function prepare(p) {
     if (loading.on === p.plugin || p.plugin.ready()) return;
     loading.on = p.plugin; loading.pct = 0; loading.err = null; paintLoad();
     p.plugin.load((f) => { loading.pct = Math.max(loading.pct, Math.min(99, Math.round(100 * (Number(f) || 0)))); paintLoad(); paintWait(); }, { voice: p.vid })
-      .then(() => { loading.on = null; paintLoad(); }, () => { loading.on = null; loading.err = p.plugin.name; paintLoad(); });
+      .then(() => { loading.on = null; paintLoad(); }, (e) => { loading.on = null; loading.err = (e && e.userMessage) || p.plugin.name + " couldn't start. The built-in voice reads instead."; paintLoad(); });
   }
   // at launch, and when Read aloud goes on: the picked plugin voice gets ready in the background, so it's there at the
   // first question. Since 15.70 whether Read aloud is on or not, so turning it on never waits either
   function preloadPicked() { const w = wantedPlugin(); if (w) prepare(w); }
   function paintLoad() {
     const el = document.getElementById("vp-status"); if (!el) return;
-    const t = loading.on ? "Getting " + loading.on.name + " ready " + loading.pct + "%. Reading waits for it." : loading.err ? loading.err + " couldn't start. The built-in voice reads instead." : "";
+    const t = loading.on ? "Getting " + loading.on.name + " ready " + loading.pct + "%. Reading waits for it." : loading.err || "";
     el.textContent = t; el.hidden = !t;
   }
   // a question waiting for the voice: the reading box says "Loading voice" and how far it's got (ui.css .voice-wait)
@@ -1779,6 +1780,8 @@ const Speech = (() => {
     if (held) { held = null; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
     playing.forEach((s) => { try { s.stop(); } catch (e) {} }); playing = [];
     timers.forEach(clearTimeout); timers = [];
+    // a plugin's voice stops making the pieces that were to come (15.73: one slow to make kept the next question waiting)
+    for (const pv of (window.QB && window.QB._voices) || []) if (pv.cancel) pv.cancel();
     if (!synthOk) return;
     const ss = window.speechSynthesis;
     try { ss.pause(); } catch (e) {}
@@ -1977,13 +1980,15 @@ const Speech = (() => {
   }
   // A plugin's voice: a sentence or two at a time (the first comes quickly), each made while the one before plays and
   // started where it ends, so there's no gap; the text follows each piece's sound across its length
-  function piecesFor(said) {
+  // first: the voice's own length for the first piece (15.73: Chatterbox, slower to make, asks for 70); then each piece
+  // up to twice the one before, so it's made while that one plays
+  function piecesFor(said, first) {
     const pieces = [];
     for (let i = 0; i < said.length;) {
       let end = said.length;
       // the first piece short, ending at a comma or a full stop (a clause, so the voice starts in under a second); the
       // rest a sentence or two. A bare space is the last resort: the voice drops its pitch at the end of each piece
-      const max = pieces.length ? 260 : 100;
+      const max = first > 0 ? Math.min(260, first * 2 ** pieces.length) : pieces.length ? 260 : 100;
       if (end - i > max) {
         const win = said.slice(i, i + max); let cut = -1, m;
         for (const re of pieces.length ? [/[.?!;]["”’)]*\s/g, /[,:]\s/g, /\s/g] : [/[.?!;,:]["”’)]*\s/g, /\s/g]) {
@@ -2004,10 +2009,11 @@ const Speech = (() => {
   function warm(text, raw) {
     const v = wantedPlugin();
     if (!v || !v.plugin.ready() || !state.settings.readAloud || !text) return;
-    const first = piecesFor(speechScript(String(text), raw).spoken)[0]; if (!first) return;
+    const first = piecesFor(speechScript(String(text), raw).spoken, v.plugin.first)[0]; if (!first) return;
     const speed = Math.max(0.5, Math.min(2, rate())), k = madeKey(v, first.t, speed);
     if (made.has(k)) return;
-    made.set(k, Promise.resolve().then(() => v.plugin.synth(first.t, { voice: v.vid, speed })).catch(() => null));
+    // ahead: kept when reading stops (the voice's cancel drops only what was being read)
+    made.set(k, Promise.resolve().then(() => v.plugin.synth(first.t, { voice: v.vid, speed, ahead: true })).catch(() => null));
     while (made.size > 3) made.delete(made.keys().next().value);
   }
   function synthOf(v, t, speed) {
@@ -2025,7 +2031,7 @@ const Speech = (() => {
     return talkedAt ? Math.max(0, now - talkedAt) : Infinity;
   }
   function speakPlugin(v, said, at, onPos, onEnd, my, fail) {
-    const pieces = piecesFor(said);
+    const pieces = piecesFor(said, v.plugin.first);
     if (!pieces.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return; }
     if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; actx = new AC(); }
     const ac = actx; if (ac.state === "suspended") ac.resume().catch(() => {});
@@ -2102,7 +2108,7 @@ const Speech = (() => {
   function preview(uri, onDone) {
     stop();
     const my = seq, end = () => { if (previewing && previewing.my === my) { previewing = null; if (onDone) onDone(); } };
-    previewing = { uri, my };
+    previewing = { uri, my, done: onDone };
     const pv = pluginVoices().find((x) => x.voiceURI === uri);
     if (pv) {
       const go = () => { if (my === seq) speakPlugin(pv, SAMPLE, (k) => k, () => {}, end, my, end); };
@@ -2117,7 +2123,8 @@ const Speech = (() => {
     try { window.speechSynthesis.speak(u); } catch (e) { end(); return false; }
     return true;
   }
-  function stopPreview() { if (previewing) { previewing = null; stop(); } }
+  // stopped (its button, closing the panel, a question coming up): onDone too, so its button never stays on Stop
+  function stopPreview() { if (previewing) { const d = previewing.done; previewing = null; stop(); if (d) d(); } }
   const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud);
   return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level, quietFor, warm,
     pause, resumeHeld, get waiting() { return !!waiting; }, preview, stopPreview, get previewing() { return previewing && previewing.uri; },
@@ -3472,7 +3479,9 @@ function startPluginPractice(rules) {
   showScreen("practice-plugin");
   setMode(type);
   paintPluginSide();
-  // (15.65) it waits for Start like your own Tossups, so there's time to set it up first
+  // (15.65) it waits for Start like your own Tossups, so there's time to set it up first; rules.start (15.73) begins at
+  // once, for a plugin whose own Play already chose everything (Challenge)
+  if (rules.start) setTimeout(() => { if (!state.sessionActive && state.practiceKind === "plugin") startSession(); }, 0);
   return true;
 }
 // a plugin page's own words for a result (banner(result) → text; result.dead when nobody got it), where its scoring
@@ -5349,7 +5358,10 @@ function paintPreview() {
 }
 const VV_PLAY = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
 const VV_STOP = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>';
+const _vvOpen = new Set();   // the voice groups opened with More
 document.getElementById("vp-voices")?.addEventListener("click", (e) => {
+  const more = e.target.closest(".vv-more");
+  if (more) { const g = more.dataset.group; if (_vvOpen.has(g)) _vvOpen.delete(g); else _vvOpen.add(g); fillVoices(); document.querySelector('#vp-voices .vv-more[data-group="' + CSS.escape(g) + '"]')?.focus(); return; }
   const play = e.target.closest(".vv-play");
   if (play) {
     e.stopPropagation();
@@ -5400,11 +5412,17 @@ function fillVoices() {
   const groups = [];
   const groupOf = (v) => v.plugin ? v.plugin.name : v.builtin ? "This browser" : /^Google\b/i.test(v.name) ? "Google" : /^Microsoft\b/i.test(v.name) ? "Microsoft, natural" : "This computer";
   for (const v of vs) { const g = groupOf(v); let G = groups.find((x) => x.g === g); if (!G) groups.push(G = { g, vs: [] }); G.vs.push(v); }
-  box.innerHTML = groups.map((G) => (groups.length > 1 ? '<div class="vv-h">' + escapeHtml(G.g) + "</div>" : "") + G.vs.map((v) => {
-    const on = v.voiceURI === cur, name = label(v);
-    return '<div class="vv-row" role="radio" aria-checked="' + on + '" tabindex="' + (on ? 0 : -1) + '" data-v="' + escapeHtml(v.voiceURI) + '"><span class="vv-dot" aria-hidden="true"></span><span class="vv-name">' + escapeHtml(name) + "</span>" +
-      '<button type="button" class="btn btn-ghost btn-icon vv-play" data-play="' + escapeHtml(v.voiceURI) + '" aria-label="Hear ' + escapeHtml(name) + '" aria-pressed="false" title="Hear it">' + VV_PLAY + "</button></div>";
-  }).join("")).join("");
+  // a few of each group (and the one picked), the rest behind More (15.73: Kokoro has 28)
+  const FEW = 3;
+  box.innerHTML = groups.map((G) => {
+    const open = _vvOpen.has(G.g), shown = open ? G.vs : G.vs.filter((v, i) => i < FEW || v.voiceURI === cur), rest = G.vs.length - shown.length;
+    return (groups.length > 1 ? '<div class="vv-h">' + escapeHtml(G.g) + "</div>" : "") + shown.map((v) => {
+      const on = v.voiceURI === cur, name = label(v);
+      return '<div class="vv-row" role="radio" aria-checked="' + on + '" tabindex="' + (on ? 0 : -1) + '" data-v="' + escapeHtml(v.voiceURI) + '"><span class="vv-dot" aria-hidden="true"></span><span class="vv-name">' + escapeHtml(name) + "</span>" +
+        '<button type="button" class="btn btn-ghost btn-icon vv-play" data-play="' + escapeHtml(v.voiceURI) + '" aria-label="Hear ' + escapeHtml(name) + '" aria-pressed="false" title="Hear it">' + VV_PLAY + "</button></div>";
+    }).join("") + (G.vs.length > FEW ? '<button type="button" class="vv-more" data-group="' + escapeHtml(G.g) + '" aria-expanded="' + open + '">' + (open ? "Fewer" : rest + " more") +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>' : "");
+  }).join("");
   paintPreview();
   syncVoiceRow();
 }
@@ -10012,10 +10030,12 @@ async function loadStats(preserveScroll = false) {
       container.innerHTML = `
         ${sid ? '<button class="btn btn-sm btn-ghost" id="stats-back">\u2190 All sessions</button>' : ""}
         <div style="text-align:center;padding:40px;color:var(--text-muted)">
-          <div style="font-size:48px;margin-bottom:16px"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.7 2.5c-.9.4-1.3 1-1.3 1.8v.3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg></div>
+          <div style="font-size:48px;margin-bottom:16px"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16M7 16v-5M12 16V6M17 16v-8"/></svg></div>
           <p>${sid ? "This session has no recorded questions." : (_statsPeriod !== "all" ? "No questions in " + escapeHtml(statsPeriodLabel().toLowerCase()) : "No statistics yet")}</p>
+          ${!sid && _statsPeriod === "all" ? '<button type="button" class="btn btn-sm btn-primary" id="stats-start" style="margin-top:10px">Practice tossups</button>' : ""}
         </div>
       `;
+      document.getElementById("stats-start")?.addEventListener("click", () => goTo("practice-tossups"));
       document.getElementById("stats-back")?.addEventListener("click", () => { state.statsSessionId = null; loadStats(); });
       return;
     }
@@ -14633,6 +14653,7 @@ function init() {
   }
   // (a share link opened signed out comes back once they're signed in: QBClubs.resumeLink)
   if (IS_WEB) handleAccountLinks().then(refreshAccount).then(() => { try { window.QBClubs?.resumeLink(); } catch (e) {} }); else refreshAccount();
+  if (IS_WEB) setTimeout(pluginLinks, 2500);
   // the website opened at a page's address (a link, a bookmark, a reload)
   if (IS_WEB) setTimeout(() => { if (location.pathname !== "/") webRoute(location.pathname); else webTitleSync(); }, 0);
   // the website runs on the server's (current) question database and has no app to update (nor has an
@@ -14737,6 +14758,18 @@ function renderAccountMenu() {
     em.textContent = Account.user ? (Account.user.handle ? "@" + Account.user.handle : Account.user.email) : "";
     const nm = head.querySelector("b"); if (nm && Account.user && IS_WEB) nm.innerHTML = neonName(state.username || Account.user.displayName || Account.user.handle || "Player", myNeon());   // (a rename shows as it's typed)
     em.hidden = !Account.user;
+  }
+}
+// A link for a plugin (15.73: ?challenge=… is a friend's Challenge): a plugin that's on takes it itself; for one that
+// isn't, its Store page opens so it can be got, and it takes the link once it's on
+// (the start of the page can change screens just after, which closes it: it opens again, a few times at most)
+function pluginLinks(tries = 0) {
+  const LINKS = { challenge: "challenge" }, q = new URLSearchParams(location.search);
+  for (const [k, id] of Object.entries(LINKS)) {
+    if (!q.get(k) || window.QB?.isPluginEnabled?.(id)) continue;
+    if (!document.getElementById("plugin-guide")) { try { window.QB?.openPluginGuide?.(id); } catch (e) {} }
+    if (tries < 4) setTimeout(() => pluginLinks(tries + 1), 1500);
+    return;
   }
 }
 // Links into the site: ?verify=… (the confirm email), ?reset=… (the password

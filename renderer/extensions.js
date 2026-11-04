@@ -812,14 +812,17 @@
         return rec;
       },
       // a voice for Read aloud (15.63; Kokoro): { id, name, voices: [{ id, name }], ready(), load(onProgress(0..1), { voice }),
-      // synth(text, { voice, speed }) → { samples: Float32Array, rate } }. It's offered in the Voice popover.
+      // synth(text, { voice, speed, ahead }) → { samples: Float32Array, rate }, first, cancel() }. It's offered in the Voice panel.
       registerVoice(v) {
         if (!v || typeof v.synth !== "function" || !Array.isArray(v.voices) || !v.voices.length) return null;
         const rec = { pluginId: ext.id, id: String(v.id || ext.id), name: String(v.name || ext.name), voices: v.voices.map((x) => ({ id: String(x.id), name: String(x.name || x.id) })),
           ready: () => { try { return !!(v.ready && v.ready()); } catch (e) { return false; } },
           // o.voice: the voice picked, which it gets ready with (15.70: it was dropped here, so Kokoro warmed up with its first)
           load: (onProgress, o) => Promise.resolve(v.load ? v.load(onProgress, o) : null),
-          synth: (text, o) => v.synth(text, o || {}) };
+          synth: (text, o) => v.synth(text, o || {}),
+          // (15.73) first: its first piece's length in characters (0: the app's); cancel(): drop the pieces being made
+          // for what was reading (not those made ahead, o.ahead)
+          first: Math.max(0, Number(v.first) || 0), cancel: () => { try { if (v.cancel) v.cancel(); } catch (e) {} } };
         QB._voices.push(rec);
         const changed = () => { try { QB._emit("voices:changed"); } catch (e) {} };
         subs.push(() => { QB._voices = QB._voices.filter((x) => x !== rec); changed(); });
@@ -2046,7 +2049,7 @@ QB.registerTheme({
     "rival": "Play", "challenge": "Play", "lightning": "Play", "voice-answers": "Play",
     "first-lines": "Study", "quotations": "Study", "missed-clues": "Study", "listen": "Study", "answer-notes": "Study",
     "buzz-tracker": "Analysis", "gap-finder": "Analysis", "neg-check": "Analysis", "answer-clusters": "Analysis",
-    "weekly-plan": "Tools", "tournament-prep": "Tools", "pyramid-check": "Tools", "moderator": "Tools", "layout-customizer": "Tools", "kokoro-voice": "Play",
+    "weekly-plan": "Tools", "tournament-prep": "Tools", "pyramid-check": "Tools", "moderator": "Tools", "layout-customizer": "Tools", "kokoro-voice": "Play", "chatterbox-voice": "Play",
     // 15.67: plugins that only change how the app looks
     "buzz-effects": "Cosmetic", "reading-style": "Cosmetic", "backdrops": "Cosmetic",
   };
@@ -2181,6 +2184,12 @@ QB.registerTheme({
   }
   QB.openPluginGuide = (id) => {
     const have = QB._plugins.find((x) => x.id === id && !x._builtin);
+    // (15.73) a plugin's link opened before the Store was: its list first, then the guide
+    if (!have && WEBSITE && QB._store && !QB._store.list) {
+      fetch("/api/plugin-store", { cache: "no-store" }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}))
+        .then((j) => { if (!QB._store.list) QB._store.list = (j && j.plugins) || []; QB.openPluginGuide(id); });
+      return;
+    }
     const item = ((QB._store && QB._store.list) || []).find((x) => x.id === id);
     const src = have && have.guide ? have : (item || have);
     if (!src) return;
@@ -2331,7 +2340,7 @@ QB.registerTheme({
     "listen": ["Study", "Audio", "Hands free"], "answer-notes": ["Study", "Notes", "Answers"],
     "buzz-tracker": ["Analysis", "Buzzing", "Progress"], "gap-finder": ["Analysis", "Distribution", "Practice"], "neg-check": ["Analysis", "Negs", "Patterns"], "answer-clusters": ["Analysis", "Answers", "Mix-ups"],
     "weekly-plan": ["Tools", "Plan", "Goals"], "tournament-prep": ["Tools", "Tournaments", "Plan"],
-    "pyramid-check": ["Tools", "Writing", "Clues"], "moderator": ["Tools", "Club", "Reading"], "layout-customizer": ["Tools", "Layout", "Design"], "kokoro-voice": ["Play", "Voice", "Read aloud"],
+    "pyramid-check": ["Tools", "Writing", "Clues"], "moderator": ["Tools", "Club", "Reading"], "layout-customizer": ["Tools", "Layout", "Design"], "kokoro-voice": ["Play", "Voice", "Read aloud"], "chatterbox-voice": ["Play", "Voice", "Natural"],
     "buzz-effects": ["Cosmetic", "Effects", "Celebrate"], "reading-style": ["Cosmetic", "Fonts", "Reading"], "backdrops": ["Cosmetic", "Background", "Atmosphere"],
   };
   const SICO = {

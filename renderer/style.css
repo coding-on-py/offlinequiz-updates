@@ -4408,6 +4408,7 @@ button.acct-row:hover { background: var(--raised); }
   .stk-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .stk-now { grid-column: 1 / -1; }
   .stk-stat b { font-size: 21px; }
+  .stk-stat { justify-content: flex-start; }   /* the numbers in a row though a label wraps to two lines */
   .stk-week { justify-content: space-between; }
   .stk-grid, .stk-months { grid-auto-columns: 13px; }
 }
@@ -6584,7 +6585,7 @@ html:not(.topics-on) .topics-only { display: none !important; }
 .canon-row:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Setup panel: Canon fills the row like Difficulty above it */
 .filters-panel .canon-checks { display: flex; flex-wrap: nowrap; width: 100%; }
-.filters-panel .canon-row { flex: 1 1 0; min-width: 0; padding: 0 4px; }
+.filters-panel .canon-row { flex: 1 1 auto; min-width: 0; padding: 0 4px; }   /* by their words' widths, so Uncommon fits on a phone */
 .filters-panel .canon-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tt-na { color: var(--muted); font-size: 12.5px; }
 /* a question's topics: About, Themes, Mentions, each a labelled row of chips */
@@ -6904,20 +6905,26 @@ html[data-panel-side="left"] .voice-panel { right: auto; left: 12px; transform-o
 .voice-panel .vp-key { margin-left: auto; }
 .voice-panel .vp-key kbd { display: inline-block; min-width: 20px; padding: 0 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; color: var(--muted); font: 500 11.5px/1.6 var(--font); text-align: center; }
 .voice-panel .slider-group { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; }
-.voice-panel .filter-label { margin: 0 0 8px; }
-/* each voice: picked by its row, heard with its play button */
-.vp-voices { display: flex; flex-direction: column; gap: 2px; }
-.vv-h { margin: 10px 0 4px 10px; color: var(--muted); font-size: 12px; }
+/* each voice: picked by its row, heard with its play button. The same size as the rest of the panel's text, a few per
+   group and the rest behind More */
+.voice-panel .filter-label { margin: 0 0 6px; font-size: 11px; font-weight: 500; color: var(--muted); }
+.vp-voices { display: flex; flex-direction: column; gap: 1px; }
+.vv-h { margin: 12px 0 2px; color: var(--muted); font-size: 11px; }
 .vv-h:first-child { margin-top: 0; }
-.vv-row { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 4px 0 10px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; color: var(--text); transition: background 120ms ease, border-color 120ms ease; }
+.vv-row { display: flex; align-items: center; gap: 10px; min-height: 32px; margin: 0 -8px; padding: 0 2px 0 8px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 13px; transition: background 120ms ease, border-color 120ms ease; }
 .vv-row:hover { background: var(--raised); }
 .vv-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .vv-row[aria-checked="true"] { border-color: var(--line); background: var(--raised); color: var(--strong); }
-.vv-dot { flex: 0 0 auto; width: 14px; height: 14px; border: 2px solid var(--line-strong); border-radius: 50%; box-sizing: border-box; transition: border 120ms ease; }
-.vv-row[aria-checked="true"] .vv-dot { border: 4px solid var(--accent); }
-.vv-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vv-play { flex: 0 0 auto; }
-.vv-play[aria-pressed="true"] { color: var(--accent); }
+.vv-dot { flex: 0 0 auto; width: 12px; height: 12px; border: 1.5px solid var(--line-strong); border-radius: 50%; box-sizing: border-box; transition: border 120ms ease; }
+.vv-row[aria-checked="true"] .vv-dot { border: 3.5px solid var(--accent); }
+.vv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vv-play.btn-icon { flex: 0 0 auto; width: 28px; height: 28px; min-height: 28px; color: var(--muted); }
+.vv-play svg { width: 13px; height: 13px; }
+.vv-play:hover, .vv-play[aria-pressed="true"] { color: var(--accent); }
+.vv-more { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; margin: 2px 0 0; padding: 4px 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.vv-more:hover { color: var(--text); }
+.vv-more svg { width: 12px; height: 12px; transition: transform 160ms ease; }
+.vv-more[aria-expanded="true"] svg { transform: rotate(180deg); }
 .vp-voices.locked .vv-row { cursor: default; opacity: 0.6; }
 .vp-voices.locked .vv-row:hover { background: none; }
 .vp-voices.locked .vv-row[aria-checked="true"] { background: var(--raised); }
