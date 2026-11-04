@@ -1835,7 +1835,9 @@ const Speech = (() => {
   }
   // how fast the voice talks: Voice speed in the Voice panel (15.72). It used to follow Reading speed, whose slow end
   // made a slow voice and whose fast end it couldn't reach; with Read aloud on, Reading speed is off and the voice sets the pace
-  function rate() { const v = Number(state.settings.voiceRate); return Number.isFinite(v) && v > 0 ? Math.max(0.5, Math.min(2, v)) : 1; }
+  // (15.81) a room sets the speed while its voice reads along (its reading's pace, not the player's own setting)
+  let rateFor = 0;
+  function rate() { const v = rateFor || Number(state.settings.voiceRate); return Number.isFinite(v) && v > 0 ? Math.max(0.5, Math.min(2, v)) : 1; }
 
   // ── Where the voice is in what it says (15.72) ──
   // A voice that says where it is (word boundaries: the browser's local voices) is followed exactly. Google's voices in
@@ -2377,7 +2379,7 @@ const Speech = (() => {
   const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud);
   return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level, quietFor, warm,
     pause, resumeHeld, get waiting() { return !!waiting; }, preview, stopPreview, get previewing() { return previewing && previewing.uri; }, _marksWhere: marksWhere, _piecesFor: piecesFor,
-    get tracking() { return !!tracking; }, _alignPiece: alignPiece, _sayUnits: sayUnits };   // (the last two for tests)
+    get tracking() { return !!tracking; }, setRate(v) { rateFor = v > 0 ? v : 0; }, _alignPiece: alignPiece, _sayUnits: sayUnits };   // (the last two for tests)
 })();
 
 // ── What the voice says for a question's text (15.62) ──
@@ -9934,7 +9936,7 @@ function openHistoryOverlay(opts) {
   el.innerHTML = `
     <div class="review-viewer-box">
       <div class="review-viewer-head">
-        <span class="hotkey-sheet-title" style="margin:0">${escapeHtml((o && o.title) || "SESSION HISTORY")} (${src.length})</span>
+        <span class="hotkey-sheet-title" style="margin:0">${escapeHtml((o && o.title) || "Session history")} (${src.length})</span>
         <span style="display:flex;gap:6px">
           <button class="btn btn-sm btn-ghost" id="btn-history-export"${src.length ? "" : " disabled"}>Export</button>
           <button class="btn btn-sm btn-ghost" id="btn-history-compact">Compact all</button>
@@ -15161,7 +15163,7 @@ function init() {
       //   userAnswer, answer, question: { question_sanitized, answer, answer_sanitized,
       //   category, subcategory, alternate_subcategory, difficulty, set_name, set_year } }
       openSessionHistory: (entries, opts) =>
-        openHistoryOverlay({ entries: Array.isArray(entries) ? entries : [], title: (opts && opts.title) || "SESSION HISTORY" }),
+        openHistoryOverlay({ entries: Array.isArray(entries) ? entries : [], title: (opts && opts.title) || "Session history" }),
       // Earned/progress state for every achievement (base + plugin), computed
       // from the same data the Player screen uses. Plugins can't derive this
       // themselves — the thresholds and answer-power classes live in app.js.

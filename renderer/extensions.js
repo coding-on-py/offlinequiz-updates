@@ -3479,7 +3479,7 @@ function __qbMain(ctx) {
       if (!roll && optNext) { pressAgain = true; return; }
       toHost(roll ? { t: "reqNext", roll: roll } : { t: "reqNext" });
     }
-    function applyQuestionMsg(d) { if (optPause) { clearTimeout(optPause.t); optPause = null; } clearOptBuzz(); outIds = {}; outTeams = {}; stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
+    function applyQuestionMsg(d) { rvStop(); if (optPause) { clearTimeout(optPause.t); optPause = null; } clearOptBuzz(); outIds = {}; outTeams = {}; stopClientRead(); stopAutoSub(); endedPowerEnd = 0; current = d.q; if (typeof d.count === "number") qCount = d.count; ended = false; pendingBuzzer = null; revealIdx = 0; buzzHistory = []; buzzCharMarks = []; paused = false; bonusView = null; renderQuestion(); renderBuzzes(); updateTopBar(); }
     // Next can show the waiting question now: the room would go on (the same rules as the game server's next())
     function instantNextOk() {
       var u = upNext;
@@ -3685,6 +3685,8 @@ function __qbMain(ctx) {
         revealIdx = current.text.length; broadcast({ t: "read", from: revealIdx, speed: 0 }); applyReveal(revealIdx); hostStartBuzzWindow(); return;
       }
       broadcast({ t: "read", from: revealIdx, speed: curRevealSpeed });
+      lastReadSpeed = curRevealSpeed;   // (the host reads on its own clock: its voice reads along too)
+      if (rv.on) setTimeout(function () { rvStart(revealIdx); }, 0);
       // TIME-BASED reveal: the index follows the wall clock, not the number of
       // interval fires — a busy host machine can no longer fall behind its own
       // clients' text. (The old ticker also ran getPracticeConfig — two full
@@ -3739,9 +3741,47 @@ function __qbMain(ctx) {
     // ── client-side reading ticker (driven by the host's "read" message) ──
     var clientReadTimer = null;
     function stopClientRead() { if (clientReadTimer) { clearInterval(clientReadTimer); clientReadTimer = null; } }
+    // ── (15.82) Read aloud in a room. The room's reading sets the pace (everyone sees the same words), so the voice
+    // reads along with it, at a speed matched to the room's (voices say about 15 characters a second at 1×), a phrase
+    // at a time as the text comes (a game server sends it a few seconds ahead of the reading, never more). It stops
+    // at a buzz or a pause and starts again from the room's place when the reading goes on; if the room reads faster
+    // than the voice can, it skips on to where the room is rather than falling behind. The voice is the one picked
+    // in practice (its Voice panel); the room's Voice button turns it on or off on this device ──
+    var rv = { gen: 0, at: 0, busy: false, on: false };
+    try { rv.on = localStorage.getItem("qb-mp-voice") === "1"; } catch (e) {}
+    function rvCan() { return typeof Speech !== "undefined" && Speech.ok; }
+    function rvStop() { var was = rv.busy || rv.on; rv.gen++; rv.busy = false; if (was && rvCan()) { Speech.stop(); Speech.setRate && Speech.setRate(0); } }
+    function rvStart(from) {
+      rvStop();
+      if (!rv.on || !rvCan() || !current || !lastReadSpeed) return;
+      var t = current.text || "", a = Math.max(0, Math.min(t.length, typeof from === "number" ? from : revealIdx));
+      while (a > 0 && /\S/.test(t.charAt(a - 1))) a--;   // from the start of the word the room is in
+      rv.at = a;
+      rvPump();
+    }
+    function rvPump() {
+      if (!rv.on || !rvCan() || !current || rv.busy || paused || pendingBuzzer) return;
+      var t = current.text || "", full = !current.len || t.length >= current.len;
+      // the room has read past the next phrase (it's faster than the voice): on to the phrase the room is in
+      if (revealIdx > rv.at + 120) { var j = t.lastIndexOf(" ", revealIdx); if (j > rv.at) rv.at = j + 1; }
+      var rest = t.slice(rv.at); if (!rest.trim()) return;
+      var re = /[,;:.?!\u2014]["\u201d\u2019)]*\s/g, m, end = -1;
+      while ((m = re.exec(rest))) { if (m.index + m[0].length >= 24) { end = m.index + m[0].length; break; } }
+      if (end < 0) { if (!full) return; end = rest.length; }   // the rest of the phrase isn't here yet: "more" calls again
+      var gen = rv.gen, a = rv.at, b = rv.at + end;
+      rv.busy = true;
+      Speech.setRate && Speech.setRate(Math.max(0.5, Math.min(2, (1000 / Math.max(5, lastReadSpeed)) / 15)));
+      var heard = false, next = function () { if (gen !== rv.gen) return; rv.busy = false; rv.at = b; rvPump(); };
+      // (a voice the browser won't let speak yet, before the page has been pressed, says so or never starts: it stands
+      // down until the room reads on, rather than racing through the phrases or holding the rest back)
+      var fail = function (why) { if (gen !== rv.gen) return; if (why === "not-allowed") { rv.busy = false; return; } next(); };
+      if (!Speech.speak(t.slice(0, b), a, function () { heard = true; }, next, null, fail)) { rv.busy = false; return; }
+      setTimeout(function () { if (gen === rv.gen && !heard && rv.busy) rvStop(); }, 5000);
+    }
     function clientStartRead(from, speed, keepAhead) {
       stopClientRead();
       lastReadSpeed = speed || 0;
+      if (speed && rv.on) setTimeout(function () { rvStart(from); }, 0); else if (!speed) rvStop();
       // keepAhead: this page is ahead (Next showed the question at the press, a round trip before the room read
       // it): it holds there until the room's clock catches up, in step with everyone, and takes no text back
       var from0 = typeof from === "number" ? from : revealIdx;
@@ -4078,7 +4118,7 @@ function __qbMain(ctx) {
       else if (d.t === "chat") { addChat(d.name, d.text, d.sys, d.chan === "team"); }
       // server rooms: the question's text arrives a few seconds ahead of the
       // reading ("more"); q.len is its full length
-      else if (d.t === "more") { if (current && typeof d.text === "string") current.text += d.text; }
+      else if (d.t === "more") { if (current && typeof d.text === "string") { current.text += d.text; if (rv.on && !rv.busy) rvPump(); } }
       else if (d.t === "status") { setStatus(d.text || ""); }
       else if (d.t === "needConfig") { sendRoomConfig(true); }
       else if (d.t === "question") {
@@ -4100,7 +4140,7 @@ function __qbMain(ctx) {
       else if (d.t === "read") { if (d.speed) pendingBuzzer = null; optConfirmRead = false; clientStartRead(d.from, d.speed, true); }
       else if (d.t === "reveal") { revealIdx = d.index; applyReveal(d.index); }  // legacy hosts
       else if (d.t === "buzz") {
-        var early = optBuzz; clearOptBuzz(); pendingBuzzer = d.id || null;
+        var early = optBuzz; clearOptBuzz(); pendingBuzzer = d.id || null; rvStop();
         // (the answerer's own box runs `lag` short of the room's time: it closes before the room gives the buzz on)
         stopClientRead(); if (typeof d.index === "number") { revealIdx = d.index; applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000) - (d.id === myId ? (d.lag || 0) : 0); applyBuzz(d.id, d.name, d.index, answerDeadline);
         if (early && d.id === myId) {   // typed (or entered) before the room said it was ours
@@ -4121,7 +4161,7 @@ function __qbMain(ctx) {
       else if (d.t === "reading") { /* the host's "read" message restarts the local ticker */ }
       else if (d.t === "pause") {
         if (optPause) { clearTimeout(optPause.t); optPause = null; }
-        paused = d.paused;
+        paused = d.paused; if (paused) rvStop();
         // where the room stopped (others saw up to there); never back from what's shown
         if (typeof d.idx === "number" && d.idx > revealIdx) { revealIdx = d.idx; applyReveal(revealIdx); }
         applyPause(d.paused);
@@ -5059,6 +5099,7 @@ function __qbMain(ctx) {
             (mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
             '<span class="spacer"></span>' +
             '<span class="rh-q num" id="mp-qcount"></span>' +
+            (rvCan() ? '<button type="button" class="btn' + (rv.on ? " on" : "") + '" id="mp-voice" aria-pressed="' + rv.on + '" title="Read the questions aloud as the room reads them"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H3v6h3l5 4z"/><path class="vb-wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>Voice</button>' : "") +
             '<button type="button" class="btn" id="mp-roomset"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>Room settings</button>' +
           "</div>" +
           '<div class="practice-layout mp-layout">' +
@@ -5137,6 +5178,13 @@ function __qbMain(ctx) {
         else { try { navigator.clipboard.writeText(text); } catch (e) {} }
       };
       body.querySelector("#mp-roomset").onclick = function () { toggleRoomSettings(); };
+      var vb = body.querySelector("#mp-voice");
+      if (vb) vb.onclick = function () {
+        rv.on = !rv.on; try { localStorage.setItem("qb-mp-voice", rv.on ? "1" : "0"); } catch (e) {}
+        vb.classList.toggle("on", rv.on); vb.setAttribute("aria-pressed", String(rv.on));
+        if (!rv.on) rvStop();
+        else if (current && !ended && !paused && !pendingBuzzer && clientReadTimer) rvStart(revealIdx);
+      };
       body.querySelector("#mp-buzz-btn").onclick = function () { requestBuzz(); };
       body.querySelector("#mp-next-btn").onclick = function () { requestNext(); };
       body.querySelector("#mp-pause-btn").onclick = function () { requestPause(); };
@@ -5957,6 +6005,7 @@ function __qbMain(ctx) {
     }
 
     function applyBuzz(id, name, idx, deadline, provisional) {
+      rvStop();
       setTimeout(syncActions, 0);
       var buzz = body && body.querySelector("#mp-buzz"); if (!buzz) return;
       var kept = id === myId && !provisional && buzz.querySelector("#mp-ans-input");
@@ -6236,6 +6285,7 @@ function __qbMain(ctx) {
       var ov = body && body.querySelector("#mp-pause-overlay"); if (ov) ov.remove();
     }
     function applyPause(p) {
+      if (p) rvStop();
       setTimeout(syncActions, 0);
       var qt = body && body.querySelector("#mp-qtext"); if (qt) qt.classList.toggle("paused-text", p);
       var area = body && body.querySelector(".question-area");
@@ -6341,7 +6391,7 @@ function __qbMain(ctx) {
         }));
       }
       var entries = sessionLog.map(function (e) { return mpEntryToHistory(e, e.qid ? _qRowCache[e.qid] : null); });
-      ctx.host.openSessionHistory(entries, { title: "MULTIPLAYER HISTORY" });
+      ctx.host.openSessionHistory(entries, { title: "Room history" });
     }
 
     function leave() {
@@ -6352,7 +6402,7 @@ function __qbMain(ctx) {
       returnPanel();
       restoreSoloPanel();
       roomSelCache = null; roomCfgCache = null; _owedRoomConfig = false;   // the next room starts from its own defaults
-      stopReveal(); stopAnswerTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub();
+      stopReveal(); stopAnswerTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); rvStop();
       stopBuzzWindowTimer(); stopTick();   // a stale buzz-window timeout must never fire into the NEXT lobby
       chatScope = "all"; mpPre = { key: "", q: null, busy: false }; _lastSelJson = ""; chatHist = [];
       bonusState = null; bonusView = null; bonusPending = false;
@@ -13021,7 +13071,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     const home = Array.isArray(t.categories) ? t.categories[0] : null;
     const cats = (Array.isArray(t.categories) ? t.categories : []).filter((p, i, a) => typeof p === "string" && p && p !== home && a.indexOf(p) === i).map((p) => {
       const parts = p.split(" > "), color = typeof rootColorOf === "function" ? rootColorOf(p) : "";
-      return `<button type="button" class="tchip tcat" style="--c:${esc(color)}" data-cat-path="${esc(p)}" title="${esc(parts.join(" › "))}"><span class="dot"></span>${esc(parts.length > 1 ? parts[0] + " › " + parts[parts.length - 1] : parts[0])}</button>`;
+      return `<button type="button" class="tchip tcat" style="--c:${esc(color)}" data-cat-path="${esc(p)}" title="${esc(parts.join(" › "))}"><span class="dot"></span><span class="tc-t">${esc(parts.length > 1 ? parts[0] + " › " + parts[parts.length - 1] : parts[0])}</span></button>`;
     }).join("");
     const row = (label, html) => (html ? `<div class="trow"><span class="trow-k">${label}</span><div class="trow-v">${html}</div></div>` : "");
     const body = row("About", tiers + about) + row("Themes", themes) + row("Also in", cats) + row("Mentions", shown);

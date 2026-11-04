@@ -2897,7 +2897,7 @@ html.web .home-bg.hb-in { opacity: 1; }
 .home-bgq .ans strong { color: var(--green); letter-spacing: 0; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
 .home-veil { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse 70% 55% at 50% 32%, color-mix(in srgb, var(--bg) 92%, transparent), color-mix(in srgb, var(--bg) 80%, transparent)); }
 .home-inner {
-  position: relative; z-index: 1; flex: 1 1 auto; min-height: 0; overflow-y: auto; width: 100%;
+  position: relative; z-index: 1; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; width: 100%;   /* (on a 320-pixel phone the wordmark made it scroll 4 pixels sideways) */
   display: flex; flex-direction: column; align-items: center; justify-content: safe center;   /* safe: a tall home (a phone) scrolls from its top instead of cutting it off */
   gap: clamp(26px, 5vh, 44px); padding: clamp(24px, 6vh, 72px) var(--gutter) 40px;
 }
@@ -6626,6 +6626,10 @@ html:not(.topics-on) .topics-only { display: none !important; }
 .tchip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--c, var(--muted)) 40%, var(--line)); border-radius: 12px;
   background: color-mix(in srgb, var(--c, var(--muted)) 9%, transparent); color: var(--text); font-family: var(--font); font-size: 12px; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .tchip:hover, .tchip:focus-visible { border-color: var(--c, var(--muted)); color: var(--strong); }
+/* (15.82) a long one ("Literature › German-Language & Dutch …") shortens with "…" in a narrow card (on a phone it
+   pushed the history list sideways); its whole path is its title */
+.trow-v .tchip { min-width: 0; }
+.tchip .tc-t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tchip.plain { border-style: dashed; border-color: var(--line); background: transparent; color: var(--muted); cursor: default; }
 .tchip.tcat .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--c, var(--muted)); }   /* a category: its top category's color */
 .tchip.more { border-color: var(--line); background: transparent; color: var(--muted); }
@@ -6640,7 +6644,7 @@ html[data-scheme="light"] .ttier { color: color-mix(in srgb, var(--tc) 62%, #000
 .qcard-topics { padding: 10px 0 2px; border-top: 1px dashed var(--line); margin-top: 10px; }
 .qcard.compact .qcard-topics { display: none; }
 .topics-result { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
-@media (max-width: 640px) { .trow { flex-direction: column; gap: 4px; } .trow-k { width: auto; } }
+@media (max-width: 640px) { .trow { flex-direction: column; align-items: stretch; gap: 4px; } .trow-k { width: auto; } }   /* (stretched: at their own width a long chip ran past the card) */
 /* Database → Tags */
 .tg-toolbar { gap: 10px; }
 .tg-find { flex: 1; min-width: 0; }
@@ -6916,8 +6920,8 @@ html.tb-nocrumb .tb-crumb { display: none; }
 
 /* the Voice button and its popover (15.63, app.js openVoicePop): Read aloud, its voice, hiding the text, then plugins'
    voice settings. The button's sound waves light up while Read aloud is on */
-#btn-voice .vb-wave { opacity: 0.35; transition: opacity 160ms ease, stroke 160ms ease; }
-#btn-voice.on .vb-wave { opacity: 1; stroke: var(--accent); }
+#btn-voice .vb-wave, #mp-voice .vb-wave { opacity: 0.35; transition: opacity 160ms ease, stroke 160ms ease; }
+#btn-voice.on .vb-wave, #mp-voice.on .vb-wave { opacity: 1; stroke: var(--accent); }   /* (a room's Voice: reading along, 15.81) */
 #btn-voice[aria-expanded="true"] { background: var(--raised); border-color: var(--line-strong); color: var(--strong); }
 /* ── the Voice panel (15.72): beside the page like Setup, which it takes turns with (one open at a time), with every
    voice to pick from and hear, the voice's speed and plugins' voice settings ── */
