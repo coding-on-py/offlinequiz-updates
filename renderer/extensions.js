@@ -5602,6 +5602,7 @@ function __qbMain(ctx) {
         });
       }
       panel.classList.add("mp-borrowed");
+      try { if (window.syncVoiceRow) setTimeout(window.syncVoiceRow, 0); } catch (e) {}   // Read aloud locks nothing here (15.76)
       panel.classList.remove("open");
       layout.insertBefore(panel, layout.firstChild);
       borrowedPanel = panel;
@@ -5758,6 +5759,7 @@ function __qbMain(ctx) {
       borrowedPanel.querySelectorAll(".mp-injected").forEach(function (n) { n.remove(); });
       dxHidden.forEach(function (x) { x[0].style.display = x[1]; }); dxHidden = [];   // a diagnostic room hid the practice sections
       borrowedPanel.classList.remove("mp-borrowed");
+      try { if (window.syncVoiceRow) setTimeout(window.syncVoiceRow, 0); } catch (e) {}
       borrowedPanel.classList.remove("open");
       var ft = borrowedPanel.querySelector(".fp-title"); if (ft) ft.textContent = "Practice setup";
       var rb = body && body.querySelector("#mp-roomset"); if (rb) rb.setAttribute("aria-expanded", "false");
@@ -5812,8 +5814,14 @@ function __qbMain(ctx) {
         if (p.spec) { specs.push(p); return; }
         (teams[p.team || ""] = teams[p.team || ""] || []).push(p);
       });
-      var COLORS = ["#8957e5", "#1f6feb", "#bf4b8a", "#2ea043", "#d29922", "#0e7490", "#db6d28"];
-      var colorOf = function (id) { var h = 0; for (var i = 0; i < String(id).length; i++) h = (h * 31 + String(id).charCodeAt(i)) >>> 0; return COLORS[h % COLORS.length]; };
+      // (15.76) a circle's color says whose side they're on: yours (you and your team, who share your points) in the
+      // accent, everyone else (another team, or anyone when you play on your own) in orange, a spectator gray
+      var mine = players[myId] || {}, myTeam = mine.spec ? null : (mine.team || "");
+      var colorOf = function (p) {
+        if (p.spec) return "var(--text-muted)";
+        if (p.id === myId || (myTeam && (p.team || "") === myTeam) || inDiag()) return "var(--accent-strong)";
+        return "var(--mp-other, #d9622b)";
+      };
       // a diagnostic room: names are the accounts' and everyone is on the one team (nothing to edit);
       // a picked player who hasn't come in yet is "not here yet"
       var dx = inDiag(), dxWaiting = dx && !!(dxInfo && dxInfo.waiting);
@@ -5823,9 +5831,9 @@ function __qbMain(ctx) {
         var nm = neonNameHtml(p.name, p);   // a bought neon name glows
         var nameHtml = you && !dx ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + nm + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + nm + (you ? " <small>(you)</small>" : "") + "</b>";
         var subHtml = p.off ? (dxWaiting ? "not here yet" : "offline") : p.spec ? (dx ? "host" : "spectating")
-          : you && !dx ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? "team " + esc(p.team) : "+ Add team") + "</button>"
-          : (p.team ? "team " + esc(p.team) : "&nbsp;");
-        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(neonOf(p) || "") + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.neonAvatar(neonOf(p))) || "background:" + (you ? "var(--accent-strong)" : colorOf(p.id))) + '">' + esc(initial) + '</span>' +
+          : you && !dx ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? esc(p.team) : "+ Add team") + "</button>"
+          : (p.team ? esc(p.team) : "&nbsp;");
+        return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(neonOf(p) || "") + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.neonAvatar(neonOf(p))) || "background:" + colorOf(p)) + '">' + esc(initial) + '</span>' +
           '<span class="nm">' + nameHtml + "<span>" + subHtml + "</span></span>" +
           (p.spec ? "" : '<span class="sc num">' + (p.score || 0) + "</span>") + "</div>";
       };
@@ -5844,7 +5852,7 @@ function __qbMain(ctx) {
       var nb = el.querySelector(".mp-edit-name");
       if (nb) nb.onclick = function () { editInPlace(nb, (players[myId] || {}).name || myName, 24, "Your name", function (v) { if (v) { changeName(v); var mi = body.querySelector("#mp-myname"); if (mi) mi.value = v; } }); };
       var tb = el.querySelector(".mp-edit-team");
-      if (tb) tb.onclick = function () { editInPlace(tb, (players[myId] || {}).team || "", 24, "Team name (leave empty for none)", function (v) { changeTeam(v); var ti = body.querySelector("#mp-myteam"); if (ti) ti.value = v; }); };
+      if (tb) tb.onclick = function () { editInPlace(tb, (players[myId] || {}).team || "", 24, "Team name", function (v) { changeTeam(v); var ti = body.querySelector("#mp-myteam"); if (ti) ti.value = v; }); };
       el.querySelectorAll(".mp-join-team").forEach(function (b) { b.onclick = function () { changeTeam(b.dataset.team); var ti = body.querySelector("#mp-myteam"); if (ti) ti.value = b.dataset.team; }; });
       syncChatScope();   // team changes can invalidate the "Team" chat scope
     }

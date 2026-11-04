@@ -215,8 +215,50 @@ const API = IS_LAN ? LAN_API : isElectron
     };
 {
   const post = API.post.bind(API), del = API.delete.bind(API);
-  API.post = (url, data, timeoutMs) => { const r = post(url, data, timeoutMs); if (SYNC_WRITES.test(url)) cloudDirty(); return r; };
-  API.delete = (url) => { const r = del(url); if (/^\/api\/sessions\//.test(url)) cloudDirty(); return r; };
+  API.post = (url, data, timeoutMs) => { const r = post(url, data, timeoutMs); if (SYNC_WRITES.test(url)) cloudDirty(); readsWritten(url); return r; };
+  API.delete = (url) => { const r = del(url); if (/^\/api\/sessions\//.test(url)) cloudDirty(); readsWritten(url); return r; };
+}
+// ── Reads kept and fetched ahead (15.76) ──
+// The pages people open (Profile, Statistics, Leaderboards, Clubs, Friends, a player's card) read through here: a GET
+// of one of these is answered at once from what was fetched before while it's recent, and fetched again behind the
+// scenes when it's getting old (kept for the next look: a page never changes under the reader because the server
+// sent something). Writing anything clears the player's own reads; warmReads() fetches them ahead, after start, every
+// two minutes while the page is open, and a few seconds after a write.
+const READS = [
+  // [the path, how long it's good for, what clears it]
+  [/^\/api\/(sets|category-tree|tag-vocab|categories|subcategories|alternate-subcategories|difficulty-range)(\?|$)/, 1800000, "static"],
+  [/^\/api\/(leaderboards(\/groups)?|users\/profile|friends|clubs(\/org|\/leaderboard)?)(\?|$)/, 90000, "social"],
+  [/^\/api\/(stats|sessions|sessions\/breakdown|answer-powers|profiles\/active|account\/profile)(\?|$)/, 300000, "mine"],   // (not trials: its answer carries the server's clock)
+];
+const _reads = new Map();   // url → { data, at, p, kind }
+const readRule = (url) => READS.find((r) => r[0].test(url)) || null;
+const copyOf = (d) => { try { return structuredClone(d); } catch (e) { return d; } };
+{
+  const get = API.get.bind(API);
+  const fetchRead = (url, kind) => {
+    const e = _reads.get(url) || { kind };
+    if (e.p) return e.p;
+    e.p = get(url).then((d) => { e.p = null; if (d && !d.error) { e.data = d; e.at = Date.now(); } return d; }, (err) => { e.p = null; throw err; });
+    _reads.set(url, e);
+    return e.p;
+  };
+  API.get = (url, ...rest) => {
+    const rule = readRule(url); if (!rule) return get(url, ...rest);
+    const e = _reads.get(url), now = Date.now();
+    if (e && e.data !== undefined && now - e.at < rule[1]) {
+      if (now - e.at > rule[1] / 2) fetchRead(url, rule[2]).catch(() => {});   // kept for the next look
+      return Promise.resolve(copyOf(e.data));
+    }
+    return fetchRead(url, rule[2]).then(copyOf);
+  };
+  API.fetchRead = (url) => { const rule = readRule(url); return rule ? fetchRead(url, rule[2]) : get(url); };
+}
+// a write: the player's own reads (and the boards their numbers are on) are out of date
+let _warmT = 0;
+function readsWritten(url) {
+  if (/^\/api\/(evaluate-|reports|plugin-data|plugin-stats)/.test(url)) return;
+  for (const [u, e] of _reads) if (e.kind !== "static") _reads.delete(u);
+  clearTimeout(_warmT); _warmT = setTimeout(() => warmReads(), 4000);
 }
 
 let _profileSyncTimer = null;
@@ -4285,7 +4327,7 @@ async function loadSets() {
   }
   const cur = sel.value;
   sel.innerHTML = '<option value="">choose…</option>' +
-    _allSets.map((s) => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}${s.year ? " (" + s.year + ")" : ""}</option>`).join("");
+    _allSets.map((s) => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}${s.year && !String(s.name).includes(String(s.year)) ? " (" + s.year + ")" : ""}</option>`).join("");   // (no "(2026)" after "2026 ACF Nationals")
   if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
 }
 
@@ -5358,7 +5400,8 @@ function limitList(listEl, itemSel, key, first = 10, step = 25) {
     if (isTable) listEl.after(foot); else listEl.appendChild(foot);
   }
   const paint = () => {
-    const shown = Math.min(items.length, Math.max(first, _moreShown.get(key) || 0));
+    // (15.76) after a row is deleted, one fewer shows ("9 of 40"): the next one doesn't come up in its place
+    const shown = Math.min(items.length, _moreShown.has(key) ? _moreShown.get(key) : first);
     items.forEach((it, i) => it.classList.toggle("qb-more-hidden", i >= shown));
     const left = items.length - shown;
     foot.innerHTML = left > 0
@@ -5371,7 +5414,7 @@ function limitList(listEl, itemSel, key, first = 10, step = 25) {
   foot.onclick = (e) => {
     const b = e.target.closest("[data-more]");
     if (!b) return;
-    const cur = Math.max(first, _moreShown.get(key) || 0);
+    const cur = _moreShown.has(key) ? _moreShown.get(key) : first;
     const act = b.dataset.more;
     _moreShown.set(key, act === "all" ? items.length : act === "less" ? first : cur + step);
     paint();
@@ -5543,13 +5586,15 @@ function syncVoiceRow() {
   if (list) { list.classList.toggle("locked", mid); list.querySelectorAll(".vv-play").forEach((b) => { b.disabled = mid; }); }
   if (mid && Speech.previewing != null) { Speech.stopPreview(); paintPreview(); }
   const lk = document.getElementById("vp-lock"); if (lk) lk.hidden = !(on && mid && row && !row.hidden);
-  // Reading speed is the voice's while it reads (15.72): it can't read at the fast end, and the text follows it anyway
+  // Reading speed is the voice's while it reads (15.72): it can't read at the fast end, and the text follows it anyway.
+  // Not the Setup panel while a multiplayer room has it (15.76): no voice reads there, the room's speed does
+  const inRoom = !!document.querySelector("#filters-panel.mp-borrowed"), lockIn = (el) => on && !(inRoom && el.closest("#filters-panel"));
   ["panel-speed-slider", "speed-slider"].forEach((id) => {
     const r = document.getElementById(id); if (!r) return;
-    r.disabled = on;
-    const g = r.closest(".slider-group"); if (g) { g.classList.toggle("locked-by-read", on); g.title = on ? "The voice sets the pace while Read aloud is on" : ""; }
+    const lk = lockIn(r); r.disabled = lk;
+    const g = r.closest(".slider-group"); if (g) { g.classList.toggle("locked-by-read", lk); g.title = lk ? "The voice sets the pace while Read aloud is on" : ""; }
   });
-  document.querySelectorAll("[data-read-note]").forEach((n) => { n.hidden = !on; });
+  document.querySelectorAll("[data-read-note]").forEach((n) => { n.hidden = !lockIn(n); });
   const hide = document.getElementById("read-hide-row"); if (hide) hide.hidden = !on;
   const hb = document.getElementById("opt-read-hide"); if (hb) hb.checked = !!state.settings.readHide;
   const box = document.getElementById("opt-read-aloud"); if (box) { box.checked = !!state.settings.readAloud; box.disabled = !Speech.ok; }
@@ -5559,8 +5604,8 @@ function syncVoiceRow() {
   }
   ["filter-hide-pron", "filter-hide-notes", "opt-hide-pron", "opt-hide-notes"].forEach((id) => {
     const b = document.getElementById(id); if (!b) return;
-    b.disabled = on;
-    const row = b.closest(".checkbox-row, .setting-row"); if (row) { row.classList.toggle("locked-by-read", on); row.title = on ? "Always on while Read aloud is on" : ""; }
+    const lk = lockIn(b); b.disabled = lk;
+    const row = b.closest(".checkbox-row, .setting-row"); if (row) { row.classList.toggle("locked-by-read", lk); row.title = lk ? "Always on while Read aloud is on" : ""; }
   });
 }
 // Read aloud with the text hidden: a wide box that says "Reading" (#read-box, ui.css) stands in for the words until
@@ -10116,9 +10161,47 @@ window.addEventListener("resize", () => { clearTimeout(_statsResizeT); _statsRes
 // The row goes at once; the totals catch up when the server has deleted it.
 function deleteSessionRow(id) {
   const rows = [...document.querySelectorAll("#stats-container .session-row")].filter((r) => r.dataset.session === id);
+  // the list keeps the rest as they are, one fewer showing (limitList)
+  const showing = [...document.querySelectorAll("#stats-container .session-row:not(.qb-more-hidden)")].length;
+  if (showing) _moreShown.set("stats:sessions", Math.max(0, showing - (rows.some((r) => !r.classList.contains("qb-more-hidden")) ? 1 : 0)));
   removeOptimistic(rows, () => API.delete("/api/sessions/" + encodeURIComponent(id)), { failText: "Couldn't delete that session. Try again." })
     .then((ok) => { if (ok) { if (state.statsSessionId === id) state.statsSessionId = null; loadStats(true); refreshReviewBadge(); } });
 }
+// what Statistics asks for, as it stands (warmReads fetches the same ahead)
+function statsUrl(sid) {
+  if (sid) return "/api/stats?sessionId=" + encodeURIComponent(sid);
+  const cids = statsCatIds(), since = statsSinceMs();
+  return "/api/stats?since=" + (since || 0) + (cids.length ? "&categoryIds=" + encodeURIComponent(cids.join(",")) : "");
+}
+// Everything those pages read, fetched ahead one at a time while nothing else is going on (not while a question is
+// being read): Profile, Statistics, Leaderboards and their players, Friends, Clubs
+let _warming = false, _warmedAt = 0;
+async function warmReads() {
+  if (_warming || document.hidden || needsAccount()) return;
+  if (state.sessionActive && state.currentQuestion && !state.resultAreaVisible) { clearTimeout(_warmT); _warmT = setTimeout(warmReads, 6000); return; }
+  _warming = true; _warmedAt = Date.now();
+  const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 1200 }) : setTimeout(r, 120)));
+  const one = async (url) => { await idle(); try { await API.fetchRead(url); } catch (e) {} };
+  try {
+    for (const u of ["/api/stats", "/api/sessions", statsUrl(null), "/api/answer-powers", "/api/profiles/active"]) await one(u);
+    try { const cids = statsCatIds(); await one("/api/sessions/breakdown" + (cids.length ? "?categoryIds=" + encodeURIComponent(cids.join(",")) : "")); } catch (e) {}
+    if (Account.available && Account.user) {
+      await idle(); _lbPreloadAt = 0; preloadLeaderboards();
+      await one("/api/friends");
+      if (window.QBClubs) {
+        await one("/api/clubs");
+        // and the organization Clubs opens on
+        const cl = _reads.get("/api/clubs"), orgs = (cl && cl.data && cl.data.orgs) || [];
+        let oid = ""; try { oid = String(localStorage.getItem("qb-club-org") || "").replace(/^"|"$/g, ""); } catch (e) {}
+        if (!orgs.some((o) => o.id === oid)) oid = orgs[0] ? orgs[0].id : "";
+        if (oid) await one("/api/clubs/org?id=" + encodeURIComponent(oid));
+      }
+    }
+  } finally { _warming = false; }
+}
+setTimeout(() => warmReads(), 3500);
+setInterval(() => { if (!document.hidden && Date.now() - _warmedAt > 110000) warmReads(); }, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - _warmedAt > 60000) warmReads(); });
 async function loadStats(preserveScroll = false) {
   _screenBuilt.add("stats");
   const screen = document.getElementById("stats-screen");
@@ -10133,7 +10216,7 @@ async function loadStats(preserveScroll = false) {
   try {
     initStatsCategories();
     const cids = statsCatIds();
-    const data = await API.get("/api/stats" + (sid ? "?sessionId=" + encodeURIComponent(sid) : "?since=" + (since || 0) + (cids.length ? "&categoryIds=" + encodeURIComponent(cids.join(",")) : "")));
+    const data = await API.get(statsUrl(sid));
     const stats = data.stats;
 
     syncStatsControls(sid);
@@ -14315,6 +14398,11 @@ async function prefetchDefaults() {
   window.__qbPrefetched = true;   // (tests wait for it)
   // topic tags on: the Tags tab's first list and Frequency → Tags' (counted once per question database)
   if (window.QBTopics) { await calm(); await settle(QBTopics.check().then(() => QBTopics.prefetch())); }
+  // (15.76) each of the fourteen top categories' list too, for the type Frequency is on, so picking one is instant
+  try {
+    const tree = await fetchCatTree("tossups");
+    for (const r of (tree && tree.roots) || []) { if (_freqUnits.length) break; await calm(); await settle(freqFetch(freqUrl(_freqType || "tossup", 0, [r.id], freqATypes()))); }
+  } catch (e) {}
 }
 
 // Jump to Database → Search pre-filled and run it. Usable from anywhere in the
@@ -14806,7 +14894,7 @@ function accountPanelHtml(reason) {
     '<div class="acct-panel-btns"><button type="button" class="btn btn-primary" data-acct="signin">Sign in</button><button type="button" class="btn" data-acct="signup">Create account</button></div></div>';
 }
 document.addEventListener("click", (e) => { const b = e.target.closest("[data-acct]"); if (b) { e.preventDefault(); openAccount(b.dataset.acct); } });
-// the policies (onlinequiz.net/terms, /privacy, /refunds: server-rendered pages): the app opens them in the browser
+// the policies (onlinequiz.net/terms, /privacy: server-rendered pages): the app opens them in the browser
 document.addEventListener("click", (e) => {
   const a = e.target.closest && e.target.closest("a.legal-link"); if (!a || IS_WEB) return;
   e.preventDefault();
@@ -15850,7 +15938,7 @@ function renderStore() {
       </article>
     </section>
     <p class="st-fine">Questions about a purchase? <a href="mailto:${escapeHtml((info && info.support) || "support@onlinequiz.net")}">${escapeHtml((info && info.support) || "support@onlinequiz.net")}</a></p>
-    <p class="st-fine">Full refunds within 14 days, no questions asked. <a class="legal-link" href="/refunds">Refund Policy</a> · <a class="legal-link" href="/terms">Terms of Service</a> · <a class="legal-link" href="/privacy">Privacy Policy</a></p>
+    <p class="st-fine"><a class="legal-link" href="/terms">Terms of Service</a> · <a class="legal-link" href="/privacy">Privacy Policy</a></p>
   </div>`;
   c.querySelectorAll("[data-store-buy]").forEach((b) => b.addEventListener("click", () => storeBuy(b.dataset.storeBuy, b)));
   c.querySelectorAll("[data-store-go]").forEach((b) => b.addEventListener("click", () => openStore(b.dataset.storeGo)));
@@ -16044,6 +16132,9 @@ async function paintLeaderboards(c, d, board, note) {
   c.querySelector("[data-lb-leave]")?.addEventListener("click", () => confirmDialog("Leave " + board.board.name + "?", () => dropBoard("/api/leaderboards/leave", "Couldn't leave " + board.board.name + ". Try again."), { yes: "Leave", danger: true }));
   c.querySelector("[data-lb-invite]")?.addEventListener("click", () => { const h = document.getElementById("lb-invite-who")?.value; if (h) { msg("Inviting @" + h + "…"); act("/api/leaderboards/invite", { id: _lb.tab, handle: h }, "Invited @" + h + "."); } });
   c.querySelectorAll("[data-lb-remove]").forEach((b) => b.onclick = () => confirmDialog("Remove @" + b.dataset.lbRemove + " from this leaderboard?", () => removeOptimistic(b.closest(".lb-row"), () => API.post("/api/leaderboards/remove", { id: _lb.tab, handle: b.dataset.lbRemove }), { failText: "Couldn't remove @" + b.dataset.lbRemove + ". Try again." }).then((ok) => { if (ok) { _lbCache.clear(); renderLeaderboards(" "); } }), { yes: "Remove", danger: true }));
+  // (15.76) the players on it, fetched ahead one after another, so opening anyone's card is instant
+  const handles = [...c.querySelectorAll(".lb-row[data-user]")].map((r) => r.dataset.user).filter((h) => h && h !== (Account.user && Account.user.handle)).slice(0, 15);
+  handles.forEach((h, i) => setTimeout(() => { if (document.querySelector("#leaderboards-screen.active")) API.fetchRead("/api/users/profile?handle=" + encodeURIComponent(h)).catch(() => {}); }, 300 + 180 * i));
 }
 
 // ── Site stats (website; admins only — QB_ADMIN_HANDLES on the server) ──
@@ -16796,6 +16887,13 @@ const QBSelect = (() => {
       });
     };
 
+    // an item brought into view inside the list only (15.76): scrollIntoView scrolled every box around it too, and a
+    // list a little wider than the Setup panel slid the whole panel sideways
+    const reveal = (it) => {
+      if (!it) return;
+      const top = it.offsetTop, h = it.offsetHeight, st = popup.scrollTop, ph = popup.clientHeight;
+      if (top < st) popup.scrollTop = top; else if (top + h > st + ph) popup.scrollTop = top + h - ph;
+    };
     const close = () => {
       if (popup.hidden) return;
       popup.hidden = true;
@@ -16816,7 +16914,7 @@ const QBSelect = (() => {
       const r = trigger.getBoundingClientRect();
       wrap.classList.toggle("up", r.bottom + 240 > window.innerHeight && r.top > 240);
       const cur = popup.querySelector('[data-selected="true"]');
-      if (cur) { cur.classList.add("active"); cur.scrollIntoView({ block: "nearest" }); }
+      if (cur) { cur.classList.add("active"); reveal(cur); }
     };
 
     // A MOUSE pick hands focus back to the page: a focused trigger turned the
@@ -16842,7 +16940,7 @@ const QBSelect = (() => {
       idx = idx < 0 ? 0 : Math.max(0, Math.min(items.length - 1, idx + delta));
       items.forEach((x) => x.classList.remove("active"));
       items[idx].classList.add("active");
-      items[idx].scrollIntoView({ block: "nearest" });
+      reveal(items[idx]);
     };
 
     const highlight = (i) => {
@@ -16850,7 +16948,7 @@ const QBSelect = (() => {
       if (!it) return;
       popup.querySelectorAll(".qb-select-item").forEach((x) => x.classList.remove("active"));
       it.classList.add("active");
-      it.scrollIntoView({ block: "nearest" });
+      reveal(it);
     };
     // Type-ahead while the list is OPEN, with a short buffer: "2025 ac" or
     // "acf" (prefix first, then contains — set names all start with a year)

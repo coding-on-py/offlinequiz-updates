@@ -2760,6 +2760,9 @@ input[type="checkbox"].switch:checked::after, .switch-input:checked::after { tra
 }
 .qb-select-trigger:hover { border-color: var(--line-strong); }
 .qb-select-popup { border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); box-shadow: var(--shadow); padding: 6px; }
+/* in the Setup panel a list is as wide as its box, long names wrapping (15.76: a set list wider than the panel slid it) */
+.filters-panel .qb-select-popup { width: 100%; max-width: 100%; }
+.filters-panel .qb-select-item { white-space: normal; overflow-wrap: anywhere; }
 .qb-select-item { border-radius: var(--r-sm); padding: 7px 10px; font-size: 13px; }
 .qb-select-item.active { background: var(--raised); color: var(--strong); }
 
@@ -3612,6 +3615,9 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .ext-slider::before { width: 18px; height: 18px; left: 3px; background: #fff; }
 .ext-switch input:checked + .ext-slider { background: var(--accent-strong); border: 0; }
 .ext-switch input:checked + .ext-slider::before { transform: translate(18px, -50%); background: #fff; }
+/* (15.76) one switch everywhere: the small one kept a 13 px knob in the full-size track, short of its end */
+.ext-switch-sm .ext-slider::before { width: 18px; height: 18px; }
+.ext-switch-sm input:checked + .ext-slider::before { transform: translate(18px, -50%); }
 .ext-settings-group-title { font-size: 11px; color: var(--muted); font-weight: 500; }
 /* (15.73) a plugin's settings in Settings: a box of their own under the plugin's icon and name */
 .ext-settings-group.esg-card { margin: 16px 0 4px; padding: 4px 14px 8px; border: 1px solid var(--line); border-radius: var(--r-lg, 10px); background: color-mix(in srgb, var(--surface) 55%, transparent); }
@@ -3620,6 +3626,10 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .esg-ico { display: inline-grid; flex: none; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-size: 10px; font-weight: 800; }
 .esg-label { display: flex; align-items: center; gap: 7px; color: var(--strong); }
 .esg-label .esg-ico { width: 20px; height: 20px; border-radius: 6px; }
+/* a plugin's rows in Settings look like the app's own: the same label, height and lines between them */
+.esg-card > .ext-setting-row { min-height: 50px; margin: 0; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+.esg-card > .ext-setting-row:last-child, .esg-card > .ext-setting-row:has(+ :not(.ext-setting-row)) { border-bottom: 0; }
+.esg-card .ext-setting-label { color: var(--text); font-size: 13px; }
 
 /* ═══ Overlays reused from before (review, history, confirm, hotkey sheet) ═══ */
 .hotkey-sheet, .review-viewer, .confirm-overlay { background: color-mix(in srgb, #010409 72%, transparent); }
@@ -4464,7 +4474,7 @@ button.acct-row:hover { background: var(--raised); }
 .mp-player .nm .mp-edit-name small { color: var(--muted); font-weight: 400; }
 .mp-player .nm .mp-edit-team { font-size: 12px; color: var(--muted); }
 .mp-player .nm .mp-edit:hover, .mp-player .nm .mp-edit:focus-visible { color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.mp-player .nm .mp-pen { margin-left: 6px; font-size: 12px; color: var(--muted); opacity: 0; transition: opacity 120ms ease; }
+.mp-player .nm .mp-pen { display: inline-block; margin-left: 6px; font-size: 12px; color: var(--muted); opacity: 0; transition: opacity 120ms ease; transform: scaleX(-1); }   /* writing to the right */
 .mp-player .nm .mp-edit-name:hover .mp-pen { opacity: 1; }
 @media (hover: none) { .mp-player .nm .mp-pen { opacity: 0.8; } }
 .mp-player .nm .mp-edit-in { height: 30px; padding: 0 8px; font-size: 14px; width: 100%; max-width: 260px; }

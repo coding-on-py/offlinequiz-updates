@@ -1,5 +1,5 @@
 {
-  "version": "15.75",
+  "version": "15.76",
   "renderer": [
     "index.html",
     "style.css",
@@ -172,15 +172,15 @@
   "main": true,
   "notes": "bug fixes",
   "files": {
-    "renderer/index.html": "e8514a1ad8101e558cee4ff7a2ed171d60e6078cb8efc20323f27704bb7f3a12",
-    "renderer/style.css": "775ad8d98ba9cde3b5362f1911b1bc68981ad300490dccb18f00862f27427fc8",
+    "renderer/index.html": "bd21b417040cc7529234eda331b255bcbdb89872a59b31a1779fa94dd3b0409c",
+    "renderer/style.css": "3b55c203dc58fb7e625368a53ccd15b9f100223af1301af920b9063bedbc4034",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "ffba6d657e5760c350a78e21b80c452336fcf2b8bffe5fccd44c38b85f352bbd",
-    "renderer/app.js": "df5fd57ad74f5164dac15663a069aa2817b7ac87bde132ebb8a0e50c9c944d4e",
+    "renderer/extensions.js": "442ceefbab09e32bdf69a17ec3230f0899029cb644d0d988a35b48de36597448",
+    "renderer/app.js": "c9b4e5db2da0253952f7f0a0f91c05a63fc17d3085c2ceddb47f3b07a5d47f18",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "ef85095d9b6f3fdc770fc73d6599400a9b7ed16b15da45d8c9c807f94bc33a53",
     "plugins/answer-notes.zip": "57194a5555a806ca53d56198beee48964b10fd11005a65ae78b47d42ee386241",
-    "plugins/backdrops.zip": "9359609f91beeb7c8379f3217019117040915e6ee40d9f401451608ccf3ccedb",
+    "plugins/backdrops.zip": "67ff9df49b6913ccb8536a3a2118d387688fb5fb334756e6b30e9247f03fc54b",
     "plugins/buzz-effects.zip": "784d2e97c4396c1bf461db4114c16004584c938cea9c65d1d0eef75bb2d55306",
     "plugins/buzz-tracker.zip": "4cda6526476ae6597a47a84e5603606272f14ddbe6c40b00e8274af7f437c3fd",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
@@ -210,5 +210,5 @@
     "plugins/voice-answers.zip": "3b140021092ea3e6884c5cf8c6d76b5e7db901c5470bf11e97e111e346106d1b",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "p8twfDP+ySu2QRt34jVpJetpGEdq7Q+jHsRXaNryM/wxISu1bh7XoLGx0NSD3tYeNARTZvOnyyG274xMqT6+Cg=="
+  "signature": "bGmUhcFbwosRFrdEp9tVimRz+ChuDoPql0Mm5e6VQwiLwV+1prc9htpC8OWQuwnwva+6Kv227RqNBybWhd8XAQ=="
 }
