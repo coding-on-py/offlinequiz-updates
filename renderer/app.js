@@ -7001,6 +7001,7 @@ function promptBonusPart(idx, firstAnswer, r) {
   stopEventTimer();
   const t = state.settings.bonusTimer;
   if (t > 0) startEventTimer(t, "Part " + bonusPartLetter(idx), () => bonusPartTimeUp(idx));
+  qbEmit("answer:prompt", { type: "bonus", part: idx, input: inp, ask });   // (15.75) Voice Answers listens again
 }
 
 // An answered part folds to one line — its letter, your answer, ✓ / ✗ — once the
@@ -7659,6 +7660,7 @@ async function submitTossupAnswer(answer) {
       const inp = $("#buzz-input");
       if (inp) { inp.value = ""; inp.disabled = false; inp.placeholder = "answer again…"; setTimeout(() => inp.focus(), 30); }
       startBuzzTimer();
+      qbEmit("answer:prompt", { type: "tossup", input: inp, ask });   // (15.75) Voice Answers listens again
       return;
     }
     state.promptActive = false;
