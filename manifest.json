@@ -1,5 +1,5 @@
 {
-  "version": "15.83",
+  "version": "15.84",
   "renderer": [
     "index.html",
     "style.css",
@@ -207,8 +207,8 @@
     "plugins/reading-style.zip": "fd0fabe7939069b5d72a92d743b978322b1029ef8478a6bdf59851c7c36deec8",
     "plugins/rival.zip": "b65a9afb8848d51ecd2e54739de79f1c4afda841e4ef49b77532f3bae4093be7",
     "plugins/tournament-prep.zip": "f06f0fe0943ae029735a4a9f9f5f2a052b94fc1eecb900dc7ab6e00a7014e3e1",
-    "plugins/voice-answers.zip": "b9f51e943a1e48e5189b59b621edb76d89195bd1fbf96743a0ccee133d773280",
+    "plugins/voice-answers.zip": "e1683331879d2d2730596bc8b7a5de4f7e2f12ad6d54169e2a787c30132fcd35",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "7GjgZnvAS0bA+EnduCnsww3roCJyjFSJTjDBTMQQIvZ/baz2ePpFt0s5VinphWf496Z4rtIJXWg13OO0oBzDDA=="
+  "signature": "vJsRqFrzMovLcwbnINhNHeFXm0zqOywLnHXL2C+vGxhQytzaMAqRKqiQO+ztDCWQpb8BfhQxk+KsKh84ANrvDg=="
 }
