@@ -10654,8 +10654,11 @@ async function loadStats(preserveScroll = false) {
   try {
     initStatsCategories();
     const cids = statsCatIds();
-    const fresh = () => quietRedraw("stats-screen", () => loadStats(true));   // (15.86) opened on kept reads
-    const data = await API.getQuick(statsUrl(sid), fresh);
+    // (15.86) opened on kept reads, drawn again when newer ones come. (15.88) Drawn again (a session deleted, the newer
+    // reads come): the newer ones, waited for, so it changes once (on the kept ones first, it changed twice)
+    const fresh = () => quietRedraw("stats-screen", () => loadStats(true));
+    const read = (u) => (preserveScroll ? API.get(u) : API.getQuick(u, fresh));
+    const data = await read(statsUrl(sid));
     const stats = data.stats;
 
     syncStatsControls(sid);
@@ -10673,7 +10676,7 @@ async function loadStats(preserveScroll = false) {
       return;
     }
 
-    const sessions = await API.getQuick("/api/sessions", fresh);
+    const sessions = await read("/api/sessions");
     const sessionList = sessions.sessions || [];
 
     let sessionEntries = [];
@@ -11774,13 +11777,14 @@ async function loadPlayer(quiet) {
   // (15.86) opened on kept reads (and Trials' own), and drawn again quietly when newer ones come
   const scr = document.getElementById("player-screen"), top = quiet && scr ? scr.scrollTop : 0;
   const fresh = () => quietRedraw("player-screen", () => loadPlayer(true));
+  const read = (u) => (quiet ? API.get(u) : API.getQuick(u, fresh));   // (15.88) drawn again: the newer reads, once
 
   try {
     const [statsData, sessionsData, apData, activeProfile, trialInfo] = await Promise.all([
-      API.getQuick("/api/stats", fresh),
-      API.getQuick("/api/sessions", fresh),
-      API.getQuick("/api/answer-powers", fresh).catch(() => ({ answer_counts: {} })),
-      API.getQuick("/api/profiles/active", fresh).catch(() => null),
+      read("/api/stats"),
+      read("/api/sessions"),
+      read("/api/answer-powers").catch(() => ({ answer_counts: {} })),
+      read("/api/profiles/active").catch(() => null),
       _trialInfo && _trialInfo.trials ? Promise.resolve(_trialInfo) : loadTrialInfo(),
     ]);
     if (quiet && scr) requestAnimationFrame(() => { scr.scrollTop = top; });
@@ -14821,7 +14825,7 @@ async function runRegrade() {
   if (_cloudOn) cloudSyncSoon(1500);
   try { loadTrialInfo(); refreshReviewBadge(); } catch (e) {}
   if (document.querySelector("#stats-screen.active")) loadStats(true);
-  if (document.querySelector("#player-screen.active")) loadPlayer();
+  if (document.querySelector("#player-screen.active")) loadPlayer(true);
   // not in the middle of a question: the window waits for a pause
   for (let i = 0; i < 600 && (state.sessionActive && !trialShown() && (state.isBuzzed || !state.questionFullyRead)); i++) await new Promise((res) => setTimeout(res, 2000));
   showRegrade(r);
@@ -15987,7 +15991,7 @@ async function cloudSyncNow() {
         window.QB?.reloadPluginData?.();   // folders, decks, saved words … from the website / other devices
         loadStarredIds();
         if (document.querySelector("#stats-screen.active")) loadStats(true);   // built out of sight and swapped in (15.77)
-        if (document.querySelector("#player-screen.active")) loadPlayer();
+        if (document.querySelector("#player-screen.active")) loadPlayer(true);
       }
     } else if (r) {
       Account.syncError = r.offline ? "Offline. It syncs when you're back online." : (r.error || "The sync didn't finish.");
