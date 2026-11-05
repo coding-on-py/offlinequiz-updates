@@ -2816,7 +2816,7 @@ function __qbMain(ctx) {
     var buzzHistory = [];        // per-question [{name, correct, points, given, index}]
     var buzzCharMarks = [];      // character indices where a buzz happened (for (#) marks)
     var sessionLog = [];         // all completed questions: {text, answer, category, difficulty, buzzes[], marks[]}
-    var paused = false, qCount = 0;
+    var paused = false, qCount = 0, powerPause = false;
     var borrowedPanel = null, panelHome = null;   // the borrowed practice filter panel
     var chatScope = "all";        // "all" | "team" — which channel the chat box sends to
     var autoSubTimer = null;      // client-side: submits whatever is typed when the timer runs out
@@ -3011,7 +3011,7 @@ function __qbMain(ctx) {
         else go();
       } }];
     }) : null;
-    ctx._cleanup = function () { if (dropUserItems) dropUserItems(); window.removeEventListener("keydown", onDrawerEsc, true); markBusy(false); returnPanel(); restoreSoloPanel(); document.removeEventListener("keydown", onKey); stopReveal(); stopAnswerTimer(); stopTick(); stopBuzzWindowTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); try { if (ws) ws.close(); } catch (e) {} };
+    ctx._cleanup = function () { regRoomVoice(false); if (dropUserItems) dropUserItems(); window.removeEventListener("keydown", onDrawerEsc, true); markBusy(false); returnPanel(); restoreSoloPanel(); document.removeEventListener("keydown", onKey); stopReveal(); stopAnswerTimer(); stopTick(); stopBuzzWindowTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); try { if (ws) ws.close(); } catch (e) {} };
 
     // ── networking helpers (transport-agnostic) ──
     function sendRelay(o) { if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify(o)); } catch (e) {} } }
@@ -3685,8 +3685,9 @@ function __qbMain(ctx) {
         revealIdx = current.text.length; broadcast({ t: "read", from: revealIdx, speed: 0 }); applyReveal(revealIdx); hostStartBuzzWindow(); return;
       }
       broadcast({ t: "read", from: revealIdx, speed: curRevealSpeed });
+      var wasSpeed = lastReadSpeed;
       lastReadSpeed = curRevealSpeed;   // (the host reads on its own clock: its voice reads along too)
-      if (rv.on) setTimeout(function () { rvStart(revealIdx); }, 0);
+      if (rv.on) { if (wasSpeed && wasSpeed !== curRevealSpeed && rv.busy) rvNewSpeed(revealIdx); else setTimeout(function () { rvStart(revealIdx); }, 0); }
       // TIME-BASED reveal: the index follows the wall clock, not the number of
       // interval fires — a busy host machine can no longer fall behind its own
       // clients' text. (The old ticker also ran getPracticeConfig — two full
@@ -3750,9 +3751,43 @@ function __qbMain(ctx) {
     var rv = { gen: 0, at: 0, busy: false, on: false };
     try { rv.on = localStorage.getItem("qb-mp-voice") === "1"; } catch (e) {}
     function rvCan() { return typeof Speech !== "undefined" && Speech.ok; }
-    function rvStop() { var was = rv.busy || rv.on; rv.gen++; rv.busy = false; clearTimeout(rv.t); if (was && rvCan()) { Speech.stop(); Speech.setRate && Speech.setRate(0); } }
+    // (15.86) on or off from the Voice panel (app.js: in a room its Read aloud is the room's), kept for the next room
+    function setRoomVoice(on) {
+      rv.on = !!on; try { localStorage.setItem("qb-mp-voice", rv.on ? "1" : "0"); } catch (e) {}
+      var vb = body && body.querySelector("#mp-voice"); if (vb) { vb.classList.toggle("on", rv.on); vb.setAttribute("aria-pressed", String(rv.on)); }
+      if (!rv.on) rvStop();
+      else if (current && !ended && !paused && !pendingBuzzer && clientReadTimer) rvStart(revealIdx);
+      syncDiagDrawer();
+      try { if (ctx.host && ctx.host.voiceChanged) ctx.host.voiceChanged(); } catch (e) {}
+    }
+    function regRoomVoice(on) {
+      try { if (ctx.host && ctx.host.roomVoice) ctx.host.roomVoice(on && rvCan() ? { on: function () { return rv.on; }, set: setRoomVoice } : null); } catch (e) {}
+    }
+    // (15.86) the reading speed as its slider moves: the room's reading changes with each step, a few times a second
+    // (the chat line comes once, when it settles: onAnyFilterChange); a room this app hosts changes at once
+    var liveSpeedT = 0, liveSpeedAt = 0;
+    function liveSpeed(ms) {
+      if (!(ms >= 0)) return;
+      if (isHost && !serverMode) { hostLocalSpeed = ms; if (curRevealSpeed !== ms) { curRevealSpeed = ms; if (current && !ended && !paused && !pendingBuzzer) beginReveal(); } return; }
+      clearTimeout(liveSpeedT);
+      var go = function () { liveSpeedAt = Date.now(); toHost({ t: "setConfig", config: { revealSpeed: ms }, silent: true }); };
+      var wait = 120 - (Date.now() - liveSpeedAt);
+      if (wait <= 0) go(); else liveSpeedT = setTimeout(go, wait);
+    }
+    function rvStop() { clearTimeout(rvSpeedT); var was = rv.busy || rv.on; rv.gen++; rv.busy = false; clearTimeout(rv.t); if (was && rvCan()) { Speech.stop(); Speech.setRate && Speech.setRate(0); } }
     // the start of the word the room's reading is in (where the voice picks up when it starts over)
     function rvWordAt(t, i) { i = Math.max(0, Math.min(t.length, i)); while (i > 0 && /\S/.test(t.charAt(i - 1))) i--; return i; }
+    // a shade under the room's pace, so it trails the words rather than leads them; behind, it catches up, up to a
+    // third faster, since it can't pass the screen
+    function rvRate() { var lag = Math.max(0, revealIdx - rv.at), boost = 1 + Math.min(0.35, lag / 150); return Math.max(0.5, Math.min(2, 0.95 * boost * (1000 / Math.max(5, lastReadSpeed)) / 15)); }
+    // (15.86) the room's reading speed changed while the voice is mid-phrase (the slider moving): it takes the new pace as
+    // it plays (a plugin's voice) rather than starting the phrase again; a browser's voice starts again once it settles
+    var rvSpeedT = 0;
+    function rvNewSpeed(from) {
+      clearTimeout(rvSpeedT);
+      if (rv.busy && rvCan()) { Speech.setRate && Speech.setRate(rvRate()); if (Speech.respeed && Speech.respeed()) return; }
+      rvSpeedT = setTimeout(function () { rvStart(from); }, rv.busy ? 350 : 0);
+    }
     function rvStart(from) {
       rvStop();
       if (!rv.on || !rvCan() || !current || !lastReadSpeed) return;
@@ -3776,8 +3811,7 @@ function __qbMain(ctx) {
       rv.busy = true;
       // (a shade under the room's pace, so it trails the words rather than leads them; behind, it catches up, up to a
       // third faster, since it can't pass the screen: each phrase made on its own left it 4 s behind by the end)
-      var lag = Math.max(0, revealIdx - rv.at), boost = 1 + Math.min(0.35, lag / 150);
-      Speech.setRate && Speech.setRate(Math.max(0.5, Math.min(2, 0.95 * boost * (1000 / Math.max(5, lastReadSpeed)) / 15)));
+      Speech.setRate && Speech.setRate(rvRate());
       var heard = false, next = function () { if (gen !== rv.gen) return; rv.busy = false; rv.at = b; rvPump(); };
       // …and inside a phrase, a voice that gets more than a few letters past the screen waits for it (held, as
       // practice's Pause holds it), then goes on. A voice that can't be held starts again from the room's word
@@ -3801,8 +3835,10 @@ function __qbMain(ctx) {
     }
     function clientStartRead(from, speed, keepAhead) {
       stopClientRead();
+      var was = lastReadSpeed;
       lastReadSpeed = speed || 0;
-      if (speed && rv.on) setTimeout(function () { rvStart(from); }, 0); else if (!speed) rvStop();
+      if (speed && rv.on) { if (was && was !== speed && rv.busy) rvNewSpeed(from); else setTimeout(function () { rvStart(from); }, 0); }
+      else if (!speed) rvStop();
       // keepAhead: this page is ahead (Next showed the question at the press, a round trip before the room read
       // it): it holds there until the room's clock catches up, in step with everyone, and takes no text back
       var from0 = typeof from === "number" ? from : revealIdx;
@@ -4182,7 +4218,7 @@ function __qbMain(ctx) {
       else if (d.t === "reading") { /* the host's "read" message restarts the local ticker */ }
       else if (d.t === "pause") {
         if (optPause) { clearTimeout(optPause.t); optPause = null; }
-        paused = d.paused; if (paused) rvStop();
+        paused = d.paused; powerPause = !!(d.paused && d.power); if (paused) rvStop();
         // where the room stopped (others saw up to there); never back from what's shown
         if (typeof d.idx === "number" && d.idx > revealIdx) { revealIdx = d.idx; applyReveal(revealIdx); }
         applyPause(d.paused);
@@ -4257,8 +4293,15 @@ function __qbMain(ctx) {
       if (o.speed) clientStartRead(Math.min(current.text.length, o.idx + Math.floor((Date.now() - o.at) / o.speed)), o.speed);
       syncActions();
     }
+    // (15.86) a public room on the game server: only its host pauses or resumes (an official room has none), so nobody
+    // can stop it over and over; the stop at the power mark anyone may end (the server holds to the same)
+    function canPause() {
+      if (inDiag()) return amHost();
+      if (!(serverMode && settings.public !== false)) return true;
+      return amHost() || (paused && powerPause);
+    }
     function requestPause() {
-      if (inDiag() && !amHost()) return;
+      if (!canPause()) return;
       if (isHost) { hostTogglePause(myId); return; }
       // a game-server room: the reading stops (or goes on) here at the press; the room's "pause" confirms it, and
       // "pauseno" (it couldn't: a bonus began, the question ended) puts it back
@@ -4376,7 +4419,7 @@ function __qbMain(ctx) {
       if (b) {
         b.hidden = !officialRoom;
         if (officialRoom) b.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' + esc(officialRoom.name) +
-          ' <span class="qb-info" data-tip="' + esc("An official room for " + officialRoom.name + ". It resets after an hour with no activity.") + '">i</span>';
+          ' <span class="qb-info" data-tip="' + esc("An official room for " + officialRoom.name + ".") + '">i</span>';
       }
     }
     // ── rendering ──
@@ -4801,6 +4844,8 @@ function __qbMain(ctx) {
     }
     function preloadLobby() { prePublic(); preShop(); if (acctOf()) getTicket(); }
     setTimeout(preloadLobby, 1200);
+    // (15.86) and again every half minute while the home screen is up, so the lobby opens on a recent list
+    setInterval(function () { if (!document.hidden && document.querySelector("#title-screen.active")) prePublic(); }, 30000);
     if (ctx.host && ctx.host.whenAccountKnown) ctx.host.whenAccountKnown().then(function () { if (acctOf()) { preShop(); getTicket(); } }).catch(function () {});
     // "Questions? support@…" — a mail link on the website; plain (selectable) text in the app
     function supportLine() {
@@ -5200,11 +5245,13 @@ function __qbMain(ctx) {
       };
       body.querySelector("#mp-roomset").onclick = function () { toggleRoomSettings(); };
       var vb = body.querySelector("#mp-voice");
+      regRoomVoice(true);
+      // (15.86) the Voice panel, where the room's settings go (one or the other): its voices, and Read aloud for the room
       if (vb) vb.onclick = function () {
-        rv.on = !rv.on; try { localStorage.setItem("qb-mp-voice", rv.on ? "1" : "0"); } catch (e) {}
-        vb.classList.toggle("on", rv.on); vb.setAttribute("aria-pressed", String(rv.on));
-        if (!rv.on) rvStop();
-        else if (current && !ended && !paused && !pendingBuzzer && clientReadTimer) rvStart(revealIdx);
+        var h = ctx.host || {};
+        if (!h.openVoicePanel) { setRoomVoice(!rv.on); return; }
+        if (h.voicePanelOpen && h.voicePanelOpen()) { h.closeVoicePanel(); return; }
+        toggleRoomSettings(false); h.openVoicePanel();
       };
       body.querySelector("#mp-buzz-btn").onclick = function () { requestBuzz(); };
       body.querySelector("#mp-next-btn").onclick = function () { requestNext(); };
@@ -5274,7 +5321,9 @@ function __qbMain(ctx) {
       var can = officialRoom ? true : amHost(), s = officialRoom ? { revealSpeed: officialRoom.revealSpeed, strictness: officialRoom.strictness } : (dxInfo && dxInfo.settings) || {};
       var setRange = function (id, v, label) {
         var el = panel.querySelector("#" + id); if (!el) return;
-        el.disabled = !can;
+        var lockV = id === "mp-dx-speed" && rv.on && rvCan();   // (15.86) the voice reads at the room's pace while it's on
+        el.disabled = !can || lockV;
+        var g = el.closest(".slider-group"); if (g) { g.classList.toggle("locked-by-read", lockV); g.title = lockV ? "Locked while the voice is on" : ""; }
         if (v == null || document.activeElement === el) return;
         el.value = v;
         var out = panel.querySelector("#" + id + "-val"); if (out) out.textContent = label;
@@ -5554,6 +5603,7 @@ function __qbMain(ctx) {
     function toggleRoomSettings(open) {
       var panel = borrowedPanel; if (!panel) return;
       var on = open == null ? !panel.classList.contains("open") : !!open;
+      if (on) { try { if (ctx.host && ctx.host.closeVoicePanel) ctx.host.closeVoicePanel(); } catch (e) {} }   // one or the other (15.86)
       panel.classList.toggle("open", on);
       var rb = body && body.querySelector("#mp-roomset"); if (rb) rb.setAttribute("aria-expanded", String(on));
     }
@@ -5583,7 +5633,7 @@ function __qbMain(ctx) {
       }
       if (b) { b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer || !!optBuzz || lockedOut(); }
       if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
-      if (p) { p.hidden = !reading || mySpec || answering; p.textContent = paused ? "Resume" : "Pause"; }
+      if (p) { p.hidden = !reading || mySpec || answering || !canPause(); p.textContent = paused ? "Resume" : "Pause"; }
       var qc = body.querySelector("#mp-qcount");
       // a seasonal event's item tossup shows its mark (app.js seasonMarkHtml)
       if (qc) qc.innerHTML = qCount ? "Question " + qCount + (window.qbEventMark ? window.qbEventMark(current) : "") : "";
@@ -5628,7 +5678,7 @@ function __qbMain(ctx) {
       var dsp = body.querySelector("#mp-dx-speed");
       if (dsp) {
         var spLabel = function (v) { return window.qbSpeedMs && window.qbSpeedLabel ? window.qbSpeedLabel(window.qbSpeedMs(v)) : String(v); };
-        dsp.addEventListener("input", function () { var o = body.querySelector("#mp-dx-speed-val"); if (o) o.textContent = spLabel(dsp.value); });
+        dsp.addEventListener("input", function () { var o = body.querySelector("#mp-dx-speed-val"); if (o) o.textContent = spLabel(dsp.value); if (window.qbSpeedMs) liveSpeed(window.qbSpeedMs(dsp.value)); });
         dsp.addEventListener("change", function () {
           if (!window.qbSpeedMs) return;
           var ms = window.qbSpeedMs(dsp.value);
@@ -5674,7 +5724,7 @@ function __qbMain(ctx) {
         });
       }
       panel.classList.add("mp-borrowed");
-      try { if (window.syncVoiceRow) setTimeout(window.syncVoiceRow, 0); } catch (e) {}   // Read aloud locks nothing here (15.76)
+      try { if (window.syncVoiceRow) setTimeout(window.syncVoiceRow, 0); } catch (e) {}   // the room's voice locks its reading speed here (15.86), Read aloud doesn't
       panel.classList.remove("open");
       layout.insertBefore(panel, layout.firstChild);
       borrowedPanel = panel;
@@ -5774,6 +5824,8 @@ function __qbMain(ctx) {
       // NO events, so any change/input landing during a remote apply is a REAL
       // user edit — swallowing it would desync that player's panel for good.
       if (e && e.target && e.target.closest && e.target.closest(".mp-injected")) return; // ignore MP's own controls
+      // (15.86) the reading speed goes to the room as the slider moves (its chat line once it settles, below)
+      if (e && e.type === "input" && e.target && e.target.id === "panel-speed-slider" && panelHolds === "room" && window.qbSpeedMs) liveSpeed(window.qbSpeedMs(e.target.value));
       var msg = describeFilterChange(e && e.target);
       clearTimeout(_filterTimer);
       _filterTimer = setTimeout(function () {
@@ -6423,7 +6475,7 @@ function __qbMain(ctx) {
       returnPanel();
       restoreSoloPanel();
       roomSelCache = null; roomCfgCache = null; _owedRoomConfig = false;   // the next room starts from its own defaults
-      stopReveal(); stopAnswerTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); rvStop();
+      stopReveal(); stopAnswerTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); rvStop(); regRoomVoice(false);
       stopBuzzWindowTimer(); stopTick();   // a stale buzz-window timeout must never fire into the NEXT lobby
       chatScope = "all"; mpPre = { key: "", q: null, busy: false }; _lastSelJson = ""; chatHist = [];
       bonusState = null; bonusView = null; bonusPending = false;
@@ -12795,7 +12847,39 @@ function __debugLine(answerline, sanitized, opts = {}) {
     issues: P.L.issues };
 }
 
-return { stripTags, normalizeText, stripLeadingArticle, parseAnswerline, parseSanitizedAnswerline, healAnswerline, primaryAnswer, frequencyKey, answersSimilar, similarityKeys, similarKeysMatch, m1, answerContext, evaluateAnswer, parseDirectives, checkAnswer, checkBonusPart, checkBonus, parseAnswerLineForms, __debugLine };
+// (15.86) The other names an answer line gives for its answer, for achievements (index.js answer_alts): an answer power
+// counts when the line names the achievement's target. The main answer as written in full ("normal distribution" where
+// "normal" is the required part), and each other name that is the same thing by another name ("Gaussian distribution",
+// "Donar", "Der Prozess"). Not a name accepted only early ("Dracula before mention" on vampires), an example ("synonyms
+// like sorcery"), a part of the answer ("Emma" of "Emma Bovary", "the trial" of "Dmitri's trial": a power on Madame
+// Bovary counted for Jane Austen's Emma), nor any of them when the answer is a common noun, written lowercase (a common
+// link, "heart [accept The Tell-Tale Heart]", or a kind, "birds [accept ravens]": instances and titles, not other names)
+function achievementNames(answerline, sanitizedAnswerline) {
+  const d = parseDirectives(answerline || "", sanitizedAnswerline || "");
+  const acc = (d && d.accept) || [], forms = ((d && d.forms) || []).filter((f) => f.kind === "accept");
+  // each accepted name's form: a clause by its own text; a main answer's form can carry a bracket of no keyword with it
+  // ("Anton Chekhov [Anton Pavlovich Chekhov]"), and "Dagan or Dagon" is two main answers
+  const bare = (x) => String(x || "").replace(/["“”]/g, "").trim();
+  const formOf = (n) => forms.find((f) => bare(f.text) === bare(n)) || forms.find((f) => f.src === "main" && bare(f.text).startsWith(bare(n))) || null;
+  const fold = (x) => String(x || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim().replace(/^(?:the|a|an) /, "");
+  const mains = acc.filter((n) => { const f = formOf(n); return f && f.src === "main"; });
+  if (!mains.length) return acc;
+  const lead = String(mains[0]).replace(/^[\s"“'‘(]+/, "");
+  if (/^[a-z]/.test(lead)) return mains;
+  const mw = mains.map((m) => fold(m).split(" ").filter(Boolean));
+  const out = mains.slice();
+  for (const n of acc) {
+    const f = formOf(n);
+    if (!f || f.src === "main") continue;
+    if (f.src !== "clause" || f.window || (d.qualifiers && (d.qualifiers[f.text] || d.qualifiers[n]))) continue;
+    const w = fold(n).split(" ").filter(Boolean);
+    if (!w.length || mw.some((m) => w.length < m.length && w.every((x) => m.includes(x)))) continue;
+    out.push(n);
+  }
+  return out;
+}
+
+return { stripTags, normalizeText, stripLeadingArticle, parseAnswerline, parseSanitizedAnswerline, healAnswerline, primaryAnswer, frequencyKey, answersSimilar, similarityKeys, similarKeysMatch, m1, answerContext, evaluateAnswer, parseDirectives, checkAnswer, checkBonusPart, checkBonus, parseAnswerLineForms, __debugLine, achievementNames };
 })();
 window.QBScoring = (function () {
 "use strict";

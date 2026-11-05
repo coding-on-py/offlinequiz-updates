@@ -1,8 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { QuestionDatabase } from "./database.js";
-import { UserData, EVENT, EVENTS, eventOn, eventItemNow, mergeAchDates } from "./userData.js";
-import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer, normalizeText } from "./answerChecker.js";
+import { UserData, EVENT, EVENTS, eventOn, eventItemNow, mergeAchDates, shownAchDates } from "./userData.js";
+import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer, normalizeText, achievementNames } from "./answerChecker.js";
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
 import * as updater from "./updater.js";
@@ -1632,7 +1632,7 @@ export class App {
     const questions = {};
     // 15.5: every other name the answer line gives ("normal distribution [Gaussian distribution; accept bell curve]"):
     // an answer power counts when the line names its target, not only by its required part ("normal")
-    const alts = {};
+    const alts = {}, altsWas = {};
     if (_apQDb !== this.questionDb) { _apQ.clear(); _apQDb = this.questionDb; }
     for (const qid of ids) {
       let q = _apQ.get(qid);
@@ -1646,17 +1646,24 @@ export class App {
           const norm = apFold(head || t.answer_sanitized || t.answer || "");
           if (norm) {
             let names;
-            try { names = [...new Set((parseDirectives(t.answer || "", t.answer_sanitized || "").accept || []).map(apFold).filter((n) => n && n !== norm))].slice(0, 12); } catch (e) { names = []; }
+            // (15.86) only names for the same thing (answerChecker achievementNames): a part of it ("Emma" of Emma Bovary),
+            // an early-only accept, or a common link's titles counted for other targets
+            try { names = [...new Set(achievementNames(t.answer || "", t.answer_sanitized || "").map(apFold).filter((n) => n && n !== norm))].slice(0, 12); } catch (e) { names = []; }
+            // and every name the line accepted, as achievements went by before 15.86, where that differs: the page takes
+            // back an achievement those earned and these don't (once, app.js achRevoke)
+            let was = null;
+            try { const w = [...new Set((parseDirectives(t.answer || "", t.answer_sanitized || "").accept || []).map(apFold).filter((n) => n && n !== norm))].slice(0, 12); if (w.join("\u0001") !== names.join("\u0001")) was = w; } catch (e) { was = null; }
             // class = the question's category PATH (achievements match by prefix)
-            q = { norm, names, ck: t.category_path || [t.category, t.subcategory, t.alternate_subcategory].filter(Boolean).join(" > ") };
+            q = { norm, names, was, ck: t.category_path || [t.category, t.subcategory, t.alternate_subcategory].filter(Boolean).join(" > ") };
           }
         }
         if (_apQ.size > 60000) _apQ.clear();
         _apQ.set(qid, q);
       }
       if (!q) continue;
-      const { norm, names, ck } = q;
+      const { norm, names, was, ck } = q;
       if (names.length) alts[qid] = names;
+      if (was) altsWas[qid] = was;
       counts[norm] = (counts[norm] || 0) + 1;
       const cm = classes[norm] || (classes[norm] = {});
       cm[ck] = (cm[ck] || 0) + 1;
@@ -1670,7 +1677,7 @@ export class App {
     let events = [];
     try { event = { id: EVENT.id, start: EVENT.start, end: EVENT.end, goal: EVENT.goal, on: eventOn() && Date.now() < EVENT.end, pumpkins: this.userData.eventPumpkins() }; } catch { event = null; }
     try { const now = Date.now(); events = EVENTS.filter((ev) => now >= ev.start).map((ev) => ({ id: ev.id, key: ev.key, name: ev.name, item: ev.item, start: ev.start, end: ev.end, goal: ev.goal, on: now < ev.end, items: this.userData.eventItems(ev) })); } catch { events = []; }
-    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, answer_alts: alts, powered_at: poweredAt, event, events, ach_at: this.getAchievementDates() };
+    return { answer_counts: counts, answer_classes: classes, answer_questions: questions, answer_alts: alts, answer_alts_was: altsWas, powered_at: poweredAt, event, events, ach_at: shownAchDates(this.getAchievementDates()) };
   }
 
   // ── Achievement dates (15.25): when each achievement was unlocked, kept with the profile ("ach_at", synced, the
@@ -1682,7 +1689,7 @@ export class App {
   saveAchievementDates(dates) {
     const key = "ach_at:" + this.userData.getActiveProfileId(), had = this.getAchievementDates(), merged = mergeAchDates(had, dates);
     if (JSON.stringify(merged) !== JSON.stringify(had)) this.userData.setConfig(key, JSON.stringify(merged));
-    return { ok: true, dates: merged };
+    return { ok: true, dates: shownAchDates(merged) };
   }
   // the profile's answers in time order, as stats.js counts them: { cats: [[category, path]], rows: [[t, flags,
   // cat index]] }, flags 1 a bonus, 2 a power, 4 a neg
@@ -1697,7 +1704,7 @@ export class App {
       rows.push([Number(e.timestamp), (tu ? 0 : 1) | (tu && e.correct && e.points === 15 ? 2 : 0) | (tu && !e.correct && e.points < 0 ? 4 : 0), i]);
     }
     rows.sort((a, b) => a[0] - b[0]);
-    return { cats, rows, dates: this.getAchievementDates() };
+    return { cats, rows, dates: shownAchDates(this.getAchievementDates()) };
   }
 
   getSessionBreakdown(category, difficulty, categoryIds) {

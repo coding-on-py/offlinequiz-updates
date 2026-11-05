@@ -4445,3 +4445,35 @@ export function __debugLine(answerline, sanitized, opts = {}) {
     contains: F.contains.map((c) => ({ kind: c.kind, slots: c.slots.map((a) => a.map((t) => t.map((x) => x.t).join(" "))), desc: c.desc && c.desc.map((x) => x.t).join(" "), live: isLive(c, rc) })),
     issues: P.L.issues };
 }
+
+// (15.86) The other names an answer line gives for its answer, for achievements (index.js answer_alts): an answer power
+// counts when the line names the achievement's target. The main answer as written in full ("normal distribution" where
+// "normal" is the required part), and each other name that is the same thing by another name ("Gaussian distribution",
+// "Donar", "Der Prozess"). Not a name accepted only early ("Dracula before mention" on vampires), an example ("synonyms
+// like sorcery"), a part of the answer ("Emma" of "Emma Bovary", "the trial" of "Dmitri's trial": a power on Madame
+// Bovary counted for Jane Austen's Emma), nor any of them when the answer is a common noun, written lowercase (a common
+// link, "heart [accept The Tell-Tale Heart]", or a kind, "birds [accept ravens]": instances and titles, not other names)
+export function achievementNames(answerline, sanitizedAnswerline) {
+  const d = parseDirectives(answerline || "", sanitizedAnswerline || "");
+  const acc = (d && d.accept) || [], forms = ((d && d.forms) || []).filter((f) => f.kind === "accept");
+  // each accepted name's form: a clause by its own text; a main answer's form can carry a bracket of no keyword with it
+  // ("Anton Chekhov [Anton Pavlovich Chekhov]"), and "Dagan or Dagon" is two main answers
+  const bare = (x) => String(x || "").replace(/["“”]/g, "").trim();
+  const formOf = (n) => forms.find((f) => bare(f.text) === bare(n)) || forms.find((f) => f.src === "main" && bare(f.text).startsWith(bare(n))) || null;
+  const fold = (x) => String(x || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim().replace(/^(?:the|a|an) /, "");
+  const mains = acc.filter((n) => { const f = formOf(n); return f && f.src === "main"; });
+  if (!mains.length) return acc;
+  const lead = String(mains[0]).replace(/^[\s"“'‘(]+/, "");
+  if (/^[a-z]/.test(lead)) return mains;
+  const mw = mains.map((m) => fold(m).split(" ").filter(Boolean));
+  const out = mains.slice();
+  for (const n of acc) {
+    const f = formOf(n);
+    if (!f || f.src === "main") continue;
+    if (f.src !== "clause" || f.window || (d.qualifiers && (d.qualifiers[f.text] || d.qualifiers[n]))) continue;
+    const w = fold(n).split(" ").filter(Boolean);
+    if (!w.length || mw.some((m) => w.length < m.length && w.every((x) => m.includes(x)))) continue;
+    out.push(n);
+  }
+  return out;
+}

@@ -228,7 +228,7 @@ const READS = [
   // [the path, how long it's good for, what clears it]
   [/^\/api\/(sets|category-tree|tag-vocab|categories|subcategories|alternate-subcategories|difficulty-range)(\?|$)/, 1800000, "static"],
   [/^\/api\/(leaderboards(\/groups)?|users\/profile|friends|clubs(\/org|\/leaderboard)?)(\?|$)/, 90000, "social"],
-  [/^\/api\/(stats|sessions|sessions\/breakdown|answer-powers|profiles\/active|account\/profile)(\?|$)/, 300000, "mine"],   // (not trials: its answer carries the server's clock)
+  [/^\/api\/(stats|sessions|sessions\/breakdown|answer-powers|profiles\/active|account\/profile|activity|starred)(\?|$)/, 300000, "mine"],   // (not trials: its answer carries the server's clock)
 ];
 const _reads = new Map();   // url → { data, at, p, kind }
 const readRule = (url) => READS.find((r) => r[0].test(url)) || null;
@@ -238,15 +238,31 @@ const copyOf = (d) => { try { return structuredClone(d); } catch (e) { return d;
   const fetchRead = (url, kind) => {
     const e = _reads.get(url) || { kind };
     if (e.p) return e.p;
-    e.p = get(url).then((d) => { e.p = null; if (d && !d.error) { e.data = d; e.at = Date.now(); } return d; }, (err) => { e.p = null; throw err; });
+    e.p = get(url).then((d) => { e.p = null; if (d && !d.error) { e.data = d; e.at = Date.now(); e.stale = false; } return d; }, (err) => { e.p = null; throw err; });
     _reads.set(url, e);
     return e.p;
   };
   API.get = (url, ...rest) => {
     const rule = readRule(url); if (!rule) return get(url, ...rest);
     const e = _reads.get(url), now = Date.now();
-    if (e && e.data !== undefined && now - e.at < rule[1]) {
+    if (e && e.data !== undefined && !e.stale && now - e.at < rule[1]) {
       if (now - e.at > rule[1] / 2) fetchRead(url, rule[2]).catch(() => {});   // kept for the next look
+      return Promise.resolve(copyOf(e.data));
+    }
+    return fetchRead(url, rule[2]).then(copyOf);
+  };
+  // (15.86) a page that opens at once (Statistics, Profile, Streaks, Starred): what was fetched before, even when a write
+  // since has made it old (kept, marked stale), and onFresh() once the new one is here and differs, so the page redraws
+  // quietly. It showed Loading stats for a few seconds after every answer: a write threw the player's reads away.
+  // Everything else reads with API.get, which waits for the new one after a write, as before
+  API.getQuick = (url, onFresh) => {
+    const rule = readRule(url); if (!rule) return get(url);
+    const e = _reads.get(url), now = Date.now();
+    if (e && e.data !== undefined) {
+      if (e.stale || now - e.at > rule[1] / 2) {
+        const before = JSON.stringify(e.data);
+        fetchRead(url, rule[2]).then((d) => { if (onFresh && d && !d.error && JSON.stringify(d) !== before) onFresh(); }, () => {});
+      }
       return Promise.resolve(copyOf(e.data));
     }
     return fetchRead(url, rule[2]).then(copyOf);
@@ -257,8 +273,10 @@ const copyOf = (d) => { try { return structuredClone(d); } catch (e) { return d;
 let _warmT = 0;
 function readsWritten(url) {
   if (/^\/api\/(evaluate-|reports|plugin-data|plugin-stats)/.test(url)) return;
-  for (const [u, e] of _reads) if (e.kind !== "static") _reads.delete(u);
-  clearTimeout(_warmT); _warmT = setTimeout(() => warmReads(), 4000);
+  // (15.86) kept, marked stale: a page opens on them at once and redraws when the new ones come (API.getQuick), which
+  // are fetched a moment later
+  for (const [u, e] of _reads) if (e.kind !== "static") e.stale = true;
+  clearTimeout(_warmT); _warmT = setTimeout(() => warmReads(), 1200);
 }
 
 let _profileSyncTimer = null;
@@ -1417,7 +1435,7 @@ function closeSetupDrawer() {
 // at each keystroke and timer tick (~25 ms on a practice page), which made typing an answer lag
 function syncPanelHost() {
   const p = document.getElementById("filters-panel"), vp = document.getElementById("voice-pop");
-  const host = p && p.classList.contains("open") ? p.closest(".screen") : vp && !vp.hidden ? document.getElementById("practice-screen") : null;
+  const host = p && p.classList.contains("open") ? p.closest(".screen") : vp && !vp.hidden ? (document.querySelector(".screen.active") || document.getElementById("practice-screen")) : null;
   for (const s of document.querySelectorAll(".screen.panel-host")) if (s !== host) s.classList.remove("panel-host");
   if (host && !host.classList.contains("panel-host")) host.classList.add("panel-host");
   const co = document.getElementById("cat-ovl"), open = !!(co && !co.classList.contains("hidden"));
@@ -2256,6 +2274,11 @@ const Speech = (() => {
     if (r.later) out.later = Promise.resolve(r.later).then(faster);
     return out;
   }
+  // (15.86) the voice speed changed while a plugin's voice reads (the slider moving, a room's speed): what's playing is
+  // re-timed from where it is (WSOLA, the pitch kept, the word times with it), and what's coming is made at the new
+  // speed, so the change is heard as the slider moves. Pieces go to the audio clock a second or so before they're due
+  // (not as soon as they're made), so a change re-times one or two
+  let live = null;
   function speakPlugin(v, said, at, onPos, onEnd, my, fail) {
     const pieces = piecesFor(said, v.plugin.first);
     if (!pieces.length) { setTimeout(() => { if (my === seq) onEnd(); }, 0); return; }
@@ -2265,9 +2288,39 @@ const Speech = (() => {
     if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; actx = new AC(); }
     const ac = actx; if (ac.state === "suspended") ac.resume().catch(() => {});
     if (!meter) { meter = ac.createAnalyser(); meter.fftSize = 1024; meter.connect(ac.destination); }
-    const speed = Math.max(0.5, Math.min(2, rate())), jobs = [];
-    const job = (k) => jobs[k] || (jobs[k] = Promise.resolve().then(() => synthOf(v, pieces[k].t, speed)).then((r) => atSpeed(v, r, speed)).catch(() => null));
+    let speed = Math.max(0.5, Math.min(2, rate()));
+    const jobs = [];
+    // each piece made at the speed of the moment it's asked for (sp: kept with it)
+    const job = (k) => jobs[k] || (jobs[k] = Promise.resolve().then(() => { const sp = speed; return Promise.resolve(synthOf(v, pieces[k].t, sp)).then((r) => { const o = atSpeed(v, r, sp); if (o) o.sp = sp; return o; }); }).catch(() => null));
     let next = 0;
+    // a piece on the audio clock: its sound as made (orig, at speed sp0), played from orig second `base` at k orig
+    // seconds a second (the speed now over sp0), from audio time startAt for dur
+    const segs = [];
+    const play = (seg, at0) => {
+      if (seg.src) { try { seg.src.stop(); } catch (e) {} const i = playing.indexOf(seg.src); if (i >= 0) playing.splice(i, 1); seg.src = null; }
+      const part = seg.orig.subarray(Math.min(seg.orig.length, Math.round(seg.base * seg.sr)));
+      const x = Math.abs(seg.k - 1) < 0.02 ? part : wsola(part, seg.k);
+      seg.startAt = at0; seg.dur = x.length / seg.sr;
+      if (!x.length) return;
+      const buf = ac.createBuffer(1, x.length, seg.sr); buf.copyToChannel(x, 0);
+      const src = ac.createBufferSource(); src.buffer = buf; src.connect(meter); src.start(at0); playing.push(src); seg.src = src;
+    };
+    const endOf = (seg) => seg.startAt + seg.dur + pauseAfter(seg.p.t, seg.last, speed);
+    const respeed = (sp) => {
+      sp = Math.max(0.5, Math.min(2, sp));
+      if (Math.abs(sp - speed) < 0.01) return;
+      speed = sp;
+      const now = ac.currentTime + 0.02; let t = null;
+      for (const seg of segs) {
+        if (seg.startAt + seg.dur <= now) continue;   // played
+        if (seg.startAt <= now) seg.base = Math.min(seg.origDur, seg.base + (now - seg.startAt) * seg.k);
+        const from = seg.startAt <= now ? now : t != null ? t : Math.max(now, seg.startAt);
+        seg.k = sp / seg.sp0; play(seg, from); t = endOf(seg);
+      }
+      if (t != null) { next = t; pluginEnd = performance.now() + (next - ac.currentTime) * 1000; }
+    };
+    live = { my, respeed, segs };
+    const waitFor = (fn) => new Promise((res) => { const go = () => { if (my !== seq || fn()) res(); else timers.push(setTimeout(go, 50)); }; go(); });
     (async () => {
       for (let k = 0; k < pieces.length; k++) {
         const r = await job(k);
@@ -2283,14 +2336,18 @@ const Speech = (() => {
         a = Math.max(0, a - Math.round(sr * 0.015)); b = Math.min(r.samples.length, b + Math.round(sr * 0.04));   // a breath of fade each side
         const samples = r.samples.subarray(a, b);
         if (!samples.length) continue;
-        const buf = ac.createBuffer(1, samples.length, sr); buf.copyToChannel(samples, 0);
-        const src = ac.createBufferSource(); src.buffer = buf; src.connect(meter);
-        const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k];
-        let where = r.marks && r.marks.length >= 4 ? marksWhere(r.marks, a / sr) : alignPiece(p.t, samples, sr);
+        // (15.86) on the clock a second or so before the one before it ends
+        const prev = segs[segs.length - 1];
+        if (prev) await waitFor(() => ac.currentTime >= prev.startAt + prev.dur - 1.2);
+        if (my !== seq) return;
+        const p = pieces[k], sp0 = r.sp || speed;
+        const seg = { p, last: k === pieces.length - 1, orig: samples, sr, origDur: samples.length / sr, sp0, k: speed / sp0, base: 0, src: null, startAt: 0, dur: 0 };
+        seg.where = r.marks && r.marks.length >= 4 ? marksWhere(r.marks, a / sr) : alignPiece(p.t, samples, sr);
         // (15.85) a voice that finds its word times just after its sound (Chatterbox 1.4: Whisper hears each piece) goes by
         // them from when they come, the guess from the sound until then
-        if (r.later && !(r.marks && r.marks.length >= 4)) Promise.resolve(r.later).then((mk) => { if (mk && mk.length >= 4 && my === seq) where = marksWhere(mk, a / sr); }, () => {});
-        src.start(startAt); playing.push(src); next = startAt + dur + pauseAfter(p.t, k === pieces.length - 1, speed);
+        if (r.later && !(r.marks && r.marks.length >= 4)) Promise.resolve(r.later).then((mk) => { if (mk && mk.length >= 4 && my === seq) seg.where = marksWhere(mk, a / sr); }, () => {});
+        segs.push(seg);
+        play(seg, Math.max(next, ac.currentTime + 0.03)); next = endOf(seg);
         pluginEnd = performance.now() + (next - ac.currentTime) * 1000;
         // the text follows the sound by the audio clock, which stands still while the voice is paused (15.69); (15.85)
         // never back (the word times coming in after the guess), and all of the piece once its sound has played
@@ -2298,11 +2355,11 @@ const Speech = (() => {
         const tick = (first) => {
           if (my !== seq) return;
           const t = ac.currentTime;
-          if (t < startAt) { timers.push(setTimeout(() => tick(first), 40)); return; }
-          const sec = Math.min(dur, t - startAt);
-          was = Math.max(was, sec >= dur ? p.t.length : where(sec));
+          if (t < seg.startAt) { timers.push(setTimeout(() => tick(first), 40)); return; }
+          const done = t >= seg.startAt + seg.dur, o = Math.min(seg.origDur, seg.base + (t - seg.startAt) * seg.k);
+          was = Math.max(was, done ? p.t.length : seg.where(o));
           onPos(at(p.at + was), first);
-          if (sec < dur) timers.push(setTimeout(() => tick(false), 40));
+          if (!done) timers.push(setTimeout(() => tick(false), 40));
         };
         tick(true);
       }
@@ -2310,6 +2367,12 @@ const Speech = (() => {
       const ending = () => { if (my !== seq) return; if (ac.currentTime >= next - 0.02) onEnd(); else timers.push(setTimeout(ending, 80)); };
       ending();
     })();
+  }
+  // (15.86) the speed now (rate()) for whatever reads: true when a plugin's voice took it as it played; false when the
+  // reading has to start again for it (the browser's voices can't change mid-sentence)
+  function respeed() {
+    if (live && live.my === seq) { live.respeed(Math.max(0.5, Math.min(2, rate()))); return true; }
+    return false;
   }
   // Pause (15.69): the voice holds where it is, and Resume goes on from that word. It used to stop and start again from
   // where the text had got to, which repeated or skipped words with Google's voices (they never say where they are).
@@ -2388,7 +2451,7 @@ const Speech = (() => {
   const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud);
   return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level, quietFor, warm,
     pause, resumeHeld, get waiting() { return !!waiting; }, preview, stopPreview, get previewing() { return previewing && previewing.uri; }, _marksWhere: marksWhere, _piecesFor: piecesFor,
-    get tracking() { return !!tracking; }, setRate(v) { rateFor = v > 0 ? v : 0; }, _alignPiece: alignPiece, _sayUnits: sayUnits };   // (the last two for tests)
+    get tracking() { return !!tracking; }, setRate(v) { rateFor = v > 0 ? v : 0; }, respeed, get netVoice() { return !!curNet; }, get _live() { return live; }, _alignPiece: alignPiece, _sayUnits: sayUnits };   // (the last two for tests)
 })();
 
 // ── What the voice says for a question's text (15.62) ──
@@ -5635,6 +5698,7 @@ $("#opt-allow-rebuzzes")?.addEventListener("change", (e) => { state.settings.all
 $("#opt-stop-on-power")?.addEventListener("change", (e) => { state.settings.stopOnPower = e.target.checked; lsSet("qb-stop-on-power", e.target.checked); });
 // Read aloud: on, the question being read now is said from where it is; off, the voice stops and the text reads on
 $("#opt-read-aloud")?.addEventListener("change", (e) => {
+  if (inRoomVoice()) { roomVoice.set(e.target.checked); syncVoiceRow(); if (e.target.checked) Speech.preloadPicked(); return; }   // (15.86) the room's
   state.settings.readAloud = e.target.checked; lsSet("qb-read-aloud", e.target.checked);
   // the voice never says guides or notes: they're hidden while it reads, and put back as they were after
   if (e.target.checked) lsSet("qb-read-prev", JSON.stringify({ pron: !!state.settings.hidePronunciations, notes: !!state.settings.hideNotes }));
@@ -5698,11 +5762,20 @@ function setVoiceRate(v) {
   const l = document.getElementById("opt-voice-rate-label"); if (l) l.textContent = v.toFixed(2).replace(/0$/, "") + "×";
 }
 document.getElementById("opt-voice-rate")?.addEventListener("input", (e) => setVoiceRate(e.target.value));
-// a new speed takes from the next sentence: the voice says the rest of this one as it was
-document.getElementById("opt-voice-rate")?.addEventListener("change", () => {
+// (15.86) a new speed is heard as the slider moves: a plugin's voice re-times what it's playing (Speech.respeed); the
+// browser's voices can't change mid-sentence, so they start again from the word they're on once the slider rests a
+// moment (each start takes a Google voice about a second). (It used to take from the next sentence, on release)
+let rateT = 0;
+function restartForRate() {
+  rateT = 0;
   if (Speech.previewing != null) { const u = Speech.previewing; Speech.preview(u, paintPreview); paintPreview(); return; }
   if (!state.sessionActive || !Speech.on() || state.isPaused || state.isBuzzed) return;
   if (state.mode === "tossups" && !state.resultAreaVisible && !state.questionFullyRead) { if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; } Speech.stop(); resumeReveal(); }
+}
+document.getElementById("opt-voice-rate")?.addEventListener("input", () => {
+  clearTimeout(rateT); rateT = 0;
+  if (Speech.respeed()) return;
+  rateT = setTimeout(restartForRate, Speech.netVoice ? 350 : 120);
 });
 setTimeout(() => setVoiceRate(state.settings.voiceRate), 0);
 $("#opt-read-hide")?.addEventListener("change", (e) => {
@@ -5738,16 +5811,21 @@ function fillVoices() {
   // each plugin voice's sample line, fetched now (kept by its plugin), so its play button plays at once
   for (const v of vs) if (v.plugin && v.plugin.clip) v.plugin.clip(v.vid);
 }
-function voiceLocked() { return !!(state.sessionActive && state.currentQuestion && !state.resultAreaVisible && (state.mode === "tossups" || state.mode === "bonuses")); }
+function voiceLocked() { return !inRoomVoice() && !!(state.sessionActive && state.currentQuestion && !state.resultAreaVisible && (state.mode === "tossups" || state.mode === "bonuses")); }
 ["question:render", "answer:result", "bonus:result", "session:end", "screen:change"].forEach((ev) => window.QB?.on?.(ev, () => setTimeout(syncVoiceRow, 0)));
 // Read aloud's own options show while it's on (a voice choice only where Google's voices are), and it keeps
 // pronunciation guides and moderator notes hidden (their switches locked on)
+// (15.86) a multiplayer room's voice (multiplayer.js rv, through ctx.host.roomVoice): while a room is open, the Voice
+// panel opens in its settings' place and its Read aloud is the room's; the voice keeps the room's pace there, so its
+// speed row is gone, and the room's reading speed is locked while it's on (as Read aloud locks it in practice)
+let roomVoice = null;
+const inRoomVoice = () => !!(roomVoice && !document.getElementById("practice-screen")?.classList.contains("active"));
 function syncVoiceRow() {
-  const on = Speech.ok && !!state.settings.readAloud;
+  const room = inRoomVoice(), on = Speech.ok && (room ? !!roomVoice.on() : !!state.settings.readAloud);
   const vb = document.getElementById("btn-voice"); if (vb) { vb.classList.toggle("on", on); vb.title = on ? "Read aloud is on" : ""; }
-  const vk = document.getElementById("vp-key"); if (vk) { const k = keyDisplay("read-aloud"); vk.innerHTML = k && k !== "Not Set" ? "<kbd>" + escapeHtml(k) + "</kbd>" : ""; }
+  const vk = document.getElementById("vp-key"); if (vk) { const k = keyDisplay("read-aloud"); vk.innerHTML = k && k !== "Not Set" && !room ? "<kbd>" + escapeHtml(k) + "</kbd>" : ""; }
   const row = document.getElementById("read-voice-row"); if (row) row.hidden = !(on && Speech.choices().length > 1);
-  const rr = document.getElementById("vp-rate-row"); if (rr) rr.hidden = !on;
+  const rr = document.getElementById("vp-rate-row"); if (rr) rr.hidden = !on || room;
   // not while a question is up (15.70): one voice reads it start to end; the next question takes the new one. Nor is
   // a voice heard on its own then (it would stop the reading)
   const list = document.getElementById("vp-voices"), mid = voiceLocked();
@@ -5755,17 +5833,18 @@ function syncVoiceRow() {
   if (mid && Speech.previewing != null) { Speech.stopPreview(); paintPreview(); }
   const lk = document.getElementById("vp-lock"); if (lk) lk.hidden = !(on && mid && row && !row.hidden);
   // Reading speed is the voice's while it reads (15.72): it can't read at the fast end, and the text follows it anyway.
-  // Not the Setup panel while a multiplayer room has it (15.76): no voice reads there, the room's speed does
-  const inRoom = !!document.querySelector("#filters-panel.mp-borrowed"), lockIn = (el) => on && !(inRoom && el.closest("#filters-panel"));
+  // The Setup panel while a multiplayer room has it goes by the room's voice (15.86; before it, rooms had none)
+  const inRoom = !!document.querySelector("#filters-panel.mp-borrowed"), roomOn = !!(roomVoice && roomVoice.on());
+  const lockIn = (el) => (inRoom && el.closest("#filters-panel") ? roomOn : on);
   ["panel-speed-slider", "speed-slider"].forEach((id) => {
     const r = document.getElementById(id); if (!r) return;
     const lk = lockIn(r); r.disabled = lk;
     const g = r.closest(".slider-group"); if (g) { g.classList.toggle("locked-by-read", lk); g.title = lk ? "The voice sets the pace while Read aloud is on" : ""; }
   });
   document.querySelectorAll("[data-read-note]").forEach((n) => { n.hidden = !lockIn(n); });
-  const hide = document.getElementById("read-hide-row"); if (hide) hide.hidden = !on;
+  const hide = document.getElementById("read-hide-row"); if (hide) hide.hidden = !on || room;
   const hb = document.getElementById("opt-read-hide"); if (hb) hb.checked = !!state.settings.readHide;
-  const box = document.getElementById("opt-read-aloud"); if (box) { box.checked = !!state.settings.readAloud; box.disabled = !Speech.ok; }
+  const box = document.getElementById("opt-read-aloud"); if (box) { box.checked = room ? !!roomVoice.on() : !!state.settings.readAloud; box.disabled = !Speech.ok; }
   if (on) {
     if (!state.settings.hidePronunciations && typeof setHidePron === "function") setHidePron(true);
     if (!state.settings.hideNotes && typeof setHideNotes === "function") setHideNotes(true);
@@ -10522,15 +10601,20 @@ function statsUrl(sid) {
 let _warming = false, _warmedAt = 0;
 async function warmReads() {
   if (_warming || document.hidden || needsAccount()) return;
-  if (state.sessionActive && state.currentQuestion && !state.resultAreaVisible) { clearTimeout(_warmT); _warmT = setTimeout(warmReads, 6000); return; }
+  if (state.sessionActive && state.currentQuestion && !state.resultAreaVisible) { clearTimeout(_warmT); _warmT = setTimeout(warmReads, 3000); return; }
   _warming = true; _warmedAt = Date.now();
-  const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 1200 }) : setTimeout(r, 120)));
-  const one = async (url) => { await idle(); try { await API.fetchRead(url); } catch (e) {} };
+  const one = async (url) => { try { await API.fetchRead(url); } catch (e) {} };
+  // (15.86) three at a time, as soon as the page is up (it was one at a time, each after an idle moment, from 3.5 s):
+  // what the top bar and the home screen open first, Statistics' own first
+  const pool = async (urls) => { const q = urls.slice(); await Promise.all([0, 1, 2].map(async () => { while (q.length) await one(q.shift()); })); };
   try {
-    for (const u of ["/api/stats", "/api/sessions", statsUrl(null), "/api/answer-powers", "/api/profiles/active"]) await one(u);
-    try { const cids = statsCatIds(); await one("/api/sessions/breakdown" + (cids.length ? "?categoryIds=" + encodeURIComponent(cids.join(",")) : "")); } catch (e) {}
+    const cids = (() => { try { return statsCatIds(); } catch (e) { return []; } })();
+    await pool([statsUrl(null), "/api/sessions", "/api/stats", "/api/activity?tz=" + (-new Date().getTimezoneOffset()) + "&zone=" + encodeURIComponent(myZone()),
+      "/api/starred", "/api/starred?type=tossup", "/api/starred?type=bonus", "/api/answer-powers", "/api/profiles/active", "/api/sets",
+      "/api/sessions/breakdown" + (cids.length ? "?categoryIds=" + encodeURIComponent(cids.join(",")) : "")]);
+    loadTrialInfo().catch(() => {});   // (Trials keeps its own, with the server's clock)
     if (Account.available && Account.user) {
-      await idle(); _lbPreloadAt = 0; preloadLeaderboards();
+      _lbPreloadAt = 0; preloadLeaderboards();
       await one("/api/friends");
       if (window.QBClubs) {
         await one("/api/clubs");
@@ -10543,9 +10627,11 @@ async function warmReads() {
     }
   } finally { _warming = false; }
 }
-setTimeout(() => warmReads(), 3500);
+setTimeout(() => warmReads(), 900);
 setInterval(() => { if (!document.hidden && Date.now() - _warmedAt > 110000) warmReads(); }, 30000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - _warmedAt > 60000) warmReads(); });
+// (15.86) a page shown from kept reads redraws once the new ones are in (only the page on screen, quietly)
+const quietRedraw = (() => { const t = {}; return (screen, fn) => { clearTimeout(t[screen]); t[screen] = setTimeout(() => { if (document.getElementById(screen)?.classList.contains("active")) fn(); }, 150); }; })();
 async function loadStats(preserveScroll = false) {
   _screenBuilt.add("stats");
   const screen = document.getElementById("stats-screen");
@@ -10562,7 +10648,8 @@ async function loadStats(preserveScroll = false) {
   try {
     initStatsCategories();
     const cids = statsCatIds();
-    const data = await API.get(statsUrl(sid));
+    const fresh = () => quietRedraw("stats-screen", () => loadStats(true));   // (15.86) opened on kept reads
+    const data = await API.getQuick(statsUrl(sid), fresh);
     const stats = data.stats;
 
     syncStatsControls(sid);
@@ -10580,7 +10667,7 @@ async function loadStats(preserveScroll = false) {
       return;
     }
 
-    const sessions = await API.get("/api/sessions");
+    const sessions = await API.getQuick("/api/sessions", fresh);
     const sessionList = sessions.sessions || [];
 
     let sessionEntries = [];
@@ -11672,21 +11759,25 @@ function escapeHtml(str) {
 }
 
 
-async function loadPlayer() {
+async function loadPlayer(quiet) {
   _screenBuilt.add("player");
   const container = $("#player-container");
   if (!container) return;
   if (needsAccount()) { container.innerHTML = accountPanelHtml("Sign in to earn achievements and see your profile."); return; }
-  container.innerHTML = '<div class="text-muted">Loading player data...</div>';
+  if (!quiet) container.innerHTML = '<div class="text-muted">Loading player data...</div>';
+  // (15.86) opened on kept reads (and Trials' own), and drawn again quietly when newer ones come
+  const scr = document.getElementById("player-screen"), top = quiet && scr ? scr.scrollTop : 0;
+  const fresh = () => quietRedraw("player-screen", () => loadPlayer(true));
 
   try {
     const [statsData, sessionsData, apData, activeProfile, trialInfo] = await Promise.all([
-      API.get("/api/stats"),
-      API.get("/api/sessions"),
-      API.get("/api/answer-powers").catch(() => ({ answer_counts: {} })),
-      API.get("/api/profiles/active").catch(() => null),
-      loadTrialInfo(),
+      API.getQuick("/api/stats", fresh),
+      API.getQuick("/api/sessions", fresh),
+      API.getQuick("/api/answer-powers", fresh).catch(() => ({ answer_counts: {} })),
+      API.getQuick("/api/profiles/active", fresh).catch(() => null),
+      _trialInfo && _trialInfo.trials ? Promise.resolve(_trialInfo) : loadTrialInfo(),
     ]);
+    if (quiet && scr) requestAnimationFrame(() => { scr.scrollTop = top; });
 
     const stats = statsData.stats || {};
     const sessions = sessionsData.sessions || [];
@@ -11733,6 +11824,7 @@ async function loadPlayer() {
     wireBadges(container, (trialInfo && trialInfo.trials) || {}, true);
     wireSeasonCard(container);
     wireAchievementCards(container, { achData, records: achRecordsFrom(apData), stats, pluginAchs });
+    achRevoke(achData, apData, (Account.user && Account.user.id ? Account.user.id + ":" : "") + profileKey);
     achBackfillDates(achData, apData, (Account.user && Account.user.id ? Account.user.id + ":" : "") + profileKey);
     window.QB?.neonField?.($("#player-username-input"), myNeon());   // a bought neon name glows here too
     paintProfileNeon();   // …and its colour is picked here too
@@ -11881,6 +11973,7 @@ function apClassCount(classMap, lock) {
 //   count    "questions" (default: distinct questions), "targets" (distinct answer groups), "answers"
 //            (distinct main answers inside the topic)
 const ACH_ART = /^(?:the|a|an) /;
+let achLegacy = false;   // (15.86) the rules before 15.86, for achRevoke
 const ACH_GENERIC = new Set(["ocean", "sea", "river", "dynasty", "empire", "war", "lake", "mount", "mountains", "national", "park", "desert", "island", "islands", "peninsula", "kingdom"]);
 const achSing = (w) => (w.length > 4 && /[^s]s$/.test(w) ? w.slice(0, -1) : w);
 // a name's words (article off, each singular), worked out once: achAnsHit runs for every achievement × powered
@@ -11903,7 +11996,8 @@ function achAnsHit(ans, target, person) {
   const a = A.n, t = T.n;
   if (a === t) return true;
   const aw = A.ws, tw = T.ws;
-  if (A.j === T.j) return true;
+  // (singular or plural; 15.86: but not a plural for a title, "ravens" is no answer on The Raven; achLegacy: as before)
+  if (A.j === T.j && (achLegacy || A.n === T.n || !ACH_ART.test(target) || !/s$/.test(a))) return true;
   // more of the same name ("emily elizabeth dickinson"), never a different thing that shares a word
   if (tw.length >= 2 && aw.length <= tw.length + 2 && tw.every((w) => aw.includes(w))) return true;
   // the main answer is the line's required part: a person's surname ("poe" for "edgar allan poe"), or the name
@@ -11970,10 +12064,22 @@ function achRecordsOf(apQuestions, poweredAt, pumpkins, alts, evItems) {
   }
   return out;
 }
-function achRecordsFrom(d) {
+// (15.86) was: with every name the lines accepted, as before 15.86 (answer_alts_was where that differs)
+function achRecordsFrom(d, was) {
   const evs = d && Array.isArray(d.events) ? d.events : [], items = {};
   for (const e of evs) if (e && e.key && Array.isArray(e.items)) items[e.key] = e.items;
-  return achRecordsOf((d && d.answer_questions) || {}, d && d.powered_at, items.halloween || (d && d.event && d.event.pumpkins), d && d.answer_alts, items);
+  const alts = was && d && d.answer_alts_was ? { ...(d.answer_alts || {}), ...d.answer_alts_was } : d && d.answer_alts;
+  return achRecordsOf((d && d.answer_questions) || {}, d && d.powered_at, items.halloween || (d && d.event && d.event.pumpkins), alts, items);
+}
+// an achievement's count over records as achTopicProgress counts it, worked out afresh (not the hits kept by question)
+function achProgressPlain(ach, records) {
+  const mode = ach.count || "questions", seen = new Set();
+  for (const r of records) {
+    if (ach.during && !(r.t >= ach.during[0] && r.t < ach.during[1])) continue;
+    const g = achRecordHit(ach, r);
+    if (g >= 0) seen.add(mode === "targets" ? g : mode === "answers" ? r.a : r.q);
+  }
+  return seen.size;
 }
 // a record that is one of the event's items (an achievement of type "candy"; ev names the event, Halloween's by default)
 const achItemHit = (ach, r) => (ach.ev && ach.ev !== "halloween" ? !!(r.ev && r.ev.includes(ach.ev)) : !!r.pk);
@@ -13324,6 +13430,44 @@ function paintAchDates(dates) {
     n.textContent = g.querySelectorAll(".achievement-card.earned").length + "/" + g.querySelectorAll(".achievement-card").length;
   });
   const tot = root.querySelector(".pf-ach-n b"); if (tot) tot.textContent = root.querySelectorAll(".achievement-card.earned").length;
+}
+// (15.86) An answer power counted names its line accepted that weren't other names for the answer ("Emma" of Emma
+// Bovary for Jane Austen's Emma, a common link's titles, accepts only early, a plural for a title). Once per profile:
+// an achievement unlocked that those earned and the rules now don't is taken back ("!<id>" in its dates, synced, so
+// every device drops it; earned honestly later, it comes back). One kept by its date for another reason (a streak that
+// broke, practice deleted later) is left alone: the old rules don't reach it now either
+const ACH_FIX_V = 1;
+let _achFix = null;
+function achRevoke(achData, apData, key) {
+  const flag = "qb-ach-fix:" + key;
+  try { if ((JSON.parse(lsGet(flag) || "null") || {}).v === ACH_FIX_V) return null; } catch (e) {}
+  if (_achFix) return _achFix;
+  _achFix = (async () => {
+    try {
+      const dates = (apData && apData.ach_at) || {}, now = achRecordsFrom(apData), was = achRecordsFrom(apData, true), back = {};
+      for (const ach of ACHIEVEMENT_LIST) {
+        if (ach.type !== "answer_power" || !(Number(dates[ach.id]) > 0)) continue;
+        const need = Math.max(1, ach.threshold || 1);
+        if (achProgressPlain(ach, now) >= need) continue;
+        let old = 0; achLegacy = true;
+        try { old = achProgressPlain({ ...ach, _within: undefined, _groups: undefined }, was); } finally { achLegacy = false; }
+        if (old >= need) back["!" + ach.id] = Date.now();
+      }
+      const ids = Object.keys(back).map((k) => k.slice(1));
+      if (ids.length) {
+        const r = await API.post("/api/achievements/dates", { dates: back }).catch(() => null);
+        if (!r || !r.dates) return;   // (next time)
+        for (const id of ids) {
+          if (_achLive.dates) delete _achLive.dates[id];
+          if (achData && achData[id]) achData[id] = { ...achData[id], earned: (achData[id].progress || 0) >= Math.max(1, (ACHIEVEMENT_LIST.find((a) => a.id === id) || {}).threshold || 1), at: 0 };
+        }
+        await API.fetchRead("/api/answer-powers").catch(() => {});   // (the kept read had the date)
+        quietRedraw("player-screen", () => loadPlayer(true));
+      }
+      lsSet(flag, JSON.stringify({ v: ACH_FIX_V, back: ids }));
+    } catch (e) { /* next time */ } finally { _achFix = null; }
+  })();
+  return _achFix;
 }
 const ACH_SCAN_V = 1;
 let _achScan = null;
@@ -14811,9 +14955,10 @@ function searchFromFrequency(answer, qtype) {
 async function renderStarredTab() {
   const c = document.getElementById("db-content"); if (!c) return;
   if (needsAccount()) { c.innerHTML = '<div class="db-page">' + accountPanelHtml("Sign in to star questions and find them here.") + "</div>"; return; }
-  c.innerHTML = '<div class="db-page"><div class="search-results">' + loadingBarHtml("Loading starred…") + "</div></div>";
+  if (!c.querySelector("#db-practice-starred")) c.innerHTML = '<div class="db-page"><div class="search-results">' + loadingBarHtml("Loading starred…") + "</div></div>";
   let items = [];
-  try { items = (await API.get("/api/starred")).starred || []; } catch {}
+  // (15.86) opened on the kept list, drawn again when a newer one comes
+  try { items = (await API.getQuick("/api/starred", () => quietRedraw("database-screen", () => { if (document.getElementById("db-practice-starred")) renderStarredTab(); }))).starred || []; } catch {}
   const actions = (window.QB && window.QB.getStarredActions) ? window.QB.getStarredActions() : [];
   // The registered starred actions (Flashcards, Coach) play tossups only.
   const hasTossups = items.some((it) => (it.type || "tossup") === "tossup");
@@ -15096,6 +15241,10 @@ function init() {
       // every question the backend hands out carries its hidden answers, so there's no round trip.
       // A question without them is judged by the backend. Same answers as /api/evaluate-tossup,
       // /api/evaluate-bonus-part and /api/evaluate-answer.
+      // (15.86) a room's voice and the Voice panel: roomVoice({ on(), set(on) }) while a room is open (null after);
+      // the room's Voice button opens the panel in its settings' place
+      roomVoice: (p) => { roomVoice = p || null; syncVoiceRow(); if (!p) closeVoicePop(); },
+      openVoicePanel: () => openVoicePop(), closeVoicePanel: () => closeVoicePop(), voicePanelOpen: () => voicePopOpen(), voiceChanged: () => syncVoiceRow(),
       judgeTossup: (q, answer, o) => hostJudgeTossup(q, answer, o || {}),
       judgeBonusPart: (q, part, answer, o) => hostJudgeBonusPart(q, part, answer, o || {}),
       judgeAnswerLine: (answerline, sanitized, answer, o) => hostJudgeLine(answerline, sanitized, answer, o || {}),
@@ -15618,7 +15767,8 @@ function friendRelations(force) {
   if (!Account.user || !Account.user.handle) return Promise.resolve(new Map());
   if (!force && _rel.p && Date.now() - _rel.at < 60000) return _rel.p;
   _rel.at = Date.now();
-  _rel.p = API.get("/api/friends").then((d) => { if (d && !d.error) noteFriendRelations(d); return _rel.map; }, () => _rel.map);
+  // (15.86) forced: from the server, not the kept read (the other person may have answered since)
+  _rel.p = (force && API.fetchRead ? API.fetchRead("/api/friends") : API.get("/api/friends")).then((d) => { if (d && !d.error) noteFriendRelations(d); return _rel.map; }, () => _rel.map);
   return _rel.p;
 }
 async function friendAction(handle, rel) {
@@ -15683,7 +15833,7 @@ async function openUserMenu(x, y, u) {
   // how you stand with them: what the friends list said (a quick look if it's old)
   let rel = null;
   if (me) {
-    const m = await Promise.race([friendRelations(), new Promise((r) => setTimeout(() => r(_rel.map), 700))]);
+    const m = await Promise.race([friendRelations(true), new Promise((r) => setTimeout(() => r(_rel.map), 700))]);
     rel = m.get(handle) || null;
   }
   const items = [{ label: "View profile", hint: "achievements", onClick: () => openUserProfile(handle, u.name) }, { sep: true }];
@@ -15983,9 +16133,8 @@ const stkUtc = (iso) => Date.parse(iso + "T00:00:00Z");
 const stkIso = (t) => new Date(t).toISOString().slice(0, 10);
 const STK_FLAME = '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>';
 const stkFlame = (n) => `<svg viewBox="0 0 24 24" width="${n}" height="${n}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STK_FLAME}</svg>`;
-async function fetchActivity() {
-  return API.get("/api/activity?tz=" + (-new Date().getTimezoneOffset()) + "&zone=" + encodeURIComponent(myZone()));
-}
+const activityUrl = () => "/api/activity?tz=" + (-new Date().getTimezoneOffset()) + "&zone=" + encodeURIComponent(myZone());
+async function fetchActivity() { return API.get(activityUrl()); }
 // the top bar's day streak: the viewer's own days; an older backend falls back to the stats count
 async function streakNow() {
   try { const d = await fetchActivity(); if (d && typeof d.streak === "number") return d.streak; } catch (e) {}
@@ -15996,7 +16145,7 @@ async function renderStreaks() {
   if (needsAccount()) { c.innerHTML = '<div class="stk-page">' + accountPanelHtml("Sign in to keep your streak and see the days you practiced.") + "</div>"; return; }
   if (!c.querySelector(".stk-page")) c.innerHTML = loadingBarHtml("Loading your activity…");
   let d = null;
-  try { d = await fetchActivity(); } catch (e) { d = null; }
+  try { d = await API.getQuick(activityUrl(), () => quietRedraw("streaks-screen", renderStreaks)); } catch (e) { d = null; }   // (15.86)
   if (!d || !Array.isArray(d.days)) { c.innerHTML = '<div class="db-empty">Couldn\'t load your activity.</div>'; return; }
   _stk.data = d;
   if (!_stk.sel) _stk.sel = d.today;

@@ -89,17 +89,27 @@ export function mergeTrials(a, b) {
 }
 
 // When each achievement was unlocked (15.25): { "<achievement id>": ms }, the earliest time wins (an unlock found
-// from the history and one seen live are the same unlock)
+// from the history and one seen live are the same unlock). (15.86) "!<id>": ms takes back an unlock that shouldn't have
+// been (the achievement matched an answer it shouldn't): an unlock at or before then is gone, on every device the dates
+// sync to (the latest taking-back wins); one earned after it stands
 export function mergeAchDates(a, b) {
-  const out = {};
+  const out = {}, back = {};
   for (const src of [a || {}, b || {}]) {
     if (!src || typeof src !== "object" || Array.isArray(src)) continue;
     for (const [k, v] of Object.entries(src)) {
       const t = Math.floor(Number(v));
       if (!k || k.length > 120 || !(t > 0) || t > 4e12) continue;
+      if (k[0] === "!") { const id = k.slice(1); if (id && !(back[id] >= t)) back[id] = t; continue; }
       if (!(out[k] > 0) || t < out[k]) out[k] = t;
     }
   }
+  for (const [id, t] of Object.entries(back)) { if (out[id] > 0 && out[id] <= t) delete out[id]; out["!" + id] = t; }
+  return out;
+}
+// the dates a page shows: the unlocks, without the takings-back
+export function shownAchDates(m) {
+  const out = {};
+  for (const [k, v] of Object.entries(m || {})) if (k[0] !== "!") out[k] = v;
   return out;
 }
 
