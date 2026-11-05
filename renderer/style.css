@@ -2879,6 +2879,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px 
    its first cards are there (homeBgFill adds .hb-in) — they can take a moment to arrive */
 html.web .home-bg { opacity: 0; transition: opacity 1100ms ease; }
 html.web .home-bg.hb-in { opacity: 1; }
+/* (15.85) Backdrops on: its scene takes the wall's place, and the wall stays off from the first frame until the plugin
+   starts (index.html sets .bd-boot from the plugin's note) */
+html.bd-boot #title-screen .home-bg { display: none; }
 @media (prefers-reduced-motion: reduce) { html.web .home-bg { transition: none; } }
 .home-bg.live .home-track { animation: none; align-self: start; filter: blur(0.5px); backface-visibility: hidden; }   /* app.js streams these (ensureHomeBg); the blur rides with each column, so moving one never re-blurs the page */
 @keyframes home-rise { from { transform: translateY(0); } to { transform: translateY(-50%); } }

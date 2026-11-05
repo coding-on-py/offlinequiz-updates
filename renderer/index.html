@@ -33,6 +33,13 @@
       var evNow = Date.now(), evLight = localStorage.getItem("qb-scheme") === "light";
       if (evNow >= Date.UTC(2026, 9, 16) && evNow < Date.UTC(2026, 10, 1, 7) && localStorage.getItem("qb-hw-theme") !== "default") { document.documentElement.classList.add("hw"); document.documentElement.style.setProperty("--boot-bg", "#0f0d12"); }
       else if (evNow >= Date.UTC(2026, 10, 1, 7) && evNow < Date.UTC(2026, 11, 1, 8) && localStorage.getItem("qb-tg-theme2") === "on") { document.documentElement.classList.add("tg"); document.documentElement.style.setProperty("--boot-bg", evLight ? "#f8f3ec" : "#14110d"); }
+      // (15.85) Backdrops on (its note, plugins/kit/backdrops): the home screen's wall of questions stays off until the
+      // scene comes, since plugins start after the page; put back if no scene has come in 12 s (the plugin turned off
+      // elsewhere)
+      if (localStorage.getItem("qb-bd-boot") === "1") {
+        document.documentElement.classList.add("bd-boot");
+        setTimeout(function () { if (!document.querySelector(".bd-layer")) { document.documentElement.classList.remove("bd-boot"); try { localStorage.removeItem("qb-bd-boot"); } catch (e) {} } }, 12000);
+      }
     } catch (e) {}
   </script>
 </head>

@@ -2251,7 +2251,9 @@ const Speech = (() => {
     const did = Number(r.speed) || reached(v, askSpeed(v, speed)), more = speed / did;
     if (Math.abs(more - 1) < 0.02) return r;
     const out = Object.assign({}, r, { samples: wsola(r.samples, more) });
-    if (r.marks) { out.marks = new Float32Array(r.marks); for (let k = 0; k < out.marks.length; k += 2) out.marks[k] /= more; }
+    const faster = (mk) => { if (!mk) return mk; const m = new Float32Array(mk); for (let k = 0; k < m.length; k += 2) m[k] /= more; return m; };
+    if (r.marks) out.marks = faster(r.marks);
+    if (r.later) out.later = Promise.resolve(r.later).then(faster);
     return out;
   }
   function speakPlugin(v, said, at, onPos, onEnd, my, fail) {
@@ -2283,16 +2285,23 @@ const Speech = (() => {
         if (!samples.length) continue;
         const buf = ac.createBuffer(1, samples.length, sr); buf.copyToChannel(samples, 0);
         const src = ac.createBufferSource(); src.buffer = buf; src.connect(meter);
-        const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k], where = r.marks && r.marks.length >= 4 ? marksWhere(r.marks, a / sr) : alignPiece(p.t, samples, sr);
+        const startAt = Math.max(next, ac.currentTime + 0.03), dur = buf.duration, p = pieces[k];
+        let where = r.marks && r.marks.length >= 4 ? marksWhere(r.marks, a / sr) : alignPiece(p.t, samples, sr);
+        // (15.85) a voice that finds its word times just after its sound (Chatterbox 1.4: Whisper hears each piece) goes by
+        // them from when they come, the guess from the sound until then
+        if (r.later && !(r.marks && r.marks.length >= 4)) Promise.resolve(r.later).then((mk) => { if (mk && mk.length >= 4 && my === seq) where = marksWhere(mk, a / sr); }, () => {});
         src.start(startAt); playing.push(src); next = startAt + dur + pauseAfter(p.t, k === pieces.length - 1, speed);
         pluginEnd = performance.now() + (next - ac.currentTime) * 1000;
-        // the text follows the sound by the audio clock, which stands still while the voice is paused (15.69)
+        // the text follows the sound by the audio clock, which stands still while the voice is paused (15.69); (15.85)
+        // never back (the word times coming in after the guess), and all of the piece once its sound has played
+        let was = 0;
         const tick = (first) => {
           if (my !== seq) return;
           const t = ac.currentTime;
           if (t < startAt) { timers.push(setTimeout(() => tick(first), 40)); return; }
           const sec = Math.min(dur, t - startAt);
-          onPos(at(p.at + where(sec)), first);
+          was = Math.max(was, sec >= dur ? p.t.length : where(sec));
+          onPos(at(p.at + was), first);
           if (sec < dur) timers.push(setTimeout(() => tick(false), 40));
         };
         tick(true);
