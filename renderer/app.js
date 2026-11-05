@@ -1386,6 +1386,12 @@ async function ensureHomeBg() {
   if (!HB.raf) { HB.last = 0; HB.raf = requestAnimationFrame(homeBgTick); }
 }
 window.addEventListener("resize", () => { if (HB.n) homeBgLayout(); });   // zoom changes the width too
+// (15.87) shown after being hidden (Backdrops' Show questions turned on: it was display:none, so it had no width to lay
+// out and stayed empty until the next visit to the home screen): laid out and moving the moment it has a size
+if (window.ResizeObserver) {
+  const hbHost = document.getElementById("home-bg");
+  if (hbHost) new ResizeObserver(() => { if (hbHost.clientWidth && !HB.n && document.querySelector("#title-screen.active")) ensureHomeBg(); }).observe(hbHost);
+}
 document.addEventListener("visibilitychange", () => { if (!document.hidden && HB.n && document.querySelector("#title-screen.active")) ensureHomeBg(); });
 function homeBgCardHtml(pre, post, ans) {
   const words = (pre + " \u00b6 " + post).split(/\s+/);
