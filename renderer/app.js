@@ -8815,7 +8815,7 @@ function animateRemove(el) {
 // ── Optimistic actions: the screen changes the moment you act, the server catches up ──
 // removeOptimistic(rows, run): the row(s) fold away at once and run() does the work (a promise;
 // an { error } answer counts as failing). Done: they're dropped. Failed: they come back where
-// they were with a short note under them. Resolves to whether it worked.
+// they were with a short note under them (opts.dialog: a window says so). Resolves to whether it worked.
 function removeOptimistic(rows, run, opts) {
   opts = opts || {};
   rows = (Array.isArray(rows) ? rows : [rows]).filter(Boolean);
@@ -8828,7 +8828,7 @@ function removeOptimistic(rows, run, opts) {
     rows.forEach(unfold);
     const text = opts.failText || "Couldn't delete it. Try again.";
     const last = rows.filter((x) => x.isConnected).pop();
-    if (last) failNote(last, text); else confirmDialog(text, () => {}, { yes: "OK", noCancel: true });
+    if (last && !opts.dialog) failNote(last, text); else confirmDialog(text, () => {}, { yes: "OK", noCancel: true });
     return false;
   });
 }
@@ -10587,10 +10587,13 @@ function deleteSessionRow(id) {
   while (tn && !/\(\d+\)/.test(tn.nodeValue)) tn = tw.nextNode();
   const count = (d) => { if (tn) tn.nodeValue = tn.nodeValue.replace(/\((\d+)\)/, (m, n) => "(" + Math.max(0, Number(n) + d) + ")"); };
   count(-1);
-  removeOptimistic(rows, () => API.delete("/api/sessions/" + encodeURIComponent(id)), { failText: "Couldn't delete that session. Try again." })
+  // (15.89) done: nothing more happens on the page (it was drawn again with the server's totals, a flash, twice in
+  // 15.86); the totals catch up the next time Statistics opens. Only a session being looked at goes back to all of them.
+  // Not done: it comes back, and a window says so
+  removeOptimistic(rows, () => API.delete("/api/sessions/" + encodeURIComponent(id)), { failText: "Couldn't delete that session. Try again.", dialog: true })
     .then((ok) => {
-      if (ok) { if (state.statsSessionId === id) state.statsSessionId = null; loadStats(true); refreshReviewBadge(); return; }
-      // it couldn't be deleted: it's back where it was (with its note), the count and the heading too
+      if (ok) { if (state.statsSessionId === id) { state.statsSessionId = null; loadStats(true); } refreshReviewBadge(); return; }
+      // it couldn't be deleted: it's back where it was, the count and the heading too
       if (had) _moreShown.set("stats:sessions", was); else _moreShown.delete("stats:sessions");
       if (table && table._qbMore) table._qbMore.undo();
       count(1);
