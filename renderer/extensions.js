@@ -3750,13 +3750,14 @@ function __qbMain(ctx) {
     var rv = { gen: 0, at: 0, busy: false, on: false };
     try { rv.on = localStorage.getItem("qb-mp-voice") === "1"; } catch (e) {}
     function rvCan() { return typeof Speech !== "undefined" && Speech.ok; }
-    function rvStop() { var was = rv.busy || rv.on; rv.gen++; rv.busy = false; if (was && rvCan()) { Speech.stop(); Speech.setRate && Speech.setRate(0); } }
+    function rvStop() { var was = rv.busy || rv.on; rv.gen++; rv.busy = false; clearTimeout(rv.t); if (was && rvCan()) { Speech.stop(); Speech.setRate && Speech.setRate(0); } }
+    // the start of the word the room's reading is in (where the voice picks up when it starts over)
+    function rvWordAt(t, i) { i = Math.max(0, Math.min(t.length, i)); while (i > 0 && /\S/.test(t.charAt(i - 1))) i--; return i; }
     function rvStart(from) {
       rvStop();
       if (!rv.on || !rvCan() || !current || !lastReadSpeed) return;
-      var t = current.text || "", a = Math.max(0, Math.min(t.length, typeof from === "number" ? from : revealIdx));
-      while (a > 0 && /\S/.test(t.charAt(a - 1))) a--;   // from the start of the word the room is in
-      rv.at = a;
+      var t = current.text || "";
+      rv.at = rvWordAt(t, typeof from === "number" ? from : revealIdx);   // from the start of the word the room is in
       rvPump();
     }
     function rvPump() {
@@ -3765,17 +3766,37 @@ function __qbMain(ctx) {
       // the room has read past the next phrase (it's faster than the voice): on to the phrase the room is in
       if (revealIdx > rv.at + 120) { var j = t.lastIndexOf(" ", revealIdx); if (j > rv.at) rv.at = j + 1; }
       var rest = t.slice(rv.at); if (!rest.trim()) return;
+      // (15.83) never ahead of this player's own screen: a phrase starts once its first word shows. The voice saying
+      // words still to come would let them buzz on what the room hasn't shown yet, and a buzz counts at what showed
+      if (revealIdx < rv.at) { clearTimeout(rv.t); rv.t = setTimeout(rvPump, 80); return; }
       var re = /[,;:.?!\u2014]["\u201d\u2019)]*\s/g, m, end = -1;
       while ((m = re.exec(rest))) { if (m.index + m[0].length >= 24) { end = m.index + m[0].length; break; } }
       if (end < 0) { if (!full) return; end = rest.length; }   // the rest of the phrase isn't here yet: "more" calls again
       var gen = rv.gen, a = rv.at, b = rv.at + end;
       rv.busy = true;
-      Speech.setRate && Speech.setRate(Math.max(0.5, Math.min(2, (1000 / Math.max(5, lastReadSpeed)) / 15)));
+      // (a shade under the room's pace, so it trails the words rather than leads them; behind, it catches up, up to a
+      // third faster, since it can't pass the screen: each phrase made on its own left it 4 s behind by the end)
+      var lag = Math.max(0, revealIdx - rv.at), boost = 1 + Math.min(0.35, lag / 150);
+      Speech.setRate && Speech.setRate(Math.max(0.5, Math.min(2, 0.95 * boost * (1000 / Math.max(5, lastReadSpeed)) / 15)));
       var heard = false, next = function () { if (gen !== rv.gen) return; rv.busy = false; rv.at = b; rvPump(); };
+      // …and inside a phrase, a voice that gets more than a few letters past the screen waits for it (held, as
+      // practice's Pause holds it), then goes on. A voice that can't be held starts again from the room's word
+      var held = false, said = a;
+      var again = function () { if (gen !== rv.gen) return; rv.gen++; rv.busy = false; rv.at = rvWordAt(t, revealIdx); rvPump(); };
+      var waitRoom = function () {
+        if (gen !== rv.gen || !held) return;
+        if (paused || pendingBuzzer) return;   // (the buzz or pause stops the voice itself)
+        if (revealIdx >= said - 2) { held = false; if (!Speech.resumeHeld()) again(); return; }
+        rv.t = setTimeout(waitRoom, 60);
+      };
+      var onPos = function (i) {
+        heard = true; if (gen !== rv.gen) return; said = i;
+        if (!held && i > revealIdx + 10) { if (Speech.pause()) { held = true; rv.t = setTimeout(waitRoom, 60); } else again(); }
+      };
       // (a voice the browser won't let speak yet, before the page has been pressed, says so or never starts: it stands
       // down until the room reads on, rather than racing through the phrases or holding the rest back)
       var fail = function (why) { if (gen !== rv.gen) return; if (why === "not-allowed") { rv.busy = false; return; } next(); };
-      if (!Speech.speak(t.slice(0, b), a, function () { heard = true; }, next, null, fail)) { rv.busy = false; return; }
+      if (!Speech.speak(t.slice(0, b), a, onPos, next, null, fail)) { rv.busy = false; return; }
       setTimeout(function () { if (gen === rv.gen && !heard && rv.busy) rvStop(); }, 5000);
     }
     function clientStartRead(from, speed, keepAhead) {
