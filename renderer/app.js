@@ -1846,6 +1846,9 @@ const Speech = (() => {
     seq++; clearInterval(keep); keep = 0; talk = null; pluginEnd = 0; tracking = 0;
     if (waiting) { waiting = 0; paintWait(); }
     if (held) { held = null; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
+    // a pause ends here too (a skip while paused): its time kept counting, and the next question's text, placed by
+    // time less time held, stood still while a browser voice read it
+    if (holdAt) { heldMs += performance.now() - holdAt; holdAt = 0; }
     playing.forEach((s) => { try { s.stop(); } catch (e) {} }); playing = [];
     if (clipAudio) { try { clipAudio.a.onended = clipAudio.a.onerror = null; clipAudio.a.pause(); } catch (e) {} URL.revokeObjectURL(clipAudio.url); clipAudio = null; }
     timers.forEach(clearTimeout); timers = [];
