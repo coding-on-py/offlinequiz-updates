@@ -3847,6 +3847,9 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .practice-actions:not(:has(> :not([hidden]))) { display: none; }
 .practice-actions [hidden] { display: none !important; }
 .practice-actions .btn { height: 44px; padding: 0 22px; }
+/* (15.92) a Buzz button that has just come up fades in while it takes no tap (app.js armBuzzBtn) */
+.buzz-arming { animation: buzz-arm 0.6s ease-out; }
+@keyframes buzz-arm { from { opacity: 0.35; } to { opacity: 1; } }
 .practice-actions kbd, .mp-buzz-btn kbd { margin-left: 4px; padding: 1px 6px; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 4px; background: transparent; color: inherit; font-size: 11px; font-weight: 500; opacity: 0.8; }
 @media (hover: none) { .practice-actions kbd, .mp-buzz-btn kbd { display: none; } }
 /* the room's buttons are the practice page's: Next-sized, the key inside Buzz */

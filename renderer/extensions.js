@@ -3043,7 +3043,7 @@ function __qbMain(ctx) {
       if (!isHost) return;
       var p = players[pid];
       kickBans.push({ device: devOf[pid] || "", handle: p.handle || "", until: Date.now() + 30 * 60e3 });
-      try { relayConn(pid).send({ t: "kicked", text: "The host took you out of this room. You can come back in 30 minutes." }); } catch (e) {}
+      try { relayConn(pid).send({ t: "kicked", text: "You were removed from this room. You can rejoin in 30 minutes." }); } catch (e) {}
       if (pendingBuzzer === pid) hostHandleAnswer(pid, "");   // their buzz ends like a blank answer, as on the game server
       if (bonusState && bonusState.winner === pid) { bonusState = null; broadcast({ t: "bcancel" }); }
       removePlayer(pid);
@@ -3346,7 +3346,7 @@ function __qbMain(ctx) {
       if (d.t === "hello") {
         if (settings.locked) { try { conn.send({ t: "locked" }); } catch (e) {} return; }
         var now = Date.now(); kickBans = kickBans.filter(function (b) { return b.until > now; });
-        if (kickBans.some(function (b) { return (d.device && b.device === d.device) || (validHandle(d.handle) && b.handle === validHandle(d.handle)); })) { try { conn.send({ t: "kicked", text: "The host took you out of this room. You can come back in 30 minutes." }); } catch (e) {} return; }
+        if (kickBans.some(function (b) { return (d.device && b.device === d.device) || (validHandle(d.handle) && b.handle === validHandle(d.handle)); })) { try { conn.send({ t: "kicked", text: "You were removed from this room. You can rejoin in 30 minutes." }); } catch (e) {} return; }
         if (d.device) devOf[id] = String(d.device).slice(0, 40);   // kept here, never sent to the others
         // Same name = same person, but only an OFFLINE seat can be reclaimed:
         // never the host's own entry, never a connected player's (a live name
@@ -4238,7 +4238,7 @@ function __qbMain(ctx) {
       // must never steal it from a practice screen in the foreground.
       // a bought room: not let in (its password / members only / taken off the list)
       else if (d.t === "denied") { onDenied(d); }
-      else if (d.t === "kicked") { leftIntentionally = true; onDenied({ need: "member", kicked: true, text: d.text || "The host took you out of this room." }); }
+      else if (d.t === "kicked") { leftIntentionally = true; onDenied({ need: "member", kicked: true, text: d.text || "You were removed from this room." }); }
       else if (d.t === "roominfo") { roomInfo = d; renderRoomInfo(); }
       // a diagnostic room: its details (sent before the first state, so the room is drawn as one),
       // and how it ended once the website has the results
@@ -4465,7 +4465,7 @@ function __qbMain(ctx) {
             '<input id="mp-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name"' + (fixedName ? " readonly" : "") + '></span>' +
             (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name. Change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
           '<section class="mp-card mp-join-card">' +
-            '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="The grey code is a new room, ready for you: press Join/Create Room to open it, or type another room\u2019s code to join that one. Share the code so others can join.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code" placeholder="' + esc(suggested) + '"></label>' +
+            '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="The grey code is a new room. Press Join/Create Room to open it, or type another code to join that room.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code" placeholder="' + esc(suggested) + '"></label>' +
             (app ? '<label class="checkbox-row" id="mp-lan-row"><input type="checkbox" id="mp-lan"' + (offline ? " checked disabled" : "") + '> Create offline room ' + lanHelpBtn("Play with no internet, on the same Wi-Fi. Click for how to set one up.") + "</label>" : "") +
             '<label class="checkbox-row"><input type="checkbox" id="mp-spectate"> Join as spectator</label>' +
             '<button type="button" class="btn btn-lg btn-go" id="mp-join">' + (offline ? "Create offline room" : "Join/Create Room") + '</button>' +
@@ -5084,7 +5084,7 @@ function __qbMain(ctx) {
                 : '<label class="mode-field"><span>Team</span><input id="mp-myteam" class="mode-input" placeholder="(none)" autocomplete="off"></label>') +
         '<div class="fp-checks mp-room-checks">' +
           // public rooms are listed in everyone's lobby (game server rooms only — the relay has no list)
-          (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-public"' + (settings.public !== false ? " checked" : "") + '> Public room</label><span class="qb-info" data-tip="Listed under Public rooms for everyone who opens Multiplayer, so anyone can join. Off: only people with the code or link.">i</span></span>' : "") +
+          (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-public"' + (settings.public !== false ? " checked" : "") + '> Public room</label><span class="qb-info" data-tip="Listed under Public rooms so anyone can join. Off, only people with the code or link can.">i</span></span>' : "") +
           '<label class="checkbox-row"><input type="checkbox" id="mp-lock"' + (settings.locked ? " checked" : "") + "> Lock room</label>" +
         "</div>" +
         '<div class="text-muted" id="mp-status" style="font-size:11px;min-height:14px;margin-top:4px"></div>' +
@@ -5124,8 +5124,8 @@ function __qbMain(ctx) {
           '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + esc(v) + '" aria-label="' + esc(label) + '"><span class="slider-value" id="' + id + '-val">' + esc(text) + "</span></div>";
       };
       return '<div class="filter-section mp-injected"><div class="filter-label">Reading</div>' +
-          slider("mp-dx-speed", "Reading speed", "How fast this room reads, for everyone. 1 is the slowest and 50 the fastest. Past 50 the whole question shows at once.", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
-          slider("mp-dx-strict", "Strictness", "How close answers must be, for everyone in this room. Higher is stricter.", 0, 20, strict, String(strict)) +
+          slider("mp-dx-speed", "Reading speed", "Reading speed for everyone, from 1 (slowest) to 50. Past 50 the whole question shows at once.", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
+          slider("mp-dx-strict", "Strictness", "How exact answers must be. Higher is stricter.", 0, 20, strict, String(strict)) +
         "</div>" +
         '<p class="mp-off-note mp-injected">This room always plays ' + esc(o.name || "") + '. These settings are the room\u2019s.</p>';
     }
@@ -5253,7 +5253,7 @@ function __qbMain(ctx) {
         if (h.voicePanelOpen && h.voicePanelOpen()) { h.closeVoicePanel(); return; }
         toggleRoomSettings(false); h.openVoicePanel();
       };
-      body.querySelector("#mp-buzz-btn").onclick = function () { requestBuzz(); };
+      body.querySelector("#mp-buzz-btn").onclick = function () { if (window.qbBuzzBtnArmed && !window.qbBuzzBtnArmed(this)) return; requestBuzz(); };
       body.querySelector("#mp-next-btn").onclick = function () { requestNext(); };
       body.querySelector("#mp-pause-btn").onclick = function () { requestPause(); };
       var dxr = body.querySelector("#mp-dx-report");
@@ -5366,7 +5366,7 @@ function __qbMain(ctx) {
         '<div class="ri-head"><b class="ri-name">' + esc(String(R.name).toUpperCase()) + "</b>" + (R.role ? '<span class="badge">' + esc(ROLE_LABEL[R.role]) + "</span>" : "") + "</div>" +
         '<div class="ri-line">Owner <b data-user="' + esc(R.owner) + '">' + esc(R.owner || "—") + "</b></div>" +
         // the Database's segmented control (one look for every either/or); what each means is in the ⓘ
-        '<div class="ri-sec"><div class="ri-lbl">Who can come in <span class="qb-info" data-tip="Locked: only the owner, admins and members. Password: members get straight in, anyone else types the password. Open: anyone with the room\u2019s name.">i</span></div>' +
+        '<div class="ri-sec"><div class="ri-lbl">Who can come in <span class="qb-info" data-tip="Locked lets in only the owner, admins and members. Password lets members in and asks everyone else. Open lets in anyone with the name.">i</span></div>' +
           (mgr ? '<div class="seg ri-access" role="group" aria-label="Who can come in">' + ["members", "password", "anyone"].map(function (a) {
             return '<button type="button" data-access="' + a + '" aria-pressed="' + (R.access === a) + '">' + ACCESS_LABEL[a] + "</button>";
           }).join("") + "</div>" : '<div class="ri-line">' + esc(ACCESS_LABEL[R.access] || "") + "</div>") +
@@ -5617,7 +5617,7 @@ function __qbMain(ctx) {
         // a diagnostic: the host (or, with none here, any player) starts, goes on and pauses; the
         // counter is "Question N of M"; once it's over, the report / Clubs
         var can = amHost(), spec = !!(players[myId] && players[myId].spec), fin = !!(dxDone || (dxInfo && dxInfo.done)), waiting = !!(dxInfo && dxInfo.waiting);
-        if (b) { b.hidden = !reading || spec || answering || fin; b.disabled = !!pendingBuzzer || !!optBuzz || lockedOut(); }
+        if (b) { var bWas0 = b.hidden; b.hidden = !reading || spec || answering || fin; b.disabled = !!pendingBuzzer || !!optBuzz || lockedOut(); if (bWas0 && !b.hidden && window.qbArmBuzzBtn) window.qbArmBuzzBtn(b); }
         if (n) {
           n.hidden = !dxInfo || !can || fin || reading || !!(bonusView && !bonusView.done);
           var lbl = waiting ? "Start" : "Next";
@@ -5631,7 +5631,13 @@ function __qbMain(ctx) {
         var hb2 = body.querySelector("#mp-hostbadge"); if (hb2) hb2.hidden = !hostBadgeOn();
         return;
       }
-      if (b) { b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer || !!optBuzz || lockedOut(); }
+      if (b) {
+        var bWas = b.hidden;
+        b.hidden = !reading || mySpec || answering; b.disabled = !!pendingBuzzer || !!optBuzz || lockedOut();
+        // (15.92) it comes up where Next was: a tap meant for Next just after someone else's started the question
+        // doesn't buzz (app.js armBuzzBtn)
+        if (bWas && !b.hidden && window.qbArmBuzzBtn) window.qbArmBuzzBtn(b);
+      }
       if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
       if (p) { p.hidden = !reading || mySpec || answering || !canPause(); p.textContent = paused ? "Resume" : "Pause"; }
       var qc = body.querySelector("#mp-qcount");
@@ -6091,8 +6097,8 @@ function __qbMain(ctx) {
         buzz.className = "buzz-area";
         buzz.innerHTML =
           '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span>' +
-          '<input type="text" id="mp-ans-input" placeholder="type answer and press Enter..." autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>' +
-          '<div class="buzz-hints">You buzzed · <span id="mp-timer"></span></div>' +
+          '<input type="text" id="mp-ans-input" placeholder="Your answer" autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>' +
+          '<div class="buzz-hints"><span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         var inp = buzz.querySelector("#mp-ans-input");
         var grab = function () { try { inp.focus({ preventScroll: true }); } catch (e2) { inp.focus(); } };
@@ -6122,8 +6128,8 @@ function __qbMain(ctx) {
         buzz.className = "buzz-area";
         buzz.innerHTML =
           '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span>' +
-          '<input type="text" id="mp-ans-input" placeholder="answer again…" autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>' +
-          '<div class="buzz-hints"><span style="color:var(--yellow);font-weight:700">PROMPT' + (ask ? "</span> " + esc(ask) : "</span>") + ' · <span id="mp-timer"></span></div>' +
+          '<input type="text" id="mp-ans-input" placeholder="Your answer" autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>' +
+          '<div class="buzz-hints"><span style="color:var(--yellow);font-weight:700">Prompt' + (ask ? "</span> " + esc(ask) : "</span>") + ' · <span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         var inp = buzz.querySelector("#mp-ans-input"); inp.focus();
         resetTyping();
@@ -6132,8 +6138,8 @@ function __qbMain(ctx) {
         armAutoSub(inp, deadline || answerDeadline, submitAnswer);
       } else {
         buzz.className = "buzz-area";
-        buzz.innerHTML = '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span> <em id="mp-live-ph">' + neonNameHtml(name, players[id] || playerNamed(name)) + " is being prompted…</em><span id=\"mp-live\" class=\"mp-live\"></span></div>" +
-          '<div class="buzz-hints"><span style="color:var(--yellow);font-weight:700">PROMPT' + (ask ? ":</span> " + esc(ask) : "</span>") + ' <span id="mp-timer"></span></div>' +
+        buzz.innerHTML = '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span> <em id="mp-live-ph">' + neonNameHtml(name, players[id] || playerNamed(name)) + " was prompted</em><span id=\"mp-live\" class=\"mp-live\"></span></div>" +
+          '<div class="buzz-hints"><span style="color:var(--yellow);font-weight:700">Prompt' + (ask ? "</span> " + esc(ask) : "</span>") + ' · <span id="mp-timer"></span></div>' +
           '<div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
       }
       startTick(deadline || answerDeadline);
@@ -6314,7 +6320,7 @@ function __qbMain(ctx) {
       // no tossup result above it (a diagnostic's bonuses-only round): no dividing line either
       var top = current ? "" : "0"; el.style.borderTop = top; el.style.paddingTop = top; el.style.marginTop = top;
       var mine = bonusView.winner === myId;
-      var html = '<div class="filter-label">BONUS · ' + neonNameHtml(bonusView.name, players[bonusView.winner]) + (mine ? " (you)" : "") + " answers</div>" +
+      var html = '<div class="filter-label">BONUS · ' + (mine ? "You" : neonNameHtml(bonusView.name, players[bonusView.winner])) + "</div>" +
         // a diagnostic's bonuses-only round has no tossup above: its leadin reads like a question
         (bonusView.leadin ? '<div class="question-text" style="' + (current ? "font-size:13px;" : "") + 'min-height:0">' + esc(bonusView.leadin) + "</div>" : "");
       for (var k = 0; k < bonusView.parts.length && k <= bonusView.k; k++) {
@@ -6325,7 +6331,7 @@ function __qbMain(ctx) {
             (r.given ? "\u201c" + esc(r.given) + "\u201d · " : "") + 'ANSWER: <span class="ans">' + ansHtml(r.answerRaw, r.answer) + "</span></div>";
         } else if (k === bonusView.k && !bonusView.done) {
           html += mine
-            ? '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span><input type="text" class="mp-binput" placeholder="your answer\u2026 (Enter)" autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>'
+            ? '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span><input type="text" class="mp-binput" placeholder="Your answer" autocomplete="off" autocorrect="off" autocapitalize="off" enterkeyhint="send" spellcheck="false"></div>'
             : '<div class="text-muted" style="font-size:12px"><em id="mp-live-ph">' + neonNameHtml(bonusView.name, players[bonusView.winner]) + " is answering\u2026</em><span id=\"mp-live\" class=\"mp-live\"></span></div>";
           html += '<div class="buzz-hints"><span id="mp-timer"></span></div><div class="mp-timer-bar"><div id="mp-timer-fill"></div></div>';
         }
@@ -6525,7 +6531,7 @@ function __qbMain(ctx) {
     name: "Multiplayer",
     version: "9.0.0",
     author: "OfflineQuiz",
-    description: "Play together over a relay (works on any network) or P2P.",
+    description: "Play together online or on the same Wi-Fi.",
     onEnable: __qbMain,
     onDisable: function (ctx) { if (ctx._cleanup) ctx._cleanup(); },
   });

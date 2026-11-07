@@ -1900,6 +1900,12 @@ const Speech = (() => {
   // question went on: they run 19% faster than that pace and stop 0.95 s at a full stop. c[i]: the ms before character i,
   // fit on Google US English reading 40 real tossup sentences (a word 81 ms, a syllable 71, a consonant 33, a digit 185,
   // a comma 33, a full stop 950); 5% off a sentence on average, left out of the fit
+  // (15.92) fit again, on where each word ends (Whisper) in Google US English's own audio of 40 whole tossups' spoken
+  // text, one start per question: a full stop takes 612 ms (not 950), a quotation mark 170 (it had none), a comma 194
+  // and a capitalized word inside a sentence (a name) 48 more. Scored on the questions each fit left out: words 270 ms
+  // off on average (377 before) and 99% within 1.1 s (1.9), and the pace from question to question varies less (sd
+  // 4.8% to 3.1%). The reported tossup with four quotations: at worst 1.0 s off (1.5)
+  const SAY = { word: 11, syl: 97, cons: 40, cap: 48, digit: 213, comma: 194, stop: 612, quote: 170, hyphen: 220 };
   function sayMs(t) {
     t = String(t); const n = t.length, c = new Float32Array(n + 1), L = /[A-Za-zÀ-ɏ'’]/;
     let i = 0, acc = 0;
@@ -1909,9 +1915,11 @@ const Speech = (() => {
         while (j < n && L.test(t[j])) j++;
         const w = t.slice(i, j).toLowerCase();
         let syl = (w.match(/[aeiouyà-ÿ]+/g) || []).length; if (syl > 1 && /[^aeiouy]e$/.test(w)) syl--;
-        ms = 81 + 71 * Math.max(1, syl) + 33 * w.replace(/[aeiouy'’à-ÿ]/g, "").length;
-      } else if (/[0-9]/.test(t[i])) { while (j < n && /[0-9]/.test(t[j])) j++; ms = 185 * (j - i); }
-      else ms = /[.?!]/.test(t[i]) && (i + 1 >= n || /[\s"”’)]/.test(t[i + 1])) ? 950 : /[,;:]/.test(t[i]) ? 33 : 0;
+        ms = SAY.word + SAY.syl * Math.max(1, syl) + SAY.cons * w.replace(/[aeiouy'’à-ÿ]/g, "").length;
+        if (/[A-ZÀ-Þ]/.test(t[i]) && i > 0 && !/[.?!]\W*\s*$/.test(t.slice(Math.max(0, i - 4), i))) ms += SAY.cap;
+      } else if (/[0-9]/.test(t[i])) { while (j < n && /[0-9]/.test(t[j])) j++; ms = SAY.digit * (j - i); }
+      else ms = /[.?!]/.test(t[i]) && (i + 1 >= n || /[\s"”’)]/.test(t[i + 1])) ? SAY.stop : /[,;:]/.test(t[i]) ? SAY.comma
+        : /["“”]/.test(t[i]) ? SAY.quote : t[i] === "-" ? SAY.hyphen : 0;
       for (let k = i; k < j; k++) { c[k] = acc; acc += ms / (j - i); }
       i = j;
     }
@@ -1923,7 +1931,7 @@ const Speech = (() => {
   // syllables a millisecond, learned per voice and speed (a voice's piece: what it said over how long it took)
   let paces = {}; try { paces = JSON.parse(localStorage.getItem("qb-voice-pace") || "{}") || {}; } catch (e) {}
   // (a network voice's pieces are timed by sayMs, so its pace is that model's ms a real ms, about the speed set)
-  const paceKey = (v) => String((v && (v.voiceURI || v.name)) || "") + "@" + rate().toFixed(2) + (v && v.localService === false ? "#ms" : "");
+  const paceKey = (v) => String((v && (v.voiceURI || v.name)) || "") + "@" + rate().toFixed(2) + (v && v.localService === false ? "#ms2" : "");
   const unitsPerMs = (v) => paces[paceKey(v)] || (v && v.localService === false ? rate() : 0.0046 * rate());
   function learnPace(v, units, ms) {
     if (!(ms > 1500) || !(units > 6)) return;
@@ -2504,6 +2512,7 @@ function sayMath(t) {
   if (/^\*+$/.test(t)) return " ";
   if ((m = /^([A-Za-z])\*$/.exec(t))) return m[1].toUpperCase() + " star";   // A* search
   if ((m = /^([A-Za-z]{2,})\*+$/.exec(t))) return m[1];
+  if (/\*/.test(t) && /[A-Za-z]{2,}/.test(t) && !/[=+^]/.test(t)) return null;   // (15.92) "***Flawless", a word bleeped "F***": not "times times times"
   if (/^[<>]|[<>]$/.test(t) && t.length > 1) return null;   // <this author>
   if (/^\d{1,3}\/\d{1,3}$/.test(t)) return null;   // a fraction or a time signature: speechScript decides by what's around it   // E = mc2, its superscript lost
   if ((m = /^([a-zA-Z])\(([^()]+)\)$/.exec(t))) return sayLetters(m[1]) + " of " + m[2].split(",").map((x) => (/^[a-z]$/i.test(x) ? sayLetters(x) : sayMath(x) || x)).join(" and ");
@@ -2567,16 +2576,53 @@ function speechScript(text, raw) {
       const exprIn = (hay, from) => { const i = hay.indexOf(expr, from); if (i >= 0) return { i, len: expr.length }; const flat = expr.replace(/\s+/g, ""), j = hay.indexOf(flat, from); return j >= 0 ? { i: j, len: flat.length } : null; };
       const hit = exprIn(text, src === text ? Math.max(0, m.index - before.length + before.length - expr.length - 2) : cursor);
       if (!hit) continue;
-      let end = hit.i + hit.len;
+      let end = hit.i + hit.len, start = hit.i;
       const tail = /^[,;:]?\s*(?:\[[^\]]*\]|\([^)]*\))/.exec(text.slice(end));   // the guide itself, when the screen still shows it
       if (tail && tail[0].includes(guide.slice(0, 6))) end += tail[0].length;
-      put(hit.i, end, " " + guide.replace(/(\w)-(?=\w)/g, "$1 ") + " ");
+      // (15.92) a guide that names the words before the expression too ("Factor VIII [factor eight]", "MHC II [MHC two]")
+      // stands for them as well: they were said twice
+      const gw = guide.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean), back = /((?:[A-Za-z0-9]+[\s-]+){1,3})$/.exec(text.slice(Math.max(0, start - 60), start));
+      if (back && gw.length > 1) {
+        const parts = back[1].match(/[A-Za-z0-9]+[\s-]+/g);
+        for (let k = Math.min(parts.length, gw.length - 1); k >= 1; k--) {
+          const seg = parts.slice(parts.length - k);
+          if (seg.every((p, x) => p.replace(/[\s-]+$/, "").toLowerCase() === gw[x])) { start -= seg.join("").length; break; }
+        }
+      }
+      put(start, end, " " + guide.replace(/(\w)-(?=\w)/g, "$1 ") + " ");
       if (src === raw) cursor = hit.i + hit.len;
     }
   }
   // what's never said: the power, superpower and bonus-value marks, quoted pronunciations still on screen. (15.73: the
   // superpower mark "(#)" mid-sentence was given to the voice, which paused at its brackets as if at a comma)
   for (const re of [/\(\*\)|\(\+\)|\(#\)/g, /\((?:“[^”]*”|"[^"]*")\)/g]) { re.lastIndex = 0; while ((m = re.exec(text))) put(m.index, m.index + m[0].length, " "); }
+  // (15.92) pronunciation guides and notes to the reader, found as the screen finds them to hide them
+  // (stripPronunciations): the voice said "Pieck [peek]" as "Pieck peek", "α [alpha]" as "alpha alpha", and read
+  // "[emphasize]" and "[sic]" aloud. A sweep of every question's text found 15,000 brackets and parentheses read out
+  const phonetic = (inner) => {
+    const tokens = inner.replace(/["“”'‘’]/g, "").trim().replace(/\s*-\s+|\s+-\s*/g, "-").split(/\s+/).filter((w) => w && !/^or$/i.test(w));
+    if (!tokens.length || tokens.length > 7 || !tokens.every((w) => /^[A-Za-z][A-Za-z'-]*[.,;:]?$/.test(w))) return false;
+    if (/^(this|these|that|those|his|her|their|its|the|a|an)$/i.test(tokens[0])) return false;
+    // hyphenated as a respelling is, not as a name or a compound is ("Sci-Fi", "Pierre-Charles")
+    const resp = (w) => /[A-Za-z]-[A-Za-z]/.test(w) && !/^[A-Z][a-z]+(?:-[A-Z]?[a-z]+)+[.,;:]?$/.test(w);
+    return tokens.some(resp) || (tokens.some((w) => /^[A-Z]{2,}$/.test(w) && !PRON_ACRONYMS.has(w)) && tokens.some((w) => /^[a-z]{2,}$/.test(w)));
+  };
+  const openQuote = (at) => { const b = text.slice(0, at); return (b.match(/"/g) || []).length % 2 === 1 || (b.match(/“/g) || []).length > (b.match(/”/g) || []).length; };
+  const NOTE = /\[\s*(?:notes?\s+to\s+(?:the\s+)?(?:moderators?|readers?)\b[^\]]*|moderators?\s+notes?\b[^\]]*|moderators?\s*[:,][^\]]*|emphasi[sz]e[^\]]*|read\s+(?:notes\s+)?slowly[^\]]*|read\s+(?:the\s+)?answerline[^\]]*|pause\b[^\]]*|spell\s+(?:it|out)\b[^\]]*|slowly\s*:?[^\]]*|sic)\s*\]/gi;
+  NOTE.lastIndex = 0; while ((m = NOTE.exec(text))) put(m.index, m.index + m[0].length, " ");
+  const BR = /([^\s\[(]*)(\s*)([\[(])([^\][()]{1,80})[\])]/g;
+  BR.lastIndex = 0;
+  while ((m = BR.exec(text))) {
+    const a = m.index + m[1].length + m[2].length, b = m.index + m[0].length, prev = m[1].replace(/^["'’(]+|[,;:]+$/g, ""), inner = m[4].trim();
+    const dq = inner.replace(/["“”'‘’]/g, "").trim().toLowerCase();
+    // (a parenthesis also needs quotes or a stressed syllable in capitals: "(Austro-Hungarian)" is said)
+    // (inside a quotation a bracket is the editor's, said: "If it's [Sci-Fi] it's bad")
+    let drop = /pronounc/i.test(inner) || (!(m[3] === "[" && openQuote(a)) && (m[3] === "[" ? phonetic(inner) : phonetic(inner) && (/["“'‘]/.test(inner) || /(?:^|[\s-])[A-Z]{2,}(?=$|[\s-])/.test(inner))));
+    // what the word or symbol before it says already ("α [alpha]", "Θ (theta)", "Pieck [peek]")
+    if (!drop && prev && (dq === String(SAY_SYM[prev] || "").trim() || dq === prev.toLowerCase())) drop = true;
+    if (!drop && m[3] === "[" && m[2] && /^[a-z][a-z'’]{2,25}$/.test(inner) && !PRON_KEEP_WORDS.has(inner) && /^[A-Z]/.test(prev) && !/["“”]$/.test(m[1]) && !openQuote(a)) drop = true;
+    if (drop) put(a, b, " ");
+  }
   // (15.79) an accent printed beside its letter ("R¨ok stone" was "R double dot ok stone"): said as the letter with it
   const FM = typeof fmtOf === "function" ? fmtOf(text) : null;
   if (FM) for (let i = 0; i < text.length; i++) if (FM.disp[i] === "") { let j = i; while (j < text.length && FM.disp[j] === "") j++; if (FM.disp[j]) put(i, j + 1, FM.disp[j]); i = j; }
@@ -2599,9 +2645,12 @@ function speechScript(text, raw) {
   const coreOf = (t) => {
     if (!FM) return { core: t.core, sup: false };
     let out = "", run = "", sup = false;
-    const flush = () => { if (!run) return; out += [...run].every((c) => SUPC[c]) ? [...run].map((c) => SUPC[c]).join("") : "^(" + run + ")"; run = ""; };
+    // (15.92) a charge after letters ("NAD+", "Fe3+" with its charge raised) goes as written, which sayMath reads
+    // "N A D plus" (it was "N A D to the +"); a caret written before a raised exponent isn't said twice
+    const flush = () => { if (!run) return; out += /[A-Za-z₀-₉]$/.test(out) && /^\d*[+−-]$/.test(run) ? run.replace("−", "-") : [...run].every((c) => SUPC[c]) ? [...run].map((c) => SUPC[c]).join("") : "^(" + run + ")"; run = ""; };
     for (let k = 0; k < t.core.length; k++) {
       const f = FM.flags[t.a + k] || 0, c = t.core[k];
+      if (c === "^" && ((FM.flags[t.a + k + 1] || 0) & FMT_BIT.sup)) continue;
       if (f & FMT_BIT.sup) { run += c; sup = true; continue; }
       flush(); out += f & FMT_BIT.sub && SUBC[c] ? SUBC[c] : c;
     }
@@ -2611,6 +2660,8 @@ function speechScript(text, raw) {
   // what a superscript says when sayMath doesn't take the whole token: "squared", "cubed", "to the n"
   const supWords = (core) => core.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿⁱˣ]+|\^\(([^)]*)\)/g, (x, inner) => {
     const e = inner != null ? inner : [...x].map((c) => Object.keys(SUPC).find((k) => SUPC[k] === c) || c).join("");
+    const ch = /^(\d*)([+−-])$/.exec(e);
+    if (ch) return " " + (ch[1] ? ch[1] + " " : "") + (ch[2] === "+" ? "plus" : "minus") + " ";
     return e === "2" ? " squared " : e === "3" ? " cubed " : " to the " + e.replace(/^[−-]/, "negative ") + " ";
   });
   toks.forEach((t, k) => {
@@ -2627,6 +2678,10 @@ function speechScript(text, raw) {
       const meter = /^(time|meter|metre|signature|signatures|rhythm)$/.test(nx) || (meterish && !mathNear && nx !== "of");
       say = meter ? n + " " + d : SAY_FRAC[t.core] || n + " over " + d;
     }
+    // (15.92) "c. 1500" and "ca. 200 CE" were said "c 1500"; "1.6 x 10" said "1.6 ex 10"
+    const nx0 = (toks[k + 1] && toks[k + 1].core) || "", pv0 = (toks[k - 1] && toks[k - 1].core) || "";
+    if (!say && /^(c|ca)$/.test(t.core) && text[t.a + t.core.length] === "." && /^\d{2,4}/.test(nx0)) { put(t.a, t.a + t.core.length + 1, " circa "); return; }
+    if (!say && t.core === "x" && /\d$/.test(pv0) && /^\d/.test(nx0)) say = "times";
     if (!say && /^[A-Za-z]{1,3}$/.test(t.core) && !NOT_VAR.has(t.core.toLowerCase()) && !SAY_FN[t.core.toLowerCase()] &&
       ((toks[k - 1] && OP.test(toks[k - 1].core)) || (toks[k + 1] && OP.test(toks[k + 1].core)))) say = sayLetters(t.core);
     if (say && say !== t.core) put(t.a, t.a + t.core.length, " " + say + " ");
@@ -2639,6 +2694,15 @@ function speechScript(text, raw) {
     if (!free(i, i + 1)) continue;
     const c = text[i];
     if (c === "/" && /\s/.test(text[i - 1] || "") && /\s/.test(text[i + 1] || "")) put(i, i + 1, ",");
+    // (15.92) a slash between words without spaces was said "slash": a unit after a number ("10 m/s") is "per", a line
+    // break in a quoted poem ("an hour/The frail duration") a pause, the rest ("C/D box", "and/or") a space
+    else if (c === "/" && /[A-Za-z]/.test(text[i - 1] || "") && /[A-Za-z]/.test(text[i + 1] || "")) {
+      const w = /([A-Za-z]{1,3})$/.exec(text.slice(0, i));
+      const unit = !!w && /\d\s*$/.test(text.slice(0, i - w[1].length)) && /^[A-Za-z]{1,3}\b/.test(text.slice(i + 1));
+      put(i, i + 1, unit ? " per " : /[a-z]/.test(text[i - 1]) && /[A-Z]/.test(text[i + 1]) ? ", " : " ");
+    }
+    // editors' brackets in a quotation ("drown[ing]", "in [her] best dress") are said without them
+    else if (c === "[" || c === "]") put(i, i + 1, "");
     else if (/[\\|*#~_•·¨´ˆ˜{}^@¶§†‡]/.test(c)) put(i, i + 1, " ");
   }
   spans.sort((x, y) => x.a - y.a);
@@ -2646,7 +2710,9 @@ function speechScript(text, raw) {
   const map = [];
   for (const sp of spans) {
     for (let i = last; i < sp.a; i++) { spoken += text[i]; map.push(i); }
-    for (let k = 0; k < sp.say.length; k++) { spoken += sp.say[k]; map.push(sp.b - 1); }
+    // (15.92) what's said for it spread across what it stands for, so "NH3+" fills in as "N H 3 plus" is said (all of
+    // it showed at the first sound, 0.75 s ahead of the voice)
+    for (let k = 0; k < sp.say.length; k++) { spoken += sp.say[k]; map.push(sp.a + Math.max(0, Math.ceil((sp.b - sp.a) * (k + 1) / sp.say.length) - 1)); }
     last = sp.b;
   }
   for (let i = last; i < text.length; i++) { spoken += text[i]; map.push(i); }
@@ -5848,7 +5914,7 @@ function syncVoiceRow() {
   ["panel-speed-slider", "speed-slider"].forEach((id) => {
     const r = document.getElementById(id); if (!r) return;
     const lk = lockIn(r); r.disabled = lk;
-    const g = r.closest(".slider-group"); if (g) { g.classList.toggle("locked-by-read", lk); g.title = lk ? "The voice sets the pace while Read aloud is on" : ""; }
+    const g = r.closest(".slider-group"); if (g) { g.classList.toggle("locked-by-read", lk); g.title = lk ? "Set by the voice while Read aloud is on" : ""; }
   });
   document.querySelectorAll("[data-read-note]").forEach((n) => { n.hidden = !lockIn(n); });
   const hide = document.getElementById("read-hide-row"); if (hide) hide.hidden = !on || room;
@@ -5877,7 +5943,7 @@ function setReadHidden(on) {
 function voiceTrouble(why) {
   setReadHidden(false);
   const el = document.getElementById("vp-status"); if (!el) return;
-  el.textContent = why === "not-allowed" ? "The voice needs a click on the page before it can start." : "The voice couldn't read that, so the text shows instead. Try another voice.";
+  el.textContent = why === "not-allowed" ? "Click the page to start the voice." : "This voice couldn't read that. Try another one.";
   el.hidden = false;
 }
 let _meterRaf = 0, _meterLv = 0;
@@ -7105,7 +7171,7 @@ function ensureBonusPartBlocks(n) {
     el.id = `bonus-part-${i}`;
     el.querySelector(".bonus-part-text").id = `bonus-text-${i}`;
     const inp = el.querySelector(".bonus-answer-input");
-    inp.id = `bonus-input-${i}`; inp.placeholder = `answer for part ${bonusPartLetter(i)}...`; inp.value = "";
+    inp.id = `bonus-input-${i}`; inp.placeholder = `Part ${bonusPartLetter(i)} answer`; inp.value = "";
     el.querySelector(".bonus-part-answer").id = `bonus-answer-${i}`;
     area.insertBefore(el, submit || null);
   }
@@ -7178,6 +7244,15 @@ function followReading(el, key, block) {
   sc.scrollTo({ top: followReading._target, behavior: "smooth" });
 }
 window.qbFollowReading = followReading;
+// (15.92) A Buzz button that has just come up takes no tap for a moment (it fades in meanwhile). It comes up where
+// Next was (the bar's first place, under a phone's thumb), so a second tap on Next, or in a room a tap on Next a
+// moment after someone else's started the question, buzzed at its first word. The Buzz key isn't held back
+function armBuzzBtn(el) {
+  el._armAt = performance.now() + 600;
+  el.classList.remove("buzz-arming"); void el.offsetWidth; el.classList.add("buzz-arming");
+}
+function buzzBtnArmed(el) { return !el || performance.now() >= (el._armAt || 0); }
+window.qbArmBuzzBtn = armBuzzBtn; window.qbBuzzBtnArmed = buzzBtnArmed;
 function syncPracticeActions() {
   const bar = document.getElementById("practice-actions"); if (!bar) return;
   const set = (el, show, text) => { if (!el) return; if (el.hidden === show) el.hidden = !show; if (text != null && el.firstChild && el.firstChild.nodeValue !== text) el.firstChild.nodeValue = text; };
@@ -7186,7 +7261,9 @@ function syncPracticeActions() {
   set(document.getElementById("pa-main"), !!m, m ? m.label : null);
   document.getElementById("pa-main")?.classList.toggle("pa-next", !!(m && m.next));
   const mk = document.querySelector("#pa-main kbd"); if (m && mk) mk.textContent = keyDisplay(m.key);
-  set(document.getElementById("pa-buzz"), state.mode === "tossups" && reading && !state.isBuzzed);
+  const pb = document.getElementById("pa-buzz"), pbWas = !!(pb && pb.hidden);
+  set(pb, state.mode === "tossups" && reading && !state.isBuzzed);
+  if (pb && pbWas && !pb.hidden) armBuzzBtn(pb);
   set(document.getElementById("pa-pause"), reading && !state.isBuzzed && state.bonusAwait == null, state.isPaused ? "Resume" : "Pause");
   // phones: once the result shows, the question area lets go of its screen-tall room
   // (Next and the stats follow the result) and the verdict comes into view once
@@ -7208,7 +7285,7 @@ function syncPracticeActions() {
 (function wirePracticeActions() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener("click", (e) => { e.preventDefault(); e.currentTarget.blur(); fn(); syncPracticeActions(); });
   on("pa-main", () => { const m = practiceMain(); if (m) m.run(); });
-  on("pa-buzz", () => { if (state.sessionActive && !state.isBuzzed && state.mode === "tossups") buzz(); });
+  on("pa-buzz", () => { if (state.sessionActive && !state.isBuzzed && state.mode === "tossups" && buzzBtnArmed(document.getElementById("pa-buzz"))) buzz(); });
   on("pa-pause", () => togglePause());
   const main = document.getElementById("pa-main"); if (main && !main.querySelector("kbd")) main.appendChild(Object.assign(document.createElement("kbd"), { textContent: keyDisplay("start-skip") }));
   const pause = document.getElementById("pa-pause"); if (pause && !pause.querySelector("kbd")) pause.appendChild(Object.assign(document.createElement("kbd"), { textContent: keyDisplay("pause-reveal") }));
@@ -8003,14 +8080,22 @@ const canJudgeHere = (q) => !!(window.QBJudge && window.QBJudge.ready(q));
 const needsServer = (ev) => !!(ev && ev.askName);
 const verdictOf = (ev) => ({ status: ev.status, prompt: ev.prompt, antiprompt: !!ev.antiprompt, unsure: !!ev.unsure });
 async function hostJudgeTossup(q, answer, o) {
-  const strictness = o.strictness || 10, buzzPosition = o.buzzPosition == null ? null : o.buzzPosition, previous = o.previous || null;
+  let strictness = o.strictness || 10, buzzPosition = o.buzzPosition == null ? null : o.buzzPosition, previous = o.previous || null;
+  // (15.92) asAnswer: as the answer box would judge it now (the player's strictness, where the buzz came, the answer a
+  // prompt followed). Voice Answers judged with its own (strictness 10, no buzz, no prompt), so a right answer it heard
+  // wasn't always sent at once, and a prompt's follow-up ("the fourteenth" after "Louis") never was
+  if (o.asAnswer && q && q === state.currentQuestion) {
+    strictness = playSetting("strictness"); buzzPosition = state.questionFullyRead ? null : displayPosToOriginal(state.buzzPosition);
+    previous = state.promptActive ? state._promptFrom : null;
+  }
   if (canJudgeHere(q)) {
     try { const ev = window.QBJudge.evaluateTossup(answer, q, strictness, buzzPosition, previous); if (!needsServer(ev)) return { ...verdictOf(ev), answer: q.answer_sanitized, answerRaw: q.answer }; } catch (e) { console.error("[judge]", e); }
   }
   return API.post("/api/evaluate-tossup", { questionId: q && q.id, answer, strictness, buzzPosition, previous });
 }
 async function hostJudgeBonusPart(q, part, answer, o) {
-  const strictness = o.strictness || 10, previous = o.previous || null;
+  let strictness = o.strictness || 10, previous = o.previous || null;
+  if (o.asAnswer && q && q === state.currentQuestion) { strictness = state.settings.strictness; previous = (state._bonusPromptFrom || [])[Number(part)] || null; }
   if (canJudgeHere(q)) {
     try { const ev = window.QBJudge.evaluateBonusPart(answer, q, Number(part), strictness, previous); if (!ev) return { error: "No such part" }; if (!needsServer(ev)) return verdictOf(ev); } catch (e) { console.error("[judge]", e); }
   }
@@ -13563,7 +13648,7 @@ const ACHIEVEMENT_LIST = [
   { id:"pwr100", name:"Really fast", desc:"100 powers", type:"powers", threshold:100, icon:"迅" },
   { id:"pwr250", name:"Really really fast", desc:"250 powers", type:"powers", threshold:250, icon:"疾" },
   { id:"pwr500", name:"Overclocking", desc:"500 powers", type:"powers", threshold:500, icon:"光" },
-  { id:"pwr999", name:"Keskil's 333rd 3 Meanings", desc:"999 powers", type:"powers", threshold:999, icon:"輝" },
+  { id:"pwr999", name:"Lightspeed", desc:"999 powers", type:"powers", threshold:999, icon:"輝" },
   { id:"neg100", name:"Learning Experience", desc:"100 negs", type:"negs", threshold:100, icon:"誤" },
   { id:"neg300", name:"Confidence Interval", desc:"300 negs", type:"negs", threshold:300, icon:"迷" },
   { id:"neg500", name:"Buzzer Damage", desc:"500 negs", type:"negs", threshold:500, icon:"散" },
