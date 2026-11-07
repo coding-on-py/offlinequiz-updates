@@ -3068,6 +3068,9 @@ html[data-panel-side="left"] #app > .screen.panel-host { margin-right: 0; margin
 
 /* question area (practice + plugin pages that reuse it) */
 .question-placeholder { gap: 12px; min-height: 360px; border: 0; border-radius: var(--r-lg); color: var(--muted); }
+/* a room before its first question */
+.mp-ph-hint { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; font-size: 13px; color: var(--muted); }
+.mp-ph-hint b { font-weight: 600; color: var(--text-secondary, var(--text)); font-size: 14px; }
 .question-content { gap: 14px; }
 .question-meta { justify-content: flex-start; gap: 8px; font-size: 12px; color: var(--muted); }
 .question-meta span { height: 26px; border-radius: 13px; padding: 0 10px; border-color: var(--line-soft); }
@@ -3817,6 +3820,8 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 /* no keyboard (a phone, a tablet): the buttons say it; key hints go */
 @media (hover: none) and (pointer: coarse) {
   #practice-screen .question-placeholder p, #bonus-next-hint, #mp-placeholder p { display: none !important; }
+  /* (15.93) and the Voice panel's key, and Settings' Hotkeys (keys a phone hasn't got) */
+  #vp-key, .set-nav-btn[data-sec="hotkeys"] { display: none !important; }
 }
 
 /* the app without a connection: Multiplayer stays but greys out */
@@ -3848,7 +3853,7 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .practice-actions [hidden] { display: none !important; }
 .practice-actions .btn { height: 44px; padding: 0 22px; }
 /* (15.92) a Buzz button that has just come up fades in while it takes no tap (app.js armBuzzBtn) */
-.buzz-arming { animation: buzz-arm 0.6s ease-out; }
+.buzz-arming { animation: buzz-arm 0.8s ease-out; }
 @keyframes buzz-arm { from { opacity: 0.35; } to { opacity: 1; } }
 .practice-actions kbd, .mp-buzz-btn kbd { margin-left: 4px; padding: 1px 6px; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 4px; background: transparent; color: inherit; font-size: 11px; font-weight: 500; opacity: 0.8; }
 @media (hover: none) { .practice-actions kbd, .mp-buzz-btn kbd { display: none; } }
@@ -5804,6 +5809,8 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 @media (max-width: 640px) { .pc-toggle { display: inline-flex; } .pcard:not(.open) .pc-more { display: none; } .pcard { gap: 12px; } }
 /* the Leaderboards page: Individuals / Teams / Organizations */
 .lb-kinds { display: flex; align-items: center; gap: 6px; }
+/* (15.93) the smallest phones (320): its three kinds share the width instead of running past the edge */
+@media (max-width: 340px) { .lb-kinds, .lb-kinds .seg { min-width: 0; max-width: 100%; } .lb-kinds .seg button { flex: 1 1 auto; min-width: 0; padding-left: 8px; padding-right: 8px; } }
 .lb-kind-bar { margin-bottom: 4px; }
 #lb-groups .lb-row .club-tile.sm { margin-right: 2px; }
 /* a diagnostic room (multiplayer.js: a dx- room) */

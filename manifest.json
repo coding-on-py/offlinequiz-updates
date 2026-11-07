@@ -1,5 +1,5 @@
 {
-  "version": "15.92",
+  "version": "15.93",
   "renderer": [
     "index.html",
     "style.css",
@@ -173,10 +173,10 @@
   "notes": "bug fixes",
   "files": {
     "renderer/index.html": "c5515932cea35136ece31fa3404e129fa83d756e81853f6c168d63b15ea9e775",
-    "renderer/style.css": "097a6974715e0db96eecee38862800a55fde4f29c6c5f8de276ad1d81a0865c9",
+    "renderer/style.css": "76033f64bba8c8f92cb786c44dd11dfaed0b64e0e657b004f0f89d611b2a9045",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "aa54002fc4ff6f9a923f4bb34ef31995d9588419e6341f9d7f842933affeddab",
-    "renderer/app.js": "6baebcb5103ff1d50ffe6b6f006aeee08abf44d0f5e8d6d429db5be5e4a68a9a",
+    "renderer/extensions.js": "c8e4c193fa0a16348f749948570c838796e961caf4193833244a16daf4d30d36",
+    "renderer/app.js": "ce155c6d705ce24574f8384d90cff2441189adc60e9c26bdc79578168a637408",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "ef85095d9b6f3fdc770fc73d6599400a9b7ed16b15da45d8c9c807f94bc33a53",
     "plugins/answer-notes.zip": "57194a5555a806ca53d56198beee48964b10fd11005a65ae78b47d42ee386241",
@@ -207,8 +207,8 @@
     "plugins/reading-style.zip": "fd0fabe7939069b5d72a92d743b978322b1029ef8478a6bdf59851c7c36deec8",
     "plugins/rival.zip": "b65a9afb8848d51ecd2e54739de79f1c4afda841e4ef49b77532f3bae4093be7",
     "plugins/tournament-prep.zip": "f06f0fe0943ae029735a4a9f9f5f2a052b94fc1eecb900dc7ab6e00a7014e3e1",
-    "plugins/voice-answers.zip": "2046c8d56c822f813e0357888193375d051a7ec1ac131d8960ff519030be6c67",
+    "plugins/voice-answers.zip": "820f50cd01c7c684a0af297b13d8f44b46a9786df1edc6a700e2b1193d85629e",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "W6GQgfhMT6TQcwNvXf4KXP+KhgiaJDOkkFSRdSbYdhaqi3+maE5jltRQ6530PEg3yONdbnAq2a/rcBvGabYQBw=="
+  "signature": "0klNBKUFge5Gjh6GC/U4hbCioQovWQBLCLq9NRuBfAWrNxbRoU/AvJvGGhohMf9U/FkjlsjrH2pZpkjedaxPAw=="
 }

@@ -692,13 +692,36 @@ const TAG_FAM = {
 const TAG_FAM_ORDER = ["era", "place", "theme", "form", "answer_type", "format"];
 const DIFF_FULL = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
 
+// (15.93) how the question database's working names for a few category-tree nodes read on screen ("Any Biology",
+// "FluidMechanics Thermo Optics Nuclear", "Pop Culture TV Any Time"). Display only: filters go by node id and the
+// raw path, and the names stay as they are there (fetchCatTree keeps the raw one as rawName)
+const CAT_DISPLAY = {
+  "ClassicalMechanics and EM": "Classical Mechanics & E&M", "FluidMechanics Thermo Optics Nuclear": "Fluids, Thermodynamics, Optics & Nuclear",
+  "Instruments Theory ClassicalPerformers": "Instruments, Theory & Performers", "Composers Works": "Composers & Works",
+  "Anatomy Medicine Biology": "Anatomy & Medicine", "Cell Molecular Biology": "Cell & Molecular Biology",
+  "Organismal Population Biology": "Organismal & Population Biology", "Non Medicine Biology": "Other Biology",
+  "Non Solar System": "Beyond the Solar System", "Non Element": "Non-Element Chemistry", "American Govt History": "American Government History",
+  "Non Classical": "Non-Classical", "Non America Non Europe History": "Non-American, Non-European History", "Other Europe History": "Other European History",
+  "Anthropology Sociology": "Anthropology & Sociology", "Non English Literature": "Non-English Literature", "Non European Myth": "Non-European Myth",
+  "Nonclassical Myth": "Non-Classical Myth", "Non Judeo Christian Theology and Practice": "Non-Judeo-Christian Theology & Practice",
+  "Non Judeo Christian Literature": "Non-Judeo-Christian Literature", "Any Time": "Any Era", "Any": "General",
+};
+function catDisplay(name) {
+  const s = String(name || "");
+  if (CAT_DISPLAY[s]) return CAT_DISPLAY[s];
+  let m = /^Pop Culture \S+ (Modern|Any Time)$/.exec(s); if (m) return m[1] === "Modern" ? "Modern" : "Any Era";
+  m = /^Any (.+)$/.exec(s); if (m) return "General " + m[1];
+  return s;
+}
+const catPathDisplay = (path, sep = " \u203a ") => String(path || "").split(" > ").filter(Boolean).map(catDisplay).join(sep);
+window.qbCatDisplay = catDisplay;
 function qPathOf(q) {
   if (!q) return "";
   return String(q.category_path || [q.category, q.subcategory, q.alternate_subcategory].filter(Boolean).join(" > "));
 }
 // "Literature › American Literature" — root and leaf of the record's path.
 function catBadgeHtml(path) {
-  const parts = String(path || "").split(" > ").filter(Boolean);
+  const parts = String(path || "").split(" > ").filter(Boolean).map(catDisplay);
   if (!parts.length) return "";
   const short = parts.length > 1 ? parts[0] + " › " + parts[parts.length - 1] : parts[0];
   return `<span class="badge cat-badge" style="--c:${rootColorOf(path)}" title="${escapeHtml(parts.join(" › "))}"><span class="dot"></span><span class="t">${escapeHtml(short)}</span></span>`;
@@ -1935,8 +1958,11 @@ const Speech = (() => {
   const unitsPerMs = (v) => paces[paceKey(v)] || (v && v.localService === false ? rate() : 0.0046 * rate());
   function learnPace(v, units, ms) {
     if (!(ms > 1500) || !(units > 6)) return;
-    const net = v && v.localService === false, k = paceKey(v), seen = net ? Math.max(0.3, Math.min(4, units / ms)) : Math.max(0.001, Math.min(0.02, units / ms));
-    paces[k] = paces[k] ? paces[k] * 0.5 + seen * 0.5 : seen;
+    const net = v && v.localService === false, k = paceKey(v), seen = net ? Math.max(0.8 * rate(), Math.min(1.25 * rate(), units / ms)) : Math.max(0.001, Math.min(0.02, units / ms));
+    // (15.93) a network voice's sentences vary about 6% in speed, one to the next, and one doesn't foretell the next:
+    // its pace moves a little at a time, from the speed set (sayMs is fit in its milliseconds)
+    if (net) paces[k] = (paces[k] || rate()) * 0.85 + seen * 0.15;
+    else paces[k] = paces[k] ? paces[k] * 0.5 + seen * 0.5 : seen;
     try { localStorage.setItem("qb-voice-pace", JSON.stringify(paces)); } catch (e) {}
   }
   // (15.73) a plugin voice's piece lined up by its sound, for a voice that doesn't say when its words are (Chatterbox):
@@ -2070,8 +2096,27 @@ const Speech = (() => {
   // through with no help), so a question goes as one: no break a second long every 40 s, and no pause and resume every
   // 12 s to keep it going (that was for Chrome elsewhere, which stopped them partway). Utterances of a sentence each
   // were tried: 0.4 to 0.7 s between them and a second of silence inside each
+  // (15.93) a sentence each after all: the voice says nothing of where it is inside an utterance, only when one starts
+  // (its sound starts within 10 ms of the start event) and ends, so the text is put exactly where each sentence starts
+  // and goes by sayMs only across that sentence. One utterance a question drifted with the voice's own pauses (after a
+  // quotation, a long one or a short one) up to a second ahead by the middle of a question. Measured in the app on 5
+  // tossups (Whisper on each sentence's own sound): words show 0.03 to 0.17 s after they're said (median), 90% within
+  // half a second, never ahead by more than that (one utterance: 0.57 s ahead by the median, 1.2 s at worst). It costs a
+  // pause, 0.3 to 0.4 s more between sentences (the next one's sound coming over the network; the question takes 3 to
+  // 6% longer), so a sentence shorter than 90 characters goes with the next
   const LONG_OK = /Mac/.test(navigator.platform || navigator.userAgent || "");
+  function sentencesOf(said) {
+    const out = []; let at = 0;
+    const re = /[.?!]+["”’)]*\s+(?=["“(]?[A-Z0-9])/g; let m;
+    while ((m = re.exec(said))) { const end = m.index + m[0].length; if (end - at >= 90) { out.push({ at, t: said.slice(at, end) }); at = end; } }
+    if (at < said.length) { const rest = said.slice(at); if (out.length && rest.trim().length < 90) { const last = out[out.length - 1]; last.t += rest; } else out.push({ at, t: rest }); }
+    return out.filter((p) => p.t.trim());
+  }
   function piecesOf(said, net) {
+    if (net) return sentencesOf(said).flatMap((p) => piecesOf1(p.t, net).map((q) => ({ at: p.at + q.at, t: q.t })));
+    return piecesOf1(said, net);
+  }
+  function piecesOf1(said, net) {
     const out = [], MAX = net ? (LONG_OK ? 1e6 : Math.max(240, Math.round(40000 * charsPerMs()))) : 400;
     let at = 0;
     while (at < said.length) {
@@ -2136,7 +2181,8 @@ const Speech = (() => {
       p.c = net ? sayMs(p.t) : sayUnits(p.t);
       const est = () => {
         if (my !== seq || p.done || bounded) return;
-        const ms = performance.now() - p.t0 - (heldNow() - p.h0);
+        // (15.93) a network voice's words show a tenth of a second early, so each comes up as it's said
+        const ms = performance.now() - p.t0 - (heldNow() - p.h0) + (net ? 100 : 0);
         if (!(held && held.my === seq)) onPos(at(p.at + atUnits(p.c, ms * unitsPerMs(v))));
         timers.push(setTimeout(est, 60));
       };
@@ -2168,7 +2214,13 @@ const Speech = (() => {
       u.onend = () => {
         if (my !== seq) return;
         p.done = true;
-        if (!bounded && p.t0) learnPace(v, p.c[p.t.length], performance.now() - p.t0 - (heldNow() - p.h0));
+        if (!bounded && p.t0) {
+          let units = p.c[p.t.length], ms = performance.now() - p.t0 - (heldNow() - p.h0);
+          // (15.93) a network voice's sentence ends in its own sound's silence, 0.6 to 1 s after the last word (the
+          // full stop's pause in a long utterance is shorter): its pace is learned from its words alone
+          if (net && /[.?!]["”’)]*\s*$/.test(p.t)) { units -= SAY.stop; ms -= 800; }
+          learnPace(v, units, ms);
+        }
         onPos(at(p.at + p.t.length));
         if (k === todo.length - 1) { clearInterval(keep); keep = 0; talk = null; tracking = 0; talkedAt = performance.now(); onEnd(); }
       };
@@ -4136,6 +4188,7 @@ function fetchCatTree(type) {
       const byId = new Map(), byPath = new Map();
       const walk = (n, parent) => {
         n.parentId = parent ? parent.id : null;
+        if (n.rawName == null) { n.rawName = n.name; n.name = catDisplay(n.name); }
         byId.set(n.id, n); byPath.set(n.path, n);
         (n.children || []).forEach((c) => walk(c, n));
       };
@@ -4316,7 +4369,7 @@ function catStateFromLegacy(cats, weights) {
     const direct = idx.byPath.get(cat + " > " + sub);
     if (direct) return [direct];
     let hit = null;
-    const walk = (n) => { if (!hit && n.name === sub) hit = n; (n.children || []).forEach(walk); };
+    const walk = (n) => { if (!hit && (n.rawName ?? n.name) === sub) hit = n; (n.children || []).forEach(walk); };
     (root.children || []).forEach(walk);
     return hit ? [hit] : [];
   };
@@ -6860,7 +6913,7 @@ function switchPracticeType(type, label) {
 
 // Info bar: "Root / Leaf" of the question's category path, the full path in an ⓘ.
 function questionCategoryHtml(q) {
-  const parts = String(q.category_path || [q.category, q.subcategory, q.alternate_subcategory].filter(Boolean).join(" > ")).split(" > ").filter(Boolean);
+  const parts = String(q.category_path || [q.category, q.subcategory, q.alternate_subcategory].filter(Boolean).join(" > ")).split(" > ").filter(Boolean).map(catDisplay);
   if (!parts.length) return "<span>?</span>";
   const short = parts.length > 1 ? parts[0] + " / " + parts[parts.length - 1] : parts[0];
   return `<span>${escapeHtml(short)}</span>` + (parts.length > 2 ? `<span class="qb-info" data-tip="${escapeHtml(parts.join(" \u203a "))}">i</span>` : "");
@@ -7247,11 +7300,24 @@ window.qbFollowReading = followReading;
 // (15.92) A Buzz button that has just come up takes no tap for a moment (it fades in meanwhile). It comes up where
 // Next was (the bar's first place, under a phone's thumb), so a second tap on Next, or in a room a tap on Next a
 // moment after someone else's started the question, buzzed at its first word. The Buzz key isn't held back
+// (15.93) 0.8 s, and a tap whose finger went down before the button came up (it was on Next) never buzzes, however
+// long it's held; a click from the keyboard (detail 0) isn't a touch
+let _lastPointerDown = -1;
+document.addEventListener("pointerdown", () => { _lastPointerDown = performance.now(); }, true);
+// a practice tossup being read that a buzz would stop, on its own page
+function practiceBuzzOpen() {
+  return !!(state.sessionActive && !state.isBuzzed && state.mode === "tossups" && state.currentQuestion && !state.resultAreaVisible && !state._oppBusy
+    && document.querySelector("#practice-screen.active"));
+}
 function armBuzzBtn(el) {
-  el._armAt = performance.now() + 600;
+  const now = performance.now(); el._shownAt = now; el._armAt = now + 800;
   el.classList.remove("buzz-arming"); void el.offsetWidth; el.classList.add("buzz-arming");
 }
-function buzzBtnArmed(el) { return !el || performance.now() >= (el._armAt || 0); }
+function buzzBtnArmed(el, e) {
+  if (!el) return true;
+  if (performance.now() < (el._armAt || 0)) return false;
+  return !(e && e.detail > 0 && _lastPointerDown >= 0 && _lastPointerDown < (el._shownAt || 0));
+}
 window.qbArmBuzzBtn = armBuzzBtn; window.qbBuzzBtnArmed = buzzBtnArmed;
 function syncPracticeActions() {
   const bar = document.getElementById("practice-actions"); if (!bar) return;
@@ -7283,9 +7349,9 @@ function syncPracticeActions() {
   syncPracticeActions._shown = shown;
 }
 (function wirePracticeActions() {
-  const on = (id, fn) => document.getElementById(id)?.addEventListener("click", (e) => { e.preventDefault(); e.currentTarget.blur(); fn(); syncPracticeActions(); });
+  const on = (id, fn) => document.getElementById(id)?.addEventListener("click", (e) => { e.preventDefault(); e.currentTarget.blur(); fn(e); syncPracticeActions(); });
   on("pa-main", () => { const m = practiceMain(); if (m) m.run(); });
-  on("pa-buzz", () => { if (state.sessionActive && !state.isBuzzed && state.mode === "tossups" && buzzBtnArmed(document.getElementById("pa-buzz"))) buzz(); });
+  on("pa-buzz", (e) => { if (state.sessionActive && !state.isBuzzed && state.mode === "tossups" && buzzBtnArmed(document.getElementById("pa-buzz"), e)) buzz(); });
   on("pa-pause", () => togglePause());
   const main = document.getElementById("pa-main"); if (main && !main.querySelector("kbd")) main.appendChild(Object.assign(document.createElement("kbd"), { textContent: keyDisplay("start-skip") }));
   const pause = document.getElementById("pa-pause"); if (pause && !pause.querySelector("kbd")) pause.appendChild(Object.assign(document.createElement("kbd"), { textContent: keyDisplay("pause-reveal") }));
@@ -13276,7 +13342,7 @@ const ACH_HOW = {
   daily: (a) => `Answer ${a.threshold.toLocaleString()} questions in one day (UTC).`,
   streak: (a) => `Practice ${a.threshold.toLocaleString()} days in a row (UTC).`,
 };
-const achPathLabel = (p) => String(p || "").split(" > ").join(" › ");
+const achPathLabel = (p) => catPathDisplay(p);
 function wireAchievementCards(container, ctx) {
   if (!container || container._achWired) return;
   container._achWired = true;
@@ -15267,7 +15333,14 @@ function init() {
       })() : null,
       holdAnswerTime: (on) => { if (_eventTimer.label !== "Answer") return false; if (on) pauseEventTimer(); else resumeEventTimer(); return true; },
       // buzz on the tossup being read, as the buzz key does (15.69: Voice Answers' clap or shout); false when it can't
-      buzz: () => { if (!state.sessionActive || state.isBuzzed || state.mode !== "tossups" || !state.currentQuestion || state.resultAreaVisible || state._oppBusy) return false; buzz(); return true; },
+      // (15.93) a multiplayer room in front buzzes there (multiplayer.js window.qbRoomPlay); practice only on its own page
+      buzz: () => {
+        const r = window.qbRoomPlay && window.qbRoomPlay.front() ? window.qbRoomPlay : null;
+        if (r) return r.buzz();
+        if (!practiceBuzzOpen()) return false; buzz(); return true;
+      },
+      buzzOpen: () => { const r = window.qbRoomPlay && window.qbRoomPlay.front() ? window.qbRoomPlay : null; return r ? r.canBuzz() : practiceBuzzOpen(); },
+      roomFront: () => !!(window.qbRoomPlay && window.qbRoomPlay.front()),
       // A plugin that must not be interrupted by a page reload (multiplayer in a
       // room) marks itself busy; the question-database switch waits for it.
       setBusy: (key, on) => { if (on) _busyFlags.add(String(key)); else { _busyFlags.delete(String(key)); maybeSwitchDb(); } },

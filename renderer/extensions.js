@@ -2930,13 +2930,15 @@ function __qbMain(ctx) {
       for (var i = 0; i < n; i++) { var v = +src[i]; values.push(isFinite(v) && v > 0 ? v : 10); }
       return { values: values, max: values.reduce(function (a, v) { return a + v; }, 0) };
     }
-    // "A > B > C > D" -> "C > D": the ended-question meta shows the last two
-    // levels of the category path (older rows: the plain category).
+    // "A > B > C > D" -> "A › D": the ended-question meta shows the root and the leaf, as practice's badge does
+    // (15.93: the last two levels showed the tree's working names, "Any Biology", "FluidMechanics Thermo Optics
+    // Nuclear"); older rows: the plain category
     function catLabel(q) {
       if (!q) return "";
       var segs = String(q.category_path || "").split(" > ").map(function (s) { return s.trim(); }).filter(Boolean);
       if (!segs.length) return q.category || "";
-      return segs.slice(-2).join(" > ");
+      if (window.qbCatDisplay) segs = segs.map(window.qbCatDisplay);
+      return segs.length > 1 ? segs[0] + " \u203a " + segs[segs.length - 1] : segs[0];
     }
     function lobbyId(n) { return "offlinequiz-mp-" + n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
     // a diagnostic room's id (mpserver/room.mjs diagIdOf): "dx-wgpu9nwy" → "offlinequiz-dx-wgpu9nwy"
@@ -5173,7 +5175,9 @@ function __qbMain(ctx) {
               // a diagnostic room: who's here before the first question (its own status line too —
               // the room's lobby section isn't in its settings)
               (inDiag() ? '<div class="dx-wait" id="mp-dx-wait" hidden></div>' : "") +
+              // (15.93) a room before its first question says what starts it (it was empty)
               '<div class="question-placeholder' + (inDiag() ? " hidden" : "") + '" id="mp-placeholder">' +
+                '<div class="mp-ph-hint" id="mp-ph-hint"><b id="mp-ph-line">Press Start to read the first question.</b><span>Share the room code to invite others.</span></div>' +
               "</div>" +
               '<div class="question-content hidden" id="mp-content">' +
                 '<div class="question-meta" id="mp-meta"></div>' +
@@ -5253,7 +5257,7 @@ function __qbMain(ctx) {
         if (h.voicePanelOpen && h.voicePanelOpen()) { h.closeVoicePanel(); return; }
         toggleRoomSettings(false); h.openVoicePanel();
       };
-      body.querySelector("#mp-buzz-btn").onclick = function () { if (window.qbBuzzBtnArmed && !window.qbBuzzBtnArmed(this)) return; requestBuzz(); };
+      body.querySelector("#mp-buzz-btn").onclick = function (ev) { if (window.qbBuzzBtnArmed && !window.qbBuzzBtnArmed(this, ev)) return; requestBuzz(); };
       body.querySelector("#mp-next-btn").onclick = function () { requestNext(); };
       body.querySelector("#mp-pause-btn").onclick = function () { requestPause(); };
       var dxr = body.querySelector("#mp-dx-report");
@@ -5638,7 +5642,11 @@ function __qbMain(ctx) {
         // doesn't buzz (app.js armBuzzBtn)
         if (bWas && !b.hidden && window.qbArmBuzzBtn) window.qbArmBuzzBtn(b);
       }
-      if (n) n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
+      if (n) {
+        n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
+        var nl = qCount > 0 ? "Next" : "Start"; if (n.firstChild && n.firstChild.nodeValue !== nl) n.firstChild.nodeValue = nl;
+      }
+      var phl = body.querySelector("#mp-ph-line"); if (phl) { var pt = mySpec ? "The first question starts when a player presses Start." : "Press Start to read the first question."; if (phl.textContent !== pt) phl.textContent = pt; }
       if (p) { p.hidden = !reading || mySpec || answering || !canPause(); p.textContent = paused ? "Resume" : "Pause"; }
       var qc = body.querySelector("#mp-qcount");
       // a seasonal event's item tossup shows its mark (app.js seasonMarkHtml)
@@ -6003,6 +6011,7 @@ function __qbMain(ctx) {
 
     function renderQuestion() {
       setTimeout(syncActions, 0);
+      roomEmit("room:question");
       clearPauseUi();   // a new question must never inherit the paused grey
       var ph = body && body.querySelector("#mp-placeholder"); if (ph) ph.classList.add("hidden");
       var wt = body && body.querySelector("#mp-dx-wait"); if (wt) wt.hidden = true;   // a diagnostic room: the waiting view goes
@@ -6112,6 +6121,7 @@ function __qbMain(ctx) {
           else submitAnswer(inp.value.trim());
         });
         if (!provisional) armAutoSub(inp, deadline, submitAnswer);
+        roomEmit("room:buzz", { input: inp });
       } else {
         buzz.className = "buzz-area";
         buzz.innerHTML = '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span> <em id="mp-live-ph">' + neonNameHtml(name, players[id] || playerNamed(name)) + " is answering…</em><span id=\"mp-live\" class=\"mp-live\"></span></div>" +
@@ -6136,6 +6146,7 @@ function __qbMain(ctx) {
         inp.addEventListener("input", function () { sendTyping(inp.value); });
         inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { stopAutoSub(); inp.disabled = true; submitAnswer(inp.value.trim()); } });
         armAutoSub(inp, deadline || answerDeadline, submitAnswer);
+        roomEmit("room:prompt", { input: inp, type: "tossup" });
       } else {
         buzz.className = "buzz-area";
         buzz.innerHTML = '<div class="buzz-prompt"><span class="prompt-symbol">&gt;</span> <em id="mp-live-ph">' + neonNameHtml(name, players[id] || playerNamed(name)) + " was prompted</em><span id=\"mp-live\" class=\"mp-live\"></span></div>" +
@@ -6204,8 +6215,10 @@ function __qbMain(ctx) {
     }
 
     var _endedCategory = "";
+    var roomBonusPart = "";
     function applyResult(d) {
       setTimeout(syncActions, 0);
+      roomEmit("room:result");
       stopAutoSub(); resetTyping();
       if (d.ended) clearPauseUi();
       if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
@@ -6350,6 +6363,8 @@ function __qbMain(ctx) {
         resetTyping();
         inp.addEventListener("input", function () { sendTyping(inp.value); });
         inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { stopAutoSub(); inp.disabled = true; submitBonusAnswer(inp.value.trim(), myK); } });
+        var partKey = qCount + ":" + myK;
+        if (roomBonusPart !== partKey) { roomBonusPart = partKey; roomEmit("room:bonus", { input: inp, part: myK }); }
       }
       if (bonusView.done) { stopAutoSub(); if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } }
       else if (secs) {
@@ -6475,6 +6490,7 @@ function __qbMain(ctx) {
 
     function leave() {
       markBusy(false);
+      roomEmit("room:leave");
       leftIntentionally = true;
       mpSessId = ""; // next game records to a fresh local stats session
       var dc = body && body.querySelector("#mp-disconnect"); if (dc) dc.remove();
@@ -6501,6 +6517,25 @@ function __qbMain(ctx) {
     window.QB.mpRoom = function () { return lobby || ""; };
     window.QB.mpLeave = function () { if (lobby) leave(); };
     window.QB.mpIsDiag = function () { return inDiag(); };
+    // (15.93) plugins hear the room as they hear practice: Voice Answers' Clap or shout to buzz, and answering by voice,
+    // work here too. app.js host.buzz / host.buzzOpen / host.roomFront go through this; the room tells them when a
+    // question starts reading (room:question), when this player's answer box opens (room:buzz, room:prompt,
+    // room:bonus, each with its input), when the answer is in (room:result) and when the room is left (room:leave)
+    function roomEmit(ev, d) {
+      if (ev !== "room:leave" && !active()) return;   // a room playing on behind another page leaves it be
+      try { if (window.QB && window.QB._emit) window.QB._emit(ev, d || {}); } catch (e) {}
+    }
+    window.qbRoomPlay = {
+      front: function () { return !!(active() && lobby); },
+      canBuzz: function () {
+        var b = body && body.querySelector("#mp-buzz-btn");
+        if (!active() || !lobby || !current || ended || bonusView || paused || pendingBuzzer || optBuzz || lockedOut()) return false;
+        if (players[myId] && players[myId].spec) return false;
+        if (settings.tournament && !(players[myId] && players[myId].team)) return false;
+        return !!(b && !b.hidden && !b.disabled && !body.querySelector("#mp-ans-input"));
+      },
+      buzz: function () { if (!window.qbRoomPlay.canBuzz()) return false; requestBuzz(); return true; },
+    };
     // a diagnostic room (Clubs, /diagnostic/<code>): the website has opened it on the game server
     window.QB.dxJoin = function (code) {
       code = String(code || "").trim().slice(0, 48);
@@ -13181,7 +13216,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     // its other categories (the first is its home, already on the card): "Science › Stars & Stellar Evolution"
     const home = Array.isArray(t.categories) ? t.categories[0] : null;
     const cats = (Array.isArray(t.categories) ? t.categories : []).filter((p, i, a) => typeof p === "string" && p && p !== home && a.indexOf(p) === i).map((p) => {
-      const parts = p.split(" > "), color = typeof rootColorOf === "function" ? rootColorOf(p) : "";
+      const parts = p.split(" > ").map((x) => (window.qbCatDisplay ? window.qbCatDisplay(x) : x)), color = typeof rootColorOf === "function" ? rootColorOf(p) : "";
       return `<button type="button" class="tchip tcat" style="--c:${esc(color)}" data-cat-path="${esc(p)}" title="${esc(parts.join(" › "))}"><span class="dot"></span><span class="tc-t">${esc(parts.length > 1 ? parts[0] + " › " + parts[parts.length - 1] : parts[0])}</span></button>`;
     }).join("");
     const row = (label, html) => (html ? `<div class="trow"><span class="trow-k">${label}</span><div class="trow-v">${html}</div></div>` : "");
