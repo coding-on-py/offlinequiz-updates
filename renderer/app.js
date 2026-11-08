@@ -1781,7 +1781,10 @@ const Sound = {
 // Voices (15.62): only Google's English voices are offered (the browser's other ones sound poor). Where there are none
 // (the app, Safari, Firefox) the best English voice there is reads, with no choice shown.
 const Speech = (() => {
-  const synthOk = typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
+  // (15.94) not on a phone or a tablet (touch, no mouse): read aloud didn't work there, so it's off everywhere on them
+  // (Speech.ok false: no Voice button, a room draws none, Read aloud set elsewhere and synced is ignored)
+  const TOUCH_ONLY = (() => { try { return matchMedia("(hover: none) and (pointer: coarse)").matches; } catch (e) { return false; } })();
+  const synthOk = !TOUCH_ONLY && typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
   const audioOk = !!(window.AudioContext || window.webkitAudioContext);
   let seq = 0, clipAudio = null;   // (a voice's sample line playing, Speech.preview)
   const voices = () => { if (!synthOk) return []; try { return window.speechSynthesis.getVoices() || []; } catch (e) { return []; } };
@@ -1856,6 +1859,20 @@ const Speech = (() => {
     qa.classList.toggle("voice-wait", !!waiting);
     const lb = qa.querySelector(".rb-label"); if (lb) lb.dataset.pct = waiting ? loading.pct + "%" : "";
   }
+  // (15.94) the voice getting its words ready while the text shows: a plugin voice making its first piece (or one that
+  // has fallen behind), a network voice's first sentence on its way. html.voice-gen puts a turning circle where the
+  // words will come (ui.css). Only past 0.45 s without a sound, so a pause between sentences shows nothing; not while
+  // paused, nor while the voice's files load (that's the reading box's "Loading voice")
+  let genSeq = 0, genT = 0, genFrom = 0;
+  function genWatch(my) {
+    genSeq = my; genFrom = performance.now(); clearInterval(genT);
+    genT = setInterval(() => {
+      if (genSeq !== seq) { genStop(); return; }
+      const on = !(held && held.my === seq) && !waiting && Math.min(quietFor(), performance.now() - genFrom) > 450;
+      document.documentElement.classList.toggle("voice-gen", on);
+    }, 120);
+  }
+  function genStop() { genSeq = 0; clearInterval(genT); genT = 0; document.documentElement.classList.remove("voice-gen"); }
   // silent at once: pause() cuts the sound off where cancel() alone can let a network voice finish its word, and
   // resume() so the next question doesn't start paused
   let keep = 0, curNet = false, held = null;
@@ -1868,6 +1885,7 @@ const Speech = (() => {
     quietFor();   // talking up to now, if it was
     seq++; clearInterval(keep); keep = 0; talk = null; pluginEnd = 0; tracking = 0;
     if (waiting) { waiting = 0; paintWait(); }
+    genStop();
     if (held) { held = null; if (actx && actx.state === "suspended") actx.resume().catch(() => {}); }
     // a pause ends here too (a skip while paused): its time kept counting, and the next question's text, placed by
     // time less time held, stood still while a browser voice read it
@@ -2142,6 +2160,8 @@ const Speech = (() => {
     text = String(text);
     while (from > 0 && from < text.length && /\S/.test(text[from - 1])) from--;
     const my = seq, sc = speechScript(text, raw);
+    genWatch(my);
+    const end0 = onEnd; onEnd = () => { if (genSeq === my) genStop(); end0(); };
     let start = 0;
     while (start < sc.map.length && sc.map[start] < from) start++;
     const said = sc.spoken.slice(start);
@@ -2318,12 +2338,21 @@ const Speech = (() => {
     const N = 720, H = 360, A = Math.round(H * speed), tol = 180, win = new Float32Array(N);
     for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
     const L = Math.ceil(x.length / speed) + N, y = new Float32Array(L), wt = new Float32Array(L);
+    // (15.94) how well a slice from s lines up with the one from ref, normalized: the raw sum took a louder slice for a
+    // better one, and slices were laid over each other a few samples out of step (a doubled, hollow voice: forced
+    // through at speed 1, a Chatterbox recording came back at -3 dB; now 100 dB, the sound itself). To the sample, too:
+    // a step of two is a quarter turn out at 3 kHz
+    const fit = (s, ref, step) => { let c = 0, e = 0; for (let j = 0; j < N; j += step) { const v = x[s + j]; c += v * x[ref + j]; e += v * v; } return e > 1e-12 ? c / Math.sqrt(e) : -Infinity; };
     let prev = 0;
     for (let k = 0, at = 0, o = 0; at + N + tol < x.length && o + N < L; k++, at += A, o += H) {
       let best = 0;
-      if (k) {
-        const ref = prev + H; let top = -Infinity;
-        for (let d = -tol; d <= tol; d += 2) { const st = at + d; if (st < 0) continue; let c = 0; for (let j = 0; j < N; j += 3) c += x[st + j] * x[ref + j]; if (c > top) { top = c; best = d; } }
+      const ref = prev + H;
+      if (k && ref + N <= x.length) {
+        let top = -Infinity;
+        for (let d = -tol; d <= tol; d += 2) { const st = at + d; if (st < 0) continue; const c = fit(st, ref, 3); if (c > top) { top = c; best = d; } }
+        let b2 = best; top = -Infinity;
+        for (let d = best - 2; d <= best + 2; d++) { const st = at + d; if (st < 0 || st + N > x.length) continue; const c = fit(st, ref, 1); if (c > top) { top = c; b2 = d; } }
+        best = b2;
       }
       const st = Math.max(0, at + best);
       for (let j = 0; j < N; j++) { y[o + j] += x[st + j] * win[j]; wt[o + j] += win[j]; }
@@ -2517,8 +2546,8 @@ const Speech = (() => {
   }
   // stopped (its button, closing the panel, a question coming up): onDone too, so its button never stays on Stop
   function stopPreview() { if (previewing) { const d = previewing.done; previewing = null; stop(); if (d) d(); } }
-  const on = () => (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud);
-  return { get ok() { return synthOk || pluginVoices().length > 0; }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level, quietFor, warm,
+  const on = () => !TOUCH_ONLY && (synthOk || pluginVoices().length > 0) && (!!state.settings.readAloud || !!pageRules().readAloud);
+  return { get ok() { return !TOUCH_ONLY && (synthOk || pluginVoices().length > 0); }, on, voices, choices, voice, rate, speak, stop, charsPerMs, prepare, preloadPicked, paintLoad, pluginVoices, level, quietFor, warm,
     pause, resumeHeld, get waiting() { return !!waiting; }, preview, stopPreview, get previewing() { return previewing && previewing.uri; }, _marksWhere: marksWhere, _piecesFor: piecesFor,
     get tracking() { return !!tracking; }, setRate(v) { rateFor = v > 0 ? v : 0; }, respeed, get netVoice() { return !!curNet; }, get _live() { return live; }, _alignPiece: alignPiece, _sayUnits: sayUnits };   // (the last two for tests)
 })();
@@ -3969,9 +3998,8 @@ function startPluginPractice(rules) {
   showScreen("practice-plugin");
   setMode(type);
   paintPluginSide();
-  // (15.65) it waits for Start like your own Tossups, so there's time to set it up first; rules.start (15.73) begins at
-  // once, for a plugin whose own Play already chose everything (Challenge)
-  if (rules.start) setTimeout(() => { if (!state.sessionActive && state.practiceKind === "plugin") startSession(); }, 0);
+  // (15.65) it waits for Start like your own Tossups, so there's time to set it up first. (15.94) Every plugin's page
+  // does: rules.start (15.73, Challenge) no longer begins at once
   return true;
 }
 // a plugin page's own words for a result (banner(result) → text; result.dead when nobody got it), where its scoring
@@ -7315,6 +7343,7 @@ function armBuzzBtn(el) {
 }
 function buzzBtnArmed(el, e) {
   if (!el) return true;
+  if (e && e.detail === 0) return true;   // a key on the focused button (or a script's click): not a stray tap
   if (performance.now() < (el._armAt || 0)) return false;
   return !(e && e.detail > 0 && _lastPointerDown >= 0 && _lastPointerDown < (el._shownAt || 0));
 }
@@ -7326,6 +7355,9 @@ function syncPracticeActions() {
   const m = practiceMain();
   set(document.getElementById("pa-main"), !!m, m ? m.label : null);
   document.getElementById("pa-main")?.classList.toggle("pa-next", !!(m && m.next));
+  // (15.94) Skip comes up where Next was: a second tap meant for Next doesn't skip the new question (as Buzz)
+  const pm = document.getElementById("pa-main");
+  if (pm) { const skip = !!(m && m.label === "Skip"), was = pm.dataset.mode; pm.dataset.mode = skip ? "skip" : "other"; if (skip && was !== "skip" && !pm.hidden) armBuzzBtn(pm); }
   const mk = document.querySelector("#pa-main kbd"); if (m && mk) mk.textContent = keyDisplay(m.key);
   const pb = document.getElementById("pa-buzz"), pbWas = !!(pb && pb.hidden);
   set(pb, state.mode === "tossups" && reading && !state.isBuzzed);
@@ -7350,7 +7382,7 @@ function syncPracticeActions() {
 }
 (function wirePracticeActions() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener("click", (e) => { e.preventDefault(); e.currentTarget.blur(); fn(e); syncPracticeActions(); });
-  on("pa-main", () => { const m = practiceMain(); if (m) m.run(); });
+  on("pa-main", (e) => { const m = practiceMain(), pm = document.getElementById("pa-main"); if (m && m.label === "Skip" && pm && pm.dataset.mode === "skip" && !buzzBtnArmed(pm, e)) return; if (m) m.run(); });
   on("pa-buzz", (e) => { if (state.sessionActive && !state.isBuzzed && state.mode === "tossups" && buzzBtnArmed(document.getElementById("pa-buzz"), e)) buzz(); });
   on("pa-pause", () => togglePause());
   const main = document.getElementById("pa-main"); if (main && !main.querySelector("kbd")) main.appendChild(Object.assign(document.createElement("kbd"), { textContent: keyDisplay("start-skip") }));

@@ -3519,7 +3519,7 @@ function __qbMain(ctx) {
       renderBuzzes(); updateTopBar(); setTimeout(syncActions, 0);
       o.held.forEach(function (m) { onClientData(m); });
     }
-    function skipsAllowed() { return settings.allowSkips !== false; }
+    function skipsAllowed() { return settings.allowSkips !== false && !settings.tournament; }
     async function hostNext(byName) {
       if (!isHost || bonusState || bonusPending) return;
       // Never advance while a buzz is live or being judged — the in-flight
@@ -3752,7 +3752,9 @@ function __qbMain(ctx) {
     // in practice (its Voice panel); the room's Voice button turns it on or off on this device ──
     var rv = { gen: 0, at: 0, busy: false, on: false };
     try { rv.on = localStorage.getItem("qb-mp-voice") === "1"; } catch (e) {}
-    function rvCan() { return typeof Speech !== "undefined" && Speech.ok; }
+    // (15.94) a room's voice is set aside for now (it didn't read along the way it should): no Voice button, no reading
+    var ROOM_VOICE = false;
+    function rvCan() { return ROOM_VOICE && typeof Speech !== "undefined" && Speech.ok; }
     // (15.86) on or off from the Voice panel (app.js: in a room its Read aloud is the room's), kept for the next room
     function setRoomVoice(on) {
       rv.on = !!on; try { localStorage.setItem("qb-mp-voice", rv.on ? "1" : "0"); } catch (e) {}
@@ -5162,13 +5164,15 @@ function __qbMain(ctx) {
             (inDiag() ? '<span class="badge rh-dx" id="mp-dxbadge">Diagnostic</span>' : "") +
             '<span class="badge rh-off" id="mp-offbadge" hidden></span>' +
             (lan ? '<span class="badge rh-lan" id="mp-lanbadge"></span>' + (lan.key ? '<button type="button" class="btn btn-sm rh-invite" id="mp-lan-invite-btn">Invite</button>' : "") : "") +
-            '<span class="badge rh-host" id="mp-hostbadge"' + (hostBadgeOn() ? "" : " hidden") + ">You host</span>" +
             '<span class="badge rh-own" id="mp-ownbadge" hidden></span>' +
             (mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
             '<span class="spacer"></span>' +
             '<span class="rh-q num" id="mp-qcount"></span>' +
+            // (15.94) Voice and Room settings over the Players and Chat box, as wide as it (ui.css .rh-side)
+            '<div class="rh-side">' +
             (rvCan() ? '<button type="button" class="btn' + (rv.on ? " on" : "") + '" id="mp-voice" aria-pressed="' + rv.on + '" title="Read the questions aloud as the room reads them"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H3v6h3l5 4z"/><path class="vb-wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>Voice</button>' : "") +
             '<button type="button" class="btn" id="mp-roomset"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>Room settings</button>' +
+            "</div>" +
           "</div>" +
           '<div class="practice-layout mp-layout">' +
             '<main class="question-area">' +
@@ -5187,8 +5191,10 @@ function __qbMain(ctx) {
               '<div class="buzz-area hidden" id="mp-buzz"></div>' +
               '<div class="mp-actions" id="mp-actions">' +
                 '<button type="button" class="btn btn-go mp-buzz-btn" id="mp-buzz-btn" hidden>Buzz<kbd>Space</kbd></button>' +
-                '<button type="button" class="btn btn-primary mp-next-btn" id="mp-next-btn" hidden>Next<span aria-hidden="true">→</span></button>' +
-                '<button type="button" class="btn mp-pause-btn" id="mp-pause-btn" hidden>Pause</button>' +
+                // (15.94) practice's bar: Buzz, then Skip (while a question reads, where the room allows skips) or Next,
+                // then Pause, each with its key
+                '<button type="button" class="btn btn-primary mp-next-btn" id="mp-next-btn" hidden>Next<kbd>N</kbd></button>' +
+                '<button type="button" class="btn mp-pause-btn" id="mp-pause-btn" hidden>Pause<kbd>P</kbd></button>' +
                 (inDiag() ? '<button type="button" class="btn btn-primary" id="mp-dx-report" hidden>See the report</button><button type="button" class="btn btn-primary" id="mp-dx-clubs" hidden>Back to Clubs</button>' : "") +
               "</div>" +
               '<div class="result-area hidden" id="mp-result"></div><div class="sr-only" id="mp-sr" aria-live="polite"></div>' +
@@ -5258,7 +5264,7 @@ function __qbMain(ctx) {
         toggleRoomSettings(false); h.openVoicePanel();
       };
       body.querySelector("#mp-buzz-btn").onclick = function (ev) { if (window.qbBuzzBtnArmed && !window.qbBuzzBtnArmed(this, ev)) return; requestBuzz(); };
-      body.querySelector("#mp-next-btn").onclick = function () { requestNext(); };
+      body.querySelector("#mp-next-btn").onclick = function (ev) { if (this.dataset.mode === "skip" && window.qbBuzzBtnArmed && !window.qbBuzzBtnArmed(this, ev)) return; requestNext(); };
       body.querySelector("#mp-pause-btn").onclick = function () { requestPause(); };
       var dxr = body.querySelector("#mp-dx-report");
       if (dxr) dxr.onclick = function () { var id = (dxDone && dxDone.diag) || (dxInfo && dxInfo.diag) || ""; leave(); if (!qbCall("openDiagReport", id)) qbCall("openClubs", "diagnostics"); };
@@ -5279,7 +5285,6 @@ function __qbMain(ctx) {
       syncActions();
     }
     var panelTab = "players", unreadChat = 0;
-    function hostBadgeOn() { return inDiag() ? !!(dxInfo && dxInfo.host) : amHost() && !roomInfo; }   // a bought room shows its role badge instead
 
     // ── a diagnostic room: the waiting view, "Question N of M", the finished view, the drawer ──
     var FORMAT_LABEL = { tu: "Tossups only", bo: "Bonuses only", tb: "Tossups + Bonuses" };
@@ -5612,8 +5617,15 @@ function __qbMain(ctx) {
       var rb = body && body.querySelector("#mp-roomset"); if (rb) rb.setAttribute("aria-expanded", String(on));
     }
     // BUZZ while a tossup reads; Next once it is over (or before the first).
+    function setLabel(btn, text, key) {
+      if (!btn.firstChild || btn.firstChild.nodeType !== 3) btn.insertBefore(document.createTextNode(""), btn.firstChild);
+      if (btn.firstChild.nodeValue !== text) btn.firstChild.nodeValue = text;
+      var k = btn.querySelector("kbd"); if (k && key && k.textContent !== key) k.textContent = key;
+    }
     function syncActions() {
       if (!body) return;
+      // (15.94) who hosts, for tests and styles (the "You host" badge is gone)
+      var rm = body.querySelector(".mp-room"); if (rm) { var hv = (inDiag() ? !!(dxInfo && dxInfo.host) : amHost()) ? "1" : ""; if (rm.dataset.host !== hv) rm.dataset.host = hv; }
       var b = body.querySelector("#mp-buzz-btn"), n = body.querySelector("#mp-next-btn"), p = body.querySelector("#mp-pause-btn");
       var reading = !!current && !ended && !bonusView;
       var answering = !!(body.querySelector("#mp-ans-input") || body.querySelector(".mp-binput"));
@@ -5627,12 +5639,11 @@ function __qbMain(ctx) {
           var lbl = waiting ? "Start" : "Next";
           if (n.firstChild && n.firstChild.nodeValue !== lbl) n.firstChild.nodeValue = lbl;
         }
-        if (p) { p.hidden = !reading || !can || answering || fin; p.textContent = paused ? "Resume" : "Pause"; }
+        if (p) { p.hidden = !reading || !can || answering || fin; setLabel(p, paused ? "Resume" : "Pause"); }
         var qc2 = body.querySelector("#mp-qcount"); if (qc2) qc2.textContent = dxInfo && !waiting && dxInfo.total ? "Question " + Math.min(dxInfo.total, dxInfo.i + 1) + " of " + dxInfo.total : "";
         var rp = body.querySelector("#mp-dx-report"), cb2 = body.querySelector("#mp-dx-clubs");
         if (rp) rp.hidden = !(dxDone && dxDone.released);
         if (cb2) cb2.hidden = !(dxDone && !dxDone.released);
-        var hb2 = body.querySelector("#mp-hostbadge"); if (hb2) hb2.hidden = !hostBadgeOn();
         return;
       }
       if (b) {
@@ -5643,15 +5654,21 @@ function __qbMain(ctx) {
         if (bWas && !b.hidden && window.qbArmBuzzBtn) window.qbArmBuzzBtn(b);
       }
       if (n) {
-        n.hidden = mySpec || (reading || (bonusView && !bonusView.done));
-        var nl = qCount > 0 ? "Next" : "Start"; if (n.firstChild && n.firstChild.nodeValue !== nl) n.firstChild.nodeValue = nl;
+        // (15.94) while a question reads it's Skip (practice's): where the room allows skips and nobody is answering
+        var skipNow = reading && skipsAllowed() && !answering && !pendingBuzzer && !optBuzz;
+        var nWas = n.hidden, wasSkip = n.dataset.mode === "skip";
+        n.hidden = mySpec || !!(bonusView && !bonusView.done) || (reading && !skipNow);
+        n.dataset.mode = skipNow ? "skip" : "next";
+        setLabel(n, skipNow ? "Skip" : qCount > 0 ? "Next" : "Start", skipNow ? "S" : "N");
+        // it becomes Skip where Next was a moment ago: a second tap meant for Next doesn't skip the new question for
+        // the room (app.js armBuzzBtn, as Buzz)
+        if (skipNow && !n.hidden && (nWas || !wasSkip) && window.qbArmBuzzBtn) window.qbArmBuzzBtn(n);
       }
       var phl = body.querySelector("#mp-ph-line"); if (phl) { var pt = mySpec ? "The first question starts when a player presses Start." : "Press Start to read the first question."; if (phl.textContent !== pt) phl.textContent = pt; }
-      if (p) { p.hidden = !reading || mySpec || answering || !canPause(); p.textContent = paused ? "Resume" : "Pause"; }
+      if (p) { p.hidden = !reading || mySpec || answering || !canPause(); setLabel(p, paused ? "Resume" : "Pause"); }
       var qc = body.querySelector("#mp-qcount");
       // a seasonal event's item tossup shows its mark (app.js seasonMarkHtml)
       if (qc) qc.innerHTML = qCount ? "Question " + qCount + (window.qbEventMark ? window.qbEventMark(current) : "") : "";
-      var hb = body.querySelector("#mp-hostbadge"); if (hb) hb.hidden = !(amHost() && !roomInfo);   // a bought room shows its role badge instead
     }
 
     // Wire the MP control sections (lobby/you/timer/next) wherever they live.
@@ -5968,7 +5985,8 @@ function __qbMain(ctx) {
         var initial = (String(p.name || "?").trim()[0] || "?").toUpperCase();
         var nm = neonNameHtml(p.name, p);   // a bought neon name glows
         var nameHtml = you && !dx ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + nm + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + nm + (you ? " <small>(you)</small>" : "") + "</b>";
-        var subHtml = p.off ? (dxWaiting ? "not here yet" : "offline") : p.spec ? (dx ? "host" : "spectating")
+        // (15.94) someone away isn't labelled "offline": the row is dimmed (a diagnostic still says who isn't here yet)
+        var subHtml = p.off ? (dxWaiting ? "not here yet" : (p.team ? esc(p.team) : "&nbsp;")) : p.spec ? (dx ? "host" : "spectating")
           : you && !dx ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? esc(p.team) : "+ Add team") + "</button>"
           : (p.team ? esc(p.team) : "&nbsp;");
         return '<div class="mp-player' + (you ? " mp-you" : "") + (p.off ? " mp-off" : "") + '"' + (you ? "" : ' data-user="' + esc(p.handle || "") + '" data-user-name="' + esc(p.name) + '" data-user-neon="' + esc(neonOf(p) || "") + '" data-mp-pid="' + esc(p.id) + '"') + '><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.neonAvatar(neonOf(p))) || "background:" + colorOf(p)) + '">' + esc(initial) + '</span>' +

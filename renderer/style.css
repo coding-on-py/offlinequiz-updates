@@ -3718,10 +3718,15 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .mp-leave-btn { margin-left: -12px; padding: 0 12px 0 8px; }
 .rh-lbl { color: var(--muted); }
 .rh-code { color: var(--strong); letter-spacing: 0.3em; font-size: 16px; }
-.rh-host { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
 .rh-spec { background: var(--raised); color: var(--muted); }
 .rh-q { color: var(--muted); }
 .mp-layout { display: grid !important; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; overflow: visible !important; }
+/* (15.94) Voice and Room settings over the Players and Chat box, as wide as it (340, after the 28 between the columns:
+   the head's own gap is 10), two halves; one column (a phone, a narrow window): across the page, as the box is */
+.rh-side { display: flex; gap: 8px; flex: 0 0 340px; width: 340px; margin-left: 18px; }
+.rh-side > .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+@media (max-width: 960px) { .rh-side { flex: 1 1 100%; width: 100%; margin-left: 0; } }
+@media (max-width: 1400px) { .screen.panel-host .mp-room .rh-side { flex: 1 1 100%; width: 100%; margin-left: 0; } }
 @media (max-width: 960px) { .mp-layout { grid-template-columns: minmax(0, 1fr); } }
 .mp-layout .question-area { padding: 0; overflow: visible; gap: 18px; min-height: 360px; }
 .room-q { font-size: 17px; line-height: 1.85; color: var(--strong); }
@@ -3822,6 +3827,8 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   #practice-screen .question-placeholder p, #bonus-next-hint, #mp-placeholder p { display: none !important; }
   /* (15.93) and the Voice panel's key, and Settings' Hotkeys (keys a phone hasn't got) */
   #vp-key, .set-nav-btn[data-sec="hotkeys"] { display: none !important; }
+  /* (15.94) and read aloud (app.js Speech: off on these), and the home page's app download (a Mac and Windows app) */
+  #btn-voice, #voice-pop, .home-dl { display: none !important; }
 }
 
 /* the app without a connection: Multiplayer stays but greys out */
@@ -3855,8 +3862,8 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 /* (15.92) a Buzz button that has just come up fades in while it takes no tap (app.js armBuzzBtn) */
 .buzz-arming { animation: buzz-arm 0.8s ease-out; }
 @keyframes buzz-arm { from { opacity: 0.35; } to { opacity: 1; } }
-.practice-actions kbd, .mp-buzz-btn kbd { margin-left: 4px; padding: 1px 6px; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 4px; background: transparent; color: inherit; font-size: 11px; font-weight: 500; opacity: 0.8; }
-@media (hover: none) { .practice-actions kbd, .mp-buzz-btn kbd { display: none; } }
+.practice-actions kbd, .mp-actions kbd { margin-left: 4px; padding: 1px 6px; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 4px; background: transparent; color: inherit; font-size: 11px; font-weight: 500; opacity: 0.8; }
+@media (hover: none) { .practice-actions kbd, .mp-actions kbd { display: none; } }
 /* the room's buttons are the practice page's: Next-sized, the key inside Buzz */
 .mp-actions [hidden] { display: none; }
 .mp-actions .btn { height: 44px; padding: 0 22px; }
@@ -7030,3 +7037,13 @@ html[data-panel-side="left"] .voice-panel { right: auto; left: 12px; transform-o
 #filters-panel.fp-list :is(#sec-mode, #sec-categories, #sec-difficulty, #sec-canon, #sec-year, .checkbox-row.packet-disable, #fp-count) { display: none !important; }
 /* (15.79) a question's own superscripts and subscripts (app.js fmtText): sized down, and no taller line for them */
 :is(#question-text, .bonus-part-text, .qcard-text, .qcard-part, .qh-qtext, .qh-part) :is(sup, sub) { font-size: .72em; line-height: 0; }
+
+/* (15.94) the read-aloud voice getting its words ready while the text shows (app.js Speech genWatch): a small turning
+   circle where the next words will come, at the end of what's been read */
+html.voice-gen .revealed:has(+ .unrevealed)::after {
+  content: ""; display: inline-block; width: 0.82em; height: 0.82em; margin: 0 0.35em; vertical-align: -0.1em; box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--accent) 85%, transparent); border-right-color: transparent; border-radius: 50%;
+  animation: voice-spin 0.8s linear infinite;
+}
+@keyframes voice-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { html.voice-gen .revealed:has(+ .unrevealed)::after { animation-duration: 2.4s; } }
