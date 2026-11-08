@@ -13560,7 +13560,8 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     return ahead;
   }
   function roleSegHtml() {
-    return [["any", "Anywhere"], ["about", "About"], ["answer", "Answers"], ["theme", "Themes"]].map(([v, l]) => `<button type="button" data-trole="${v}" aria-pressed="${F.role === v}">${l}</button>`).join("");
+    // (15.94) and Mentions: what the questions name on the way (the database counted them already)
+    return [["any", "Anywhere"], ["about", "About"], ["answer", "Answers"], ["theme", "Themes"], ["mention", "Mentions"]].map(([v, l]) => `<button type="button" data-trole="${v}" aria-pressed="${F.role === v}">${l}</button>`).join("");
   }
   function setRole(v) { F.role = v; }
 

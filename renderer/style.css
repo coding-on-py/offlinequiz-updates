@@ -6634,6 +6634,9 @@ html:not(.topics-on) .topics-only { display: none !important; }
 .canon-row:has(input:checked) { background: var(--accent-strong); color: var(--on-accent); font-weight: 700; }
 .canon-row:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Setup panel: Canon fills the row like Difficulty above it */
+/* (15.94) the Database's More: Canon on one line, two columns wide (one column wrapped Unique onto a second row) */
+@media (min-width: 761px) { .db-search .drawer-panel .f-wide.topics-only { grid-column: span 2; } .db-search .drawer-panel #db-canon { flex-wrap: nowrap; width: max-content; } }
+@media (max-width: 760px) { .db-search .drawer-panel #db-canon { display: flex; flex-wrap: nowrap; width: 100%; } .db-search .drawer-panel #db-canon .canon-row { flex: 1 1 auto; min-width: 0; padding: 0 4px; } }
 .filters-panel .canon-checks { display: flex; flex-wrap: nowrap; width: 100%; }
 .filters-panel .canon-row { flex: 1 1 auto; min-width: 0; padding: 0 4px; }   /* by their words' widths, so Uncommon fits on a phone */
 .filters-panel .canon-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
