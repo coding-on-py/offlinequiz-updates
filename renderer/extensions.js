@@ -6748,6 +6748,8 @@ function __qbMain(ctx) {
   const DIFF_NAMES = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
   // a set-year range (web/clubs.mjs yearsText): "2015–2024", "2015 on", "to 2010", "" for any year
   const yearsText = (y) => (!y || (y.min == null && y.max == null) ? "" : y.min != null && y.max != null ? (y.min === y.max ? String(y.min) : y.min + "–" + y.max) : y.min != null ? y.min + " on" : "to " + y.max);
+  // (15.99) what a diagnostic played, in a few words: "20 tossups with bonuses", "20 tossups", "12 bonuses"
+  const playedText = (d) => (d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup") + (d.format === "tb" ? " with bonuses" : ""));
   const diffText = (d) => {
     const a = (d || []).slice().sort((x, y) => x - y);
     if (!a.length) return "all";
@@ -7169,7 +7171,7 @@ function __qbMain(ctx) {
     if (!list.length) return '<div class="list"><div class="cl-empty">No diagnostics yet.' + (canRunAny() && teams().length ? " Run one from the top of the page." : "") + "</div></div>";
     return '<div class="list dg-list">' + list.map((d) => {
       const when = d.status === "done" && d.releasedAt ? d.releasedAt : d.status === "scheduled" && d.startAt ? d.startAt : d.createdAt;
-      const meta = [dayText(when), FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), yearsText(d.years)].filter(Boolean).join(" · ");
+      const meta = [dayText(when), playedText(d), PLACE[d.place], "difficulty " + diffText(d.diff)].filter(Boolean).join(" · ");
       const st = dxStatus(d);
       const menu = d.canManage ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="d-' + esc(d.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="Options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden><button type="button" class="pop-item danger" role="menuitem" data-cl="dx-delete" data-id="' + esc(d.id) + '" data-done="' + (d.status === "done" ? 1 : "") + '">' + ico("trash", 15) + (d.status === "done" ? "Delete report" : "Delete diagnostic") + "</button></div></div>" : "";
       return '<div class="list-row dg-row"><span class="dg-main"><b>' + esc(d.team) + "</b><small>" + esc(meta) + '</small><span class="dg-status ' + st.tone + '">' + esc(st.text) + '</span></span><span class="dg-act">' + st.btn + menu + "</span></div>";
@@ -8280,11 +8282,15 @@ function __qbMain(ctx) {
     if (hasBo) tiles.push(["Bonuses", s.ppb == null ? "—" : s.ppb.toFixed(1), "points per bonus" + (s.partsPct != null ? " · " + s.partsPct + "% of parts" : ""), delta(s.ppb, prev && prev.ppb)]);
     if (!hasTu) tiles.unshift(["Bonuses heard", fmt(s.bonuses || 0), "", ""]);
     const seeAll = (d.cards || []).some((x) => !who(x.mid).you);
-    const meta = [FORMATS[d.format] && FORMATS[d.format].label, d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup"), PLACE[d.place], "difficulty " + diffText(d.diff), yearsText(d.years), "NAQT distribution", plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
+    // (15.99) the line under the title: what was played, how, how hard, by how many. The years and the distribution
+    // are in the title's info
+    const meta = [playedText(d), PLACE[d.place], "difficulty " + diffText(d.diff), plural((d.players || []).length, "player")].filter(Boolean).join(" · ");
+    const y = d.years || {};
+    const yrs = y.min != null && y.max != null ? "from " + (y.min === y.max ? y.min : y.min + "–" + y.max) + " sets" : y.min != null ? "from sets since " + y.min : y.max != null ? "from sets up to " + y.max : "";
     const topics = topicsHtml(d, who), dims = dimsHtml(d), sheet = scoresheetHtml(d), bz = hasTu ? buzzesHtml(d) : "", qs = questionsHtml(d, who);
     const jump = [["rp-summary", "Summary"], sheet ? ["rp-sheet", "Scoresheet"] : null, bz ? ["rp-buzzes", "Buzzes"] : null, hasTu ? ["rp-coverage", "Coverage"] : ["rp-coverage", "Categories"], topics ? ["rp-topics", "Topics"] : null, dims ? ["rp-dims", "Breakdown"] : null,
       qs ? ["rp-questions", "Questions"] : null, ["rp-plan", "Practice"], R.shared && !(d.cards || []).length ? null : ["rp-players", seeAll || R.shared ? "Players" : "Your card"]].filter(Boolean);
-    let html = '<div class="cl-page rp-page"><div class="rp-head"><div><p class="eyebrow">' + esc([d.org && d.org.name, d.team].filter(Boolean).join(" · ")) + "</p><h1>" + esc(date) + " diagnostic" + info("Released to every player at once" + (d.date ? ", " + whenText(d.date) : "") + ".", "When this report was released") + '</h1><p class="rp-meta">' + esc(meta) + "</p></div>" +
+    let html = '<div class="cl-page rp-page"><div class="rp-head"><div><p class="eyebrow">' + esc([d.org && d.org.name, d.team].filter(Boolean).join(" · ")) + "</p><h1>" + esc(date) + " diagnostic" + info("Released to every player at once" + (d.date ? ", " + whenText(d.date) : "") + ". Questions drawn by NAQT's distribution" + (yrs ? ", " + yrs : "") + ".", "About this diagnostic") + '</h1><p class="rp-meta">' + esc(meta) + "</p></div>" +
       '<div class="ph-right">' + (R.shared ? '<span class="rp-shared">' + ico("link", 15) + "Shared report</span>"
         : '<button type="button" class="btn" data-go-clubs="diagnostics">' + ico("doc", 16) + "All reports</button>" +
           (R.canManage ? '<button type="button" class="btn" data-rp-share>' + ico("link", 16) + "Share</button>" : "") +
