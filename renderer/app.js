@@ -12052,7 +12052,7 @@ async function loadPlayer(quiet) {
           <div class="pf-id">
             <div class="pf-name-row"><input type="text" class="pf-name" id="player-username-input" value="${escapeHtml(state.username)}" placeholder="Your name" maxlength="24" aria-label="Your name" spellcheck="false"></div>
             <small class="pf-sub">${handle ? escapeHtml(handle) : Account.user ? "Signed in" : IS_WEB ? "Not signed in" : "On this computer"}</small>
-            ${trialBadgesHtml(trialInfo && trialInfo.trials, seasonBadgesHtml(apData))}
+            ${trialBadgesHtml(trialInfo && trialInfo.trials, seasonBadgesHtml(apData) + achSetBadgesHtml(achData))}
           </div>
         </section>
         <div class="pf-tiles">${tile(totalQ, "questions")}${tile(powers, "powers", "pf-pwr")}${tile(negs, "negs", "pf-neg")}${tile(sessions.length, "sessions")}</div>
@@ -12810,7 +12810,13 @@ function openBadgeDetail(key, trials, own, extra) {
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "bd-h");
   let title, hero, body, next = "";
   const sev = key === "hw" ? HW : SEASONS.find((e) => "ev:" + e.key === key);
-  if (sev) {
+  const aset = String(key).startsWith("achset:") ? _achSetInfo[key] : null;
+  if (aset) {
+    title = aset.label;
+    hero = achSetEmblem(aset, 150);
+    body = `<p class="bd-sub">Achievement badge · all ${aset.list.length}</p><p class="bd-text">Earned every ${escapeHtml(aset.label)} achievement.</p>` +
+      `<div class="bd-achs">${aset.list.map((a) => `<span class="bd-ach">${escapeHtml(a.name)}</span>`).join("")}</div>`;
+  } else if (sev) {
     title = sev.label;
     hero = seasonEmblem(sev, 150);
     body = `<p class="bd-sub">Event badge · ${escapeHtml(extra || String(sev.goal))} ${sev.many}</p><p class="bd-text">Collected ${sev.goal} ${sev.many} during ${escapeHtml(sev.label)}.</p>`;
@@ -13408,6 +13414,30 @@ function seasonBadgesHtml(powers) {
   }).join("");
 }
 applySeasonTheme();
+
+// ── (15.105) A badge for every achievement in a group: the global groups (Questions, Powers, Negs, Categories,
+// Endurance, Streaks) and each category's Answer Powers. It joins the category badges on the profile (the trials',
+// the events'): a gold emblem in the group's colour with its glyph, its ribbon "100%". An event's achievements have
+// the event's own badge ──
+const ACH_SET_GLOBAL = [["total", "Questions", "chart"], ["powers", "Powers", "bolt"], ["negs", "Negs", "flag"], ["cat", "Categories", "puzzle"], ["daily", "Endurance", "clock"], ["streak", "Streaks", "calendar"]];
+const ACH_SET_GLYPH = { Literature: "lit", History: "hist", Geography: "geo", Science: "sci", Math: "math", Mythology: "myth", "Pop Culture": "pop", Sports: "sports", "Fine Arts": "fa", Philosophy: "phil" };
+let _achSetInfo = {};
+function achSets(achData) {
+  const sets = [];
+  for (const [type, label, icon] of ACH_SET_GLOBAL) sets.push({ key: "achset:g:" + type, label, glyph: ICON[icon], hue: "#e3b341", list: ACHIEVEMENT_LIST.filter((a) => a.type === type && !a.event && achData[a.id]) });
+  const ap = ACHIEVEMENT_LIST.filter((a) => a.type === "answer_power" && !a.event && achData[a.id]);
+  for (const [, label] of AP_CATEGORY_PREFIXES) sets.push({ key: "achset:ap:" + label, label, glyph: TRIAL_GLYPH[ACH_SET_GLYPH[label]] || ICON.award, hue: ROOT_COLOR[label] || "#e3b341", list: ap.filter((a) => achCatOf(a) === label) });
+  return sets.filter((s) => s.list.length);
+}
+const achSetEmblem = (s, size) => emblemSvg({ level: 7, metal: "gold", hue: s.hue, glyph: s.glyph, ribbon: "100%", size });
+function achSetBadgesHtml(achData) {
+  if (!achData) return "";
+  _achSetInfo = {};
+  return achSets(achData).filter((s) => s.list.every((a) => achData[a.id] && achData[a.id].earned)).map((s) => {
+    _achSetInfo[s.key] = s;
+    return `<button type="button" class="tr-emb ach-set-emb" data-badge="${escapeHtml(s.key)}" title="Every ${escapeHtml(s.label)} achievement" aria-label="${escapeHtml(s.label)} achievements badge">${achSetEmblem(s, 62)}<span class="tr-emb-name">${escapeHtml(s.label)}</span></button>`;
+  }).join("");
+}
 
 // ── Achievement details (14.88): a click on a card ─────────────────────────────────────────────────────
 // ctx = { achData, records, stats, pluginAchs } — whoever's achievements the cards show (you, or a friend)

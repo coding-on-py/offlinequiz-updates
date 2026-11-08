@@ -1,5 +1,5 @@
 {
-  "version": "15.104",
+  "version": "15.105",
   "renderer": [
     "index.html",
     "style.css",
@@ -170,13 +170,13 @@
     }
   ],
   "main": true,
-  "notes": "bug fixes",
+  "notes": "minor ui fixes",
   "files": {
     "renderer/index.html": "863f81daf5140614388bca0c4f66ff3d0239b2a9a2dd01a805d958eb875ed9e0",
-    "renderer/style.css": "3848d8f5ddf85d6674128af7a5b62ddcd3e98eee378f2bbd2c67496bf0848c61",
+    "renderer/style.css": "549cae2d8d4d5431b772a8ef537cd12f6898196a76df906d4e216838ea0881fc",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "d0db0a58ba8f04c0641383ac0222977067652bcd3cdf4ad0da23e09fc2ac332d",
-    "renderer/app.js": "c2275a0ef870cfa826d3f55d8a30dd41b86d302928f545cb07a94643eb145ea5",
+    "renderer/extensions.js": "bad779cc8aa4e272fbe5b73fdef52b80684148624a942633ab9a810cbb93c215",
+    "renderer/app.js": "bb1f64a7845f105dc2e8b6ba1e46ce070928d1af0b7794492a895ee5e5a5f04d",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "ef85095d9b6f3fdc770fc73d6599400a9b7ed16b15da45d8c9c807f94bc33a53",
     "plugins/answer-notes.zip": "57194a5555a806ca53d56198beee48964b10fd11005a65ae78b47d42ee386241",
@@ -210,5 +210,5 @@
     "plugins/voice-answers.zip": "0f7d2928186eee4a99d04ba36d4d0840816b65ed294d357a0a23735088905a84",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "yRfb5uKu92r41NnAyH3w2P5vaKOjK8n5AO5FzS8l9xHDX+dTrToxLllXQUtz2B2r9XkE9RGR4PEmF3zv8QgmDA=="
+  "signature": "SUlAKBnrRKYI6b8BI0mdo8jqKwDxU7sVtNcYyzIw+OZgjVX/mwwWGjYqEAWhEh9oH8ynWHIIXh9i8puqshgsBg=="
 }

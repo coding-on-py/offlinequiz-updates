@@ -3759,6 +3759,32 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .lb-bar .seg.lb-periods button:nth-child(n+4) { grid-column: span 3; }
   .lb-bar .seg.lb-periods button:nth-child(4):last-child { grid-column: span 6; }
 }
+/* (15.105) a leaderboard row on a phone: the rank, the picture and the name, the points large on the right; TUH, P and
+   ACC small on a line under the name (they wrapped under the rank in four columns of their own). The kind of board
+   (Individuals, Teams, Organizations) spans the width, as the boxes under it do */
+@media (max-width: 720px) {
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) { display: grid; grid-template-columns: 20px 36px auto auto minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; align-items: center; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .lb-rank { grid-column: 1; grid-row: 1 / span 2; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > :is(.fr-av, .club-tile) { grid-column: 2; grid-row: 1 / span 2; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-name { grid-column: 3 / span 3; grid-row: 1; min-width: 0; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-stat { flex: none; grid-row: 2; flex-direction: row; align-items: baseline; gap: 4px; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-stat b { font-size: 13px; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-stat:nth-child(4) { grid-column: 6; grid-row: 1 / span 2; flex-direction: column; align-items: flex-end; gap: 0; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-stat:nth-child(4) b { font-size: 18px; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-stat:nth-child(5) { grid-column: 3; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-stat:nth-child(6) { grid-column: 4; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-stat:nth-child(7) { grid-column: 5; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-act:empty { display: none; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile):has(> .fr-act:not(:empty)) > .fr-stat:nth-child(4) { grid-row: 1; }
+  :is(.lb-board, #lb-groups) .lb-row:has(> .fr-av, > .club-tile) > .fr-act:not(:empty) { grid-column: 6; grid-row: 2; justify-self: end; }
+}
+@media (max-width: 600px) {
+  .lb-bar .lb-kinds, .lb-bar .lb-kinds .seg { flex: 1 1 100%; width: 100%; }
+  .lb-bar .lb-kinds .seg button { flex: 1 1 0; min-width: 0; }
+}
+/* (15.105) an achievement badge's window lists what it took */
+.bd-achs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 4px; }
+.bd-ach { padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); font-size: 12px; }
 /* (15.104) short centred messages break evenly ("yet." alone on a line) */
 :is(.acct-panel, .cl-empty, .ext-empty-state, .db-empty) p, .acct-panel > p { text-wrap: balance; }
 /* (15.103) Beta: a small blue box beside the Voice panel's title and every newer plugin's name (extensions.js betaTag) */

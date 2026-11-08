@@ -4256,6 +4256,8 @@ function __qbMain(ctx) {
       // must never steal it from a practice screen in the foreground.
       // a bought room: not let in (its password / members only / taken off the list)
       else if (d.t === "denied") { onDenied(d); }
+      // (15.105) a room closed for no activity: back to the lobby, no box (it said so with a Sign in button, signed in or not)
+      else if (d.t === "kicked" && d.idle) { leftIntentionally = true; admitting = false; door = null; leave(); }
       else if (d.t === "kicked") { leftIntentionally = true; onDenied({ need: "member", kicked: true, text: d.text || "You were removed from this room." }); }
       else if (d.t === "roominfo") { roomInfo = d; renderRoomInfo(); }
       // a diagnostic room: its details (sent before the first state, so the room is drawn as one),
@@ -5499,7 +5501,7 @@ function __qbMain(ctx) {
         var dxDoor = !!D.dx && !!(window.QB && typeof window.QB.openClubs === "function");
         st.innerHTML = '<div class="mp-door">' + (D.kicked ? esc(D.text || "You were taken off this room.") :
           "<b>" + name + "</b> is for its members. Ask its owner or an admin to add your username" + (D.signedIn ? "." : ", and sign in first.")) +
-          (D.signedIn ? "" : ' <button type="button" class="btn btn-sm" data-acct="signin">Sign in</button>') +
+          (D.signedIn || D.kicked ? "" : ' <button type="button" class="btn btn-sm" data-acct="signin">Sign in</button>') +
           (dxDoor ? ' <button type="button" class="btn btn-sm" id="mp-door-clubs">Back to Clubs</button>' : "") + "</div>";
         var dcb = st.querySelector("#mp-door-clubs"); if (dcb) dcb.onclick = function () { door = null; render(); qbCall("openClubs", "diagnostics"); };
       }
@@ -8443,9 +8445,10 @@ function __qbMain(ctx) {
       last = e.rank;
       html += kind === "teams"
         ? '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.team) + "</b>" + (e.mine ? '<span class="badge cl-you">Your team</span>' : "") + "<small>" + esc(e.org) + "</small></span>" +
-          stat(e.active + (e.roster !== e.active ? '<small class="num"> /' + e.roster + "</small>" : ""), "active") + stat(fmt(e.avg), "Avg") + stat(fmt(e.total), "PTS") + stat(e.acc == null ? "—" : e.acc + "%", "ACC") + "</div>"
+          // (15.105) PTS first, as on the individuals' board (a phone shows it large on the right, the rest under the name)
+          stat(fmt(e.total), "PTS") + stat(e.active + (e.roster !== e.active ? '<small class="num"> /' + e.roster + "</small>" : ""), "active") + stat(fmt(e.avg), "Avg") + stat(e.acc == null ? "—" : e.acc + "%", "ACC") + "</div>"
         : '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.name) + "</b>" + (e.mine ? '<span class="badge cl-you">Yours</span>' : "") + "<small>" + e.active + " of " + e.members + " active</small></span>" +
-          stat(e.teams, e.teams === 1 ? "team" : "teams") + stat(e.members, "members") + stat(fmt(e.avg), "Avg") + stat(fmt(e.total), "PTS") + "</div>";
+          stat(fmt(e.total), "PTS") + stat(e.teams, e.teams === 1 ? "team" : "teams") + stat(e.members, "members") + stat(fmt(e.avg), "Avg") + "</div>";
     });
     return '<div class="fr-list lb-board">' + html + "</div>";
   }
