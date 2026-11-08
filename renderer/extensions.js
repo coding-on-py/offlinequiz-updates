@@ -6443,7 +6443,7 @@ function __qbMain(ctx) {
       if (p && area && !ov) {
         ov = document.createElement("div");
         ov.className = "pause-overlay"; ov.id = "mp-pause-overlay";
-        ov.textContent = "PAUSED";
+        ov.textContent = "Paused";
         area.appendChild(ov);
       } else if (!p && ov) ov.remove();
       var meta = body && body.querySelector("#mp-meta"); if (meta && current) meta.textContent = !p && ended && _endedCategory ? _endedCategory : "";
@@ -13419,7 +13419,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     const seg = [["", "All"], ...FAMILIES.map((f) => [f[0], f[1]])].map(([k, l]) => `<button type="button" data-tfam="${k}" aria-pressed="${V.fam === k}">${l}</button>`).join("");
     c.innerHTML = `<div class="db-page db-topics">
       <div class="qrow tg-toolbar">
-        <div class="cfield tg-find">${ic("search", 18)}<input class="cinput" id="tg-q" type="search" autocomplete="off" spellcheck="false" placeholder="Find a person, work, place or idea" aria-label="Find a tag" value="${esc(V.q)}"></div>
+        <div class="cfield tg-find">${ic("search", 18)}<input class="cinput" id="tg-q" type="search" autocomplete="off" spellcheck="false" placeholder="Search tags" aria-label="Find a tag" value="${esc(V.q)}"></div>
       </div>
       <div class="seg tg-fams" id="tg-fams" role="group" aria-label="Kind">${seg}</div>
       <div class="rhead"><span class="total num" id="tg-total"></span></div>
@@ -13615,7 +13615,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     const tiers = (d.tiers || []).filter((x) => x.heard);
     const list = (title, rows) => rows && rows.length ? `<div class="tst-col"><h4>${title}</h4><div class="topics"><div class="trow-v">${rows.map((x) =>
       `<button type="button" class="tchip" style="--c:${kindColor(x.kind)}" data-topic="${esc(x.id)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind || "")}" title="${num(x.correct)} of ${num(x.heard)}">${esc(x.name)} <span class="tchip-n num">${pct(x)}</span></button>`).join("")}</div></div></div>` : "";
-    host.innerHTML = `<div class="stats-section tst" data-coll="stats:topics"><div class="stats-section-title">TOPICS</div>
+    host.innerHTML = `<div class="stats-section tst" data-coll="stats:topics"><div class="stats-section-title">Topics</div>
       ${tiers.length ? `<div class="tst-tiers">${tiers.map((x) => `<div class="tst-tier"><span class="ttier ttier-${x.tier}">${TIER_NAME[x.tier]}</span><b class="num">${pct(x)}</b><small>${plural(x.heard, "tossup")}</small></div>`).join("")}</div>` : ""}
       <div class="tst-cols">${list("Strongest", d.strong)}${list("Weakest", d.weak)}</div>
       ${d.missedCanon && d.missedCanon.length ? `<div class="tst-col tst-missed"><h4>Canon answers to review</h4><div class="topics"><div class="trow-v">${d.missedCanon.map((x) => tagChip(x)).join("")}</div></div></div>` : ""}

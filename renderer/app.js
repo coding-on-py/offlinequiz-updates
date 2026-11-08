@@ -647,6 +647,7 @@ const ICON = {
   left: '<path d="M15 6l-6 6 6 6"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M4 20h16"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-4 4.2-6 8-6s6.8 2 8 6"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5 12 13l8.5-6.5"/>',
   monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/>',
   right: '<path d="M9 6l6 6-6 6"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
@@ -3076,6 +3077,9 @@ function showScreen(name, opts) {
   // and the windows over a screen (a tag chip in the session history opens Database → Search, which then sat under it)
   document.querySelectorAll("#history-overlay, #review-viewer, #review-menu, #save-menu").forEach((x) => { if (x.id === "history-overlay") _histEntries = null; x.remove(); });
   document.getElementById("plugin-guide")?.remove();   // a plugin's guide belongs to the Plugins page
+  // (15.104) and the account window, asked for on the page being left (Review's "Sign in to review…" stayed over
+  // Statistics after Back); not one opened on the way to this page
+  { const ao = document.getElementById("account-ovl"); if (ao && Date.now() - Number(ao.dataset.openedAt || 0) > 400) ao.dispatchEvent(new CustomEvent("qb-close")); }
   try { closeSetupDrawer(); } catch (e) {}
   try { flushPendingFilterSave(); } catch (e) {}   // while state.mode still names the outgoing tab
   const back = opts ? !!opts.back : _navBack;
@@ -3185,7 +3189,7 @@ function toggleHotkeySheet() {
     .join("");
   el.innerHTML =
     `<div class="hotkey-sheet-box">
-      <div class="hotkey-sheet-title">KEYBOARD SHORTCUTS</div>
+      <div class="hotkey-sheet-title">Keyboard shortcuts</div>
       ${rows}
       <div class="hk-row"><span>Show this sheet</span><kbd>?</kbd></div>
     </div>`;
@@ -3761,7 +3765,7 @@ async function openReviewViewer(items) {
   el.innerHTML = `
     <div class="review-viewer-box">
       <div class="review-viewer-head">
-        <span class="hotkey-sheet-title" style="margin:0">REVIEW QUESTIONS</span>
+        <span class="hotkey-sheet-title" style="margin:0">Review questions</span>
         <span style="display:flex;gap:6px">
           <button class="btn btn-sm btn-ghost" id="rv-collapse">Collapse all</button>
           <button class="btn btn-sm btn-ghost" id="rv-expand">Expand all</button>
@@ -3802,7 +3806,7 @@ async function openReviewViewer(items) {
       return qcardHtml({
         compact: false, question: q, tagsWhere: "starred", category: q.category, subcategory: q.subcategory, year: q.set_year, difficulty: q.difficulty,
         attrs: dataAttrs,
-        sideHtml: `<span class="pill">BONUS</span>` + side,
+        sideHtml: `<span class="pill">Bonus</span>` + side,
         answerHtml: `Bonus · ${parts.length} parts`,
         bodyHtml: body,
       });
@@ -4051,7 +4055,7 @@ function pauseAtPageStop(i) {
   state.isPaused = true;
   const el = document.createElement("div");
   el.className = "pause-overlay page-stop"; el.id = "pause-overlay";
-  el.textContent = pageRules().pauseLabel || "PAUSED";
+  el.textContent = pageRules().pauseLabel || "Paused";
   el.addEventListener("click", () => togglePause());
   $("#question-area")?.appendChild(el);
 }
@@ -6311,7 +6315,7 @@ function suspendSession() {
       const el = document.createElement("div");
       el.className = "pause-overlay";
       el.id = "pause-overlay";
-      el.textContent = "PAUSED";
+      el.textContent = "Paused";
       $("#question-area")?.appendChild(el);
     }
   }
@@ -7133,7 +7137,7 @@ function renderTossup(q) {
       state.isPaused = true;
       const pel = document.createElement("div");
       pel.className = "pause-overlay"; pel.id = "pause-overlay";
-      pel.textContent = "PAUSED";
+      pel.textContent = "Paused";
       $("#question-area")?.appendChild(pel);
       return;
     }
@@ -7185,7 +7189,7 @@ async function renderBonus(q) {
   const bv = bonusPartValues(q);
   for (let i = 0; i < nParts; i++) {
     const head = $(`#bonus-part-${i} .bonus-part-header`);
-    if (head) head.textContent = "PART " + bonusPartLetter(i) + (bv.stated && bv.values[i] !== 10 ? ` [${bv.values[i]}]` : "");
+    if (head) head.textContent = "Part " + bonusPartLetter(i) + (bv.stated && bv.values[i] !== 10 ? ` [${bv.values[i]}]` : "");
     const partText = partTexts[i] != null ? partTexts[i] : `Part ${i + 1}`;
     $(`#bonus-text-${i}`).textContent = partText;
     state._bonusPartTexts[i] = partText;
@@ -7539,7 +7543,7 @@ function promptBonusPart(idx, firstAnswer, r) {
     row.parentNode.insertBefore(banner, row);
   }
   const ask = (r && r.prompt && r.prompt.ask) || (r && r.antiprompt ? "less specific?" : "");
-  banner.innerHTML = `<span class="prompt-tag">PROMPT</span>` + (ask ? " " + escapeHtml(ask) : "");
+  banner.innerHTML = `<span class="prompt-tag">Prompt</span>` + (ask ? " " + escapeHtml(ask) : "");
   inp.value = "";
   inp.disabled = false;
   setTimeout(() => inp.focus(), 30);
@@ -7660,7 +7664,7 @@ function revealText(text) {
       state.isPaused = true;
       const el = document.createElement("div");
       el.className = "pause-overlay"; el.id = "pause-overlay";
-      el.textContent = "PAUSED";
+      el.textContent = "Paused";
       $("#question-area")?.appendChild(el);
       return;
     }
@@ -7689,7 +7693,7 @@ function revealText(text) {
         Speech.stop(); quit();
         state._stoppedAtPower = true; state.isPaused = true;
         const el = document.createElement("div");
-        el.className = "pause-overlay"; el.id = "pause-overlay"; el.textContent = "PAUSED";
+        el.className = "pause-overlay"; el.id = "pause-overlay"; el.textContent = "Paused";
         $("#question-area")?.appendChild(el);
       }
     }, () => {
@@ -7715,7 +7719,7 @@ function revealText(text) {
         state.isPaused = true;
         const el = document.createElement("div");
         el.className = "pause-overlay"; el.id = "pause-overlay";
-        el.textContent = "PAUSED";
+        el.textContent = "Paused";
         $("#question-area")?.appendChild(el);
         return;
       }
@@ -7750,7 +7754,7 @@ function revealText(text) {
       state.isPaused = true;
       const el = document.createElement("div");
       el.className = "pause-overlay"; el.id = "pause-overlay";
-      el.textContent = "PAUSED";
+      el.textContent = "Paused";
       $("#question-area")?.appendChild(el);
       return;
     }
@@ -7830,7 +7834,7 @@ function togglePause() {
     const el = document.createElement("div");
     el.className = "pause-overlay";
     el.id = "pause-overlay";
-    el.textContent = "PAUSED";
+    el.textContent = "Paused";
     $("#question-area")?.appendChild(el);
   } else {
     $("#question-text")?.classList.remove("paused-text");
@@ -8083,7 +8087,7 @@ function buzz() {
   const ur = $("#question-text .unrevealed"); if (ur) ur.style.display = "none";
   const marker = document.createElement("div");
   marker.className = "buzz-marker";
-  marker.textContent = "▼ BUZZED ▼";
+  marker.textContent = "▼ Buzzed ▼";
   $("#question-text").appendChild(marker);
 
   clearPromptBanner();
@@ -8199,8 +8203,8 @@ function showPromptBanner(ask) {
     area.insertBefore(banner, area.firstChild);
   }
   banner.innerHTML = ask
-    ? `<span class="prompt-tag">PROMPT</span> ${escapeHtml(ask)}`
-    : `<span class="prompt-tag">PROMPT</span>`;
+    ? `<span class="prompt-tag">Prompt</span> ${escapeHtml(ask)}`
+    : `<span class="prompt-tag">Prompt</span>`;
 }
 function clearPromptBanner() {
   document.getElementById("buzz-prompt-banner")?.remove();
@@ -9766,23 +9770,23 @@ function renderTossupResult() {
   banner.className = "result-banner";
   if (r.isPower) {
     banner.classList.add("power");
-    banner.textContent = `POWER! +${r.points} pts`;
+    banner.textContent = `Power +${r.points} pts`;
   } else if (r.correct) {
     banner.classList.add("correct");
-    banner.textContent = `CORRECT +${r.points} pts`;
+    banner.textContent = `Correct +${r.points} pts`;
   } else if (r.points < 0) {
     banner.classList.add("incorrect");
-    banner.textContent = `NEG ${r.points} pts`;
+    banner.textContent = `Neg ${r.points} pts`;
   } else {
     banner.classList.add("incorrect");
-    banner.textContent = "INCORRECT (0 pts)";
+    banner.textContent = "Incorrect, 0 pts";
   }
   { const t = pageBanner(r); if (t) banner.textContent = t; }
 
   const celPct = ((1 - r.celerity) * 100).toFixed(1);
   const unsure = r.unsure;
   answerDiv.innerHTML = `
-    <div class="ra-row"><span class="ra-k">Your answer</span><strong class="ra-you ${r.correct ? "ok" : "bad"}">${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">UNSURE</span><span class="qb-info" data-tip="Your answer didn&apos;t match any accepted equivalent.">i</span>' : ""}</div>
+    <div class="ra-row"><span class="ra-k">Your answer</span><strong class="ra-you ${r.correct ? "ok" : "bad"}">${escapeHtml(r.userAnswer || "(no answer)")}</strong>${unsure ? ' <span class="result-unsure">Unsure</span><span class="qb-info" data-tip="Your answer didn&apos;t match any accepted equivalent.">i</span>' : ""}</div>
     <div class="ra-row"><span class="ra-k">Answer</span><span class="actual">${answerLineHtml(state.currentQuestion?.answer, r.answer || state.currentQuestion?.answer_sanitized || "")}</span></div>
     <div class="ra-row ra-cel"><span class="ra-k">Celerity</span><span>${celPct}% remaining</span></div>
   `;
@@ -10926,7 +10930,7 @@ async function loadStats(preserveScroll = false) {
     }
 
     html += `<div class="stats-section" data-coll="stats:overview">
-      <div class="stats-section-title">OVERVIEW${selectedCat ? " · " + escapeHtml(selectedCat) : ""}</div>
+      <div class="stats-section-title">Overview${selectedCat ? " · " + escapeHtml(selectedCat) : ""}</div>
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-card-value">${view.totalQuestions}</div>
@@ -10957,13 +10961,13 @@ async function loadStats(preserveScroll = false) {
 
     if (!sid) {
       html += `<div class="stats-section" data-coll="stats:graph">
-        <div class="stats-section-title">GRAPH</div>
+        <div class="stats-section-title">Graph</div>
         <canvas id="stats-graph" class="chart-canvas" width="700" height="300" style="width:100%;height:300px"></canvas>
       </div>`;
     }
 
     html += `<div class="stats-section" data-coll="stats:tossups">
-      <div class="stats-section-title">TOSSUPS: ${view.tossupsAttempted}</div>
+      <div class="stats-section-title">Tossups (${view.tossupsAttempted})</div>
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-card-value" style="color:var(--green)">${view.tossupPowers}</div>
@@ -10987,7 +10991,7 @@ async function loadStats(preserveScroll = false) {
     if (view.bonusesAttempted > 0) {
       const bd = view.bonusDist || null; // per-category views don't carry a distribution
       html += `<div class="stats-section" data-coll="stats:bonuses">
-        <div class="stats-section-title">BONUSES: ${view.bonusesAttempted}</div>
+        <div class="stats-section-title">Bonuses (${view.bonusesAttempted})</div>
         <div class="stats-grid">
           <div class="stat-card">
             <div class="stat-card-value">${view.bonusPartsCorrect}/${view.bonusPartsTotal}</div>
@@ -11010,7 +11014,7 @@ async function loadStats(preserveScroll = false) {
       .sort((a, b) => (b.totalPoints / b.totalQuestions) - (a.totalPoints / a.totalQuestions));
     if (categoryData.length > 0) {
       html += `<div class="stats-section" data-coll="stats:by-category">
-        <div class="stats-section-title">BY CATEGORY</div>
+        <div class="stats-section-title">By category</div>
         <table class="stats-table">
           <thead><tr>
             <th>Category</th><th>Q's</th><th>Pts</th><th>Pts/Q</th>
@@ -11040,12 +11044,12 @@ async function loadStats(preserveScroll = false) {
     if (sid && sessionEntries.length) {
       const rowsHtml = sessionEntries.map((en, i) => {
         const isBonus = en.type === "bonus";
-        let cls = "qh-miss", label = "MISS";
+        let cls = "qh-miss", label = "Miss";
         if (isBonus) { const pc = en.bonus_parts_correct != null ? en.bonus_parts_correct : 0, pn = en.part_count || 3; cls = pc >= pn ? "qh-correct" : en.points > 0 ? "qh-partial" : "qh-miss"; label = pc + "/" + pn; }
-        else if (en.points >= 15) { cls = "qh-power"; label = "POWER"; }
-        else if (en.correct) { cls = "qh-correct"; label = "CORRECT"; }
-        else if (en.points < 0) { cls = "qh-neg"; label = "NEG"; }
-        else if (en.prompt_reply != null) { cls = "qh-prompt"; label = "PROMPTED"; }   // (15.77) prompted, and it didn't end right
+        else if (en.points >= 15) { cls = "qh-power"; label = "Power"; }
+        else if (en.correct) { cls = "qh-correct"; label = "Correct"; }
+        else if (en.points < 0) { cls = "qh-neg"; label = "Neg"; }
+        else if (en.prompt_reply != null) { cls = "qh-prompt"; label = "Prompted"; }   // (15.77) prompted, and it didn't end right
         const cel = Math.max(0, Math.min(1, en.celerity == null ? 1 : en.celerity));
         const buzzBar = isBonus ? "" :
           '<div class="qh-buzzbar" title="Buzzed ' + Math.round(cel * 100) + '% into the question">' +
@@ -11083,7 +11087,7 @@ async function loadStats(preserveScroll = false) {
       (celDist.end?.length || 0);
     if (celTotal > 0) {
       html += `<div class="stats-section" data-coll="stats:celerity">
-        <div class="stats-section-title">CELERITY DISTRIBUTION</div>
+        <div class="stats-section-title">Celerity distribution</div>
         <table class="stats-table">
           <thead><tr>
             <th>Zone</th><th>Count</th><th>Distribution</th>
@@ -11117,7 +11121,7 @@ async function loadStats(preserveScroll = false) {
     const pickedRoots = selectedCat && _statsCat ? [...new Set(_statsCat.paths().map((p) => p.split(" > ")[0]))] : [];
     if (!sid && sessionList.length > 0) {
       html += `<div class="stats-section" data-coll="stats:sessions">
-        <div class="stats-section-title">SESSIONS (${sessionList.length})</div>
+        <div class="stats-section-title">Sessions (${sessionList.length})</div>
         <table class="stats-table stats-sessions-table">
           <thead><tr>
             <th>Session</th><th><span class="th-long">Questions</span><span class="th-short" aria-hidden="true">Qs</span></th><th>Points</th><th>Started</th><th></th>
@@ -11147,7 +11151,7 @@ async function loadStats(preserveScroll = false) {
     const diffKeys = Object.keys(stats.byDifficulty || {}).sort((a,b) => parseInt(a) - parseInt(b));
     if (diffKeys.length >= 2) {
       html += `<div class="stats-section" data-coll="stats:by-difficulty">
-        <div class="stats-section-title">BY DIFFICULTY</div>
+        <div class="stats-section-title">By difficulty</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
           <canvas id="graph-diff-accuracy" class="chart-canvas" width="420" height="260" style="flex:1;min-width:340px;max-width:520px"></canvas>
           <canvas id="graph-diff-celerity" class="chart-canvas" width="420" height="260" style="flex:1;min-width:340px;max-width:520px"></canvas>
@@ -11157,7 +11161,7 @@ async function loadStats(preserveScroll = false) {
     }
 
     if (!sid) html += `<div class="stats-section" data-coll="stats:breakdown">
-      <div class="stats-section-title">SESSION BREAKDOWN
+      <div class="stats-section-title">Session breakdown
         <div class="diff-toggles" id="graph-filter-diff" role="group" aria-label="Difficulty">${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((d) => `<label title="${escapeHtml(DIFF_FULL[d] || "")}"><input type="checkbox" value="${d}"${_bdDiffs.includes(d) ? " checked" : ""}><span>${d}</span></label>`).join("")}</div>
       </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap">
@@ -12859,7 +12863,7 @@ function trialCardHtml(info, key, name, bl) {
   const lv = trialBest(info && info.trials)[key] || 0, b = trialBadgeOf(info && info.trials, key);
   const pips = Array.from({ length: 10 }, (_, i) => { const st = trialState(info, key, i + 1); return `<i class="${st.passed ? "on" : st.wait ? "wait" : st.locked ? "lock" : ""}"></i>`; }).join("");
   return `<button type="button" class="tr-card${bl ? "" : " none"}${isSubTrial(key) ? " tr-sub" : ""}" data-trial="${key}" style="--hue:${trialHue(key)}"><span class="tr-card-emb" aria-hidden="true">${trialEmblem(key, bl || 1, 40)}</span><span class="tr-name">${escapeHtml(name)}</span>` +
-    `<span class="tr-lv">${bl ? escapeHtml(name + " " + ROMAN[bl]) : "No badge yet"}</span>` +
+    `<span class="tr-lv">${bl ? escapeHtml(name + " " + ROMAN[bl]) : "No badge"}</span>` +
     `<span class="tr-meta"><span class="tr-xp num">${b.next ? b.xp.toLocaleString() + " / " + fmtXp(b.need) : fmtXp(b.xp)}</span>${(() => { const nx = trialState(info, key, Math.min(10, lv + 1)); return nx.wait && !nx.locked ? waitHtml(nx.wait) : ""; })()}</span>` +
     `<span class="tr-prog" title="${escapeHtml(b.next ? b.xp.toLocaleString() + " of " + b.need.toLocaleString() + " XP to " + trialName(key, b.next) : "Top badge")}"><i style="width:${b.next ? Math.min(100, (b.xp / b.need) * 100) : 100}%"></i></span>` +
     `<span class="tr-pips" aria-hidden="true">${pips}</span></button>`;
@@ -15784,6 +15788,8 @@ function openAccount(mode, opts) {
   document.body.appendChild(el);
   let pollTimer = null;
   const close = () => { clearTimeout(pollTimer); pollTimer = null; animateRemove(el); };
+  el.dataset.openedAt = String(Date.now());
+  el.addEventListener("qb-close", close);   // (15.104) another page shown under it (showScreen)
   el.addEventListener("click", (e) => { if (e.target === el) close(); });
   el.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } });
   let email = opts.email || "", handle = "", display = "";
@@ -15823,7 +15829,7 @@ function openAccount(mode, opts) {
     else if (m === "applinked") html = head("The app is signed in", "You can go back to OfflineQuiz. It now syncs with this account.") + `<div class="acct-actions"><button type="button" class="btn btn-primary" data-to="close">Done</button></div>`;
     else if (m === "account") html = head("Account") + okLine + err +
       `<div class="acct-rows"><div class="acct-row"><span class="fr-av"${avatarStyle(u.neon)}>${escapeHtml(String(u.displayName || u.handle || "?")[0].toUpperCase())}</span><span class="acct-v"><b>${neonName(u.displayName || u.handle || "", u.neon)}</b>${u.handle ? `<small>@${escapeHtml(u.handle)}</small>` : '<small class="text-muted">No username yet</small>'}</span><button type="button" class="btn btn-sm" data-to="profile">Edit</button></div>` +
-      `<div class="acct-row">${ic("user", 16)}<span class="acct-v">${escapeHtml(u.email || "")}${u.google ? '<small>Signs in with Google</small>' : ""}</span></div>` +
+      `<div class="acct-row">${ic("mail", 16)}<span class="acct-v">${escapeHtml(u.email || "")}${u.google ? '<small>Signs in with Google</small>' : ""}</span></div>` +
       (Account.app ? `<div class="acct-row">${ic("review", 16)}<span class="acct-v" id="acct-sync-line">${escapeHtml(syncLineText())}</span><button type="button" class="btn btn-sm" id="acct-sync-now">Sync now</button></div>` : "") +
       `</div><div class="acct-rows"><button type="button" class="acct-row acct-nav" data-to="leaderboards">${ic("chart", 16)}<span class="acct-v">Leaderboards</span>${ic("right", 16)}</button>` +
       `<button type="button" class="acct-row acct-nav" data-to="friends">${ic("users", 16)}<span class="acct-v">Friends</span>${ic("right", 16)}</button></div>` +
@@ -16140,7 +16146,7 @@ async function openUserProfile(handle, shownName) {
     const achData = computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p), p.ach_at);
     const all = Object.values(achData || {}), got = all.filter((a) => a && a.earned).length;
     achNote = `<div class="up-stats"><span><b class="num">${num(st.totalQuestions)}</b><small>questions</small></span><span><b class="num">${num(st.tossupPowers)}</b><small>powers</small></span><span><b class="num">${st.totalQuestions ? Math.round((st.tossupAccuracy || 0) * 100) + "%" : "—"}</b><small>tossup accuracy</small></span><span><b class="num">${got}</b><small>achievements</small></span></div>`;
-    achHtml = `<div class="stats-section"><div class="stats-section-title">ACHIEVEMENTS</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
+    achHtml = `<div class="stats-section"><div class="stats-section-title">Achievements</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
   }
   body.innerHTML = `<div class="up-actions">${friendBtn}</div>${achNote}${achHtml}`;
   el.querySelector(".up-who .tr-badges")?.remove();
@@ -17226,7 +17232,7 @@ async function renderFriends(note) {
   const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
   c.innerHTML = `<div class="fr-page">` +
     `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button><button type="button" class="btn btn-sm fr-link" id="fr-link">${ic("link", 15)}Friend link</button></div>` +
-      `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Friend's username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +
+      `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Their username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +
       `<div class="fr-msg" id="fr-msg" role="status">${note ? escapeHtml(note) : ""}</div></section>` +
     (reqs ? `<section class="fr-sec"><h2 class="eyebrow">Requests</h2><div class="fr-list">${reqs}</div></section>` : "") +
     `<section class="fr-sec"><h2 class="eyebrow">This week</h2><div class="fr-list fr-board">${board}</div>` +

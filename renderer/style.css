@@ -3298,6 +3298,8 @@ html:not(.kb-nav) :is(.qb-overlay, .pop, [role="dialog"]) :is(.btn, button, a):f
 .set-pane .setting-row { display: flex; align-items: center; gap: 10px 16px; min-height: 54px; padding: 8px 0; margin: 0; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: transparent; justify-content: flex-start; }
 .set-pane .setting-row + .setting-row { margin-top: 0; }
 .set-pane .setting-label { flex: 0 0 240px; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+/* (15.104) a longer label takes the room it needs ("Show me on the global leaderboard" broke in two at 240 px) */
+@media (min-width: 761px) { .set-pane .setting-label { flex: 0 1 auto; min-width: 240px; } }
 .set-pane .setting-row > :not(.setting-label) { margin-left: 0; }
 .set-pane .setting-row .slider-group { flex: 1; min-width: 0; }
 .set-pane .setting-row .slider-group input[type="range"] { flex: 1; }
@@ -3316,6 +3318,8 @@ html:not(.kb-nav) :is(.qb-overlay, .pop, [role="dialog"]) :is(.btn, button, a):f
 .set-actions { display: inline-flex; gap: 8px; }
 .tag-fam-chips, .tag-where { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .tag-where { gap: 0 20px; }
+/* (15.104) two even columns, so the second column's switches line up (each was as wide as its label) */
+.tag-where { display: grid; grid-template-columns: repeat(2, max-content); }
 .tag-fam-chips .chip.on { background: color-mix(in srgb, var(--c) 14%, transparent); border-color: var(--c); }
 #hotkey-table .stats-table td, #hotkey-table .stats-table th { padding: 8px 10px; }
 @media (max-width: 760px) { .set-layout { flex-direction: column; } .set-nav { flex: none; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line-soft); padding: 8px; } .set-nav-btn { flex: none; } .set-pane .setting-label { flex: 1 1 100%; } }
@@ -3747,6 +3751,16 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .mp-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 36px; }
   .rh-side { flex-basis: 320px; width: 320px; }
 }
+/* (15.104) a phone's leaderboard periods: the three in one row, the seasons' boards sharing the next (Thanksgiving sat
+   alone on a second line) */
+@media (max-width: 600px) {
+  .lb-bar .seg.lb-periods { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .lb-bar .seg.lb-periods button { grid-column: span 2; min-width: 0; }
+  .lb-bar .seg.lb-periods button:nth-child(n+4) { grid-column: span 3; }
+  .lb-bar .seg.lb-periods button:nth-child(4):last-child { grid-column: span 6; }
+}
+/* (15.104) short centred messages break evenly ("yet." alone on a line) */
+:is(.acct-panel, .cl-empty, .ext-empty-state, .db-empty) p, .acct-panel > p { text-wrap: balance; }
 /* (15.103) Beta: a small blue box beside the Voice panel's title and every newer plugin's name (extensions.js betaTag) */
 .beta-tag { display: inline-flex; align-items: center; height: 18px; margin-left: 6px; padding: 0 6px; border: 1px solid rgba(88, 166, 255, 0.45); border-radius: 4px;
   background: rgba(88, 166, 255, 0.14); color: #58a6ff; font-family: var(--font); font-size: 10.5px; font-weight: 700; line-height: 1; letter-spacing: 0.02em;
@@ -3776,6 +3790,9 @@ html[data-scheme="light"] .beta-tag { border-color: rgba(37, 99, 235, 0.4); back
 @media (max-width: 960px) { .mp-side > .mp-history { order: -1; } }
 @media (max-width: 1400px) { .screen.panel-host .mp-room .mp-side { position: static; } .screen.panel-host .mp-room .mp-side > .mp-history { order: -1; } }
 .room-q { font-size: 17px; line-height: 1.85; color: var(--strong); }
+/* (15.104) a room's question is as wide as practice's (110 characters; it stopped at 80, and a plugin's narrower
+   column could take it lower still) */
+.mp-room #mp-qtext { max-width: 110ch; }
 .mp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .mp-actions:not(:has(> :not([hidden], .mp-reconnecting))) { display: none; }
 /* ── Phones and small windows ──
@@ -6779,7 +6796,7 @@ html[data-scheme="light"] .ttier { color: color-mix(in srgb, var(--tc) 62%, #000
   .set-pane .setting-row-wrap { row-gap: 12px; }
   .set-pane .setting-row-wrap > .setting-label { flex-basis: 100%; }
   .set-pane .setting-row-wrap > :not(.setting-label) { flex: 1 1 100%; }
-  .tag-where { flex-direction: column; gap: 6px; }
+  .tag-where { grid-template-columns: minmax(0, 1fr); gap: 6px; }
 }
 @media (pointer: coarse) {
   .acct-link { padding: 8px 0; }
