@@ -3206,6 +3206,11 @@ html[data-scheme="light"] .cat-badge { color: color-mix(in srgb, var(--c) 58%, #
 .qtag .dot { width: 6px; height: 6px; }
 .qmeta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .qmeta-row .src { color: var(--muted); font-size: 12px; }
+/* (15.102) a source naming its packet opens it (app.js srcHtml): it reads as the label until pointed at */
+button.src-pkt { padding: 0; border: 0; background: none; font: inherit; line-height: inherit; text-align: left; cursor: pointer; }
+.qmeta-row button.src-pkt { font-size: 12px; }
+button.src-pkt:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+button.src-pkt:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 .vsep { width: 1px; height: 18px; background: var(--line); flex: 0 0 auto; }
 .chip {
   display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 16px;
@@ -3731,6 +3736,17 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 @media (max-width: 1400px) { .screen.panel-host .mp-room .rh-side { flex: 1 1 100%; width: 100%; margin-left: 0; } }
 @media (max-width: 960px) { .mp-layout { grid-template-columns: minmax(0, 1fr); } }
 .mp-layout .question-area { padding: 0; overflow: visible; gap: 18px; min-height: 360px; }
+/* (15.102) a room sits where practice does: the practice page's width and edges (.practice-layout), so Room settings and
+   Players / Chat take the place of Voice, Setup and the score (the room had the narrower page width, its side column
+   ~180 px further in on a wide screen) */
+@media (min-width: 961px) {
+  /* the box scrolls full width (the scrollbar at the window's edge); the room inside it is centered as practice's layout
+     is, within what the scrollbar leaves (padding on the box counted the scrollbar and sat 5 px off) */
+  .ext-page-body.mp-flush:has(> .mp-room) { padding-left: 0; padding-right: 0; }
+  .ext-page-body.mp-flush > .mp-room { width: 100%; max-width: var(--practice-w); margin: 0 auto; padding-left: clamp(20px, 3vw, 48px); padding-right: clamp(20px, 3vw, 48px); }
+  .mp-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 36px; }
+  .rh-side { flex-basis: 320px; width: 320px; }
+}
 .room-q { font-size: 17px; line-height: 1.85; color: var(--strong); }
 .mp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .mp-actions:not(:has(> :not([hidden], .mp-reconnecting))) { display: none; }

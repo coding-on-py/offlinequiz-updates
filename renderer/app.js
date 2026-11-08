@@ -768,6 +768,26 @@ function tagChipsHtml(q, where) {
 // (15.101) a set and its packet as one name: "2023 EMACS Packet 6" (it was "2023 EMACS · packet 6")
 function setPacketLabel(set, packet) { return set ? set + (packet ? " Packet " + packet : "") : packet ? "Packet " + packet : ""; }
 window.qbSetPacket = setPacketLabel;
+// (15.102) the source under a question opens its packet (Database → Sets → that packet, every question in it) when it
+// names one: a button that reads like the label
+function srcHtml(label, set, packet) {
+  if (!label) return "";
+  if (!set || !packet) return `<span class="src">${escapeHtml(label)}</span>`;
+  return `<button type="button" class="src src-pkt" data-pkt-set="${escapeHtml(set)}" data-pkt-n="${escapeHtml(String(packet))}" title="Open this packet">${escapeHtml(label)}</button>`;
+}
+window.qbSrcHtml = srcHtml;
+let _pendingPacket = null;
+function openPacketPage(set, n) {
+  if (!set || !(n > 0)) return;
+  _pendingPacket = { set, n };
+  goTo("db-sets");
+}
+// before a card's own click (a Database card opens and closes on one)
+document.addEventListener("click", (e) => {
+  const b = e.target.closest?.(".src-pkt[data-pkt-set]"); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  openPacketPage(b.dataset.pktSet, parseInt(b.dataset.pktN, 10));
+}, true);
 function questionMetaRowHtml(q, where, opts) {
   if (!q) return "";
   const o = opts || {};
@@ -777,7 +797,7 @@ function questionMetaRowHtml(q, where, opts) {
   // as that pushed the question down at the end of every question (ui.css)
   const d = parseInt(q.difficulty);
   const dup = o.noCat ? `<span class="qm-dup">${catBadgeHtml(qPathOf(q))}${q.difficulty != null ? `<span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[d] || "")}">Diff ${escapeHtml(String(q.difficulty))}</span>` : ""}${yearBadgeHtml(q.set_year)}</span>` : "";
-  const lead = (o.noCat ? dup : catBadgeHtml(qPathOf(q)) + yearBadgeHtml(q.set_year)) + (src ? `<span class="src">${escapeHtml(src)}</span>` : "");
+  const lead = (o.noCat ? dup : catBadgeHtml(qPathOf(q)) + yearBadgeHtml(q.set_year)) + srcHtml(src, q.set_name, q.packet_number);
   return `<div class="qmeta-row">${lead}${tags ? (lead ? '<span class="vsep" aria-hidden="true"></span>' : "") + tags : ""}</div>`;
 }
 // Clicking any tag chip opens Database → Search with just that tag.
@@ -8532,7 +8552,7 @@ function qcardHtml(o) {
     return `<div class="${cls}"${o.attrs || ""}>
       <div class="qcard-head"><span class="qcard-chev" aria-hidden="true"></span><div class="qcard-title"><span class="qcard-ans">${o.titleHtml}</span>${o.kindHtml ? `<span class="qcard-kind">${o.kindHtml}</span>` : ""}</div><span class="qcard-side">${o.sideHtml || ""}</span></div>
       <div class="qcard-body">${o.bodyHtml || ""}</div>${topics}
-      <div class="qcard-tags qmeta-row">${catBadgeHtml(path)}${yearBadgeHtml(year)}${src ? `<span class="src">${escapeHtml(src)}</span>` : ""}${tags ? '<span class="vsep" aria-hidden="true"></span>' + tags : ""}</div>
+      <div class="qcard-tags qmeta-row">${catBadgeHtml(path)}${yearBadgeHtml(year)}${srcHtml(src, q && q.set_name, q && q.packet_number)}${tags ? '<span class="vsep" aria-hidden="true"></span>' + tags : ""}</div>
     </div>`;
   }
   const diffBadge = diff !== null && diff !== undefined && diff !== "" ? `<span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[parseInt(diff)] || "")}">Diff ${escapeHtml(String(diff))}</span>` : "";
@@ -14062,6 +14082,8 @@ function loadDatabase() {
   // Mark the tab strip too — rendering the body alone left every tab
   // unselected when you returned to the Database after leaving it.
   syncDbTabActive();
+  // (15.102) a packet asked for from a question's source: that packet, on Sets
+  if (_pendingPacket) { const p = _pendingPacket; _pendingPacket = null; if (IS_WEB) window.qbWebPathSync(); openPacket(p.set, p.n); return; }
   renderDbTab();
 }
 

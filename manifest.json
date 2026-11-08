@@ -1,5 +1,5 @@
 {
-  "version": "15.101",
+  "version": "15.102",
   "renderer": [
     "index.html",
     "style.css",
@@ -173,14 +173,14 @@
   "notes": "minor ui fixes",
   "files": {
     "renderer/index.html": "70a9a138150c7a1fe006db042810ddef7db7123cc90bc6cb286a9cb01929ede4",
-    "renderer/style.css": "a9cb9d0ebc6ec23a311277fd67b352362ebc2a7fafa1a44cdeb20ff67e9449b4",
+    "renderer/style.css": "25f5798a2fafa32c26a99a1c9d880f0f129741e25ecdaffcc8f167c6b74c15af",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "f244718bf96a3699003b5d92061f30ef7636e09f6f62543a8b50d620589e6d42",
-    "renderer/app.js": "b784ece8e3e569eaf52347a9894d013a1a57cf306bd692beeff9b2daa0dd4d4e",
+    "renderer/extensions.js": "a6e3be4ead0b1d173ff11d940edb0d33e35820ccd16b8699eff47494570fe08c",
+    "renderer/app.js": "792743783671582efdb519fe508025f4dada4bfb7d7e4eddce69e74e31bddc5d",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "ef85095d9b6f3fdc770fc73d6599400a9b7ed16b15da45d8c9c807f94bc33a53",
     "plugins/answer-notes.zip": "57194a5555a806ca53d56198beee48964b10fd11005a65ae78b47d42ee386241",
-    "plugins/backdrops.zip": "314b022fb1d8ffb7b1ccc5e4ee2a8ec558943824156119bcd6b01ab528bbee0f",
+    "plugins/backdrops.zip": "9a00c5456780993df6fa6de8ff89ac7c7c8e6357475fa05edb4825ba3ad5da4c",
     "plugins/buzz-effects.zip": "200d0a0701c5a90e643d19d4d3b863cfe48dfb7a9ed47f619d5a6428668b7991",
     "plugins/buzz-tracker.zip": "4cda6526476ae6597a47a84e5603606272f14ddbe6c40b00e8274af7f437c3fd",
     "plugins/buzz-words.zip": "e3495609a4fa765a10e22483f3a874334e3122f8b334f26d7f992b213a6b0250",
@@ -204,11 +204,11 @@
     "plugins/packet-builder.zip": "171acf3d3ada0b300dff7aa48b5dac603d789f658f03cf7c216b698ce550b23d",
     "plugins/pyramid-check.zip": "e5e5aa4757dc49e56361c454b3c769c2cf5625a81362adf1dcc6e2256f297b76",
     "plugins/quotations.zip": "c10ea9f49ba1efad5644c92dbfb03a831d74cb18bfe66f9849b8dd1f92f1855a",
-    "plugins/reading-style.zip": "fd0fabe7939069b5d72a92d743b978322b1029ef8478a6bdf59851c7c36deec8",
+    "plugins/reading-style.zip": "33541bc1cbac7e935be561f884b02e3f1dd74cbf20769416a0cdf232f076266e",
     "plugins/rival.zip": "ac22d98621743e8e7a7f26ef71cae898f86fa1cd5033e0e8d3278d1640ce0a4d",
     "plugins/tournament-prep.zip": "f06f0fe0943ae029735a4a9f9f5f2a052b94fc1eecb900dc7ab6e00a7014e3e1",
     "plugins/voice-answers.zip": "0f7d2928186eee4a99d04ba36d4d0840816b65ed294d357a0a23735088905a84",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "EMa34168jK783IRVFpspdqskK6R9F2TBkSnB/OXIzJAqFq32HFz47DYJ6lBfwt7sxtbOAoO5ZdeBxoUd5oxmCQ=="
+  "signature": "WAoo9ZR1yx+v+/S99GV2tt9xhpQjjjkYPoOnO0uaES5hdOlXhQUg+rfy7Y3ZLNxi8++Y3atG1dbi2zJ/gKkODQ=="
 }

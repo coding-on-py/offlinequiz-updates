@@ -6947,21 +6947,15 @@ function __qbMain(ctx) {
   }
   const seenReports = () => { try { return JSON.parse(ls.get("qb-dx-seen") || "[]") || []; } catch (e) { return []; } };
   const markSeen = (id) => { const s = seenReports().filter((x) => x !== id); s.unshift(id); ls.set("qb-dx-seen", JSON.stringify(s.slice(0, 100))); };
-  function roleLine() {
-    const r = role(), caps = myCapTeams().map((t) => t.name), mine = teamsOf(myMid()).map((t) => t.name), parts = [];
-    if (r === "owner") parts.push("owner"); else if (r === "admin") parts.push("admin");
-    if (caps.length) parts.push(caps.join(" and ") + " captain");
-    if (!parts.length) parts.push(mine.length ? "on " + mine.join(" and ") : "member");
-    return "you: <b>" + esc(parts.join(", ")) + "</b>";
-  }
   function headHtml() {
     const o = O();
     const settingsItem = isAdmin() ? '<button type="button" class="pop-item" role="menuitem" data-cl="settings">' + ico("gear", 15) + "Organization settings…</button>" : "";
     const items = isOwner()
       ? settingsItem + '<button type="button" class="pop-item" role="menuitem" data-cl="transfer">' + ico("crown", 15) + 'Transfer ownership…</button><div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="delete-org">' + ico("trash", 15) + "Delete organization</button>"
       : settingsItem + (settingsItem ? '<div class="pop-sep"></div>' : "") + '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
+    // (15.102) under the name only the count against the cap ("20/100 members"): no teams, no role
     return '<div class="cl-card club-head"><span class="club-tile lg" aria-hidden="true">' + esc(o.tag) + '</span><div class="ch-text"><div class="ch-name"><h2>' + esc(o.name) + '</h2><span class="tag-chip">' + esc(o.tag) + "</span></div>" +
-      '<p class="ch-meta">' + people().length + "/" + ((o && o.cap) || 100) + " members · " + plural(teams().length, "team") + " · " + roleLine() + "</p></div>" +
+      '<p class="ch-meta">' + people().length + "/" + ((o && o.cap) || 100) + " members</p></div>" +
       '<div class="ch-actions">' + (canRunAny() && teams().length ? '<button type="button" class="btn btn-primary" data-cl="run">' + ico("target", 16) + "Run a diagnostic</button>" : "") +
       '<button type="button" class="btn" data-cl-tab="invites">' + ico(canInvite() ? "userplus" : "key", 16) + (canInvite() ? "Invite" : "Invite code") + "</button>" +
       '<div class="pop-wrap"><button type="button" class="btn btn-icon" data-menu="org" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(o.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div></div></div>";
@@ -13540,7 +13534,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
     const ans = typeof primaryAnswerText === "function" ? primaryAnswerText(k.answer || "") || k.answer : k.answer;
     return `<article class="tg-clue"><p class="tg-clue-text">${text}</p>
       <div class="tg-clue-foot"><span class="tg-ans"><span class="ra-k">Answer</span> <span class="ans-toggle"><span class="ans">${esc(ans || "?")}</span></span></span>` +
-      `${k.part != null ? `<span class="tg-part">Part ${"ABCDEFGHI"[k.part] || k.part + 1}</span>` : ""}${k.role === "about" ? '<span class="tg-about">About it</span>' : ""}${k.canon ? tierHtml(k.canon) : ""}<span class="src">${esc(src)}</span></div></article>`;
+      `${k.part != null ? `<span class="tg-part">Part ${"ABCDEFGHI"[k.part] || k.part + 1}</span>` : ""}${k.role === "about" ? '<span class="tg-about">About it</span>' : ""}${k.canon ? tierHtml(k.canon) : ""}${window.qbSrcHtml ? window.qbSrcHtml(src, k.set_name, k.packet_number) : `<span class="src">${esc(src)}</span>`}</div></article>`;
   }
   const tagUrl = (id) => "/api/topics/tag?id=" + encodeURIComponent(id);
   const cluesUrl = (id, qtype, role, offset) => "/api/topics/clues?id=" + encodeURIComponent(id) + "&qtype=" + qtype + "&role=" + (role === "about" ? "about" : "any") + "&limit=25&offset=" + offset;
