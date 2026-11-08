@@ -1,5 +1,5 @@
 {
-  "version": "15.97",
+  "version": "15.98",
   "renderer": [
     "index.html",
     "style.css",
@@ -176,7 +176,7 @@
     "renderer/style.css": "7eb2e407d56a2504cce3920b28918295ce9527ae298f9dc9a7fd294c894a9e43",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "2f0042ae48716834600d7555ce9a45af74189ca88a3521d986f1c15722012478",
-    "renderer/app.js": "351a8969ac76f01cd440037752c24211a56a99ad9c1acf0b53c6a09299e980e7",
+    "renderer/app.js": "ceeda98587ddcac08ef5d7bfaeb23214ba8fa693d41a19c7805d6b7bc1d005db",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "ef85095d9b6f3fdc770fc73d6599400a9b7ed16b15da45d8c9c807f94bc33a53",
     "plugins/answer-notes.zip": "57194a5555a806ca53d56198beee48964b10fd11005a65ae78b47d42ee386241",
@@ -210,5 +210,5 @@
     "plugins/voice-answers.zip": "0f7d2928186eee4a99d04ba36d4d0840816b65ed294d357a0a23735088905a84",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "QDewl65IW4x+9ipuA2lB9YRc/0F21Pl1UwVRp4S7K45V2pQUDOcZWu1+6QZsJg+8BppaNhbLcx9Y4ng9Qh/5AA=="
+  "signature": "Ax8CEvHzslOCfX0VRu+QiW86FgmuqR3UQasy6pmUPGzdHYkPN53pwUd1URvS7ZOUW0s1Ajze0K5jrGCDyybcCg=="
 }

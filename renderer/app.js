@@ -8019,8 +8019,12 @@ function buzz() {
   if (state.isBuzzed || !state.sessionActive || state._oppBusy) return;
   // No live question (still loading, or a queue just ran out) — nothing to buzz on.
   if (!state.currentQuestion || state._loadingQuestion) return;
+  // (15.98) a buzz while paused ends the pause: the PAUSED cover and the greyed text go (they stayed up, the answer
+  // box under them), and the buzz is where reading stopped (a word Pause cut off isn't finished first)
+  const fromPause = state.isPaused;
   state.isBuzzed = true;
   state.isPaused = false;
+  if (fromPause) { $("#question-text")?.classList.remove("paused-text"); document.getElementById("pause-overlay")?.remove(); }
   state.promptActive = false;
   state._promptFrom = null;
 
@@ -8031,7 +8035,7 @@ function buzz() {
 
   const text = state.currentDisplayText || state.currentQuestion?.question_sanitized || "";
   // in the middle of a word: the rest of it shows, the buzz after it (wordEndAt); never past a plugin page's stop
-  { const ps = pageStop(), j = wordEndAt(text, state.revealIndex); state.revealIndex = ps && state.revealIndex <= ps && j > ps ? ps : j; }
+  if (!fromPause) { const ps = pageStop(), j = wordEndAt(text, state.revealIndex); state.revealIndex = ps && state.revealIndex <= ps && j > ps ? ps : j; }
   state.buzzPosition = state.revealIndex;
   (state.buzzMarks = state.buzzMarks || []).push(state.revealIndex);
 
