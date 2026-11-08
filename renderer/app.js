@@ -13419,12 +13419,14 @@ applySeasonTheme();
 // Endurance, Streaks) and each category's Answer Powers. It joins the category badges on the profile (the trials',
 // the events'): a gold emblem in the group's colour with its glyph, its ribbon "100%". An event's achievements have
 // the event's own badge ──
-const ACH_SET_GLOBAL = [["total", "Questions", "chart"], ["powers", "Powers", "bolt"], ["negs", "Negs", "flag"], ["cat", "Categories", "puzzle"], ["daily", "Endurance", "clock"], ["streak", "Streaks", "calendar"]];
+const ACH_SET_GLOBAL = [["total", "Questions", "chart"], ["powers", "Powers", "bolt"], ["negs", "Negs", "flag"], ["cat", "Categories", "grid"], ["daily", "Endurance", "clock"], ["streak", "Streaks", "calendar"]];
+// Categories' glyph: four tiles (the puzzle piece is Miscellaneous's trial badge)
+const ACH_SET_ICON = { grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/>' };
 const ACH_SET_GLYPH = { Literature: "lit", History: "hist", Geography: "geo", Science: "sci", Math: "math", Mythology: "myth", "Pop Culture": "pop", Sports: "sports", "Fine Arts": "fa", Philosophy: "phil" };
 let _achSetInfo = {};
 function achSets(achData) {
   const sets = [];
-  for (const [type, label, icon] of ACH_SET_GLOBAL) sets.push({ key: "achset:g:" + type, label, glyph: ICON[icon], hue: "#e3b341", list: ACHIEVEMENT_LIST.filter((a) => a.type === type && !a.event && achData[a.id]) });
+  for (const [type, label, icon] of ACH_SET_GLOBAL) sets.push({ key: "achset:g:" + type, label, glyph: ACH_SET_ICON[icon] || ICON[icon], hue: "#e3b341", list: ACHIEVEMENT_LIST.filter((a) => a.type === type && !a.event && achData[a.id]) });
   const ap = ACHIEVEMENT_LIST.filter((a) => a.type === "answer_power" && !a.event && achData[a.id]);
   for (const [, label] of AP_CATEGORY_PREFIXES) sets.push({ key: "achset:ap:" + label, label, glyph: TRIAL_GLYPH[ACH_SET_GLYPH[label]] || ICON.award, hue: ROOT_COLOR[label] || "#e3b341", list: ap.filter((a) => achCatOf(a) === label) });
   return sets.filter((s) => s.list.length);
@@ -13432,7 +13434,6 @@ function achSets(achData) {
 const achSetEmblem = (s, size) => emblemSvg({ level: 7, metal: "gold", hue: s.hue, glyph: s.glyph, ribbon: "100%", size });
 function achSetBadgesHtml(achData) {
   if (!achData) return "";
-  _achSetInfo = {};
   return achSets(achData).filter((s) => s.list.every((a) => achData[a.id] && achData[a.id].earned)).map((s) => {
     _achSetInfo[s.key] = s;
     return `<button type="button" class="tr-emb ach-set-emb" data-badge="${escapeHtml(s.key)}" title="Every ${escapeHtml(s.label)} achievement" aria-label="${escapeHtml(s.label)} achievements badge">${achSetEmblem(s, 62)}<span class="tr-emb-name">${escapeHtml(s.label)}</span></button>`;
@@ -16169,18 +16170,19 @@ async function openUserProfile(handle, shownName) {
     : rel === "incoming" ? '<button type="button" class="btn btn-sm btn-primary" data-up="accept">Accept friend request</button>'
     : '<button type="button" class="btn btn-sm btn-primary" data-up="add">Add friend</button>';
   const st = d.stats || {}, num = (v) => Number(v || 0).toLocaleString();
-  let achHtml = "", achNote = "";
+  let achHtml = "", achNote = "", upAch = null;
   if (d.private) achNote = `<p class="fr-empty">${ic("lock", 14)} @${escapeHtml(d.handle)} keeps their practice private.</p>`;
   else {
     const p = d.powers || {};
     const achData = computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p), p.ach_at);
+    upAch = achData;
     const all = Object.values(achData || {}), got = all.filter((a) => a && a.earned).length;
     achNote = `<div class="up-stats"><span><b class="num">${num(st.totalQuestions)}</b><small>questions</small></span><span><b class="num">${num(st.tossupPowers)}</b><small>powers</small></span><span><b class="num">${st.totalQuestions ? Math.round((st.tossupAccuracy || 0) * 100) + "%" : "—"}</b><small>tossup accuracy</small></span><span><b class="num">${got}</b><small>achievements</small></span></div>`;
     achHtml = `<div class="stats-section"><div class="stats-section-title">Achievements</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
   }
   body.innerHTML = `<div class="up-actions">${friendBtn}</div>${achNote}${achHtml}`;
   el.querySelector(".up-who .tr-badges")?.remove();
-  el.querySelector(".up-who").insertAdjacentHTML("beforeend", trialBadgesHtml(normTrialInfo({ trials: d.trials }).trials, seasonBadgesHtml(d.powers)));
+  el.querySelector(".up-who").insertAdjacentHTML("beforeend", trialBadgesHtml(normTrialInfo({ trials: d.trials }).trials, seasonBadgesHtml(d.powers) + (upAch ? achSetBadgesHtml(upAch) : "")));   // (15.106) and the achievement badges
   wireBadges(el.querySelector(".up-who"), normTrialInfo({ trials: d.trials }).trials, false);
   try { initCollapsibles(body); } catch (e) {}
   if (!d.private) { const p = d.powers || {}; body._achWired = false; wireAchievementCards(body, { achData: computeAchievementData(st, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p), p.ach_at), records: achRecordsFrom(p), stats: st }); }

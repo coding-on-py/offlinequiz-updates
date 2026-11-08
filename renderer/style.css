@@ -4632,8 +4632,10 @@ button.acct-row:hover { background: var(--raised); }
 .lb-row[data-user]:hover, .fr-row[data-user]:hover, .fr-req[data-user]:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .mp-player[data-user]:not(.mp-you):hover .nm b, .mp-chat-name[data-user]:hover { text-decoration: underline; text-underline-offset: 3px; }
 /* their profile */
-.up-box { width: min(640px, 94vw); max-width: min(640px, 94vw); max-height: min(86vh, 860px); display: flex; flex-direction: column; gap: 12px; }
-.up-head { display: flex; align-items: center; gap: 12px; }
+/* (15.106) wider (its badges and achievements had little room); the picture lines up with the name and username, not
+   the middle of everything beside it (the badges under them pulled it down) */
+.up-box { width: min(860px, 94vw); max-width: min(860px, 94vw); max-height: min(86vh, 860px); display: flex; flex-direction: column; gap: 12px; }
+.up-head { display: flex; align-items: flex-start; gap: 12px; }
 .up-av { width: 44px; height: 44px; font-size: 19px; flex: 0 0 auto; }
 .up-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .up-who b { font-size: 17px; color: var(--strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
