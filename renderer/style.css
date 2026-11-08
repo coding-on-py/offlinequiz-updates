@@ -7047,10 +7047,14 @@ html[data-panel-side="left"] .voice-panel { right: auto; left: 12px; transform-o
 
 /* (15.94) the read-aloud voice getting its words ready while the text shows (app.js Speech genWatch): a small turning
    circle where the next words will come, at the end of what's been read */
-html.voice-gen .revealed:has(+ .unrevealed)::after {
+html.voice-gen .revealed:has(+ .unrevealed)::after,
+html.voice-gen #question-area:not(.read-hidden) #question-text:empty::before {
   content: ""; display: inline-block; width: 0.82em; height: 0.82em; margin: 0 0.35em; vertical-align: -0.1em; box-sizing: border-box;
   border: 2px solid color-mix(in srgb, var(--accent) 85%, transparent); border-right-color: transparent; border-radius: 50%;
   animation: voice-spin 0.8s linear infinite;
 }
+/* (15.100) at a question's very start nothing is on the page yet (the text comes with the first word): the circle stands
+   where that word will be */
+html.voice-gen #question-area:not(.read-hidden) #question-text:empty::before { margin-left: 0; }
 @keyframes voice-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { html.voice-gen .revealed:has(+ .unrevealed)::after { animation-duration: 2.4s; } }
+@media (prefers-reduced-motion: reduce) { html.voice-gen .revealed:has(+ .unrevealed)::after, html.voice-gen #question-text:empty::before { animation-duration: 2.4s; } }

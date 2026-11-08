@@ -383,6 +383,7 @@ async function loadProfileSettings() {
     let migrated = false;
     if (p.settings && !(Number(p.settings.strictV) >= 2)) { const f = migrateStrictness(p.settings, p.filters); if (f && p.filters) p.filters = f; migrated = true; }
     if (p.settings) Object.assign(state.settings, p.settings);
+    state.settings.readAloud = false;   // (15.100) the account's copy may say on: it starts off
     if (p.username != null) state.username = p.username;
     if (p.avatar != null) state.avatar = p.avatar;
     if (p.viewMode) state.viewMode = p.viewMode;
@@ -462,7 +463,7 @@ const state = {
     strictV: Number(localStorage.getItem("qb-strict-v") || 0),
     allowRebuzzes: localStorage.getItem("qb-allow-rebuzzes") === "true",
     stopOnPower: localStorage.getItem("qb-stop-on-power") === "true",
-    readAloud: localStorage.getItem("qb-read-aloud") === "true",
+    readAloud: false,   // (15.100) off at every start and after every session: turned on by hand (the voice picked stays, qb-voice)
     voice: localStorage.getItem("qb-voice") || "",
     voiceRate: (() => { const v = parseFloat(localStorage.getItem("qb-voice-rate") || "1"); return Number.isFinite(v) && v > 0 ? v : 1; })(),   // Voice speed (15.72)
     readHide: localStorage.getItem("qb-read-hide") === "true",
@@ -5852,6 +5853,17 @@ document.addEventListener("change", (e) => { if (e.target && _MODE_SETTING_IDS.h
 document.addEventListener("input", (e) => { if (e.target && (e.target.id === "strictness-slider" || e.target.id === "panel-speed-slider" || e.target.id === "speed-slider")) scheduleModeSettingSave(); });
 $("#opt-allow-rebuzzes")?.addEventListener("change", (e) => { state.settings.allowRebuzzes = e.target.checked; lsSet("qb-allow-rebuzzes", e.target.checked); });
 $("#opt-stop-on-power")?.addEventListener("change", (e) => { state.settings.stopOnPower = e.target.checked; lsSet("qb-stop-on-power", e.target.checked); });
+// (15.100) Read aloud goes off at every start and when a session ends, so it's only on when turned on for this session.
+// The voice picked is kept (qb-voice); the guides and notes it hid come back as they were (qb-read-prev). At a start it
+// finishes what a session left behind (the app closed while it read)
+function readAloudOff() {
+  let prev = null; try { prev = JSON.parse(localStorage.getItem("qb-read-prev") || "null"); } catch (err) {}
+  if (!state.settings.readAloud && !prev && localStorage.getItem("qb-read-aloud") !== "true") return;
+  state.settings.readAloud = false; lsSet("qb-read-aloud", false);
+  try { localStorage.removeItem("qb-read-prev"); } catch (err) {}
+  if (prev) { if (!!state.settings.hidePronunciations !== prev.pron) setHidePron(prev.pron); if (!!state.settings.hideNotes !== prev.notes) setHideNotes(prev.notes); }
+  try { syncVoiceRow(); } catch (err) {}
+}
 // Read aloud: on, the question being read now is said from where it is; off, the voice stops and the text reads on
 $("#opt-read-aloud")?.addEventListener("change", (e) => {
   if (inRoomVoice()) { roomVoice.set(e.target.checked); syncVoiceRow(); if (e.target.checked) Speech.preloadPicked(); return; }   // (15.86) the room's
@@ -6294,6 +6306,7 @@ function endSession() {
   state._wantBonus = false; state._pendingPairedBonus = null; state._currentPaired = null;
   if (state.revealTimer) { cancelAnimationFrame(state.revealTimer); state.revealTimer = null; }
   Speech.stop();
+  readAloudOff();   // (15.100) on again by hand for the next session
   $("#btn-start-session").innerHTML = keyLabelHtml("start-skip", "Start Session");
   resetQuestionUI();
   updateLiveStats();
@@ -15289,7 +15302,7 @@ function initApp() {
   });
   showScreen("title");
   loadStarredIds();
-  loadProfileSettings().then(pruneOldSessions);
+  loadProfileSettings().then((v) => { readAloudOff(); return pruneOldSessions(v); });
   setTimeout(() => prefetchDefaults().catch(() => {}), IS_WEB ? 600 : 2500);
   setTimeout(() => runRegrade().catch(() => {}), IS_WEB ? 1500 : 5000);
   checkMpReachable();
