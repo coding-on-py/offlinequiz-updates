@@ -218,6 +218,33 @@
       daily: svg('<circle cx="12" cy="12" r="4.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/>'),
       streak: svg('<path d="M12 2c1 3.5-2.5 5-2.5 8a2.5 2.5 0 0 0 5 .3C16.5 12 18 13.5 18 16a6 6 0 0 1-12 0c0-5 4.5-7 6-14z"/>')
     };
+    // (15.107) the events' answer achievements each have their own (all eleven showed the trophy)
+    var EVENT = {
+      "hw26-monster": '<path d="M7 6h10v11.5a2.5 2.5 0 0 1-2.5 2.5h-5A2.5 2.5 0 0 1 7 17.5z"/><path d="M7 9h10"/><path d="M4.5 15.5H7M17 15.5h2.5"/><path d="M9.6 12.3h.01M14.4 12.3h.01"/><path d="M10 16.6h4M11 16v1.2M13 16v1.2"/><path d="M9 6V4M12 6V3.5M15 6V4"/>',
+      "hw26-nevermore": '<path d="M4 3.5h16"/><path d="M12 3.5v10"/><path d="M5.5 14h13a6.5 5.5 0 0 1-13 0z"/><path d="M8 16.5c1.2 1.4 2.5 2 4 2"/>',
+      "hw26-creature": '<path d="M8.8 21c-2.4 0-3.6-1.9-3-4.4.5-2 2.4-4.4 2.4-6.6 0-2.2 1.2-3.8 3-3.8s2.9 1.7 2.7 4.2c-.2 2.4-1 3.8-.6 6.1.5 2.6-1.4 4.5-4.5 4.5z"/><circle cx="9.2" cy="3.6" r="1.1"/><circle cx="12.4" cy="3.2" r="1.1"/><circle cx="15.2" cy="4.6" r="1"/><circle cx="16.7" cy="7.3" r=".9"/>',
+      "hw26-witch": '<path d="M2.5 19.5h19"/><path d="M5.5 19.5c1.4-3.3 2.6-8.4 4.6-12 1.2-2.2 3.1-3.3 4.8-2.7-1.4.9-1.7 2.8-1.1 5L18.5 19.5"/><path d="M8.3 15.3h7.4"/>',
+      "hw26-dead": '<path d="M6.5 20.5V10a5.5 5.5 0 0 1 11 0v10.5"/><path d="M4 20.5h16"/><path d="M12 8v6.5M9.3 10.6h5.4"/>',
+      "hw26-moon": '<circle cx="12" cy="12" r="8.5"/><path d="M6.8 12.6c1-.3 1.8-1 2.1-2 .3.8 1 1.3 1.7 1.2L12 10.2l.4 1.6c.7.1 1.4-.4 1.7-1.2.3 1 1.1 1.7 2.1 2-1.2.4-2.1 1.2-2.4 2.3-.5-.5-1.2-.7-1.8-.5L12 15.6l-.6-1.2c-.6-.2-1.3 0-1.8.5-.3-1.1-1.2-1.9-2.8-2.3z"/>',
+      "tg26-turkey": '<circle cx="12" cy="14.5" r="3.8"/><path d="M8.8 12.2C6.4 9.9 5.9 7 7.3 5.3M10.3 11C9.3 8.2 9.7 5.6 11.2 4M13.7 11c1-2.8.6-5.4-.9-7M15.2 12.2c2.4-2.3 2.9-5.2 1.5-6.9"/><path d="M12 18.3v2.4M10.4 20.7h3.2"/><path d="M12 13.2h.01"/>',
+      "tg26-plymouth": '<path d="M3 15.5h18l-2.6 4.5H5.6z"/><path d="M12 15.5V3"/><path d="M12 4.2l5.8 4.4L12 11.4"/><path d="M12 6.2 7.2 10l4.8 2.1"/><path d="M12 3h2"/>',
+      "tg26-harvest": '<path d="M3.5 10.5 12 4l8.5 6.5V20h-17z"/><path d="M9 20v-6h6v6"/><path d="M9 14l6 6M15 14l-6 6"/><path d="M10.5 9.5h3"/>',
+      "tg26-grain": '<path d="M14.5 3.5a7.5 7.5 0 1 1-8.2 11.3"/><path d="M14.5 3.5c-3.1.9-5.3 3.4-5.4 6.6"/><path d="M6.3 14.8l-2.8 5.7"/>',
+      "tg26-feast": '<path d="M2.5 6.5c4.3 1.1 8.3 4.6 9.8 10.8"/><path d="M2.5 6.5c1.6 4.1 6.2 9.3 12.4 9.8"/><path d="M2.5 6.5 2 8"/><circle cx="16.6" cy="13.6" r="2.1"/><circle cx="19.3" cy="17.2" r="1.8"/><path d="M13.6 18.8c1.1 1.6 2.7 2.1 4.3 1.6"/>',
+    };
+    for (var ek in EVENT) if (!ICONS[ek]) ICONS[ek] = svg(EVENT[ek]);
+    // (15.107) no two achievements look alike: where two drew the same thing (three crowns, two torii, two temples,
+    // two bolts, two drops, two plain suns), all but the likeliest one draw something of their own
+    var REDRAW = {
+      "ap-hist-capet": '<path d="M12 3c-1.6 1.7-2.4 3.7-2.4 5.6 0 2 1 3.4 2.4 4.4 1.4-1 2.4-2.4 2.4-4.4 0-1.9-.8-3.9-2.4-5.6z"/><path d="M9.6 11c-1.9-1.8-4.6-1.7-5.6.2-.9 1.8.4 3.6 2.4 3.3"/><path d="M14.4 11c1.9-1.8 4.6-1.7 5.6.2.9 1.8-.4 3.6-2.4 3.3"/><path d="M7.5 14.5h9"/><path d="M12 13v8M10 21h4"/>',
+      "ap-pop-lebron": '<path d="M8.5 3.5 6 5.2 3.5 9.5l2.8 1.6L7 9.8v10.7h10V9.8l.7 1.3 2.8-1.6L18 5.2l-2.5-1.7c-.5 1.6-1.8 2.6-3.5 2.6s-3-1-3.5-2.6z"/><path d="M9.5 17.5l1-4 1.5 2 1.5-2 1 4z"/>',
+      "ap-hist-japan": '<rect x="2.5" y="5.5" width="19" height="13" rx="1.6"/><circle cx="12" cy="12" r="3.6" fill="currentColor"/>',
+      "ap-phil-athens": '<path d="M7 21h10M8.3 18.5h7.4M9.6 18.5V8.5M14.4 18.5V8.5M12 18.5V8.5"/><path d="M6.6 8.5h10.8"/><path d="M6.6 8.5C5.2 8.5 4.5 7.5 4.6 6.6c.1-1 1-1.5 1.9-1.2.7.2.9 1 .4 1.4M17.4 8.5c1.4 0 2.1-1 2-1.9-.1-1-1-1.5-1.9-1.2-.7.2-.9 1-.4 1.4"/><path d="M7 5.5h10"/>',
+      "ap-myth-lightning": '<path d="M12 2.5v4.5l-2.6 2.6L12 12l-2.6 2.4L12 17v4.5"/><path d="M12 7l2.6 2.6L12 12l2.6 2.4L12 17"/><path d="M7.5 4.5 12 7l4.5-2.5M7.5 19.5 12 17l4.5 2.5"/>',
+      "streak3": '<path d="M12 21v-8"/><path d="M12 13c0-3.6-2.6-6.2-6.3-6.2 0 3.6 2.6 6.2 6.3 6.2z"/><path d="M12 11c0-3.1 2.2-5.6 5.8-5.6 0 3.1-2.2 5.6-5.8 5.6z"/><path d="M8.5 21h7"/>',
+      "ap-sci-sun": '<circle cx="7.5" cy="12" r="3.6"/><path d="M7.5 5v1.6M7.5 17.4V19M2 12h1.4M3.6 8.1l1 1M3.6 15.9l1-1"/><path d="M11.8 12h10M11.6 10.4l9.2-2.4M11.6 13.6l9.2 2.4"/>',
+    };
+    for (var rk in REDRAW) ICONS[rk] = svg(REDRAW[rk]);
     window.QB_ACHIEVEMENT_ICONS = {
       map: ICONS,
       iconFor: function (ach) {
