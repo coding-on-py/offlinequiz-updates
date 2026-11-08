@@ -2061,6 +2061,19 @@ QB.registerTheme({
     "buzz-effects": "Cosmetic", "reading-style": "Cosmetic", "backdrops": "Cosmetic",
   };
   const GROUP_ORDER = ["Play", "Study", "Tools", "Analysis", "Cosmetic", "Other"];
+  // (15.103) the order plugins are listed in (Open, Manage, the Store): the best first. Fact Sheet, Flashcards, Folders
+  // and the database analysis ones; the voices and reading aloud; the rest of the first plugins; then every newer one
+  // (each marked Beta), by name
+  const PLUGIN_RANK = ["fact-sheet", "flashcards", "folders", "keyword-freq", "buzz-words", "canon-tracker",
+    "kokoro-voice", "chatterbox-voice", "voice-answers", "listen",
+    "coach-mode", "packet-builder", "achievement-glyphs"];
+  const rankOf = (id) => { const i = PLUGIN_RANK.indexOf(id); return i < 0 ? PLUGIN_RANK.length : i; };
+  const byRank = (a, b) => rankOf(a.id) - rankOf(b.id) || String(a.name).localeCompare(String(b.name));
+  // the first plugins (before 15.62) aren't Beta; every one since is (or one whose plugin.json says beta)
+  const FIRST_PLUGINS = new Set(["flashcards", "coach-mode", "packet-builder", "folders", "keyword-freq", "buzz-words", "fact-sheet", "canon-tracker", "achievement-glyphs"]);
+  const isBeta = (p) => !!p && (p.beta === true || (!!PLUGIN_GROUP[p.id] && !FIRST_PLUGINS.has(p.id)));
+  const betaTag = (p) => (isBeta(p) ? ' <span class="beta-tag">Beta</span>' : "");
+  QB.isBetaPlugin = (id) => isBeta(QB._plugins.find((x) => x.id === id) || { id });
   const GROUP_COLOR = { Play: "#f0883e", Study: "#3fb950", Tools: "#58a6ff", Analysis: "#bc8cff", Cosmetic: "#f778ba", Other: "#8b949e" };
   const groupOf = (id) => PLUGIN_GROUP[id] || "Other";
   const mono = (name) => String(name || "?").replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
@@ -2211,7 +2224,7 @@ QB.registerTheme({
     const sections = g && Array.isArray(g.sections) ? g.sections.map((s) => guideSectionHtml(s, name)).join("") : "";
     el.innerHTML = '<div class="pg-box" role="document">' +
       '<header class="pg-head">' + piconHtml(src.icon ? src : (have || item), color, " pg-ico") +
-        '<div class="pg-title"><h2>' + esc(name) + "</h2><small>" + (version ? "v" + esc(version) : "") + (author ? " · " + esc(author) : "") + " · " + esc(groupOf(id)) + "</small></div>" +
+        '<div class="pg-title"><h2>' + esc(name) + betaTag(QB._plugins.find((x) => x.id === id) || { id }) + "</h2><small>" + (version ? "v" + esc(version) : "") + (author ? " · " + esc(author) : "") + " · " + esc(groupOf(id)) + "</small></div>" +
         '<button type="button" class="btn btn-ghost btn-icon btn-sm pg-x" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
       "</header>" +
       '<div class="pg-scroll">' +
@@ -2282,23 +2295,23 @@ QB.registerTheme({
       if (!pages.length) {
         body = WEBSITE ? '<div class="ext-empty-state">No plugin pages yet <button type="button" class="btn btn-sm" data-ext-tab="store">Open the Store</button></div>' : '<div class="ext-empty-state">No plugin pages yet</div>';
       } else {
-        const groups = {};
-        pages.forEach((pg) => { (groups[groupOf(pg.pluginId)] = groups[groupOf(pg.pluginId)] || []).push(pg); });
-        body = GROUP_ORDER.filter((g) => groups[g]).map((g) =>
-          '<section class="pgroup"><h2>' + esc(g) + '</h2><div class="pgrid">' + groups[g].map((pg) => {
-            const plug = QB._plugins.find((x) => x.id === pg.pluginId) || {};
-            const label = pg.navLabel || pg.title || plug.name || pg.id;
-            const nice = /[a-z]/.test(label) ? label : String(label).toLowerCase().replace(/(^|\s)\S/g, (m) => m.toUpperCase());
-            return '<button type="button" class="ptile" data-page="' + esc(pg.pluginId + "::" + pg.id) + '">' + piconHtml(plug.icon ? plug : { name: nice }, GROUP_COLOR[g]) + '<span style="min-width:0"><b>' + esc(nice) + '</b><small>v' + esc(plug.version || "") + "</small></span></button>";
-          }).join("") + "</div></section>").join("");
+        // (15.103) one grid, the best first (PLUGIN_RANK); it was a section for each kind
+        const plugOf = (pg) => QB._plugins.find((x) => x.id === pg.pluginId) || { id: pg.pluginId, name: pg.title };
+        const ranked = pages.slice().sort((a, b) => byRank(plugOf(a), plugOf(b)));
+        body = '<section class="pgroup"><div class="pgrid">' + ranked.map((pg) => {
+          const plug = plugOf(pg), g = groupOf(pg.pluginId);
+          const label = pg.navLabel || pg.title || plug.name || pg.id;
+          const nice = /[a-z]/.test(label) ? label : String(label).toLowerCase().replace(/(^|\s)\S/g, (m) => m.toUpperCase());
+          return '<button type="button" class="ptile" data-page="' + esc(pg.pluginId + "::" + pg.id) + '">' + piconHtml(plug.icon ? plug : { name: nice }, GROUP_COLOR[g]) + '<span style="min-width:0"><b>' + esc(nice) + betaTag(plug) + '</b><small>v' + esc(plug.version || "") + "</small></span></button>";
+        }).join("") + "</div></section>";
       }
     } else if (tab === "manage") {
-      const rows = visible.slice().sort((a, b) => GROUP_ORDER.indexOf(groupOf(a.id)) - GROUP_ORDER.indexOf(groupOf(b.id)) || String(a.name).localeCompare(String(b.name))).map((p) => {
+      const rows = visible.slice().sort(byRank).map((p) => {
         const g = groupOf(p.id);
         const on = p.enabled && !QB.pluginLocked(p.id), set = on ? settingsHtml(p, "card") : "";
         return '<div class="ext-row ext-card' + (on ? " active" : "") + '" data-guide="' + esc(p.id) + '" tabindex="0" role="button" aria-label="' + esc(p.name) + ', how to use it">' +
           piconHtml(p, GROUP_COLOR[g]) +
-          '<span class="er-name"><b>' + esc(p.name) +
+          '<span class="er-name"><b>' + esc(p.name) + betaTag(p) +
             (p._error ? ' <span class="ext-badge err">Failed</span><span class="qb-info" data-tip="' + esc(p._error) + '">i</span>' : "") + "</b>" +
             '<small>' + esc(p.author ? "by " + p.author : "") + "</small></span>" +
           '<span class="er-ver">v' + esc(p.version) + "</span>" +
@@ -2393,7 +2406,7 @@ QB.registerTheme({
     }
     if (!st.list.length) return '<div class="ext-empty-state">The Store is empty right now</div>';
     // (15.63: no download or like counts on the cards; a search box over them instead, which filters as you type)
-    const items = st.list.slice().sort((a, b) => GROUP_ORDER.indexOf(groupOf(a.id)) - GROUP_ORDER.indexOf(groupOf(b.id)) || String(a.name).localeCompare(String(b.name)));
+    const items = st.list.slice().sort(byRank);   // (15.103) the best first
     // a wide search box, then a chip for each kind of plugin with how many there are (15.65)
     const count = (g) => items.filter((x) => (g === "added" ? QB._plugins.some((p) => p.id === x.id && !p._builtin) : groupOf(x.id) === g)).length;
     const kinds = GROUP_ORDER.filter((g) => count(g) > 0);
@@ -2418,7 +2431,7 @@ QB.registerTheme({
       const words = [item.name, item.description, g].concat(PLUGIN_TAGS[item.id] || []).join(" ").toLowerCase();
       return '<article class="sc-card" data-guide="' + esc(item.id) + '" data-search="' + esc(words) + '" data-kind="' + esc(g) + '"' + (have ? " data-added" : "") + ' tabindex="0" role="button" aria-label="' + esc(item.name) + ', how to use it" style="--g:' + esc(color) + '">' +
         storeShot(item, color) +
-        '<div class="sc-body"><h3 class="sc-name">' + esc(item.name) + '</h3><div class="sc-by">by <span>' + esc(item.author || "OfflineQuiz") + "</span> · v" + esc(item.version) + "</div>" +
+        '<div class="sc-body"><h3 class="sc-name">' + esc(item.name) + betaTag(item) + '</h3><div class="sc-by">by <span>' + esc(item.author || "OfflineQuiz") + "</span> · v" + esc(item.version) + "</div>" +
         '<p class="sc-desc">' + esc(item.description || "") + '</p><div class="sc-tags">' + tags + "</div>" +
         '<div class="sc-foot">' + btn + "</div></div></article>";
     }).join("") + "</div>";
@@ -4558,7 +4571,8 @@ function __qbMain(ctx) {
         // a room as a row: its name, how many players and how many online (no names, 14.91), Join
         var roomRow = function (r, name) {
           var who = countText(r.online == null ? { players: r.players, online: r.players } : r);
-          var state = [r.spectators ? r.spectators + " watching" : "", r.official ? "" : r.questions ? "Q" + r.questions : "waiting"].filter(Boolean).join(" · ");
+          // (15.103) no question count ("Q2"): only that it hasn't started yet
+          var state = [r.spectators ? r.spectators + " watching" : "", r.official || r.questions ? "" : "waiting"].filter(Boolean).join(" · ");
           return '<button type="button" class="list-row clickable mp-recent-row mp-pub-row" data-code="' + esc(r.code) + '"' + '><b class="mp-rcode">' + esc(name) + (r.password ? ' <span class="mp-lock" title="Needs its password" aria-label="Needs its password">' + LOCK_SVG + "</span>" : "") + '</b><span class="mp-rwho">' + esc(who) + '</span><span class="mp-rwhen">' + esc(state) + '</span><span class="mp-rjoin">Join ›</span></button>';
         };
         var osec = body.querySelector("#mp-official");
@@ -5199,10 +5213,9 @@ function __qbMain(ctx) {
                 (inDiag() ? '<button type="button" class="btn btn-primary" id="mp-dx-report" hidden>See the report</button><button type="button" class="btn btn-primary" id="mp-dx-clubs" hidden>Back to Clubs</button>' : "") +
               "</div>" +
               '<div class="result-area hidden" id="mp-result"></div><div class="sr-only" id="mp-sr" aria-live="polite"></div>' +
-              '<div class="history-panel mp-history" id="mp-history-panel" style="display:none">' +
-                '<button class="btn" id="mp-history-open">Session history (<span id="mp-history-count">0</span>)</button>' +
-              "</div>" +
             "</main>" +
+            // (15.103) the side column, as practice's: Players / Chat, Session history under it (above it in one column)
+            '<div class="mp-side">' +
             '<aside class="mp-panel" aria-label="Room">' +
               '<div class="panel-tabs" role="tablist">' +
                 '<button type="button" role="tab" data-mptab="players" aria-selected="' + (panelTab === "players") + '">Players</button>' +
@@ -5221,6 +5234,10 @@ function __qbMain(ctx) {
                 "</div>" +
               "</div>" +
             "</aside>" +
+            '<div class="history-panel mp-history" id="mp-history-panel" style="display:none">' +
+              '<button class="btn" id="mp-history-open">Session history (<span id="mp-history-count">0</span>)</button>' +
+            "</div>" +
+            "</div>" +
           "</div>" +
         "</div>";
 

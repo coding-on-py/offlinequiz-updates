@@ -3747,6 +3747,34 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   .mp-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 36px; }
   .rh-side { flex-basis: 320px; width: 320px; }
 }
+/* (15.103) Beta: a small blue box beside the Voice panel's title and every newer plugin's name (extensions.js betaTag) */
+.beta-tag { display: inline-flex; align-items: center; height: 18px; margin-left: 6px; padding: 0 6px; border: 1px solid rgba(88, 166, 255, 0.45); border-radius: 4px;
+  background: rgba(88, 166, 255, 0.14); color: #58a6ff; font-family: var(--font); font-size: 10.5px; font-weight: 700; line-height: 1; letter-spacing: 0.02em;
+  text-transform: none; vertical-align: 0.15em; white-space: nowrap; flex: none; }
+html[data-scheme="light"] .beta-tag { border-color: rgba(37, 99, 235, 0.4); background: rgba(37, 99, 235, 0.1); color: #1d4ed8; }
+/* (15.103) Session history (practice and rooms, app.js openHistoryOverlay): its search is as tall as the filters beside
+   it (height auto made it 29 px against their 36). On a phone the window fits the screen, its four buttons share one row
+   (Close went past the edge) and the filters are an even grid: two, then Categories and the search across */
+#history-overlay .rv-filterbar input { height: 36px; margin-top: 0; }
+@media (max-width: 560px) {
+  #history-overlay .review-viewer-box { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); margin: 0 auto; }
+  #history-overlay .review-viewer-head { padding: 12px 12px 10px; gap: 8px; }
+  #history-overlay .review-viewer-head > span:last-child { width: 100%; display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px !important; }
+  #history-overlay .review-viewer-head .btn { min-width: 0; margin: 0; padding: 0 4px; justify-content: center; white-space: nowrap; font-size: 12px; }
+  #history-overlay .rv-filterbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px; }
+  #history-overlay .rv-filterbar > * { min-width: 0; width: 100%; margin: 0; }
+  #history-overlay .rv-filterbar > :is(#hist-fcat-btn, #hist-fq) { grid-column: 1 / -1; }
+  #history-overlay .review-viewer-list { padding: 12px; }
+}
+/* (15.103) the side column holds Players / Chat and Session history under it, as practice's holds the score and its
+   history; it stays at the top as the page scrolls (the panel did on its own). In one column (a phone, or Room
+   settings open on a middling window) the history is above Players / Chat, where it was */
+.mp-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.mp-side > .mp-panel { position: static; }
+.mp-side > .mp-history .btn { width: 100%; }
+@media (min-width: 961px) { .mp-side { position: sticky; top: 0; align-self: start; } }
+@media (max-width: 960px) { .mp-side > .mp-history { order: -1; } }
+@media (max-width: 1400px) { .screen.panel-host .mp-room .mp-side { position: static; } .screen.panel-host .mp-room .mp-side > .mp-history { order: -1; } }
 .room-q { font-size: 17px; line-height: 1.85; color: var(--strong); }
 .mp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .mp-actions:not(:has(> :not([hidden], .mp-reconnecting))) { display: none; }
