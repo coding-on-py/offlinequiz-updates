@@ -5126,7 +5126,7 @@ tr.op-fail-note > td { padding: 6px 12px; color: var(--red); font-size: 12.5px; 
    pages under the top bar, lists, panels, windows — instead of cutting off at a hard line. Not a
    text box, and not a box holding the settings panel (a mask would clip its fixed category picker):
    the panel's own fade sits under its pinned head (below). */
-.qb-scrolled:not(textarea, input, select, .filters-panel):not(:has(.filters-panel)) {
+.qb-scrolled:not(textarea, input, select, .filters-panel):not(:has(.filters-panel, .rp-jump)) {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
   mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
 }
@@ -5650,6 +5650,10 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 @media (max-width: 560px) { .rp-head .ph-right { margin-left: 0; } }   /* under the title on a phone: lined up with it */
 .rp-jump { position: sticky; top: 0; z-index: 30; display: flex; gap: 4px; margin: 0 0 8px; padding: 8px 0; background: var(--bg); border-bottom: 1px solid var(--line-soft); overflow-x: auto; scrollbar-width: none; }
 .rp-jump::-webkit-scrollbar { display: none; }
+/* (15.96) a report's section bar stays at the top as it scrolls, so the fade goes under it (the page's own fade would
+   dim the bar): a shadow in the page's colour, as the bar scrolls sideways and can't hold a gradient below it */
+.rp-jump { transition: box-shadow .15s ease; }
+.qb-scrolled .rp-jump { box-shadow: 0 20px 18px -10px var(--bg); }
 .rp-jump .db-tab { height: 30px; font-size: 12.5px; flex: none; }
 .rp-sec { display: flex; flex-direction: column; gap: 16px; padding-top: 16px; scroll-margin-top: 48px; }
 .rp-sec + .rp-sec { margin-top: 24px; }

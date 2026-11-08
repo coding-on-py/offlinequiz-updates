@@ -9071,7 +9071,8 @@ function confirmEndSession(after) {
   confirmDialog("End this session?", () => { endSession(); if (after) after(); }, {
     yes: "End session", no: "Keep playing", danger: true,
     detail: heard ? `${heard} ${heard === 1 ? "question" : "questions"} · ${score} ${score === 1 ? "point" : "points"}` : "",
-    alt: heard && state.sessionId ? { label: "End without saving", danger: true, onClick: () => { discardSession(); if (after) after(); } } : null,
+    // (15.96) not for someone signed out on the website where an account is needed to keep anything: nothing is saved
+    alt: heard && state.sessionId && !needsAccount() ? { label: "End without saving", danger: true, onClick: () => { discardSession(); if (after) after(); } } : null,
   });
 }
 // The screen moves on at once; the answers are deleted once the ones still being recorded are in.

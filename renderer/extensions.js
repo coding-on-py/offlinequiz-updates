@@ -3159,6 +3159,7 @@ function __qbMain(ctx) {
           setVal("strictness-slider", b.cfg.strictness, ["input", "change"]);
           // the slider holds a level (1 … 50, 51 = Instant); the config is ms per character
           setVal("panel-speed-slider", window.qbSpeedLevel ? window.qbSpeedLevel(b.cfg.revealSpeed) : b.cfg.revealSpeed, ["input", "change"]);
+          speedRange(publicRoom());
           setChk("opt-stop-on-power", b.cfg.stopOnPower);
           setChk("opt-allow-skips", b.cfg.allowSkips !== false);
           setChk("filter-hide-pron", b.cfg.hidePron);
@@ -5617,6 +5618,23 @@ function __qbMain(ctx) {
       var rb = body && body.querySelector("#mp-roomset"); if (rb) rb.setAttribute("aria-expanded", String(on));
     }
     // BUZZ while a tossup reads; Next once it is over (or before the first).
+    // (15.96) a public room reads between 20 and 40 on the slider (the game server holds it there too: room.mjs
+    // PUBLIC_SPEED): its Setup panel's Reading speed and an official room's slider go only that far. The value is only
+    // brought inside (no change sent: the room's own speed is the server's)
+    function publicRoom() { return !!(lobby && serverMode && settings.public !== false && !inDiag()); }
+    function speedRange(on) {
+      ["panel-speed-slider", "mp-dx-speed"].forEach(function (id) {
+        var sl = document.getElementById(id); if (!sl) return;
+        var want = on && (id === "mp-dx-speed" || !!(borrowedPanel && borrowedPanel.contains(sl)));
+        if (want) {
+          if (sl.dataset.fullMin == null) { sl.dataset.fullMin = sl.min; sl.dataset.fullMax = sl.max; }
+          if (sl.min !== "20") sl.min = "20"; if (sl.max !== "40") sl.max = "40";
+        } else if (sl.dataset.fullMin != null) { sl.min = sl.dataset.fullMin; sl.max = sl.dataset.fullMax; delete sl.dataset.fullMin; delete sl.dataset.fullMax; }
+        else return;
+        var lb = document.getElementById(id === "mp-dx-speed" ? "mp-dx-speed-val" : "panel-speed-label");
+        if (lb && window.qbSpeedLabel && window.qbSpeedMs) { var t = window.qbSpeedLabel(window.qbSpeedMs(sl.value)); if (lb.textContent !== t) lb.textContent = t; }
+      });
+    }
     function setLabel(btn, text, key) {
       if (!btn.firstChild || btn.firstChild.nodeType !== 3) btn.insertBefore(document.createTextNode(""), btn.firstChild);
       if (btn.firstChild.nodeValue !== text) btn.firstChild.nodeValue = text;
@@ -5624,6 +5642,7 @@ function __qbMain(ctx) {
     }
     function syncActions() {
       if (!body) return;
+      speedRange(publicRoom());
       // (15.94) who hosts, for tests and styles (the "You host" badge is gone)
       var rm = body.querySelector(".mp-room"); if (rm) { var hv = (inDiag() ? !!(dxInfo && dxInfo.host) : amHost()) ? "1" : ""; if (rm.dataset.host !== hv) rm.dataset.host = hv; }
       var b = body.querySelector("#mp-buzz-btn"), n = body.querySelector("#mp-next-btn"), p = body.querySelector("#mp-pause-btn");
@@ -5759,6 +5778,7 @@ function __qbMain(ctx) {
       panel.classList.remove("open");
       layout.insertBefore(panel, layout.firstChild);
       borrowedPanel = panel;
+      speedRange(publicRoom());
       var ft = panel.querySelector(".fp-title"); if (ft) ft.textContent = "Room settings";
       var fs = panel.querySelector("#btn-drawer-start"); if (fs) fs.textContent = "Done";
       if (inDiag() || officialRoom) {
@@ -5906,6 +5926,7 @@ function __qbMain(ctx) {
     }
     // Put the panel back where it belongs and strip the injected MP sections.
     function returnPanel(redraw) {
+      speedRange(false);
       var gameOpt = document.querySelector('#mode-select option[value="game"]');
       if (gameOpt) { gameOpt.hidden = false; gameOpt.disabled = false; }
       if (!borrowedPanel) { if (!redraw) giveSoloBack(); return; }
