@@ -3093,7 +3093,9 @@ html[data-panel-side="left"] #app > .screen.panel-host { margin-right: 0; margin
 .result-answer .actual { color: var(--strong); font-weight: 500; }
 .result-answer .actual u, .result-answer .actual b { color: var(--strong); }
 .result-tags:empty { display: none; }
-.result-tags { padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.result-tags { padding-top: 12px; border-top: 1px solid var(--line-soft); }
+/* (15.101) the topics panel under it: the area's own gap is the space (its margin doubled it, 28 px under the row) */
+.result-area > .topics-result { margin-top: 0; }
 .bonus-parts { gap: 12px; }
 .bonus-part { padding: 14px 16px; border: 1px solid var(--line-soft); border-radius: var(--r-lg); background: var(--surface); }
 .bonus-part-header { font-size: 11px; letter-spacing: 0.08em; color: var(--muted); }
@@ -3748,7 +3750,7 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
   #practice-screen .history-panel { margin-top: 6px; }
   #practice-screen .question-placeholder { min-height: 34vh; }
   /* the unread rest of the question isn't laid out (invisible, it pushed the answer box a screen below what was read) */
-  :is(#practice-screen, .mp-room) .question-text .unrevealed { display: none; }
+  :is(#practice-screen, .mp-room) :is(.question-text, .bonus-part-text) .unrevealed { display: none; }
   #practice-screen .question-text { font-size: calc(16.5px * var(--q-scale, 1)); line-height: calc(1.8 * var(--q-lh, 1)); }
   .side-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
   .practice-side .stat-item { min-height: 54px; padding: 8px 4px; }
@@ -6741,7 +6743,7 @@ html[data-scheme="light"] .ttier { color: color-mix(in srgb, var(--tc) 62%, #000
 /* a phone on its side or a tablet: the unread rest of the question isn't laid out either (invisible, it pushed the
    answer box below the screen), as on a phone held upright */
 @media (pointer: coarse), (max-height: 560px) {
-  :is(#practice-screen, .mp-room) .question-text .unrevealed { display: none; }
+  :is(#practice-screen, .mp-room) :is(.question-text, .bonus-part-text) .unrevealed { display: none; }
 }
 /* The top bar fits what it holds (a streak, the Store, Clubs' count, an admin's links), whatever the width: app.js
    fitTopbar measures it and, when it runs past the edge (it pushed the avatar off the screen), its links go to icons
@@ -7044,6 +7046,20 @@ html[data-panel-side="left"] .voice-panel { right: auto; left: 12px; transform-o
 #filters-panel.fp-list :is(#sec-mode, #sec-categories, #sec-difficulty, #sec-canon, #sec-year, .checkbox-row.packet-disable, #fp-count) { display: none !important; }
 /* (15.79) a question's own superscripts and subscripts (app.js fmtText): sized down, and no taller line for them */
 :is(#question-text, .bonus-part-text, .qcard-text, .qcard-part, .qh-qtext, .qh-part) :is(sup, sub) { font-size: .72em; line-height: 0; }
+
+/* (15.101) a bonus part's unread rest is held by its invisible shape, as a tossup's is (style.css .question-text
+   .unrevealed): its dots, one a letter, showed */
+.bonus-part-text .unrevealed { color: transparent; user-select: none; -webkit-user-select: none; pointer-events: none; }
+
+/* (15.101) Tossups and Bonuses fade out at the top as they scroll, as other pages do (.qb-scrolled). The page can't
+   take that mask (it holds the Setup panel, whose category picker a mask would clip), so the question column carries a
+   fade in the page's colour that stays at the top; its 28 px and the column's 20 px gap are given back, so nothing
+   moves, and the score box beside it isn't faded */
+#practice-screen #question-area::before {
+  content: ""; position: sticky; top: 0; z-index: 3; display: block; flex: none; height: 28px; margin-bottom: -48px;
+  background: linear-gradient(var(--bg), transparent); pointer-events: none; opacity: 0; transition: opacity .15s ease;
+}
+#practice-screen.qb-scrolled #question-area::before { opacity: 1; }
 
 /* (15.94) the read-aloud voice getting its words ready while the text shows (app.js Speech genWatch): a small turning
    circle where the next words will come, at the end of what's been read */

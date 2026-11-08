@@ -5528,7 +5528,7 @@ function __qbMain(ctx) {
       if (!settings.tournament) { el.innerHTML = ""; return; }
       var tally = matchTally();
       var head = '<div class="ms-teams">' + (tally.teams.length ? tally.teams.map(function (tm) { return '<div class="ms-team"><b class="num">' + ((tally.t[tm] || {}).pts || 0) + "</b><span>" + esc(tm) + "</span></div>"; }).join("") : '<div class="ms-empty">No teams yet</div>') + "</div>";
-      var info = match && match.set ? '<div class="ms-info">' + esc(match.set) + " · Packet " + esc(match.packet) + (match.over ? " · Final" : match.rows.length ? " · Tossup " + match.rows.length + "/" + (match.total || "?") : "") + "</div>" : "";
+      var info = match && match.set ? '<div class="ms-info">' + esc(match.set) + " Packet " + esc(match.packet) + (match.over ? " · Final" : match.rows.length ? " · Tossup " + match.rows.length + "/" + (match.total || "?") : "") + "</div>" : "";
       var rows = match && match.rows.length ? match.rows.slice().reverse().map(function (r) {
         var chips = r.buzzes.map(function (b) { return '<span class="ms-chip ' + (b.pts > 0 ? "pos" : b.pts < 0 ? "neg" : "") + '">' + neonNameHtml(b.name, playerNamed(b.name)) + " " + signed(b.pts) + "</span>"; }).join("");
         if (!chips && r.answer) chips = '<span class="ms-chip dead">Dead</span>';
@@ -5555,7 +5555,7 @@ function __qbMain(ctx) {
       return { tally: tally, teams: teams, header: header, table: table, players: playerLines() };
     }
     function matchSheetText(d) {
-      var lines = ["Scoresheet · " + (match && match.set ? match.set + ", Packet " + match.packet : "")];
+      var lines = ["Scoresheet · " + (match && match.set ? match.set + " Packet " + match.packet : "")];
       lines.push(d.teams.map(function (tm) { return tm + " " + ((d.tally.t[tm] || {}).pts || 0); }).join("  ·  "), "");
       d.table.forEach(function (row) { lines.push(row.join(" | ")); });
       lines.push("", "Players (15 / 10 / −5, tossup points)");
@@ -5580,7 +5580,7 @@ function __qbMain(ctx) {
       var tbody = d.table.map(function (r) { return "<tr>" + r.map(function (c, i) { return "<td" + (i === 1 ? ' class="ms-ans"' : "") + ">" + esc(c) + "</td>"; }).join("") + "</tr>"; }).join("") || '<tr><td colspan="' + (2 + d.teams.length * 3) + '">No tossups yet</td></tr>';
       var pl = d.players.map(function (x) { return "<tr><td>" + neonNameHtml(x.name, playerNamed(x.name)) + "</td><td>" + esc(x.team) + "</td><td>" + x.p + "</td><td>" + x.g + "</td><td>" + x.n + "</td><td>" + x.pts + "</td></tr>"; }).join("");
       el.innerHTML = '<div class="ms-box" role="document">' +
-        '<header class="ms-head"><div><h2>' + (match.over ? "Final" : "Scoresheet") + "</h2><small>" + esc(match.set || "") + (match.packet != null ? " · Packet " + esc(match.packet) : "") + (match.rows.length && !match.over ? " · Tossup " + match.rows.length + "/" + (match.total || "?") : "") + "</small></div>" +
+        '<header class="ms-head"><div><h2>' + (match.over ? "Final" : "Scoresheet") + "</h2><small>" + esc(match.set || "") + (match.packet != null ? " Packet " + esc(match.packet) : "") + (match.rows.length && !match.over ? " · Tossup " + match.rows.length + "/" + (match.total || "?") : "") + "</small></div>" +
           '<span class="ms-actions"><button type="button" class="btn btn-sm" data-ms="copy">Copy</button><button type="button" class="btn btn-sm" data-ms="csv">CSV</button><button type="button" class="btn btn-ghost btn-icon btn-sm" data-ms="close" aria-label="Close">\u2715</button></span></header>' +
         '<div class="ms-scroll"><div class="ms-bigs">' + teamsHtml + "</div>" +
           '<div class="ms-tablewrap"><table class="ms-table"><thead>' + thead + "</thead><tbody>" + tbody + "</tbody></table></div>" +
@@ -6961,7 +6961,7 @@ function __qbMain(ctx) {
       ? settingsItem + '<button type="button" class="pop-item" role="menuitem" data-cl="transfer">' + ico("crown", 15) + 'Transfer ownership…</button><div class="pop-sep"></div><button type="button" class="pop-item danger" role="menuitem" data-cl="delete-org">' + ico("trash", 15) + "Delete organization</button>"
       : settingsItem + (settingsItem ? '<div class="pop-sep"></div>' : "") + '<button type="button" class="pop-item danger" role="menuitem" data-cl="leave">' + ico("exit", 15) + "Leave organization</button>";
     return '<div class="cl-card club-head"><span class="club-tile lg" aria-hidden="true">' + esc(o.tag) + '</span><div class="ch-text"><div class="ch-name"><h2>' + esc(o.name) + '</h2><span class="tag-chip">' + esc(o.tag) + "</span></div>" +
-      '<p class="ch-meta">' + plural(people().length, "member") + " · " + plural(teams().length, "team") + " · " + roleLine() + "</p></div>" +
+      '<p class="ch-meta">' + people().length + "/" + ((o && o.cap) || 100) + " members · " + plural(teams().length, "team") + " · " + roleLine() + "</p></div>" +
       '<div class="ch-actions">' + (canRunAny() && teams().length ? '<button type="button" class="btn btn-primary" data-cl="run">' + ico("target", 16) + "Run a diagnostic</button>" : "") +
       '<button type="button" class="btn" data-cl-tab="invites">' + ico(canInvite() ? "userplus" : "key", 16) + (canInvite() ? "Invite" : "Invite code") + "</button>" +
       '<div class="pop-wrap"><button type="button" class="btn btn-icon" data-menu="org" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(o.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' + items + "</div></div></div></div>";
@@ -13536,7 +13536,7 @@ return { ready, judgeOpts, readPos, bonusPartPos, evaluateTossup, scoreTossupRes
       const i = text.toLowerCase().indexOf(esc(s).toLowerCase());
       if (i >= 0) text = text.slice(0, i) + "<mark>" + text.slice(i, i + esc(s).length) + "</mark>" + text.slice(i + esc(s).length);
     }
-    const src = [k.set_name, k.packet_number ? "packet " + k.packet_number : ""].filter(Boolean).join(" · ");
+    const src = window.qbSetPacket ? window.qbSetPacket(k.set_name, k.packet_number) : [k.set_name, k.packet_number ? "Packet " + k.packet_number : ""].filter(Boolean).join(" ");
     const ans = typeof primaryAnswerText === "function" ? primaryAnswerText(k.answer || "") || k.answer : k.answer;
     return `<article class="tg-clue"><p class="tg-clue-text">${text}</p>
       <div class="tg-clue-foot"><span class="tg-ans"><span class="ra-k">Answer</span> <span class="ans-toggle"><span class="ans">${esc(ans || "?")}</span></span></span>` +

@@ -765,6 +765,9 @@ function tagChipsHtml(q, where) {
 }
 // Category + year badges, the source, then the tags — one row under a question. noCat leaves the
 // category and year out (practice: the info bar above the question already shows them).
+// (15.101) a set and its packet as one name: "2023 EMACS Packet 6" (it was "2023 EMACS · packet 6")
+function setPacketLabel(set, packet) { return set ? set + (packet ? " Packet " + packet : "") : packet ? "Packet " + packet : ""; }
+window.qbSetPacket = setPacketLabel;
 function questionMetaRowHtml(q, where, opts) {
   if (!q) return "";
   const o = opts || {};
@@ -1585,7 +1588,7 @@ function renderResultTags(q) {
   const el = document.getElementById("result-tags");
   if (!el) return;
   if (!q) { el.innerHTML = ""; return; }
-  const src = [q.set_name, q.packet_number ? "packet " + q.packet_number : "", q.question_number ? "#" + q.question_number : ""].filter(Boolean).join(" \u00b7 ");
+  const src = [setPacketLabel(q.set_name, q.packet_number), q.question_number ? "#" + q.question_number : ""].filter(Boolean).join(" \u00b7 ");
   el.innerHTML = questionMetaRowHtml(q, "practice", { src, noCat: state.settings.showQuestionMeta });
 }
 
@@ -14595,7 +14598,7 @@ function renderSearchResult(q, where) {
       parts.map((p, i) =>
         `<div class="qcard-part">[${bonusPartValues(q).values[i] || 10}] ${fb.parts[i] != null ? fb.parts[i] : escapeHtml(p)}<br><span class="ans-toggle"><span class="ans">ANSWER: ${answerLineHtml(rawAnswers[i], answers[i] || "")}</span></span></div>`).join("");
   }
-  const src = q.set_name ? q.set_name + (q.packet_number ? " · packet " + q.packet_number : "") : "";
+  const src = q.set_name ? setPacketLabel(q.set_name, q.packet_number) : "";
   return qcardHtml({
     compact: state.viewMode === "compact",
     question: q,
@@ -14794,7 +14797,7 @@ async function openSet(setName) {
         { sep: true },
         { label: "Play tossups", onClick: () => playSetPacket(setName, n, false) },
         { label: "Play bonuses", onClick: () => playSetPacket(setName, n, true) },
-      ], { title: setName + " · packet " + n });
+      ], { title: setPacketLabel(setName, n) });
     });
   });
 }
