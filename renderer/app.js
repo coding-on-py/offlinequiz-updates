@@ -1098,6 +1098,7 @@ function goTo(target) {
     case "admin": _adm.tab = "stats"; showScreen("admin"); renderAdmin(); break;
     case "admin-users": _adm.tab = "users"; showScreen("admin"); renderAdmin(); break;
     case "admin-reports": _adm.tab = "reports"; showScreen("admin"); renderAdmin(); break;
+    case "admin-visitors": _adm.tab = "visitors"; showScreen("admin"); renderAdmin(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -1135,7 +1136,7 @@ function webPathNow() {
     case "leaderboards-screen": return "/leaderboards";
     case "store-screen": return "/store";
     case "streaks-screen": return "/streaks";
-    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : "/admin";
+    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : _adm.tab === "visitors" ? "/admin/visitors" : "/admin";
     case "download-screen": return "/download";
     case "clubs-screen": case "diagnostic-screen": case "irl-screen": case "report-screen": case "link-screen": return window.QBClubs ? window.QBClubs.webPath(a.id) : "/";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
@@ -1196,7 +1197,7 @@ function webRoute(path) {
       goTo("plugins");
       if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
     } else if (a === "admin") {
-      goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : "admin");
+      goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : b === "visitors" ? "admin-visitors" : "admin");
     } else if ((a === "clubs" || a === "diagnostic" || a === "report" || a === "l") && window.QBClubs) {
       window.QBClubs.route(seg);
     } else if (a === "tags" && window.QBTopics) {
@@ -16936,19 +16937,22 @@ const _adm = { metric: "visitors", data: null, tab: "stats" };
 // ── Site stats → Users (admins): any account by username — its products (switch each one, or give a
 // whole product, rooms included), its profile, its rooms, its orders and what it keeps here ──
 const ADM_GRANT_NAMES = { "plugin:keyword-freq": "Keyword Frequency", "plugin:canon-tracker": "Canon Tracker", "plugin:buzz-words": "Buzzwords", "plugin:fact-sheet": "Fact Sheet", neon: "Neon name" };
-const _admu = { q: "", list: null, id: null, d: null, gen: 0 };
-const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"], ["reports", "Reports"]].map(([k, l]) =>
+const _admu = { q: "", list: null, id: null, d: null, gen: 0, all: null, total: 0, unverified: 0, filter: "all", allGen: 0, err: false };
+const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"], ["visitors", "Visitors"], ["reports", "Reports"]].map(([k, l]) =>
   `<button type="button" class="db-tab${(_adm.tab || "stats") === k ? " active" : ""}" role="tab" aria-selected="${(_adm.tab || "stats") === k}" data-adm-tab="${k}">${l}${k === "reports" && _admr.counts && _admr.counts.open ? ` <span class="adm-tabn num">${_admr.counts.open}</span>` : ""}</button>`).join("")}</div>`;
 function wireAdmTabs(c) {
   c.querySelectorAll("[data-adm-tab]").forEach((b) => b.onclick = () => { _adm.tab = b.dataset.admTab; renderAdmin(); window.qbWebPathSync?.(); });
 }
 const admAv = (name, neon) => `<span class="fr-av"${avatarStyle(neon)}>${escapeHtml(String(name || "?")[0].toUpperCase())}</span>`;
 const admWhen = (t) => (t ? new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—");
+// (15.108) with nothing searched the list is every account, newest first (unverified ones too, or only those), a
+// hundred at a time; each row says where it was last seen (or where its time zone is) and when it joined
 function paintAdminUsers(c) {
   c.innerHTML = `<div class="adm-page">${admTabsHtml()}
     <div class="adm-users">
       <aside class="adm-find">
         <form id="adm-find" class="adm-search" autocomplete="off"><input id="adm-q" class="mode-input" placeholder="Username, name or email" value="${escapeHtml(_admu.q)}" aria-label="Find an account" spellcheck="false" autocapitalize="off"></form>
+        <div class="adm-listhead" id="adm-listhead"></div>
         <div class="adm-results" id="adm-results"></div>
       </aside>
       <section class="adm-user" id="adm-user"></section>
@@ -16958,7 +16962,19 @@ function paintAdminUsers(c) {
   q.addEventListener("input", () => { _admu.q = q.value; clearTimeout(_admu.t); _admu.t = setTimeout(admSearch, 220); });
   c.querySelector("#adm-find").addEventListener("submit", (e) => { e.preventDefault(); clearTimeout(_admu.t); admSearch(); });
   paintAdmResults(); paintAdmUser();
-  if (!_admu.list && !_admu.q) setTimeout(() => q.focus(), 0);
+  if (!_admu.all || _admu.all.length <= 100) admLoadAll();   // shown as it was, then fresh (unless more pages were opened)
+}
+async function admLoadAll(more) {
+  const my = ++_admu.allGen, from = more && _admu.all ? _admu.all.length : 0;
+  _admu.loadingMore = !!more; if (more) paintAdmResults();
+  let d = null; try { d = await API.get("/api/admin/users?limit=100&offset=" + from + (_admu.filter === "unverified" ? "&filter=unverified" : "")); } catch (e) {}
+  if (my !== _admu.allGen) return;
+  _admu.loadingMore = false;
+  if (!d || !Array.isArray(d.users)) { _admu.err = true; if (!more) _admu.all = null; paintAdmResults(); return; }
+  _admu.err = false;
+  _admu.all = more ? (_admu.all || []).concat(d.users) : d.users;
+  _admu.total = d.total || 0; _admu.unverified = d.unverified || 0;
+  paintAdmResults();
 }
 async function admSearch() {
   const my = ++_admu.gen, q = _admu.q.trim();
@@ -16968,11 +16984,28 @@ async function admSearch() {
   _admu.list = d && Array.isArray(d.users) ? d.users : [];
   paintAdmResults();
 }
+// where an account is: its last address's country, else its time zone's
+const admPlace = (u) => u.country ? admCountry(u.country) : u.zoneCountry ? admCountry(u.zoneCountry) : "";
+const admUserRow = (u) => `<button type="button" class="adm-urow${u.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(u.id)}">${admAv(u.displayName || u.handle || u.email, u.neon)}<span class="adm-uname"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b><small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : ""}${escapeHtml(u.email || "")}</small><small>${[admPlace(u), "joined " + admAgo(u.createdAt)].filter(Boolean).map(escapeHtml).join(" · ")}</small></span>${u.verified ? "" : '<span class="adm-pill">Not verified</span>'}</button>`;
 function paintAdmResults() {
-  const el = document.getElementById("adm-results"); if (!el) return;
-  if (!_admu.list) { el.innerHTML = ""; return; }
-  el.innerHTML = _admu.list.length ? _admu.list.map((u) => `<button type="button" class="adm-urow${u.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(u.id)}">${admAv(u.displayName || u.handle || u.email, u.neon)}<span class="adm-uname"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b><small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : ""}${escapeHtml(u.email || "")}</small></span></button>`).join("")
-    : '<p class="adm-none">No accounts match.</p>';
+  const el = document.getElementById("adm-results"), head = document.getElementById("adm-listhead"); if (!el) return;
+  const searching = !!_admu.q.trim();
+  if (head) {
+    head.hidden = searching;
+    head.innerHTML = searching ? "" : `<div class="seg adm-ufilter" role="group" aria-label="Which accounts">${[["all", "All"], ["unverified", "Not verified"]].map(([k, l]) => `<button type="button" data-adm-ufilter="${k}" aria-pressed="${_admu.filter === k}">${l}</button>`).join("")}</div>
+      <small>${_admu.all ? (_admu.total.toLocaleString() + (_admu.filter === "unverified" ? " not verified" : _admu.total === 1 ? " account" : " accounts")) : ""}</small>`;
+    head.querySelectorAll("[data-adm-ufilter]").forEach((b) => b.onclick = () => { if (_admu.filter === b.dataset.admUfilter) return; _admu.filter = b.dataset.admUfilter; _admu.all = null; paintAdmResults(); admLoadAll(); });
+  }
+  if (searching) {
+    if (!_admu.list) { el.innerHTML = loadingBarHtml(""); return; }
+    el.innerHTML = _admu.list.length ? _admu.list.map(admUserRow).join("") : '<p class="adm-none">No accounts match.</p>';
+  } else if (!_admu.all) {
+    el.innerHTML = _admu.err ? '<p class="adm-none">Couldn\'t load the accounts.</p>' : loadingBarHtml("");
+  } else {
+    el.innerHTML = (_admu.all.length ? _admu.all.map(admUserRow).join("") : `<p class="adm-none">${_admu.filter === "unverified" ? "Every account is verified." : "No accounts yet."}</p>`) +
+      (_admu.all.length < _admu.total ? `<button type="button" class="btn btn-sm btn-ghost adm-more" id="adm-umore"${_admu.loadingMore ? " disabled" : ""}>${_admu.loadingMore ? "Loading…" : "Show more"}</button>` : "");
+    el.querySelector("#adm-umore")?.addEventListener("click", () => admLoadAll(true));
+  }
   el.querySelectorAll("[data-adm-user]").forEach((b) => b.onclick = () => admOpen(b.dataset.admUser));
 }
 async function admOpen(id, keep) {
@@ -16983,9 +17016,16 @@ async function admOpen(id, keep) {
   _admu.d = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that account." };
   paintAdmUser();
 }
+// (15.108) where the account was last seen: when, the country, the address, its time zone
+function admWhere(w) {
+  w = w || {};
+  const bits = w.seenAt ? ["Seen " + admAgo(w.seenAt), w.country ? admCountry(w.country) : "", w.ip || ""] : ["Location not known yet"];
+  if (w.zone) bits.push("time zone " + w.zone + (!w.country && w.zoneCountry ? " (" + admCountry(w.zoneCountry) + ")" : ""));
+  return bits.filter(Boolean).join(" · ");
+}
 function paintAdmUser() {
   const el = document.getElementById("adm-user"); if (!el) return;
-  if (!_admu.id) { el.innerHTML = '<p class="adm-none">Find an account to see and change what it has.</p>'; return; }
+  if (!_admu.id) { el.innerHTML = '<p class="adm-none">Pick an account to see and change what it has.</p>'; return; }
   const d = _admu.d;
   if (!d) { el.innerHTML = loadingBarHtml(""); return; }
   if (d.error) { el.innerHTML = `<div class="db-empty">${escapeHtml(d.error)}</div>`; return; }
@@ -17006,7 +17046,8 @@ function paintAdmUser() {
     <div class="fr-card adm-uhead">${admAv(u.displayName || u.handle || u.email, u.neon)}
       <div class="adm-uhead-txt"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b>
         <small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : "no username · "}${escapeHtml(u.email || "")}</small>
-        <small>Joined ${escapeHtml(admWhen(u.createdAt))} · last sign-in ${escapeHtml(admWhen(u.lastLogin))} · ${d.friends} ${d.friends === 1 ? "friend" : "friends"}</small></div>
+        <small>Joined ${escapeHtml(admWhen(u.createdAt))} · last sign-in ${escapeHtml(admWhen(u.lastLogin))} · ${d.friends} ${d.friends === 1 ? "friend" : "friends"}</small>
+        <small>${escapeHtml(admWhere(u.where))}</small></div>
       <span class="adm-badges">${u.admin ? '<span class="badge">Admin</span>' : ""}${u.verified ? '<span class="badge">Verified</span>' : '<span class="badge">Not verified</span>'}${u.google ? '<span class="badge">Google</span>' : ""}</span></div>
     <section class="fr-card adm-sec"><h3 class="eyebrow">Profile</h3>
       <form id="adm-profile" class="adm-form">
@@ -17070,7 +17111,9 @@ async function renderAdmin() {
   const c = document.getElementById("admin-container"); if (!c) return;
   if (_adm.tab === "users") { paintAdminUsers(c); return; }
   if (_adm.tab === "reports") { renderAdminReports(c); return; }
-  if (!c.querySelector(".adm-page")) c.innerHTML = loadingBarHtml("Loading…");
+  if (_adm.tab === "visitors") { renderAdminVisitors(c); return; }
+  if (!c.querySelector(".adm-page") || c.querySelector(".adm-users, .adm-rpage, .adm-vpage")) c.innerHTML = loadingBarHtml("Loading…");
+  loadAdmGeo();
   let d;
   try { d = await API.get("/api/admin/stats"); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
   if (!document.querySelector("#admin-screen.active")) return;
@@ -17089,18 +17132,123 @@ function paintAdmin(c) {
   const max = Math.max(1, ...days.map((r) => r[_adm.metric] || 0));
   const bars = days.map((r) => `<div class="adm-bar${r.day === d.today ? " today" : ""}" title="${escapeHtml(r.day)}: ${num(r[_adm.metric])}"><i style="height:${Math.max(r[_adm.metric] ? 3 : 0, Math.round(((r[_adm.metric] || 0) / max) * 100))}%"></i><span>${escapeHtml(r.day.slice(8))}</span></div>`).join("");
   const t = d.totals || {};
-  const totals = [["Accounts", t.accounts], ["With a username", t.withUsername], ["Google sign-ins", t.google], ["Friendships", t.friendships], ["Leaderboards made", t.leaderboards], ["Signed-out visitors kept", t.visitorFiles], ["Rooms open now", d.live ? d.live.rooms : null], ["Players in rooms now", d.live ? d.live.players : null]]
+  const totals = [["Accounts", t.accounts], ["Not verified", t.unverified], ["With a username", t.withUsername], ["Google sign-ins", t.google], ["Friendships", t.friendships], ["Leaderboards made", t.leaderboards], ["Signed-out visitors kept", t.visitorFiles], ["Signed out, 30 days", t.signedOut30], ["Rooms open now", d.live ? d.live.rooms : null], ["Players in rooms now", d.live ? d.live.players : null]]
     .map(([l, v]) => `<div class="adm-tot"><b class="num">${v == null ? "—" : num(v)}</b><small>${l}</small></div>`).join("");
   const recent = days.slice(-14).reverse();
   const table = `<table class="adm-table"><thead><tr><th>Day</th>${ADM_METRICS.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead><tbody>${recent.map((r) => `<tr><td>${escapeHtml(r.day)}</td>${ADM_METRICS.map(([k]) => `<td class="num">${num(r[k])}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   c.innerHTML = `<div class="adm-page">${admTabsHtml()}
     <div class="adm-cards">${cards}</div>
     <section class="fr-card adm-chart"><div class="adm-chart-head"><h2>${escapeHtml(label)}</h2><small>last 30 days</small></div><div class="adm-bars">${bars}</div></section>
+    <section class="fr-card adm-geo" id="adm-geo"></section>
     <section class="fr-card adm-totals">${totals}</section>
     <section class="fr-card adm-recent"><div class="adm-scroll">${table}</div></section>
   </div>`;
   c.querySelectorAll("[data-adm]").forEach((b) => b.onclick = () => { _adm.metric = b.dataset.adm; paintAdmin(c); });
   wireAdmTabs(c);
+  paintAdmGeo();
+}
+
+// ── (15.108) Site stats → where players are (admins): accounts and signed-out visitors by country (their last
+// address, web/geoip.mjs; an account not seen since then by its time zone) on a world map, the share in each part of
+// the world (the server is in Singapore, so is a second one worth it), and the countries with the most ──
+const _admg = { show: "all", when: "all", d: null, map: null, err: false, gen: 0 };
+let _admNames = null;
+const admCountry = (cc) => {
+  if (!cc) return "Unknown";
+  try { _admNames = _admNames || new Intl.DisplayNames(["en"], { type: "region" }); const n = _admNames.of(cc); if (n && n !== cc) return n; } catch (e) {}
+  return (_admg.map && _admg.map.names && _admg.map.names[cc]) || cc;
+};
+// the three parts of the world by where a country's middle is (Russia counted with Europe, where most of it lives)
+const ADM_REGIONS = [["am", "Americas"], ["eu", "Europe, Africa and the Middle East"], ["as", "Asia and Oceania"]];
+function admRegionOf(cc) {
+  if (cc === "RU") return "eu";
+  const m = _admg.map, p = m && m.c && m.c[cc]; if (!p) return "";
+  const lon = (p[0] / m.w) * 360 - 180;
+  return lon < -25 ? "am" : lon < 62 ? "eu" : "as";
+}
+async function loadAdmGeo() {
+  const my = ++_admg.gen;
+  const [d, map] = await Promise.all([API.get("/api/admin/geo").catch(() => null), _admg.map ? Promise.resolve(_admg.map) : API.get("/api/admin/worldmap").catch(() => null)]);
+  if (my !== _admg.gen) return;
+  if (map && map.paths) _admg.map = map;
+  _admg.d = d && !d.error ? d : null; _admg.err = !_admg.d || !_admg.map;
+  paintAdmGeo();
+}
+function admGeoCounts() {
+  const d = _admg.d || {}, w = _admg.when === "30" ? "30" : "";
+  const a = d["accounts" + w] || {}, v = d["visitors" + w] || {};
+  if (_admg.show === "accounts") return { ...a };
+  if (_admg.show === "visitors") return { ...v };
+  const out = { ...a }; for (const [k, n] of Object.entries(v)) out[k] = (out[k] || 0) + n; return out;
+}
+function paintAdmGeo() {
+  const el = document.getElementById("adm-geo"); if (!el) return;
+  const seg = (key, opts) => `<div class="seg" role="group">${opts.map(([k, l]) => `<button type="button" data-adm-g${key}="${k}" aria-pressed="${_admg[key] === k}">${l}</button>`).join("")}</div>`;
+  const head = `<div class="adm-chart-head adm-geo-head"><h2>Where players are</h2><small>the server is in Singapore</small>
+    <span class="adm-geo-ctl">${seg("show", [["accounts", "Accounts"], ["visitors", "Signed out"], ["all", "Everyone"]])}${seg("when", [["30", "30 days"], ["all", "All time"]])}</span></div>`;
+  if (!_admg.d || !_admg.map) { el.innerHTML = head + (_admg.err ? '<p class="adm-none">Couldn\'t load where players are.</p>' : loadingBarHtml("")); wireAdmGeo(el); return; }
+  const counts = admGeoCounts(), m = _admg.map;
+  const known = Object.entries(counts).filter(([k, n]) => k && n > 0).sort((x, y) => y[1] - x[1]);
+  const unknown = counts[""] || 0, total = known.reduce((s, [, n]) => s + n, 0) + unknown;
+  const max = known.length ? known[0][1] : 1;
+  const pct = (n) => (total ? Math.round((n / total) * 1000) / 10 : 0);
+  const fill = (n) => n > 0 ? `color-mix(in srgb, var(--accent) ${Math.round(22 + 78 * (Math.log(1 + n) / Math.log(1 + max)))}%, var(--surface-2))` : "";
+  const tip = (cc, n) => `<title>${escapeHtml(admCountry(cc))} ${n.toLocaleString()}</title>`;
+  const shapes = Object.entries(m.paths).map(([cc, dPath]) => { const n = counts[cc] || 0; return `<path d="${dPath}"${n ? ` style="fill:${fill(n)}" class="on"` : ""}>${tip(cc, n)}</path>`; }).join("");
+  // countries too small for the map (Singapore, Hong Kong, Malta …) are a dot
+  const dots = known.filter(([cc]) => !m.paths[cc] && m.c && m.c[cc]).map(([cc, n]) => `<circle cx="${m.c[cc][0]}" cy="${m.c[cc][1]}" r="5" style="fill:${fill(n)}">${tip(cc, n)}</circle>`).join("");
+  const reg = { am: 0, eu: 0, as: 0 }; let regOther = 0;
+  for (const [cc, n] of known) { const r = admRegionOf(cc); if (r) reg[r] += n; else regOther += n; }
+  const placed = total - unknown - regOther;
+  const regions = ADM_REGIONS.map(([k, l]) => `<div class="adm-tot adm-reg"><b class="num">${placed ? Math.round((reg[k] / placed) * 100) : 0}%</b><small>${l}</small><span class="num">${reg[k].toLocaleString()}</span></div>`).join("");
+  const TOP = 12, rows = known.slice(0, TOP).map(([cc, n]) => `<li><span class="adm-gname">${escapeHtml(admCountry(cc))}</span><span class="adm-gbar"><i style="width:${Math.max(2, Math.round((n / max) * 100))}%"></i></span><span class="num">${n.toLocaleString()}</span><span class="num adm-gpct">${pct(n)}%</span></li>`).join("");
+  const rest = known.slice(TOP), restN = rest.reduce((s, [, n]) => s + n, 0);
+  const more = (rest.length ? `<li class="adm-gmore"><span class="adm-gname">${rest.length} more ${rest.length === 1 ? "country" : "countries"}</span><span></span><span class="num">${restN.toLocaleString()}</span><span class="num adm-gpct">${pct(restN)}%</span></li>` : "") +
+    (unknown ? `<li class="adm-gmore"><span class="adm-gname">Not known</span><span></span><span class="num">${unknown.toLocaleString()}</span><span class="num adm-gpct">${pct(unknown)}%</span></li>` : "");
+  const d = _admg.d, byZone = _admg.show !== "visitors" && _admg.when === "all" && d.accountsByZone ? d.accountsByZone : 0;
+  el.innerHTML = head + `
+    <div class="adm-regions">${regions}</div>
+    <div class="adm-geo-body">
+      <svg class="adm-map" viewBox="0 0 ${m.w} ${m.h}" role="img" aria-label="Map of where players are">${shapes}${dots}</svg>
+      ${known.length || unknown ? `<ol class="adm-glist">${rows}${more}</ol>` : '<p class="adm-none">Nobody to show yet.</p>'}
+    </div>
+    <p class="adm-geo-foot">Placed by each person's last IP address${byZone ? `. ${byZone.toLocaleString()} ${byZone === 1 ? "account" : "accounts"} not seen lately ${byZone === 1 ? "is" : "are"} placed by time zone` : ""}. <a href="https://db-ip.com" target="_blank" rel="noopener">IP geolocation by DB-IP</a></p>`;
+  wireAdmGeo(el);
+}
+function wireAdmGeo(el) {
+  el.querySelectorAll("[data-adm-gshow]").forEach((b) => b.onclick = () => { _admg.show = b.dataset.admGshow; paintAdmGeo(); });
+  el.querySelectorAll("[data-adm-gwhen]").forEach((b) => b.onclick = () => { _admg.when = b.dataset.admGwhen; paintAdmGeo(); });
+}
+
+// ── (15.108) Site stats → Visitors (admins): people on the website without an account, the last seen first: when
+// they came first and last, where from (country and address), how many visits (half an hour apart), and the account
+// they made, if they made one since ──
+const _admv = { list: null, total: 0, signedUp: 0, all: false, more: false, gen: 0, err: null, loadingMore: false };
+async function renderAdminVisitors(c, more) {
+  const my = ++_admv.gen, from = more && _admv.list ? _admv.list.length : 0;
+  if (!more && !c.querySelector(".adm-vpage")) { c.innerHTML = `<div class="adm-page adm-vpage">${admTabsHtml()}<div id="adm-vbody">${loadingBarHtml("Loading…")}</div></div>`; wireAdmTabs(c); if (_admv.list) paintAdminVisitors(); }
+  _admv.loadingMore = !!more; if (more) paintAdminVisitors();
+  let d = null; try { d = await API.get("/api/admin/visitors?limit=100&offset=" + from + (_admv.all ? "&all=1" : "")); } catch (e) {}
+  if (my !== _admv.gen || !document.querySelector("#admin-screen.active") || _adm.tab !== "visitors") return;
+  _admv.loadingMore = false;
+  if (!d || d.error || !Array.isArray(d.visitors)) { _admv.err = (d && d.error) || "Couldn't load the visitors."; if (!more) _admv.list = null; }
+  else { _admv.err = null; _admv.list = more ? (_admv.list || []).concat(d.visitors) : d.visitors; _admv.total = d.total || 0; _admv.signedUp = d.signedUp || 0; }
+  paintAdminVisitors();
+}
+function paintAdminVisitors() {
+  const el = document.getElementById("adm-vbody"); if (!el) return;
+  const seg = `<div class="seg" role="group" aria-label="Which visitors">${[[false, "Signed out"], [true, "With those who signed up"]].map(([k, l]) => `<button type="button" data-adm-vall="${k ? 1 : 0}" aria-pressed="${_admv.all === k}">${l}</button>`).join("")}</div>`;
+  const head = `<div class="adm-vhead">${seg}<small>${_admv.list ? `${_admv.total.toLocaleString()} ${_admv.total === 1 ? "visitor" : "visitors"} · ${_admv.signedUp.toLocaleString()} made an account later` : ""}</small></div>`;
+  let body;
+  if (!_admv.list) body = _admv.err ? `<div class="db-empty">${escapeHtml(_admv.err)}</div>` : loadingBarHtml("");
+  else if (!_admv.list.length) body = '<p class="adm-none">No visitors yet. They\'re kept from 15.108 on.</p>';
+  else body = `<section class="fr-card adm-recent"><div class="adm-scroll"><table class="adm-table adm-vtable"><thead><tr><th>Last seen</th><th>First seen</th><th>Country</th><th>IP address</th><th>Visits</th>${_admv.all ? "<th>Account</th>" : ""}</tr></thead><tbody>${_admv.list.map((v) =>
+    `<tr><td>${escapeHtml(admAgo(v.lastAt))}</td><td>${escapeHtml(admAgo(v.firstAt))}</td><td>${escapeHtml(v.country ? admCountry(v.country) : "Not known")}</td><td class="adm-ip">${escapeHtml(v.ip || "")}</td><td class="num">${Number(v.visits || 0).toLocaleString()}</td>${_admv.all ? `<td>${v.signedUp ? `<button type="button" class="adm-link" data-adm-vuser="${escapeHtml(v.signedUp.id)}">${escapeHtml(v.signedUp.handle ? "@" + v.signedUp.handle : v.signedUp.displayName || "their account")}</button>` : ""}</td>` : ""}</tr>`).join("")}</tbody></table></div></section>` +
+    (_admv.list.length < _admv.total ? `<button type="button" class="btn btn-sm btn-ghost adm-more" id="adm-vmore"${_admv.loadingMore ? " disabled" : ""}>${_admv.loadingMore ? "Loading…" : "Show more"}</button>` : "");
+  el.innerHTML = head + body;
+  el.querySelectorAll("[data-adm-vall]").forEach((b) => b.onclick = () => { const all = b.dataset.admVall === "1"; if (all === _admv.all) return; _admv.all = all; _admv.list = null; paintAdminVisitors(); renderAdminVisitors(document.getElementById("admin-container")); });
+  el.querySelector("#adm-vmore")?.addEventListener("click", () => renderAdminVisitors(document.getElementById("admin-container"), true));
+  el.querySelectorAll("[data-adm-vuser]").forEach((b) => b.onclick = () => { _adm.tab = "users"; renderAdmin(); window.qbWebPathSync?.(); admOpen(b.dataset.admVuser); });
 }
 
 // ── Site stats → Reports (admins): every question someone reported (web/reports.mjs): the reason, their

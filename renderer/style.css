@@ -5392,6 +5392,48 @@ html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%
 .adm-st-fulfilled { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
 .adm-st-refunded, .adm-st-failed, .adm-st-expired { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
 .adm-st-pending, .adm-st-paid { background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); }
+/* (15.108) Users with nothing searched: every account, a filter above, a pill on the unverified */
+.adm-listhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.adm-listhead small, .adm-vhead small { color: var(--muted); font-size: 12px; }
+.adm-urow .adm-uname { flex: 1; }
+.adm-pill { flex: none; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+.adm-more { align-self: center; margin: 6px auto 2px; }
+/* Site stats → where players are */
+.adm-geo { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; }
+.adm-geo-head { flex-wrap: wrap; margin-bottom: 0; }
+.adm-geo-ctl { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.adm-regions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.adm-reg { padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--r); }
+.adm-reg span { color: var(--muted); font-size: 12px; }
+.adm-geo-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: 18px; align-items: start; }
+.adm-map { display: block; width: 100%; height: auto; overflow: hidden; border-radius: var(--r-sm); background: color-mix(in srgb, var(--surface-2) 40%, transparent); }
+.adm-map path, .adm-map circle { fill: var(--surface-2); stroke: var(--surface); stroke-width: 0.6; vector-effect: non-scaling-stroke; transition: fill 160ms ease; }
+.adm-map circle { stroke-width: 1.2; }
+.adm-map path:hover, .adm-map circle:hover { stroke: var(--strong); stroke-width: 1.2; }
+.adm-glist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+.adm-glist li { display: grid; grid-template-columns: minmax(0, 1fr) 60px 44px 46px; align-items: center; gap: 8px; }
+.adm-gname { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-gbar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.adm-gbar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.adm-glist .num { text-align: right; color: var(--strong); }
+.adm-glist .adm-gpct { color: var(--muted); }
+.adm-gmore .adm-gname { color: var(--muted); }
+.adm-geo-foot { margin: 0; color: var(--muted); font-size: 12px; }
+.adm-geo-foot a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+/* Site stats → Visitors */
+.adm-vhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.adm-vtable th, .adm-vtable td { text-align: left; }
+.adm-vtable td.num, .adm-vtable th:nth-child(5) { text-align: right; }
+.adm-ip { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--muted); }
+.adm-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.adm-link:hover { text-decoration: underline; }
+@media (max-width: 760px) {
+  .adm-geo { padding: 14px; }
+  .adm-geo-ctl { margin-left: 0; width: 100%; }
+  .adm-geo-body { grid-template-columns: minmax(0, 1fr); }
+  .adm-regions { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .adm-reg { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: baseline; gap: 8px; }
+}
 .adm-tots { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
 .adm-prev { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11.5px; }
 @media (max-width: 860px) {
