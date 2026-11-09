@@ -130,7 +130,9 @@ function bwAppText(appJs) {
   // settings — notes cut, guides kept — then stripped the guides itself)
   const box = { state: { settings: { hideNotes: true, hidePronunciations: false } } };
   vm.createContext(box);
-  vm.runInContext(BW_APP_FNS.map(pick).join("\n\n") + "\n;globalThis.__bw = { questionPlainText, stripPronunciations };", box, { filename: "app.js (buzzwords)" });
+  // (15.113: the app's hidePronOn / hideNotesOn, which also hide them in a trial; here, the settings)
+  vm.runInContext("function hidePronOn() { return !!state.settings.hidePronunciations; }\nfunction hideNotesOn() { return !!state.settings.hideNotes; }\n\n" +
+    BW_APP_FNS.map(pick).join("\n\n") + "\n;globalThis.__bw = { questionPlainText, stripPronunciations };", box, { filename: "app.js (buzzwords)" });
   _bwLifted.set(appJs, box.__bw);
   return box.__bw;
 }

@@ -38,7 +38,8 @@ const SRC = { mention: 1, aboutClue: 2, about: 4, theme: 8, answer: 16 };
 // a topic-tag filter's role -> the src bits that count
 const ROLE_MASK = { any: 31, about: SRC.aboutClue | SRC.about | SRC.answer, answer: SRC.answer, theme: SRC.theme, mention: SRC.mention | SRC.aboutClue };
 // what a quick random draw by category may carry besides its categories (15.110, QuestionDatabase._quickIds)
-const QUICK_KEYS = new Set(["random", "limit", "offset", "sort", "categories", "categoryIds", "difficulties", "yearMin", "yearMax"]);
+// (15.113: and practice's own, Powers only, Clean only, canon tiers, standard sets, with or without categories)
+const QUICK_KEYS = new Set(["random", "limit", "offset", "sort", "categories", "categoryIds", "difficulties", "yearMin", "yearMax", "powermarkOnly", "cleanOnly", "canon", "standard"]);
 export const isTopicTagId = (v) => typeof v === "string" && /^t[0-9a-f]{12}$/.test(v);
 // A topic-tag filter list (query string JSON or IPC array): at most 8 of { id, r: any|about|answer|theme|mention, x }.
 export function normalizeTopicFilters(raw) {
@@ -890,25 +891,43 @@ export class QuestionDatabase {
   _quickBase(table, f) {
     if (!f) return null;
     for (const [k, v] of Object.entries(f)) {
-      if (v == null || v === false || v === "" || (Array.isArray(v) && !v.length)) continue;
+      if (k === "standard" || v == null || v === false || v === "" || (Array.isArray(v) && !v.length)) continue;
       if (!QUICK_KEYS.has(k) && k !== "includeUnplayable") return null;
     }
     const every = !!f.includeUnplayable;
+    // what practice adds, each from one byte kept per question (_byteCol), as _buildWhere has it
+    const pm = !!f.powermarkOnly && table === "tossups", clean = !!f.cleanOnly && this.v2;
+    const std = f.standard === undefined || f.standard === null ? null : f.standard ? 1 : 0;
+    let canonSet = null, canonMask = 0;
+    if (this.hasTopics && f.canon && f.canon.length) {
+      const tiers = normalizeCanon(f.canon).map((t) => CANON_TIERS.indexOf(t) + 1);
+      if (tiers.length && tiers.length < CANON_TIERS.length) { if (table === "bonuses") canonMask = tiers.reduce((m, t) => m | (1 << (t - 1)), 0); else canonSet = new Set(tiers); }
+    }
+    const bytes = [];
+    try {
+      if (pm) bytes.push([this._byteCol(table, "pm"), (v) => v === 1]);
+      if (clean) bytes.push([this._byteCol(table, "warn"), (v) => v === 0]);
+      if (std != null) bytes.push([this._byteCol(table, "standard"), (v) => v === std]);
+      if (canonSet) bytes.push([this._byteCol(table, "canon"), (v) => canonSet.has(v)]);
+      if (canonMask) bytes.push([this._byteCol(table, "canonMask"), (v) => (v & canonMask) !== 0]);
+    } catch (e) { return null; }
+    if (bytes.some((b) => !b[0])) return null;
     const ids = [...(f.categoryIds || []), ...(f.categories || [])].map(String);
-    if (!ids.length || !ids.every(isNodeId)) return null;   // plain category names: the SQL way
+    if (ids.length && !ids.every(isNodeId)) return null;   // plain category names: the SQL way
     if ((f.yearMin !== undefined && !Number.isFinite(f.yearMin)) || (f.yearMax !== undefined && !Number.isFinite(f.yearMax))) return null;
     let pool;
     try {
-      const pools = [...new Set(ids)].map((id) => this.catPool(table, id, every));
+      const pools = ids.length ? [...new Set(ids)].map((id) => this.catPool(table, id, every)) : [this.catPool(table, "*", every)];   // no category: all of them
       pool = pools.length === 1 ? pools[0] : Int32Array.from(new Set(pools.flatMap((p) => Array.from(p))));
     } catch (e) { return null; }
     const diffs = f.difficulties && f.difficulties.length ? new Set(f.difficulties.map(Number)) : null;
     const ymin = f.yearMin, ymax = f.yearMax;
-    if (!diffs && ymin === undefined && ymax === undefined) return pool;
+    if (!diffs && ymin === undefined && ymax === undefined && !bytes.length) return pool;
     const m = this._pickMeta(table); if (!m) return null;
     const out = [];
-    for (let i = 0; i < pool.length; i++) {
+    next: for (let i = 0; i < pool.length; i++) {
       const r = pool[i], d = m.diff[r], y = m.year[r];
+      for (const [col, ok] of bytes) if (!ok(col[r])) continue next;
       if (diffs && (d === 255 || !diffs.has(d))) continue;
       if ((ymin !== undefined || ymax !== undefined) && y === 0) continue;   // no year: no year range holds it (as SQL's NULL)
       if (ymin !== undefined && y < ymin) continue;
@@ -923,12 +942,31 @@ export class QuestionDatabase {
     let ids = pools.get(key);
     if (ids) { pools.delete(key); pools.set(key, ids); return ids; }
     ids = this._keptIds("pool-" + table + "-" + nodeId + (every ? "-all" : ""), () => {
-      const { where, params } = this._buildWhere({ categoryIds: [nodeId], includeUnplayable: every }, "", table === "bonuses" ? { isBonus: true } : {});
+      const { where, params } = this._buildWhere({ ...(nodeId === "*" ? {} : { categoryIds: [nodeId] }), includeUnplayable: every }, "", table === "bonuses" ? { isBonus: true } : {});
       return Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${narrowWhere(where)}`).all(params), (x) => x.r);
     });
     pools.set(key, ids);
     while (pools.size > 400) pools.delete(pools.keys().next().value);   // the top ones are asked for again at once anyway
     return ids;
+  }
+  // (15.113) one byte per question (by rowid) that a draw can filter on, from a narrow index (bonuses' canon mask has
+  // none: a whole read, kept on disk): pm 1 = has a power mark; warn, standard, canon as stored (255: none);
+  // canonMask (0: none). null: the database hasn't that column
+  _byteCol(table, name) {
+    const all = this._bytes || (this._bytes = {}), key = table + "|" + name;
+    if (all[key] !== undefined) return all[key];
+    const sql = { pm: table === "tossups" ? "SELECT rowid AS r, 1 AS v FROM tossups WHERE question_sanitized LIKE '%(*)%'" : null, warn: `SELECT rowid AS r, warn AS v FROM ${table}`,
+      standard: `SELECT rowid AS r, standard AS v FROM ${table}`, canon: table === "tossups" ? "SELECT rowid AS r, canon AS v FROM tossups" : null,
+      canonMask: table === "bonuses" ? "SELECT rowid AS r, canon_mask AS v FROM bonuses" : null }[name];
+    try {
+      if (!sql) throw new Error("no column");
+      all[key] = this._kept("byte-" + table + "-" + name, () => {
+        const max = this._maxRowid(table), a = new Uint8Array(max + 1).fill(name === "pm" || name === "canonMask" ? 0 : 255);
+        for (const r of this.db.prepare(sql).iterate()) if (r.r <= max && Number.isInteger(r.v) && r.v >= 0 && r.v < 255) a[r.r] = r.v;
+        return a;
+      }, Uint8Array);
+    } catch (e) { all[key] = null; }
+    return all[key];
   }
   // each question's difficulty (255: none) and year (0: none), by rowid, from a covering index
   _pickMeta(table) {
@@ -951,6 +989,9 @@ export class QuestionDatabase {
     const roots = this._loadTree().nodes.filter((n) => n.depth === 1).map((n) => n.id);
     const jobs = [() => this._pickMeta("tossups"), () => this._pickMeta("bonuses"), ...roots.flatMap((id) => [() => this.catPool("tossups", id), () => this.catPool("bonuses", id)]),
       ...roots.flatMap((id) => [() => this.catPool("tossups", id, true), () => this.catPool("bonuses", id, true)]),
+      // (15.113) practice's filters, and its draws with no category
+      () => this.catPool("tossups", "*"), () => this.catPool("bonuses", "*"),
+      ...[["tossups", "pm"], ["tossups", "warn"], ["bonuses", "warn"], ["tossups", "canon"], ["bonuses", "canonMask"], ["tossups", "standard"], ["bonuses", "standard"]].map(([t, c]) => () => this._byteCol(t, c)),
       // (15.113) and Search's orders: the default and each sort, tossups and bonuses
       ...[null, ...Object.keys(SORT_SQL)].flatMap((s) => [() => this._fullOrder("tossups", browseOrderBy(s)), () => this._fullOrder("bonuses", browseOrderBy(s))])];
     if (i < 0 || i >= jobs.length) return false;
@@ -1010,10 +1051,11 @@ export class QuestionDatabase {
   }
   // a list of rowids kept on disk for this question file (cacheDir: the website's per-database cache, server.js),
   // made once by make(); without a cacheDir (the desktop app) just made
-  _keptIds(name, make) {
+  _keptIds(name, make) { return this._kept(name, make, Int32Array); }
+  _kept(name, make, Type) {
     const f = this.cacheDir ? join(this.cacheDir, "ids-" + name.replace(/[^A-Za-z0-9_-]/g, "_") + ".bin") : "";
     if (f && existsSync(f)) {
-      try { const b = readFileSync(f); if (b.length % 4 === 0) return new Int32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)); } catch (e) {}
+      try { const b = readFileSync(f); if (b.length % Type.BYTES_PER_ELEMENT === 0) return new Type(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)); } catch (e) {}
     }
     const ids = make();
     if (f) { try { writeFileSync(f + ".tmp", Buffer.from(ids.buffer, ids.byteOffset, ids.byteLength)); renameSync(f + ".tmp", f); } catch (e) {} }

@@ -7063,7 +7063,7 @@ function renderQuestion(question) {
 function tossupText(q) {
   let text = q.question_sanitized || q.question || "";
   text = applyNoteFilter(text, q.question);   // notes first: the HTML locates them in the unstripped text
-  if (state.settings.hidePronunciations) text = stripPronunciations(text);
+  if (hidePronOn()) text = stripPronunciations(text);
   text = window.QB?.applyTextTransforms?.(text, { type: "tossup", question: q }) ?? text;
   const full = text.replace(/\(\*\)/g, "").replace(/\(\)/g, "").replace(/\(\s*\)/g, "");
   fmtSource(full, q.question);
@@ -7098,7 +7098,7 @@ function tossupDisplay(q) {
 function bonusDisplay(q) {
   let leadin = q.leadin_sanitized || q.leadin || "";
   leadin = applyNoteFilter(leadin, q.leadin);
-  if (state.settings.hidePronunciations) leadin = stripPronunciations(leadin);
+  if (hidePronOn()) leadin = stripPronunciations(leadin);
   leadin = window.QB?.applyTextTransforms?.(leadin, { type: "bonus-leadin", question: q }) ?? leadin;
   let parts, partsHtml = [];
   try { parts = JSON.parse(q.parts_sanitized || q.parts || "[]"); } catch { parts = ["Error parsing bonus parts"]; }
@@ -7106,7 +7106,7 @@ function bonusDisplay(q) {
   const texts = parts.map((p, i) => {
     let s = p || `Part ${i + 1}`;
     s = applyNoteFilter(s, partsHtml[i]);
-    if (state.settings.hidePronunciations) s = stripPronunciations(s);
+    if (hidePronOn()) s = stripPronunciations(s);
     s = window.QB?.applyTextTransforms?.(s, { type: "bonus-part", question: q, part: i }) ?? s;
     fmtSource(s, partsHtml[i], true);
     return s;
@@ -9460,7 +9460,7 @@ function cutNotesUsingHtml(text, html) {
 // (15.81) a question's text (html given: a question, leadin or part) also loses the packet's own number left on its
 // front ("20. This instrument represents…": 677 bonuses and 232 tossups)
 function applyNoteFilter(text, html) {
-  const out = !state.settings.hideNotes ? text : stripModeratorNotes(html ? cutNotesUsingHtml(text, html) : text);
+  const out = !hideNotesOn() ? text : stripModeratorNotes(html ? cutNotesUsingHtml(text, html) : text);
   return html !== undefined && typeof out === "string" ? out.replace(/^\s*\d{1,2}\.\s+(?=["“A-Z])/, "") : out;
 }
 
@@ -11972,7 +11972,7 @@ function questionPlainText(q, kind, part) {
   else if (kind === "part") { plain = arr(q.parts_sanitized)[part] || arr(q.parts)[part] || ""; html = arr(q.parts)[part]; }
   else { plain = q.question_sanitized || q.question || ""; html = q.question; }
   let t = applyNoteFilter(plain, html);
-  if (state.settings.hidePronunciations) t = stripPronunciations(t);
+  if (hidePronOn()) t = stripPronunciations(t);
   return t;
 }
 // Per-part point values. point_values always has one entry per part (10s when
@@ -13139,6 +13139,11 @@ function trialMark(power, why) {
 // the trial is over: its result shows, or will in a moment (the last verdict is in)
 function trialOver() { try { return !!(_trial && !_trial.pending && (_trial.done || _trial.ending)); } catch (e) { return false; } }
 function trialRunning() { try { return !!(_trial && !_trial.done && !_trial.pending); } catch (e) { return false; } }   // (safe before _trial exists)
+// (15.113) a trial's questions never show pronunciation guides or notes to the moderator, whatever practice is set to
+// (its last question too, while it stays on the page); the player's own settings are left as they are
+function onTrialPage() { try { return !!_trial; } catch (e) { return false; } }
+function hidePronOn() { return !!state.settings.hidePronunciations || onTrialPage(); }
+function hideNotesOn() { return !!state.settings.hideNotes || onTrialPage(); }
 const skipsOk = () => !!state.settings.allowSkips && !trialRunning();   // no skipping in a trial
 // a trial plays by its own rules, whatever the player's practice setup says (only the reading speed is theirs):
 // no rebuzzes, no stop at the power mark, strictness 10, 10 seconds to answer and to buzz after the end
@@ -14655,8 +14660,10 @@ async function performDbSearch(opts) {
       early = true;
     }, () => {});
   }
+  const tFetch = performance.now();
   try {
     const [t, b] = await Promise.all([entry.t, entry.b]);
+    const took = performance.now() - tFetch;
     clearTimeout(barT);
     if (seq !== _dbSearchSeq) return;
     container.classList.remove("db-loading");
@@ -14692,8 +14699,9 @@ async function performDbSearch(opts) {
       const next = _dbPage + 1;
       setTimeout(() => { if (seq === _dbSearchSeq) dbFetchPage(keyFor(next), urlsFor(next)); }, 50);
     }
-    // (15.113) and this search in the other orders, a moment later
-    if (sum) setTimeout(() => { if (seq === _dbSearchSeq) dbPrefetchSorts({ ...q }, sets, pkt, seq); }, 600);
+    // (15.113) and this search in the other orders, a moment later, when it came back quickly (a slow one, a rare tag,
+    // would only keep the server busy four times over)
+    if (sum && took < 1200) setTimeout(() => { if (seq === _dbSearchSeq) dbPrefetchSorts({ ...q }, sets, pkt, seq); }, 600);
   } catch (e) {
     clearTimeout(barT);
     early = null;
