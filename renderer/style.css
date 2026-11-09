@@ -4639,6 +4639,8 @@ button.acct-row:hover { background: var(--raised); }
 .up-av { width: 44px; height: 44px; font-size: 19px; flex: 0 0 auto; }
 .up-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .up-who b { font-size: 17px; color: var(--strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-name { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; min-width: 0; }
+.up-name > b { flex: 0 1 auto; min-width: 0; }
 .up-who small { color: var(--muted); }
 .up-x { align-self: flex-start; }
 .up-body { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
