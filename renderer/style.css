@@ -6439,6 +6439,8 @@ html.hw .tb-scheme.hw-zap { color: #fff; }
 .adm-rr-answer { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
 .adm-rr-info { background: color-mix(in srgb, var(--yellow) 18%, transparent); color: var(--yellow); }
 .adm-rr-missing { background: color-mix(in srgb, #bc8cff 18%, transparent); color: #bc8cff; }
+.adm-rr-typo { background: color-mix(in srgb, #39c5cf 18%, transparent); color: #39c5cf; }
+.adm-rr-judged { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 .adm-rmeta { color: var(--muted); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere; }
 .adm-rby { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .adm-rby > small { color: var(--muted); font-size: 12px; }

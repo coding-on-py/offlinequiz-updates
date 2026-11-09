@@ -36,6 +36,8 @@ export const CANON_TIERS = ["core", "common", "uncommon", "rare", "unique"];
 const SRC = { mention: 1, aboutClue: 2, about: 4, theme: 8, answer: 16 };
 // a topic-tag filter's role -> the src bits that count
 const ROLE_MASK = { any: 31, about: SRC.aboutClue | SRC.about | SRC.answer, answer: SRC.answer, theme: SRC.theme, mention: SRC.mention | SRC.aboutClue };
+// what a quick random draw by category may carry besides its categories (15.110, QuestionDatabase._quickIds)
+const QUICK_KEYS = new Set(["random", "limit", "offset", "sort", "categories", "categoryIds", "difficulties", "yearMin", "yearMax"]);
 export const isTopicTagId = (v) => typeof v === "string" && /^t[0-9a-f]{12}$/.test(v);
 // A topic-tag filter list (query string JSON or IPC array): at most 8 of { id, r: any|about|answer|theme|mention, x }.
 export function normalizeTopicFilters(raw) {
@@ -820,7 +822,7 @@ export class QuestionDatabase {
     // every page is a lookup — a separate COUNT plus an OFFSET query re-sorted everything
     // for each page (3–4 s a page on the website's server)
     if (!filters.random) return this._orderedPage("tossups", where, params, orderBy, offset, limit);
-    if (filters.random) return this._randomRows("tossups", where, params, limit);
+    if (filters.random) return this._randomRows("tossups", where, params, limit, this._quickIds("tossups", filters));
 
     const countSql = `SELECT COUNT(*) as count FROM tossups ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -840,7 +842,7 @@ export class QuestionDatabase {
     const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number, rowid");
 
     if (!filters.random) return this._orderedPage("bonuses", where, params, orderBy, offset, limit);
-    if (filters.random) return this._randomRows("bonuses", where, params, limit);
+    if (filters.random) return this._randomRows("bonuses", where, params, limit, this._quickIds("bonuses", filters));
 
     const countSql = `SELECT COUNT(*) as count FROM bonuses ${where}`;
     const countRow = this.db.prepare(countSql).get(params);
@@ -870,14 +872,86 @@ export class QuestionDatabase {
     }
     return ids;
   }
-  _randomRow(table, where, params) {
-    const ids = this._randomIds(table, where, params);
+  // ── Random picks by category, quickly (15.110) ──
+  // A random draw by category, difficulty and year (Packet Builder asks for every top category at once, tossups and
+  // bonuses: 28 draws) listed every matching question first, and checking each was playable read its whole row: about
+  // 1 s a category on the website's server, 37 s for a packet. Now a category's questions (any of a question's
+  // categories in the subtree, playable) are listed once and kept (catPool), and difficulty and year are picked out in
+  // memory from what one narrow index read keeps per question (_pickMeta). The same rows as the SQL, in any order;
+  // anything else in the filters takes the SQL way. server.js warms the top categories at startup (warmRandom).
+  _quickIds(table, f) {
+    if (!f || !f.random) return null;
+    for (const [k, v] of Object.entries(f)) {
+      if (v == null || v === false || v === "" || (Array.isArray(v) && !v.length)) continue;
+      if (!QUICK_KEYS.has(k)) return null;
+    }
+    const ids = [...(f.categoryIds || []), ...(f.categories || [])].map(String);
+    if (!ids.length || !ids.every(isNodeId)) return null;   // plain category names: the SQL way
+    if ((f.yearMin !== undefined && !Number.isFinite(f.yearMin)) || (f.yearMax !== undefined && !Number.isFinite(f.yearMax))) return null;
+    let pool;
+    try {
+      const pools = [...new Set(ids)].map((id) => this.catPool(table, id));
+      pool = pools.length === 1 ? pools[0] : Int32Array.from(new Set(pools.flatMap((p) => Array.from(p))));
+    } catch (e) { return null; }
+    const diffs = f.difficulties && f.difficulties.length ? new Set(f.difficulties.map(Number)) : null;
+    const ymin = f.yearMin, ymax = f.yearMax;
+    if (!diffs && ymin === undefined && ymax === undefined) return pool;
+    const m = this._pickMeta(table); if (!m) return null;
+    const out = [];
+    for (let i = 0; i < pool.length; i++) {
+      const r = pool[i], d = m.diff[r], y = m.year[r];
+      if (diffs && (d === 255 || !diffs.has(d))) continue;
+      if ((ymin !== undefined || ymax !== undefined) && y === 0) continue;   // no year: no year range holds it (as SQL's NULL)
+      if (ymin !== undefined && y < ymin) continue;
+      if (ymax !== undefined && y > ymax) continue;
+      out.push(r);
+    }
+    return Int32Array.from(out);
+  }
+  // one category node's playable questions (rowids), listed once and kept
+  catPool(table, nodeId) {
+    const key = table + "|" + nodeId, pools = this._catPools || (this._catPools = new Map());
+    let ids = pools.get(key);
+    if (ids) { pools.delete(key); pools.set(key, ids); return ids; }
+    const { where, params } = this._buildWhere({ categoryIds: [nodeId] }, "", table === "bonuses" ? { isBonus: true } : {});
+    // (+rowid: the playable check from the narrow index, not each question's row)
+    ids = Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${where.replace(/\browid IN \(/, "+rowid IN (")}`).all(params), (x) => x.r);
+    pools.set(key, ids);
+    while (pools.size > 400) pools.delete(pools.keys().next().value);   // the top ones are asked for again at once anyway
+    return ids;
+  }
+  // each question's difficulty (255: none) and year (0: none), by rowid, from a covering index
+  _pickMeta(table) {
+    const all = this._metas || (this._metas = {});
+    if (all[table] !== undefined) return all[table];
+    try {
+      const max = (this.db.prepare(`SELECT MAX(rowid) AS m FROM ${table}`).get() || {}).m || 0;
+      const diff = new Uint8Array(max + 1).fill(255), year = new Uint16Array(max + 1);
+      for (const r of this.db.prepare(`SELECT rowid AS r, difficulty AS d, set_year AS y FROM ${table}`).iterate()) {
+        if (Number.isInteger(r.d) && r.d >= 0 && r.d < 255) diff[r.r] = r.d;
+        if (Number.isInteger(r.y) && r.y > 0 && r.y < 65536) year[r.r] = r.y;
+      }
+      all[table] = { diff, year };
+    } catch (e) { all[table] = null; }
+    return all[table];
+  }
+  // server.js at startup, one piece a call (each worker its own): the two tables' metadata, then every top category's
+  // pool, tossups and bonuses → false when there's nothing left
+  warmRandom(i) {
+    const roots = this._loadTree().nodes.filter((n) => n.depth === 1).map((n) => n.id);
+    const jobs = [() => this._pickMeta("tossups"), () => this._pickMeta("bonuses"), ...roots.flatMap((id) => [() => this.catPool("tossups", id), () => this.catPool("bonuses", id)])];
+    if (i < 0 || i >= jobs.length) return false;
+    jobs[i]();
+    return true;
+  }
+  _randomRow(table, where, params, quick) {
+    const ids = quick || this._randomIds(table, where, params);
     if (!ids.length) return undefined;
     return this.db.prepare(`SELECT * FROM ${table} WHERE rowid = ?`).get(ids[Math.floor(Math.random() * ids.length)]);
   }
   // `limit` distinct random rows (query?random=1, e.g. the home background), in random order.
-  _randomRows(table, where, params, limit) {
-    const ids = this._randomIds(table, where, params);
+  _randomRows(table, where, params, limit, quick) {
+    const ids = quick || this._randomIds(table, where, params);
     const n = Math.min(limit, ids.length), pick = new Set();
     while (pick.size < n) pick.add(ids[Math.floor(Math.random() * ids.length)]);
     const order = [...pick];
@@ -924,7 +998,7 @@ export class QuestionDatabase {
       return this.db.prepare(`SELECT * FROM tossups WHERE rowid >= ? ${where ? "AND playable = 1" : ""} LIMIT 1`).get(randomId)
         || this.db.prepare(`SELECT * FROM tossups ${where} LIMIT 1`).get();
     }
-    return this._randomRow("tossups", where, params);
+    return this._randomRow("tossups", where, params, this._quickIds("tossups", { ...filters, random: true }));
   }
 
   getRandomBonus(filters = {}) {
@@ -938,7 +1012,7 @@ export class QuestionDatabase {
       return this.db.prepare(`SELECT * FROM bonuses WHERE rowid >= ? ${where ? "AND playable = 1" : ""} LIMIT 1`).get(randomId)
         || this.db.prepare(`SELECT * FROM bonuses ${where} LIMIT 1`).get();
     }
-    return this._randomRow("bonuses", where, params);
+    return this._randomRow("bonuses", where, params, this._quickIds("bonuses", { ...filters, random: true }));
   }
 
   searchTossups(query, filters = {}) { return this._ftsSearch("tossups", "t", query, filters); }

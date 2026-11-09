@@ -73,6 +73,7 @@ const LAN_API = {
   async post(url) { return String(url).startsWith("/api/regrade") ? { ok: true, already: true } : { ok: true }; },
   async delete() { return { ok: true }; },
 };
+const WEB_ZONE = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; } })();
 const API = IS_LAN ? LAN_API : isElectron
   ? {
       get(url) {
@@ -179,7 +180,8 @@ const API = IS_LAN ? LAN_API : isElectron
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
         try {
-          const r = await fetch(url, { signal: controller.signal });
+          // (15.110) with the visitor's time zone: their days (questions in a day, streaks) run midnight to midnight there
+          const r = await fetch(url, { signal: controller.signal, headers: WEB_ZONE ? { "X-QB-Zone": WEB_ZONE } : {} });
           return r.json();
         } catch (e) {
           if (controller.signal.aborted) throw new Error("the server took too long to answer. Try again in a moment");
@@ -9204,7 +9206,7 @@ function openSaveMenu(question, type, anchor) {
 // Any question, wherever it shows (the practice question's flag, every + menu, right-click, a room's answer):
 // a reason and an optional note go to the site's admins (POST /api/reports, web/reports.mjs; the app forwards
 // it as the signed-in account). Signed out, it goes in as a guest. The admins see it on Site stats > Reports.
-const REPORT_REASONS = [["category", "Wrong Category/Tags"], ["info", "Wrong Info"], ["missing", "Missing Info"], ["answer", "Wrong Answer"]];
+const REPORT_REASONS = [["category", "Wrong Category/Tags"], ["info", "Wrong Info"], ["missing", "Missing Info"], ["answer", "Wrong Answer"], ["typo", "Answer Typo"], ["judged", "Misjudged Answer"]];
 // "2012 BDAT II", not "2012 2012 BDAT II" (most set names start with their year)
 const yearAndSet = (year, name) => { name = String(name || "").trim(); return year && !name.startsWith(String(year)) ? (year + " " + name).trim() : name || (year ? String(year) : ""); };
 // What you answered, when the question being reported is the one on screen and you've answered it (15.19): it goes
@@ -12332,12 +12334,29 @@ const achItemHit = (ach, r) => (ach.ev && ach.ev !== "halloween" ? !!(r.ev && r.
 // order (tl, /api/achievements/timeline: { cats: [[category, path]], rows: [[t, flags, cat]] }, flags 1 a bonus, 2 a
 // power, 4 a neg) and its powered tossups (records, t = the first power). → { id: ms } for every achievement the
 // history reaches, a streak too once it was long enough (even if it broke later).
-function achUnlockTimes(list, tl, records) {
+// (15.110) the day (YYYY-MM-DD) a time falls on for its player: midnight to midnight in their time zone (zone, an IANA
+// name; none: this machine's, the page's own). The offset is looked up once for each hour played in
+function achDayFn(zone) {
+  let f = null;
+  try { f = new Intl.DateTimeFormat("en-US", { timeZone: zone || undefined, timeZoneName: "longOffset" }); } catch (e) { f = null; }
+  const offs = new Map();
+  return (t) => {
+    const h = Math.floor(t / 36e5);
+    let off = offs.get(h);
+    if (off === undefined) {
+      const m = f ? /GMT([+-])(\d{1,2}):?(\d{2})?/.exec(f.format(new Date(h * 36e5))) : null;
+      off = m ? (m[1] === "-" ? -1 : 1) * (+m[2] * 60 + +(m[3] || 0)) * 60000 : f ? 0 : -new Date(h * 36e5).getTimezoneOffset() * 60000;
+      offs.set(h, off);
+    }
+    return new Date(t + off).toISOString().slice(0, 10);
+  };
+}
+function achUnlockTimes(list, tl, records, zone) {
   const out = {}, rows = ((tl && tl.rows) || []).filter((r) => Array.isArray(r) && r[0] > 0), cats = (tl && tl.cats) || [];
   const catOf = (r) => (cats[r[2]] || [])[0] || "Unknown", pathOf = (r) => (cats[r[2]] || [])[1] || "";
   const nth = (ts, n) => (ts.length >= n ? ts[n - 1] : 0);
   const all = rows.map((r) => r[0]), powers = rows.filter((r) => r[1] & 2).map((r) => r[0]), negs = rows.filter((r) => r[1] & 4).map((r) => r[0]);
-  const dayOf = (t) => new Date(t).toISOString().slice(0, 10);
+  const dayOf = achDayFn(zone);
   // the first time a running count of one key (a category, a day) reaches n
   const firstReach = (keyOf, n) => { const c = new Map(); for (const r of rows) { const k = keyOf(r); if (k == null) continue; const v = (c.get(k) || 0) + 1; c.set(k, v); if (v >= n) return r[0]; } return 0; };
   // a streak as computeDailyStreak counts it: practice days no more than a day and a half apart
@@ -12462,7 +12481,7 @@ function achLiveApply(e) {
   else if (e.type === "tossup" && !e.correct && e.points < 0) st.tossupNegs = (st.tossupNegs || 0) + 1;
   if (cat) { const bc = st.byCategory || (st.byCategory = {}); (bc[cat] || (bc[cat] = { totalQuestions: 0 })).totalQuestions++; }
   achAddPath(st.byPath || (st.byPath = {}), path);
-  const day = new Date().toISOString().split("T")[0], bd = st.questionsByDate || (st.questionsByDate = {});
+  const day = achDayFn()(Date.now()), bd = st.questionsByDate || (st.questionsByDate = {});   // (15.110) today where you are
   (bd[day] || (bd[day] = { date: day, questions: 0, points: 0 })).questions++;
   if (power && q.id != null) {
     let head = "";
@@ -13489,8 +13508,8 @@ const ACH_HOW = {
   powers: (a) => `Power ${a.threshold.toLocaleString()} tossups by answering correctly before the power mark (*).`,
   negs: (a) => `Neg ${a.threshold.toLocaleString()} tossups by buzzing early with a wrong answer.`,
   cat: (a) => `Answer ${a.threshold.toLocaleString()} questions in any one category.`,
-  daily: (a) => `Answer ${a.threshold.toLocaleString()} questions in one day (UTC).`,
-  streak: (a) => `Practice ${a.threshold.toLocaleString()} days in a row (UTC).`,
+  daily: (a) => `Answer ${a.threshold.toLocaleString()} questions in one day. A day starts at midnight your time.`,
+  streak: (a) => `Practice ${a.threshold.toLocaleString()} days in a row. A day starts at midnight your time.`,
 };
 const achPathLabel = (p) => catPathDisplay(p);
 function wireAchievementCards(container, ctx) {

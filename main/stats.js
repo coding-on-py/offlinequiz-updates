@@ -1,12 +1,16 @@
+import { dayCounter } from "./userData.js";
 // A question the player skipped (Skip / S) — saved with the answer "(skipped)", or an
 // older row index.js recognised (e.skipped) — counts as heard, never as a miss: it's
 // left out of accuracy, bonus conversion and points per bonus.
 export const isSkipped = (e) => !!e && (e.skipped === true || e.given_answer === "(skipped)");
 
-export function computeStats(entries) {
+// zone (15.110): the player's time zone (an IANA name, "America/New_York"): an answer's day in questionsByDate runs
+// midnight to midnight there (the daily and streak achievements count those days). None: UTC, as before
+export function computeStats(entries, zone = "") {
   if (!entries || entries.length === 0) {
     return emptyStats();
   }
+  const dayNo = dayCounter(0, zone || ""), dayKey = (t) => new Date(dayNo(Number(t) || 0) * 864e5).toISOString().slice(0, 10);
 
   const tossups = entries.filter((e) => e.type === "tossup");
   const bonuses = entries.filter((e) => e.type === "bonus");
@@ -86,7 +90,7 @@ export function computeStats(entries) {
     if (t.alternate_subcategory) addToCategoryStats(stats.byAltSubcategory, { ...t, category: t.alternate_subcategory }, "tossup");
     addToPathStats(stats.byPath, t, "tossup");
     addToDifficultyStats(stats.byDifficulty, t, "tossup");
-    addToDateStats(stats.questionsByDate, t);
+    addToDateStats(stats.questionsByDate, t, dayKey);
   }
 
   let bonusTotalPts = 0;
@@ -102,7 +106,7 @@ export function computeStats(entries) {
     if (b.alternate_subcategory) addToCategoryStats(stats.byAltSubcategory, { ...b, category: b.alternate_subcategory }, "bonus");
     addToPathStats(stats.byPath, b, "bonus");
     addToDifficultyStats(stats.byDifficulty, b, "bonus");
-    addToDateStats(stats.questionsByDate, b);
+    addToDateStats(stats.questionsByDate, b, dayKey);
   }
 
   stats.tossupAccuracy = tuAnswered > 0 ? tossupCorrect / tuAnswered : 0;
@@ -215,8 +219,8 @@ function addToDifficultyStats(byDifficulty, entry, type) {
   }
 }
 
-function addToDateStats(byDate, entry) {
-  const date = new Date(entry.timestamp).toISOString().split("T")[0];
+function addToDateStats(byDate, entry, dayKey) {
+  const date = dayKey ? dayKey(entry.timestamp) : new Date(entry.timestamp).toISOString().split("T")[0];
   if (!byDate[date]) {
     byDate[date] = { date, questions: 0, points: 0 };
   }

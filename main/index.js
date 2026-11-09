@@ -5,6 +5,8 @@ import { UserData, EVENT, EVENTS, eventOn, eventItemNow, mergeAchDates, shownAch
 import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer, normalizeText, achievementNames } from "./answerChecker.js";
 import { scoreTossup, scoreBonus } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
+// this machine's time zone: the desktop app's player is the one at it (15.110)
+const LOCAL_ZONE = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
 import * as updater from "./updater.js";
 import { randomBytes, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -1224,10 +1226,12 @@ export class App {
     return this.userData.deleteSessionsOlderThan(days);
   }
 
-  getOverallStats(since, categoryIds) {
+  // zone (15.110): the player's time zone, for the days the daily and streak achievements count. The desktop app's
+  // is this machine's; the website passes the visitor's (their page sends it) or an account's own
+  getOverallStats(since, categoryIds, zone) {
     let entries = this._historyAll();
     if (since) entries = entries.filter((e) => (e.timestamp || 0) >= since);
-    return computeStats(this._inCategories(entries, categoryIds));
+    return computeStats(this._inCategories(entries, categoryIds), zone || LOCAL_ZONE);
   }
 
   // Every answer of the active profile, relabeled. Statistics' requests (stats, sessions, breakdown, topics, review)
