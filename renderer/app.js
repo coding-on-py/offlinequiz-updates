@@ -16211,7 +16211,7 @@ async function openUserProfile(handle, shownName) {
   const el = document.createElement("div");
   el.id = "user-profile";
   el.className = "qb-overlay confirm-overlay up-overlay";
-  el.innerHTML = `<div class="confirm-box up-box" role="dialog" aria-label="Profile of @${escapeHtml(handle)}"><div class="up-head"><span class="fr-av up-av">${escapeHtml(String(shownName || handle)[0].toUpperCase())}</span><div class="up-who"><div class="up-name"><b>${escapeHtml(shownName || handle)}</b><span class="up-actions"></span></div><small>@${escapeHtml(handle)}</small></div><button type="button" class="btn btn-ghost btn-icon btn-sm up-x" aria-label="Close">${ic("x", 16)}</button></div><div class="up-body">${loadingBarHtml("Loading profile…")}</div></div>`;
+  el.innerHTML = `<div class="confirm-box up-box" role="dialog" aria-label="Profile of @${escapeHtml(handle)}"><div class="up-head"><span class="fr-av up-av">${escapeHtml(String(shownName || handle)[0].toUpperCase())}</span><div class="up-who"><div class="up-idrow"><div class="up-names"><b>${escapeHtml(shownName || handle)}</b><small>@${escapeHtml(handle)}</small></div><span class="up-actions"></span></div></div><button type="button" class="btn btn-ghost btn-icon btn-sm up-x" aria-label="Close">${ic("x", 16)}</button></div><div class="up-body">${loadingBarHtml("Loading profile…")}</div></div>`;
   const close = () => animateRemove(el);
   el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
   el.querySelector(".up-x").onclick = close;
@@ -16244,8 +16244,8 @@ async function openUserProfile(handle, shownName) {
     achNote = `<div class="up-stats"><span><b class="num">${num(st.totalQuestions)}</b><small>questions</small></span><span><b class="num">${num(st.tossupPowers)}</b><small>powers</small></span><span><b class="num">${st.totalQuestions ? Math.round((st.tossupAccuracy || 0) * 100) + "%" : "—"}</b><small>tossup accuracy</small></span><span><b class="num">${got}</b><small>achievements</small></span></div>`;
     achHtml = `<div class="stats-section"><div class="stats-section-title">Achievements</div><div class="achievements-grid">${buildAchievementHTML(achData, st.totalQuestions || 0, st.tossupPowers || 0, st.tossupNegs || 0, [])}</div></div>`;
   }
-  // (15.111) Add friend (and the rest) beside the name
-  el.querySelector(".up-name .up-actions").innerHTML = friendBtn;
+  // (15.111) Add friend (and the rest) beside the name and handle, centred on the picture
+  el.querySelector(".up-idrow .up-actions").innerHTML = friendBtn;
   body.innerHTML = `${achNote}${achHtml}`;
   el.querySelector(".up-who .tr-badges")?.remove();
   el.querySelector(".up-who").insertAdjacentHTML("beforeend", trialBadgesHtml(normTrialInfo({ trials: d.trials }).trials, seasonBadgesHtml(d.powers) + (upAch ? achSetBadgesHtml(upAch) : "")));   // (15.106) and the achievement badges
