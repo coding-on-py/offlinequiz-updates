@@ -12811,8 +12811,18 @@ function openBadgeDetail(key, trials, own, extra) {
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "bd-h");
   let title, hero, body, next = "";
   const sev = key === "hw" ? HW : SEASONS.find((e) => "ev:" + e.key === key);
-  const aset = String(key).startsWith("achset:") ? _achSetInfo[key] : null;
-  if (aset) {
+  let aset = String(key).startsWith("achset:") ? _achSetInfo[key] : null;
+  if (aset && aset.tiered && extra != null && extra !== "" && Number(extra) >= 0) aset = { ...aset, at: Math.min(aset.levels.length - 1, Number(extra)) };
+  if (aset && aset.tiered) {
+    // (15.109) a general group's: its top achievement (and Endurance's levels past it, on a road of three)
+    const n = aset.levels.length, i = Math.max(0, aset.at), nx = aset.levels[i + 1];
+    title = achSetName(aset);
+    hero = achSetEmblem(aset, 150);
+    body = `<p class="bd-sub">${escapeHtml(aset.label)} · achievement badge${n > 1 ? ` · level ${i + 1} of ${n}` : ""}</p><p class="bd-text">${escapeHtml(achSetFor(aset))}.</p>` +
+      (n > 1 ? `<div class="bd-road" aria-label="Levels">${aset.levels.map((a, k) => `<span class="bd-step${k <= i ? " on" : ""}${k === i ? " cur" : ""}" title="${escapeHtml(a.name)}">${achSetEmblem(aset, 40, k)}</span>`).join("")}</div>` : "") +
+      (own && nx ? `<p class="bd-text">Answer ${nx.threshold.toLocaleString()} ${ACH_SET_UNIT[aset.type] || ""} for ${escapeHtml(nx.name)}.</p>` : "") +
+      `<div class="bd-achs">${aset.list.concat(aset.levels.slice(1, i + 1)).map((a) => `<span class="bd-ach">${escapeHtml(a.name)}</span>`).join("")}</div>`;
+  } else if (aset) {
     title = aset.label;
     hero = achSetEmblem(aset, 150);
     body = `<p class="bd-sub">Achievement badge · all ${aset.list.length}</p><p class="bd-text">Earned every ${escapeHtml(aset.label)} achievement.</p>` +
@@ -13424,26 +13434,51 @@ applySeasonTheme();
 
 // ── (15.105) A badge for every achievement in a group: the global groups (Questions, Powers, Negs, Categories,
 // Endurance, Streaks) and each category's Answer Powers. It joins the category badges on the profile (the trials',
-// the events'): a gold emblem in the group's colour with its glyph, its ribbon "100%". An event's achievements have
-// the event's own badge ──
+// the events'): a gold emblem in the group's colour with its glyph. An event's achievements have the event's own badge.
+// (15.109) A category's badge keeps "100%" on its ribbon. A general group's badge is its top achievement instead
+// (Zenith, Lightspeed, Locked In …): won with it, named after it, its number on the ribbon. Endurance goes on past
+// its top (Get a life bro, 500 in a day): Touch Grass (1000) and How did we get here? (2000) are the same badge's
+// next two levels, each grander, the ribbon 500, 1000, 2000 ──
 const ACH_SET_GLOBAL = [["total", "Questions", "chart"], ["powers", "Powers", "asterisk"], ["negs", "Negs", "flag"], ["cat", "Categories", "grid"], ["daily", "Endurance", "clock"], ["streak", "Streaks", "calendar"]];
 // Categories' glyph: four tiles (the puzzle piece is Miscellaneous's trial badge)
 const ACH_SET_ICON = { asterisk: '<path d="M12 3.5v17M4.6 7.75l14.8 8.5M4.6 16.25l14.8-8.5"/>', grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/>' };
 const ACH_SET_GLYPH = { Literature: "lit", History: "hist", Geography: "geo", Science: "sci", Math: "math", Mythology: "myth", "Pop Culture": "pop", Sports: "sports", "Fine Arts": "fa", Philosophy: "phil" };
+// a group whose top is below its last achievements (those are the badge's further levels): the top's threshold
+const ACH_SET_TOP = { daily: 500 };
+// what a general group's number counts ("For 1,000 questions in one day")
+const ACH_SET_UNIT = { total: "questions", powers: "powers", negs: "negs", cat: "questions in one category", daily: "questions in one day", streak: "days in a row" };
+const ACH_SET_LEVEL = [7, 9, 10];   // the emblem for each level of a badge (gold, gold with more, prismatic)
 let _achSetInfo = {};
 function achSets(achData) {
   const sets = [];
-  for (const [type, label, icon] of ACH_SET_GLOBAL) sets.push({ key: "achset:g:" + type, label, glyph: ACH_SET_ICON[icon] || ICON[icon], hue: "#e3b341", list: ACHIEVEMENT_LIST.filter((a) => a.type === type && !a.event && achData[a.id]) });
+  for (const [type, label, icon] of ACH_SET_GLOBAL) {
+    const all = ACHIEVEMENT_LIST.filter((a) => a.type === type && !a.event && achData[a.id]).sort((x, y) => x.threshold - y.threshold);
+    const top = ACH_SET_TOP[type], list = top ? all.filter((a) => a.threshold <= top) : all;
+    if (!list.length) continue;
+    // its levels: the top achievement, then any past it; `at` = the highest one earned (-1: none)
+    const levels = [list[list.length - 1], ...(top ? all.filter((a) => a.threshold > top) : [])];
+    let at = -1; levels.forEach((a, i) => { if (achData[a.id] && achData[a.id].earned) at = i; });
+    sets.push({ key: "achset:g:" + type, type, label, glyph: ACH_SET_ICON[icon] || ICON[icon], hue: "#e3b341", list, levels, at, tiered: true });
+  }
   const ap = ACHIEVEMENT_LIST.filter((a) => a.type === "answer_power" && !a.event && achData[a.id]);
   for (const [, label] of AP_CATEGORY_PREFIXES) sets.push({ key: "achset:ap:" + label, label, glyph: TRIAL_GLYPH[ACH_SET_GLYPH[label]] || ICON.award, hue: ROOT_COLOR[label] || "#e3b341", list: ap.filter((a) => achCatOf(a) === label) });
   return sets.filter((s) => s.list.length);
 }
-const achSetEmblem = (s, size) => emblemSvg({ level: 7, metal: "gold", hue: s.hue, glyph: s.glyph, ribbon: "100%", size });
+// a badge's emblem; a general group's at level i of its levels (default: the one earned)
+function achSetEmblem(s, size, i) {
+  if (!s.tiered) return emblemSvg({ level: 7, metal: "gold", hue: s.hue, glyph: s.glyph, ribbon: "100%", size });
+  const k = Math.max(0, i == null ? s.at : i), lv = ACH_SET_LEVEL[Math.min(k, ACH_SET_LEVEL.length - 1)];
+  return emblemSvg({ level: lv, metal: lv >= 10 ? "legend" : "gold", hue: s.hue, glyph: s.glyph, ribbon: String(s.levels[k].threshold), size });
+}
+const achSetName = (s) => s.tiered ? s.levels[Math.max(0, s.at)].name : s.label;
+const achSetFor = (s, i) => { const a = s.levels[Math.max(0, i == null ? s.at : i)]; return "For " + a.threshold.toLocaleString() + " " + (ACH_SET_UNIT[s.type] || "") };
 function achSetBadgesHtml(achData) {
   if (!achData) return "";
-  return achSets(achData).filter((s) => s.list.every((a) => achData[a.id] && achData[a.id].earned)).map((s) => {
+  return achSets(achData).filter((s) => s.tiered ? s.at >= 0 : s.list.every((a) => achData[a.id] && achData[a.id].earned)).map((s) => {
     _achSetInfo[s.key] = s;
-    return `<button type="button" class="tr-emb ach-set-emb" data-badge="${escapeHtml(s.key)}" title="Every ${escapeHtml(s.label)} achievement" aria-label="${escapeHtml(s.label)} achievements badge">${achSetEmblem(s, 62)}<span class="tr-emb-name">${escapeHtml(s.label)}</span></button>`;
+    const name = achSetName(s), tip = s.tiered ? name + ", " + achSetFor(s).replace(/^For /, "").toLowerCase() : "Every " + s.label + " achievement";
+    // (the level rides on the button: _achSetInfo is shared, and a friend's profile may hold another level)
+    return `<button type="button" class="tr-emb ach-set-emb" data-badge="${escapeHtml(s.key)}"${s.tiered ? ` data-extra="${s.at}"` : ""} title="${escapeHtml(tip)}" aria-label="${escapeHtml(name)} badge">${achSetEmblem(s, 62)}<span class="tr-emb-name">${escapeHtml(name)}</span></button>`;
   }).join("");
 }
 
@@ -13574,7 +13609,7 @@ function buildAchievementHTML(achData, totalQ, powers, negs, pluginAchs) {
   }
   html += '<div class="achievement-section-title">Global</div>';
   for (const [type, label] of globalSections) {
-    const list = ACHIEVEMENT_LIST.filter(a => a.type === type && achData[a.id]).map((a) => [a, achData[a.id]]);
+    const list = ACHIEVEMENT_LIST.filter(a => a.type === type && achData[a.id]).sort((x, y) => (x.threshold || 0) - (y.threshold || 0)).map((a) => [a, achData[a.id]]);
     html += group("g:" + type, label, list, false);
   }
 
@@ -13848,6 +13883,9 @@ const ACHIEVEMENT_LIST = [
   { id:"day50", name:"Prelims", desc:"Answer 50 questions in a day", type:"daily", threshold:50, icon:"予" },
   { id:"day100", name:"Playoffs", desc:"Answer 100 questions in a day", type:"daily", threshold:100, icon:"決" },
   { id:"day300", name:"Marathon", desc:"Answer 300 questions in a day", type:"daily", threshold:300, icon:"覇" },
+  // (15.109) past the top of Endurance (Get a life bro, 500): the Endurance badge's next two levels
+  { id:"day1000", name:"Touch Grass", desc:"Answer 1000 questions in a day", type:"daily", threshold:1000, icon:"草" },
+  { id:"day2000", name:"How did we get here?", desc:"Answer 2000 questions in a day", type:"daily", threshold:2000, icon:"何" },
   // ── Halloween 2026 (14.90): limited — only powers inside the event's window count; kept for good once earned ──
   {id:"hw26-candy13",name:"Sweet Tooth",desc:"Collect 13 candies (power 13 pumpkin tossups)",type:"candy",threshold:13,during:HW_WIN,event:"Halloween 2026",svg:PUMPKIN_SVG,icon:"糖"},
   {id:"hw26-candy31",name:"King-Size Bar",desc:"Collect 31 candies",type:"candy",threshold:31,during:HW_WIN,event:"Halloween 2026",svg:CANDYBAR_SVG,icon:"菓"},
