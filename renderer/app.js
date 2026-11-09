@@ -5466,7 +5466,7 @@ function makeUnitsPicker(cfg) {
 function searchPicker() {
   return _searchPicker || (_searchPicker = makeUnitsPicker({
     overlayId: "cat-ovl-search", get: () => _dbCatUnits, set: (ids) => { _dbCatUnits = ids; },
-    changed: () => { const b = document.getElementById("db-cat-btn-val"); if (b) b.textContent = dbUnitsSummary(); dbSearchSoon(true); },
+    changed: () => { const b = document.getElementById("db-cat-btn-val"); if (b) b.textContent = dbUnitsSummary(); dbSearchSoon(true, 120); },
   }));
 }
 function freqPicker() {
@@ -14265,7 +14265,7 @@ function renderSearchTab() {
     host: document.getElementById("db-searchbar"), icon: "search", ariaLabel: "Search questions", chips: q.tags, textValue: q.text,
     placeholder: (chips) => (chips.length ? "Add words" : "Search questions"),
     rightHtml: `<div class="sbar-right"><div class="seg" id="db-qtype-seg" role="group" aria-label="Question type">${seg}</div>${narrow ? "" : searchInHtml}</div>`,
-    onChange: (chips) => { _dbq.tags = chips; dbSearchSoon(true); },
+    onChange: (chips) => { _dbq.tags = chips; dbSearchSoon(true, 0); },
     onText: (t) => { _dbq.text = t; dbSearchSoon(true); },
   });
   _searchTagField.input.id = "db-search-input";
@@ -14279,12 +14279,12 @@ function renderSearchTab() {
     const b = e.target.closest("[data-qtype]"); if (!b) return;
     _dbq.qtype = b.dataset.qtype;
     g("db-qtype-seg").querySelectorAll("[data-qtype]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-    syncPm(); dbSearchSoon(true);
+    syncPm(); dbSearchSoon(true, 0);
   });
-  g("db-search-type").addEventListener("change", (e) => { _dbq.field = e.target.value; dbSearchSoon(true); });
+  g("db-search-type").addEventListener("change", (e) => { _dbq.field = e.target.value; dbSearchSoon(true, 0); });
   g("db-cat-btn").addEventListener("click", openSearchCategories);
-  g("db-canon")?.addEventListener("change", () => { _dbq.canon = [...document.querySelectorAll("#db-canon .canon-checkbox:checked")].map((cb) => cb.value); dbMoreCount(); dbSearchSoon(true); });
-  g("db-diffs").addEventListener("change", () => { _dbq.diffs = [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value); dbSearchSoon(true); });
+  g("db-canon")?.addEventListener("change", () => { _dbq.canon = [...document.querySelectorAll("#db-canon .canon-checkbox:checked")].map((cb) => cb.value); dbMoreCount(); dbSearchSoon(true, 120); });
+  g("db-diffs").addEventListener("change", () => { _dbq.diffs = [...document.querySelectorAll(".db-diff-cb:checked")].map((cb) => cb.value); dbSearchSoon(true, 120); });
   const yb = g("db-years-btn"), yp = g("db-years-pop");
   yb.addEventListener("click", (e) => { e.stopPropagation(); const open = yp.hidden; closeAllPops(); yp.hidden = !open; yb.setAttribute("aria-expanded", String(open)); if (open) { const f = g("db-year-from"); f && f.focus(); f && f.select(); } });
   g("db-years-form").addEventListener("submit", (e) => {
@@ -14303,11 +14303,11 @@ function renderSearchTab() {
     // plain localStorage: lsSet would schedule a profile push for a UI toggle
     try { localStorage.setItem("qb-db-more", _dbMoreOpen ? "1" : "0"); } catch (e) {}
   });
-  g("db-match").addEventListener("change", (e) => { _dbq.match = e.target.value; dbSearchSoon(true); });
+  g("db-match").addEventListener("change", (e) => { _dbq.match = e.target.value; dbSearchSoon(true, 0); });
   g("db-exclude").addEventListener("input", (e) => { _dbq.exclude = e.target.value; dbSearchSoon(true); });
-  g("db-set-filter").addEventListener("change", (e) => { _dbq.set = e.target.value; _dbq.packet = ""; dbSearchSoon(true); });
-  g("db-packet-filter").addEventListener("change", (e) => { _dbq.packet = e.target.value; dbSearchSoon(true); });
-  [["db-powermark", "powermark"], ["db-starred", "starred"], ["db-prefix", "prefix"]].forEach(([id, key]) => g(id).addEventListener("change", (e) => { _dbq[key] = e.target.checked; dbSearchSoon(true); }));
+  g("db-set-filter").addEventListener("change", (e) => { _dbq.set = e.target.value; _dbq.packet = ""; dbSearchSoon(true, 0); });
+  g("db-packet-filter").addEventListener("change", (e) => { _dbq.packet = e.target.value; dbSearchSoon(true, 0); });
+  [["db-powermark", "powermark"], ["db-starred", "starred"], ["db-prefix", "prefix"]].forEach(([id, key]) => g(id).addEventListener("change", (e) => { _dbq[key] = e.target.checked; dbSearchSoon(true, 0); }));
   // Hiding answers is instant — a CSS cover over each answer, no re-query.
   g("db-hide-ans").addEventListener("change", (e) => {
     _dbq.hideAns = e.target.checked;
@@ -14315,7 +14315,7 @@ function renderSearchTab() {
     document.querySelectorAll("#db-results .ans-toggle.shown").forEach((t) => t.classList.remove("shown"));
     dbMoreCount();
   });
-  g("db-sort").addEventListener("change", (e) => { _dbq.sort = e.target.value; dbSearchSoon(true); });
+  g("db-sort").addEventListener("change", (e) => { _dbq.sort = e.target.value; dbSearchSoon(true, 0); });
   getDbSets().then((s) => {
     const sel = g("db-set-filter");
     if (!sel || sel.options.length > 1) return;   // two quick renders must not append twice
@@ -14399,9 +14399,11 @@ function dbQueryDefaults() {
 const _dbq = dbQueryDefaults();
 let _dbMoreOpen = (() => { try { return localStorage.getItem("qb-db-more") === "1"; } catch (e) { return false; } })();
 let _searchTagField = null;
-function dbSearchSoon(resetPage) {
+// (15.113) typing waits 300 ms for the next key; a menu or a tick searches at once; a difficulty or category a moment
+// (another click may follow)
+function dbSearchSoon(resetPage, ms = 300) {
   clearTimeout(_dbTimer);
-  _dbTimer = setTimeout(() => performDbSearch(resetPage ? { page: 0 } : undefined), 300);
+  _dbTimer = setTimeout(() => performDbSearch(resetPage ? { page: 0 } : undefined), ms);
 }
 function dbYearsLabel() {
   const a = _dbq.yearMin, b = _dbq.yearMax;
@@ -14516,11 +14518,24 @@ function dbFetchPage(key, urls) {
   Promise.all([entry.t, entry.b]).then(() => { entry.ms = performance.now() - t0; }, () => { if (key) _dbPageCache.delete(key); });
   if (key) {
     _dbPageCache.set(key, entry);
-    while (_dbPageCache.size > 30) _dbPageCache.delete(_dbPageCache.keys().next().value);
+    while (_dbPageCache.size > 60) _dbPageCache.delete(_dbPageCache.keys().next().value);
   }
   return entry;
 }
 let _dbSearchSeq = 0;
+// (15.113) The other orders' first pages of a search (Best match, Newest, Oldest, Easiest, Hardest), fetched one after
+// another while it stays the search on screen, so changing the order is instant. seq null: the start-up prefetch
+const DB_SORTS = ["relevance", "newest", "oldest", "easiest", "hardest"];
+async function dbPrefetchSorts(q, sets, pkt, seq) {
+  for (const s of DB_SORTS) {
+    if (seq != null && seq !== _dbSearchSeq) return;
+    if (s === (q.sort || "relevance")) continue;
+    const plan = dbSearchPlan({ ...q, sort: s }, sets, pkt), key = plan.keyFor(0);
+    if (!key) return;   // starred only: never kept
+    const e = dbFetchPage(key, plan.urlsFor(0));
+    if (e.ms == null) { try { await Promise.all([e.t, e.b]); } catch (er) { return; } }
+  }
+}
 // The request a search makes for query q: its signature, every page's URLs and
 // the page-cache key (null for starred-only, whose results change as you star).
 // performDbSearch and the start-up prefetch share it, so a prefetched page is
@@ -14677,6 +14692,8 @@ async function performDbSearch(opts) {
       const next = _dbPage + 1;
       setTimeout(() => { if (seq === _dbSearchSeq) dbFetchPage(keyFor(next), urlsFor(next)); }, 50);
     }
+    // (15.113) and this search in the other orders, a moment later
+    if (sum) setTimeout(() => { if (seq === _dbSearchSeq) dbPrefetchSorts({ ...q }, sets, pkt, seq); }, 600);
   } catch (e) {
     clearTimeout(barT);
     early = null;
@@ -15225,8 +15242,10 @@ async function prefetchDefaults() {
     return Promise.all([e.t, e.b]);
   };
   const freq = (qtype, page) => (_freqUnits.length ? null : freqFetch(freqUrl(qtype, page, [], freqATypes())));   // the answer type this player picked
+  // (15.113) Search's first page in its other orders too
+  const sorts = () => (_dbq.set || _dbq.starred ? null : dbPrefetchSorts({ ..._dbq }, { ids: [], n: 0 }, "", null));
   const steps = [() => search(0), () => freq("tossup", 0), () => freq("bonus", 0), () => freq("both", 0),
-    () => search(1), () => freq("tossup", 1), () => freq("bonus", 1), () => freq("both", 1)];
+    () => search(1), () => sorts(), () => freq("tossup", 1), () => freq("bonus", 1), () => freq("both", 1)];
   for (const step of steps) { await calm(); await settle(step()); }
   window.__qbPrefetched = true;   // (tests wait for it)
   // topic tags on: the Tags tab's first list and Frequency → Tags' (counted once per question database)

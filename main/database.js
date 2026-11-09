@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { join } from "node:path";
 
 // Question tags (schema 2, the `tags` JSON column). Families a filter may name;
 // "subject" is matched as a category-tree node (its id), never as text.
@@ -91,6 +92,11 @@ const SORT_SQL = {
 // Browse pages from this offset on come from the cached rowid order (_orderedPage).
 const DEEP_PAGE_OFFSET = 1000;
 const sortSql = (s, p) => (typeof s === "string" && Object.hasOwn(SORT_SQL, s) ? SORT_SQL[s](p) : null);
+// a browse's ORDER BY: a chosen sort, or the default (newest set first, in reading order)
+const BROWSE_DEFAULT = "ORDER BY set_year DESC, set_name, question_number, rowid";
+const browseOrderBy = (sort) => (sortSql(sort, "") ? "ORDER BY " + sortSql(sort, "") : BROWSE_DEFAULT);
+// (15.110) "+rowid IN (": the same rows, but SQLite reads the narrow indexes instead of each question's whole row
+const narrowWhere = (where) => String(where || "").replace(/(^|[\s(])rowid IN \(/, "$1+rowid IN (");
 
 function sanitizeFtsFallback(query) {
   const toks = String(query == null ? "" : query).match(/[\p{L}\p{N}]+/gu) || [];
@@ -816,12 +822,12 @@ export class QuestionDatabase {
     const offset = filters.offset || 0;
     const { where, params } = this._buildWhere(filters);
 
-    const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number, rowid");
+    const orderBy = filters.random ? "ORDER BY RANDOM()" : browseOrderBy(filters.sort);
 
     // browsing: the whole ordered id list once (one sort; the count is its length), then
     // every page is a lookup — a separate COUNT plus an OFFSET query re-sorted everything
     // for each page (3–4 s a page on the website's server)
-    if (!filters.random) return this._orderedPage("tossups", where, params, orderBy, offset, limit);
+    if (!filters.random) return this._orderedPage("tossups", where, params, orderBy, offset, limit, filters);
     if (filters.random) return this._randomRows("tossups", where, params, limit, this._quickIds("tossups", filters));
 
     const countSql = `SELECT COUNT(*) as count FROM tossups ${where}`;
@@ -839,9 +845,9 @@ export class QuestionDatabase {
     const offset = filters.offset || 0;
     const { where, params } = this._buildWhere(filters, "", { isBonus: true });
 
-    const orderBy = filters.random ? "ORDER BY RANDOM()" : (sortSql(filters.sort, "") ? "ORDER BY " + sortSql(filters.sort, "") : "ORDER BY set_year DESC, set_name, question_number, rowid");
+    const orderBy = filters.random ? "ORDER BY RANDOM()" : browseOrderBy(filters.sort);
 
-    if (!filters.random) return this._orderedPage("bonuses", where, params, orderBy, offset, limit);
+    if (!filters.random) return this._orderedPage("bonuses", where, params, orderBy, offset, limit, filters);
     if (filters.random) return this._randomRows("bonuses", where, params, limit, this._quickIds("bonuses", filters));
 
     const countSql = `SELECT COUNT(*) as count FROM bonuses ${where}`;
@@ -879,18 +885,21 @@ export class QuestionDatabase {
   // categories in the subtree, playable) are listed once and kept (catPool), and difficulty and year are picked out in
   // memory from what one narrow index read keeps per question (_pickMeta). The same rows as the SQL, in any order;
   // anything else in the filters takes the SQL way. server.js warms the top categories at startup (warmRandom).
-  _quickIds(table, f) {
-    if (!f || !f.random) return null;
+  _quickIds(table, f) { return f && f.random ? this._quickBase(table, f) : null; }
+  // (15.113) the same for a browse (Search's: unplayable records included, a pool of their own); null: not that kind
+  _quickBase(table, f) {
+    if (!f) return null;
     for (const [k, v] of Object.entries(f)) {
       if (v == null || v === false || v === "" || (Array.isArray(v) && !v.length)) continue;
-      if (!QUICK_KEYS.has(k)) return null;
+      if (!QUICK_KEYS.has(k) && k !== "includeUnplayable") return null;
     }
+    const every = !!f.includeUnplayable;
     const ids = [...(f.categoryIds || []), ...(f.categories || [])].map(String);
     if (!ids.length || !ids.every(isNodeId)) return null;   // plain category names: the SQL way
     if ((f.yearMin !== undefined && !Number.isFinite(f.yearMin)) || (f.yearMax !== undefined && !Number.isFinite(f.yearMax))) return null;
     let pool;
     try {
-      const pools = [...new Set(ids)].map((id) => this.catPool(table, id));
+      const pools = [...new Set(ids)].map((id) => this.catPool(table, id, every));
       pool = pools.length === 1 ? pools[0] : Int32Array.from(new Set(pools.flatMap((p) => Array.from(p))));
     } catch (e) { return null; }
     const diffs = f.difficulties && f.difficulties.length ? new Set(f.difficulties.map(Number)) : null;
@@ -908,14 +917,15 @@ export class QuestionDatabase {
     }
     return Int32Array.from(out);
   }
-  // one category node's playable questions (rowids), listed once and kept
-  catPool(table, nodeId) {
-    const key = table + "|" + nodeId, pools = this._catPools || (this._catPools = new Map());
+  // one category node's playable questions (rowids), listed once and kept; every: the unplayable ones too (Search)
+  catPool(table, nodeId, every = false) {
+    const key = table + "|" + nodeId + (every ? "|all" : ""), pools = this._catPools || (this._catPools = new Map());
     let ids = pools.get(key);
     if (ids) { pools.delete(key); pools.set(key, ids); return ids; }
-    const { where, params } = this._buildWhere({ categoryIds: [nodeId] }, "", table === "bonuses" ? { isBonus: true } : {});
-    // (+rowid: the playable check from the narrow index, not each question's row)
-    ids = Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${where.replace(/\browid IN \(/, "+rowid IN (")}`).all(params), (x) => x.r);
+    ids = this._keptIds("pool-" + table + "-" + nodeId + (every ? "-all" : ""), () => {
+      const { where, params } = this._buildWhere({ categoryIds: [nodeId], includeUnplayable: every }, "", table === "bonuses" ? { isBonus: true } : {});
+      return Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${narrowWhere(where)}`).all(params), (x) => x.r);
+    });
     pools.set(key, ids);
     while (pools.size > 400) pools.delete(pools.keys().next().value);   // the top ones are asked for again at once anyway
     return ids;
@@ -939,7 +949,10 @@ export class QuestionDatabase {
   // pool, tossups and bonuses → false when there's nothing left
   warmRandom(i) {
     const roots = this._loadTree().nodes.filter((n) => n.depth === 1).map((n) => n.id);
-    const jobs = [() => this._pickMeta("tossups"), () => this._pickMeta("bonuses"), ...roots.flatMap((id) => [() => this.catPool("tossups", id), () => this.catPool("bonuses", id)])];
+    const jobs = [() => this._pickMeta("tossups"), () => this._pickMeta("bonuses"), ...roots.flatMap((id) => [() => this.catPool("tossups", id), () => this.catPool("bonuses", id)]),
+      ...roots.flatMap((id) => [() => this.catPool("tossups", id, true), () => this.catPool("bonuses", id, true)]),
+      // (15.113) and Search's orders: the default and each sort, tossups and bonuses
+      ...[null, ...Object.keys(SORT_SQL)].flatMap((s) => [() => this._fullOrder("tossups", browseOrderBy(s)), () => this._fullOrder("bonuses", browseOrderBy(s))])];
     if (i < 0 || i >= jobs.length) return false;
     jobs[i]();
     return true;
@@ -960,6 +973,53 @@ export class QuestionDatabase {
     return { rows: order.map((id) => { const r = byId.get(id); if (r) delete r.__rid; return r; }).filter(Boolean), total: ids.length };
   }
 
+  // (15.113) A browse's rows in order. Sorting meant reading every matching question's whole row (packet_number is in
+  // no index): 1–5 s a sort on the website's server, more with filters. Now each order of the WHOLE table is worked
+  // out once (_fullOrder, kept on disk for this file), and a filtered browse is its matching rows (narrow indexes)
+  // in that order. Every order ends on a unique column, so it is exactly SQL's
+  _sortedIds(table, where, params, orderBy, base) {
+    const order = this._fullOrder(table, orderBy);
+    if (!where) return order;
+    const max = this._maxRowid(table), on = new Uint8Array(max + 1);
+    let n = 0;
+    const mark = (r) => { if (r <= max && !on[r]) { on[r] = 1; n++; } };
+    // the matching rows: a kept category list when the filters are only categories, difficulty and years (_quickBase)
+    if (base) for (let i = 0; i < base.length; i++) mark(base[i]);
+    else for (const r of this.db.prepare(`SELECT rowid AS r FROM ${table} ${narrowWhere(where)}`).iterate(params)) mark(r.r);
+    const out = new Int32Array(n);
+    let k = 0;
+    for (let i = 0; i < order.length && k < n; i++) if (on[order[i]]) out[k++] = order[i];
+    return k === n ? out : out.subarray(0, k);
+  }
+  _maxRowid(table) {
+    const m = this._maxRow || (this._maxRow = {});
+    if (m[table] == null) m[table] = (this.db.prepare(`SELECT MAX(rowid) AS m FROM ${table}`).get() || {}).m || 0;
+    return m[table];
+  }
+  // every row of a table in one browse order, worked out once
+  _fullOrder(table, orderBy) {
+    const all = this._orders || (this._orders = new Map()), key = table + "|" + orderBy;
+    let ids = all.get(key);
+    if (!ids) {
+      const tag = Object.keys(SORT_SQL).find((s) => browseOrderBy(s) === orderBy) || (orderBy === BROWSE_DEFAULT ? "default" : null);
+      const make = () => Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${orderBy}`).all(), (x) => x.r);
+      ids = tag ? this._keptIds("order-" + table + "-" + tag, make) : make();
+      all.set(key, ids);
+    }
+    return ids;
+  }
+  // a list of rowids kept on disk for this question file (cacheDir: the website's per-database cache, server.js),
+  // made once by make(); without a cacheDir (the desktop app) just made
+  _keptIds(name, make) {
+    const f = this.cacheDir ? join(this.cacheDir, "ids-" + name.replace(/[^A-Za-z0-9_-]/g, "_") + ".bin") : "";
+    if (f && existsSync(f)) {
+      try { const b = readFileSync(f); if (b.length % 4 === 0) return new Int32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)); } catch (e) {}
+    }
+    const ids = make();
+    if (f) { try { writeFileSync(f + ".tmp", Buffer.from(ids.buffer, ids.byteOffset, ids.byteLength)); renameSync(f + ".tmp", f); } catch (e) {} }
+    return ids;
+  }
+
   // Deep pages of a browse (no search text) re-sorted the whole table on every
   // request (~2.7 s at page 3000 without an index on the browse order). Past
   // the first pages the ordered rowids are computed once per filter and kept
@@ -968,15 +1028,17 @@ export class QuestionDatabase {
   // first build cheap too.
   _orderedKey(table, where, params, orderBy) { return table + "|" + where + "|" + orderBy + "|" + JSON.stringify(params); }
   _hasOrderedIds(table, where, params, orderBy) { return !!(this._idCache && this._idCache.has(this._orderedKey(table, where, params, orderBy))); }
-  _orderedPage(table, where, params, orderBy, offset, limit) {
+  _orderedPage(table, where, params, orderBy, offset, limit, filters) {
     const key = this._orderedKey(table, where, params, orderBy);
     const cache = this._idCache || (this._idCache = new Map());
     let ids = cache.get(key);
     if (ids) { cache.delete(key); cache.set(key, ids); }
     else {
-      ids = Int32Array.from(this.db.prepare(`SELECT rowid AS r FROM ${table} ${where} ${orderBy}`).all(params), (x) => x.r);
+      let base = null;
+      try { base = filters ? this._quickBase(table, filters) : null; } catch (e) { base = null; }
+      ids = this._sortedIds(table, where, params, orderBy, base);
       cache.set(key, ids);
-      while (cache.size > 6) cache.delete(cache.keys().next().value);
+      while (cache.size > 24) cache.delete(cache.keys().next().value);
     }
     const slice = Array.from(ids.subarray(offset, offset + limit));
     if (!slice.length) return { rows: [], total: ids.length };
