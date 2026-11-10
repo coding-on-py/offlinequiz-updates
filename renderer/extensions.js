@@ -3393,14 +3393,19 @@ function __qbMain(ctx) {
         var now = Date.now(); kickBans = kickBans.filter(function (b) { return b.until > now; });
         if (kickBans.some(function (b) { return (d.device && b.device === d.device) || (validHandle(d.handle) && b.handle === validHandle(d.handle)); })) { try { conn.send({ t: "kicked", text: "You were removed from this room. You can rejoin in 30 minutes." }); } catch (e) {} return; }
         if (d.device) devOf[id] = String(d.device).slice(0, 40);   // kept here, never sent to the others
-        // Same name = same person, but only an OFFLINE seat can be reclaimed:
-        // never the host's own entry, never a connected player's (a live name
-        // collision gets a numbered name instead of stealing the seat).
+        // (never the host's own entry; a live name collision gets a numbered name instead of the seat)
         var wantName = String(d.name || "").trim().toLowerCase();
         var sameName = function (x) { return x !== id && x !== myId && players[x] && String(players[x].name).trim().toLowerCase() === wantName; };
-        var oldId = wantName ? order.find(function (x) { return sameName(x) && players[x].off; }) : null;
+        // one seat per account (15.115): the same username joining again (another tab, a reload before the old
+        // connection went) takes its seat back, and the older connection is shown out. Otherwise same name = same
+        // person, but only an OFFLINE seat, and never one held by another username.
+        var acctH = validHandle(d.handle);
+        var mine = acctH ? order.find(function (x) { return x !== id && x !== myId && players[x] && players[x].handle === acctH; }) : null;
+        var oldId = mine || (wantName ? order.find(function (x) { return sameName(x) && players[x].off && (!players[x].handle || players[x].handle === acctH); }) : null);
         if (oldId) {
           var seat = players[oldId];
+          if (mine && !seat.off) { try { relayConn(oldId).send({ t: "kicked", text: "You joined this room somewhere else." }); } catch (e) {} }
+          if (players[id] && players[id] !== seat) order = order.filter(function (x) { return x !== id; });
           delete players[oldId];
           order[order.indexOf(oldId)] = id;
           seat.id = id;
@@ -3412,6 +3417,7 @@ function __qbMain(ctx) {
           if (bonusState && bonusState.winner === oldId) bonusState.winner = id;
           if (pendingBuzzer === oldId) pendingBuzzer = id;
           if (lockedIds[oldId]) { lockedIds[id] = lockedIds[oldId]; delete lockedIds[oldId]; }
+          if (bonusView && bonusView.winner === oldId) bonusView.winner = id;
           sysChat(seat.name + " rejoined");
         } else {
           var joinName = String(d.name || "").trim();
@@ -3427,6 +3433,19 @@ function __qbMain(ctx) {
           }
           addPlayer(id, joinName || d.name, "", d.spectate, d.avatar, d.handle);
           sysChat(players[id].name + " joined" + (d.spectate ? " (spectating)" : ""));
+        }
+        // the account's leftovers (offline seats on its username, "Name (2)" from joining twice) fold into its seat,
+        // points and all, and the seat takes the name it asked for when nobody else has it
+        if (acctH && players[id]) {
+          var keep = players[id];
+          order.slice().forEach(function (x) {
+            var g = players[x];
+            if (x === id || x === myId || !g || !g.off || g.handle !== acctH) return;
+            keep.score = (Number(keep.score) || 0) + (Number(g.score) || 0);
+            removePlayer(x); delete lockedIds[x];
+          });
+          var nm = String(d.name || "").trim();
+          if (nm && String(keep.name).trim().toLowerCase() !== wantName && !order.some(function (x) { return x !== id && players[x] && String(players[x].name).trim().toLowerCase() === wantName; })) keep.name = nm.slice(0, 24);
         }
         pushState();
         // bring the newcomer up to speed
