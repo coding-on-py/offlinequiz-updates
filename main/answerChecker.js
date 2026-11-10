@@ -2322,14 +2322,22 @@ function wordCost(w, r, ctx, fuzzy, required) {
   if (required && ctx.wordForms && wordFormEq(base, rt)) return 0;
   if (required && ctx.wordFormsAuto && !w.cap && wordFormAutoEq(base, rt)) { ctx.autoForm = true; return 0; }
   if (!fuzzy || /\d/.test(rt)) return -1;
-  // never fuzz a one-letter required portion (an initial), digits or numerals (J10)
-  if (w.kind !== "O" && w._rlen === 1) return -1;
+  // never fuzz a one-letter required portion (an initial), digits or numerals (J10). (15.118) A word whose one
+  // required letter is its first, written out in full, may still be misspelled after that letter ("elanor" for
+  // <u>E</u>leanor): the first letter must be right and the whole word's typo budget holds
+  let only = null;
+  if (w.kind !== "O" && w._rlen === 1) {
+    const full = w.segs.map((x) => x[1]).join("");
+    if (!w.segs[0][0] || full.length < 5 || /\d/.test(full) || rt.length < 4 || rt[0] !== full[0]) return -1;
+    only = [full];
+  }
+  const fz = only || cands;
   // a lowercase word's -ing / -ed form, either way ("hydrogen bonding" for <u>hydrogen bond</u>s): a common
   // noun or verb only — a capitalised word may be a name (Browning is not Brown, Fielding is not Field).
   // It costs like one typo, so the form's budget and the collision guard still apply (painting ≠ paint).
-  if (!w.cap && rt.length >= 5) for (const c of cands) if (!/\d/.test(c) && ingEdEq(c, rt)) return 1;
+  if (!w.cap && rt.length >= 5) for (const c of fz) if (!/\d/.test(c) && ingEdEq(c, rt)) return 1;
   let best = -1;
-  for (const c of cands) {
+  for (const c of fz) {
     if (/\d/.test(c) || c.length < 3) continue;
     const bud = budgetFor(Math.max(c.length, rt.length), ctx);
     // a derivational variant (nationalist / nationalism) is a word form, not a typo
