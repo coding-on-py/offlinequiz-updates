@@ -16488,10 +16488,22 @@ function tipSync() {
   const live = [...dock.querySelectorAll(".qb-tip:not(.qb-leaving)")];
   const show = live.filter((t) => tipOwnerShown(t._owner)).pop() || null;
   for (const t of live) if ((t === show) === t.hidden) t.hidden = t !== show;
-  if (!show) return;
-  // stay clear of what's along the bottom: the practice / room bar, Setup's footer, a dialog's footer
+  if (!show) { dock.style.zIndex = ""; return; }
+  // (15.115) a tip that belongs to a dialog (the category picker's) floats OVER it, inside its box: the dock's own
+  // place (z-index 95) is under every dialog, so it was half hidden behind the picker and couldn't be closed
   const W = innerWidth, H = innerHeight, phone = matchMedia("(max-width: 760px)").matches;
-  const left = phone ? 12 : 16, right = phone ? W - 12 : Math.min(W - 16, 16 + 360);
+  const ovl = show._owner.closest(".qb-overlay, .settings-ovl");
+  let left = phone ? 12 : 16;
+  if (ovl) {
+    let z = 0;
+    for (let a = ovl; a && a !== document.body; a = a.parentElement) { const cs = getComputedStyle(a); if (cs.position !== "static" && cs.zIndex !== "auto") z = Math.max(z, parseInt(cs.zIndex, 10) || 0); }
+    dock.style.zIndex = String(Math.max(95, z) + 1);
+    const box = (show._owner.closest(".settings-modal") || show._owner).getBoundingClientRect();
+    if (!phone && box.width) left = Math.round(Math.max(16, Math.min(box.left + 16, W - 16 - 360)));
+  } else dock.style.zIndex = "";
+  dock.style.setProperty("--tip-left", left + "px");
+  // stay clear of what's along the bottom: the practice / room bar, Setup's footer, a dialog's footer
+  const right = phone ? W - 12 : Math.min(W - 16, left + 360);
   let lift = 0;
   for (const b of document.querySelectorAll(".practice-actions, .mp-actions, .filters-panel.open .fp-foot, .qb-overlay:not(.hidden) .modal-foot, .cat-modal .cp-foot")) {
     const r = b.getBoundingClientRect();

@@ -3937,7 +3937,7 @@ html[data-scheme="light"] .beta-tag { border-color: rgba(37, 99, 235, 0.4); back
 .qb-tip-x { flex: none; width: 28px; height: 28px; border: 0; border-radius: var(--r-sm); background: none; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; }
 .qb-tip-x:hover { color: var(--strong); background: var(--raised); }
 /* the tip dock (tipInto): a corner of the screen, over the page — it moves nothing */
-#qb-tip-dock { position: fixed; z-index: 95; left: 16px; bottom: calc(16px + var(--tip-lift, 0px)); width: min(360px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; pointer-events: none; transition: bottom 160ms var(--ease-out); }
+#qb-tip-dock { position: fixed; z-index: 95; left: var(--tip-left, 16px); bottom: calc(16px + var(--tip-lift, 0px)); width: min(360px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; pointer-events: none; transition: bottom 160ms var(--ease-out); }
 #qb-tip-dock .qb-tip { pointer-events: auto; margin: 0; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.42), 0 2px 6px rgba(0, 0, 0, 0.25); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
 #qb-tip-dock .qb-tip[hidden] { display: none; }
 html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.08); }
