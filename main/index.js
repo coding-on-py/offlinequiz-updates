@@ -56,7 +56,8 @@ const TRIAL_CATS = [
 // Five tossups a run, no cooldown, and their XP is their own (keys "<cat>-<sub>|<level>"), never the category's.
 // The "Any …" buckets and the small branches aren't here. 15.119: the large alternate subcategories too (a branch of
 // a subcategory: 500+ playable tossups, not most of its parent), each after its parent, and branches no trial covered
-// with 300+ (Linguistics, Engineering, Religious and Exploration History). (app.js TRIAL_SUBS is the same list.)
+// with 300+ (Linguistics, Engineering, Religious and Exploration History). 15.120: every mythology branch with 150+.
+// (app.js TRIAL_SUBS is the same list.)
 const TRIAL_SUBS = [
   ["lit-eng", "English Literature", "lit", "n35336fe01e"], ["lit-amlit", "American Literature", "lit", "n3f8e3710af"],
   ["lit-britlit", "British Literature", "lit", "n1ebd9af611"], ["lit-world", "Non English Literature", "lit", "n4226830785"],
@@ -88,8 +89,16 @@ const TRIAL_SUBS = [
   ["fa-jazz", "Jazz", "fa", "n8b46438892"], ["fa-instruments", "Instruments, Performers & Theory", "fa", "na69ea90ff3"],
   ["fa-perf", "Performing Arts", "fa", "nf47165363d"], ["fa-opera", "Opera", "fa", "n917fb8d76c"],
   ["myth-classical", "Classical Myth", "myth", "nf6b2135ea1"], ["myth-olympians", "Olympians & Major Gods", "myth", "n43a6a02eca"],
-  ["myth-norse", "Scandinavian Myth", "myth", "n5ee35f04d6"], ["myth-noneu", "Non European Myth", "myth", "nb6a0129bc9"],
-  ["myth-egypt", "Egyptian Myth", "myth", "nb8c7ce8909"], ["myth-nonclassical", "Nonclassical Myth", "myth", "nb0539fb1c5"],
+  ["myth-heracles", "Heracles & His Labors", "myth", "n50c2ddcafb"], ["myth-heroes", "Heroes of Athens, Argos & Crete", "myth", "nf7890416e3"],
+  ["myth-troy", "Trojan War & the Iliad", "myth", "n658b1b6d65"], ["myth-odyssey", "The Odyssey & the Returns", "myth", "nde056c40f7"],
+  ["myth-thebes", "Theban & Mycenaean Cycles", "myth", "n5d665e267f"], ["myth-monsters", "Monsters, Nymphs & Minor Divinities", "myth", "n9451c08342"],
+  ["myth-lovers", "Lovers, Metamorphoses & Punishments", "myth", "n0dbb26b42a"], ["myth-roman", "Roman Myth & Legend", "myth", "nfcf64e7d4a"],
+  ["myth-norse", "Scandinavian Myth", "myth", "n5ee35f04d6"], ["myth-aesir", "Aesir, Vanir & Other Gods", "myth", "n57985dae57"],
+  ["myth-noneu", "Non European Myth", "myth", "nb6a0129bc9"], ["myth-egypt", "Egyptian Myth", "myth", "nb8c7ce8909"],
+  ["myth-mesopotamia", "Mesopotamian & Near Eastern Myth", "myth", "ndcedd7c82a"], ["myth-southasia", "South Asian Myth", "myth", "nd5c5249881"],
+  ["myth-eastasia", "East Asian Myth", "myth", "ndcb8060afb"], ["myth-mesoamerica", "Mesoamerican & Andean Myth", "myth", "n9c4c721933"],
+  ["myth-nonclassical", "Nonclassical Myth", "myth", "nb0539fb1c5"], ["myth-irish", "Irish & Gaelic Legend", "myth", "na0f0fe2a2d"],
+  ["myth-arthur", "Arthurian Legend", "myth", "na4e3458f40"], ["myth-sacred", "Animals, Plants & Sacred Objects", "myth", "n770c2a9cf7"],
   ["phil-ancient", "Ancient Philosophy", "phil", "n2a0c39e1d1"], ["phil-medieval", "Medieval & Renaissance Philosophy", "phil", "nc4ad5d0f22"],
   ["phil-early", "Early Modern Philosophy", "phil", "nefd0811a1d"], ["phil-19c", "19th-Century Philosophy", "phil", "ndb4743fa2d"],
   ["phil-analytic", "Analytic Philosophy", "phil", "nb8f3d8c1b4"], ["phil-continental", "Continental Philosophy", "phil", "nfd111ec97c"],
@@ -1388,8 +1397,9 @@ export class App {
       const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
       let ids = pick("pure");
       if (ids.length < LEN) ids = shuffle([...new Set([...ids, ...pick("home")])].slice(0, LEN));
-      // a branch short at its level borrows from the levels next to it, then the ones beside those
-      if (sub) for (const d of [[level - 1, level + 1], [level - 2, level + 2]]) {
+      // a branch short at its level borrows from the levels next to it, then the ones beside those (15.119: and the
+      // ones beside those, for the small myth branches)
+      if (sub) for (const d of [[level - 1, level + 1], [level - 2, level + 2], [level - 3, level + 3]]) {
         if (ids.length >= LEN) break;
         const ds = d.filter((x) => x >= 0 && x <= 10);
         ids = shuffle([...new Set([...ids, ...pick("pure", ds), ...pick("home", ds)])].slice(0, LEN));
