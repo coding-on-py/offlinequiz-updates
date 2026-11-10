@@ -12605,7 +12605,10 @@ const trialXp = (level, powers) => { const p = Math.max(0, Math.min(TRIAL_LEN, p
 // 40 × n² XP, so they move much faster than a category's. Their XP is their own: it never counts toward the category.
 const TRIAL_SUBS = [
   ["lit-eng", "English Literature", "lit"], ["lit-amlit", "American Literature", "lit"], ["lit-britlit", "British Literature", "lit"],
-  ["lit-world", "Non English Literature", "lit"], ["lit-eurolit", "European Literature", "lit"], ["lit-worldlit", "World Literature", "lit"],
+  ["lit-shakespeare", "Shakespeare", "lit"], ["lit-world", "Non English Literature", "lit"], ["lit-eurolit", "European Literature", "lit"],
+  ["lit-french", "French Literature", "lit"], ["lit-german", "German & Dutch Literature", "lit"], ["lit-russian", "Russian Literature", "lit"],
+  ["lit-classics", "Classical Greek & Latin Literature", "lit"], ["lit-worldlit", "World Literature", "lit"],
+  ["lit-latam", "Latin American Literature", "lit"], ["lit-african", "African Literature", "lit"], ["lit-japanese", "Japanese Literature", "lit"],
   ["lit-young", "Young Reader Literature", "lit"],
   ["hist-am", "American History", "hist"], ["hist-ammil", "American Military History", "hist"], ["hist-ampol", "American Political History", "hist"],
   ["hist-amsoc", "American Social History", "hist"], ["hist-eu", "European History", "hist"], ["hist-british", "British History", "hist"],
@@ -12616,14 +12619,20 @@ const TRIAL_SUBS = [
   ["hist-rome", "Ancient Rome", "hist"], ["hist-ancworld", "Non Classical Ancient History", "hist"], ["hist-religious", "Religious History", "hist"],
   ["hist-exploration", "Exploration History", "hist"],
   ["sci-phys", "Physics", "sci"], ["sci-mech", "Mechanics & Electromagnetism", "sci"], ["sci-thermo", "Thermodynamics, Optics & Nuclear", "sci"],
-  ["sci-astro", "Astronomy", "sci"], ["sci-stars", "Stars & Galaxies", "sci"], ["sci-bio", "Biology", "sci"],
-  ["sci-anatomy", "Anatomy & Medicine", "sci"], ["sci-cell", "Cell & Molecular Biology", "sci"],
-  ["sci-organisms", "Organismal & Population Biology", "sci"], ["sci-chem", "Chemistry", "sci"], ["sci-cs", "Computer Science", "sci"],
-  ["sci-earth", "Earth Science", "sci"], ["sci-eng", "Engineering", "sci"],
-  ["math-theory", "Math Theory", "math"], ["math-calc", "Calculus & Analysis", "math"], ["math-geom", "Geometry & Trigonometry", "math"],
-  ["fa-visual", "Visual Arts", "fa"], ["fa-painting", "Painting", "fa"], ["fa-arch", "Architecture", "fa"], ["fa-sculpture", "Sculpture", "fa"],
-  ["fa-music", "Fine Arts Music", "fa"], ["fa-composers", "Composers & Works", "fa"], ["fa-jazz", "Jazz", "fa"],
-  ["fa-instruments", "Instruments, Performers & Theory", "fa"], ["fa-perf", "Performing Arts", "fa"], ["fa-opera", "Opera", "fa"],
+  ["sci-modern", "Modern Physics", "sci"], ["sci-astro", "Astronomy", "sci"], ["sci-solar", "Solar System", "sci"],
+  ["sci-stars", "Stars & Galaxies", "sci"], ["sci-bio", "Biology", "sci"], ["sci-anatomy", "Anatomy & Medicine", "sci"],
+  ["sci-cell", "Cell & Molecular Biology", "sci"], ["sci-organisms", "Organismal & Population Biology", "sci"], ["sci-chem", "Chemistry", "sci"],
+  ["sci-organic", "Organic Chemistry", "sci"], ["sci-elements", "Chemical Elements", "sci"], ["sci-cs", "Computer Science", "sci"],
+  ["sci-algorithms", "Algorithms & Data Structures", "sci"], ["sci-earth", "Earth Science", "sci"], ["sci-minerals", "Minerals & Rocks", "sci"],
+  ["sci-eng", "Engineering", "sci"],
+  ["math-theory", "Math Theory", "math"], ["math-algebra", "Numbers & Elementary Algebra", "math"], ["math-ntheory", "Number Theory", "math"],
+  ["math-calc", "Calculus & Analysis", "math"], ["math-geom", "Geometry & Trigonometry", "math"], ["math-linalg", "Linear Algebra", "math"],
+  ["math-prob", "Probability & Statistics", "math"],
+  ["fa-visual", "Visual Arts", "fa"], ["fa-painting", "Painting", "fa"], ["fa-renaissance", "Italian Renaissance Painting", "fa"],
+  ["fa-baroque", "Baroque & Dutch Golden Age Painting", "fa"], ["fa-impressionism", "Impressionism & Post-Impressionism", "fa"],
+  ["fa-arch", "Architecture", "fa"], ["fa-sculpture", "Sculpture", "fa"], ["fa-photo", "Photography", "fa"], ["fa-music", "Fine Arts Music", "fa"],
+  ["fa-composers", "Composers & Works", "fa"], ["fa-jazz", "Jazz", "fa"], ["fa-instruments", "Instruments, Performers & Theory", "fa"],
+  ["fa-perf", "Performing Arts", "fa"], ["fa-opera", "Opera", "fa"], ["fa-dance", "Dance", "fa"],
   ["myth-classical", "Classical Myth", "myth"], ["myth-olympians", "Olympians & Major Gods", "myth"],
   ["myth-heracles", "Heracles & His Labors", "myth"], ["myth-heroes", "Heroes of Athens, Argos & Crete", "myth"],
   ["myth-troy", "Trojan War & the Iliad", "myth"], ["myth-odyssey", "The Odyssey & the Returns", "myth"],
@@ -12635,22 +12644,40 @@ const TRIAL_SUBS = [
   ["myth-mesoamerica", "Mesoamerican & Andean Myth", "myth"], ["myth-nonclassical", "Nonclassical Myth", "myth"],
   ["myth-irish", "Irish & Gaelic Legend", "myth"], ["myth-arthur", "Arthurian Legend", "myth"],
   ["myth-sacred", "Animals, Plants & Sacred Objects", "myth"],
-  ["phil-ancient", "Ancient Philosophy", "phil"], ["phil-medieval", "Medieval & Renaissance Philosophy", "phil"],
-  ["phil-early", "Early Modern Philosophy", "phil"], ["phil-19c", "19th-Century Philosophy", "phil"], ["phil-analytic", "Analytic Philosophy", "phil"],
-  ["phil-continental", "Continental Philosophy", "phil"], ["phil-problems", "Philosophical Problems & Concepts", "phil"],
+  ["phil-ancient", "Ancient Philosophy", "phil"], ["phil-plato", "Socrates & Plato", "phil"],
+  ["phil-medieval", "Medieval & Renaissance Philosophy", "phil"], ["phil-early", "Early Modern Philosophy", "phil"],
+  ["phil-rationalists", "Continental Rationalists", "phil"], ["phil-empiricists", "British Empiricists", "phil"],
+  ["phil-19c", "19th-Century Philosophy", "phil"], ["phil-nietzsche", "Schopenhauer & Nietzsche", "phil"],
+  ["phil-pragmatism", "Transcendentalism & Pragmatism", "phil"], ["phil-analytic", "Analytic Philosophy", "phil"],
+  ["phil-language", "Philosophy of Language", "phil"], ["phil-continental", "Continental Philosophy", "phil"],
+  ["phil-phenom", "Phenomenology & Existentialism", "phil"], ["phil-problems", "Philosophical Problems & Concepts", "phil"],
+  ["phil-eastasian", "East Asian Philosophy", "phil"],
   ["rel-practice", "Theology and Practice", "rel"], ["rel-jctheo", "Judeo Christian Theology", "rel"],
-  ["rel-worldrel", "Non Judeo Christian Theology", "rel"], ["rel-lit", "Religious Literature", "rel"],
-  ["rel-bible", "Judeo Christian Literature", "rel"],
+  ["rel-worldrel", "Non Judeo Christian Theology", "rel"], ["rel-hindu", "Hinduism", "rel"], ["rel-lit", "Religious Literature", "rel"],
+  ["rel-bible", "Judeo Christian Literature", "rel"], ["rel-gospels", "Gospels & the Life of Jesus", "rel"],
+  ["rel-otherlit", "Non Judeo Christian Literature", "rel"],
   ["geo-na", "North American Geography", "geo"], ["geo-usplaces", "US States & Cities", "geo"],
-  ["geo-usnature", "US Physical Features & Parks", "geo"], ["geo-world", "World Geography", "geo"], ["geo-europe", "European Geography", "geo"],
-  ["geo-asia", "Asian Geography", "geo"], ["geo-africa", "African Geography", "geo"], ["geo-samerica", "South American Geography", "geo"],
-  ["ss-anth", "Anthropology & Sociology", "ss"], ["ss-econ", "Economics", "ss"], ["ss-gov", "Government", "ss"], ["ss-law", "Jurisprudence", "ss"],
-  ["ss-polphil", "Political Philosophy", "ss"], ["ss-psych", "Psychology", "ss"], ["ss-ling", "Linguistics", "ss"],
-  ["ce-us", "US Current Events", "ce"], ["ce-world", "World Current Events", "ce"], ["ce-biz", "Business", "ce"],
-  ["pop-tv", "TV", "pop"], ["pop-music", "Pop Music", "pop"], ["pop-film", "Film", "pop"], ["pop-games", "Video Games", "pop"],
-  ["pop-musicals", "Musicals", "pop"], ["pop-comics", "Comics", "pop"],
-  ["sports-major", "Major Sports", "sports"], ["sports-minor", "Minor Sports", "sports"],
+  ["geo-usnature", "US Physical Features & Parks", "geo"], ["geo-canada", "Canada", "geo"], ["geo-world", "World Geography", "geo"],
+  ["geo-europe", "European Geography", "geo"], ["geo-asia", "Asian Geography", "geo"], ["geo-africa", "African Geography", "geo"],
+  ["geo-samerica", "South American Geography", "geo"],
+  ["ss-anth", "Anthropology & Sociology", "ss"], ["ss-socio", "Classical Sociological Theory", "ss"], ["ss-culture", "Anthropological Theory", "ss"],
+  ["ss-econ", "Economics", "ss"], ["ss-macro", "Macroeconomics", "ss"], ["ss-micro", "Microeconomics", "ss"],
+  ["ss-econthought", "History of Economic Thought", "ss"], ["ss-gov", "Government", "ss"], ["ss-law", "Jurisprudence", "ss"],
+  ["ss-conlaw", "Constitutional Law", "ss"], ["ss-polphil", "Political Philosophy", "ss"], ["ss-psych", "Psychology", "ss"],
+  ["ss-socialpsych", "Social Psychology", "ss"], ["ss-freud", "Psychoanalysis", "ss"], ["ss-ling", "Linguistics", "ss"],
+  ["ce-us", "US Current Events", "ce"], ["ce-uspol", "US Politics", "ce"], ["ce-world", "World Current Events", "ce"], ["ce-biz", "Business", "ce"],
+  ["pop-tv", "TV", "pop"], ["pop-dramas", "TV Dramas", "pop"], ["pop-sitcoms", "Sitcoms", "pop"], ["pop-music", "Pop Music", "pop"],
+  ["pop-rock", "Rock & Metal", "pop"], ["pop-film", "Film", "pop"], ["pop-classicfilm", "Silent & Classic Film", "pop"],
+  ["pop-arthouse", "World & Art-House Cinema", "pop"], ["pop-directors", "Directors & Film Technique", "pop"], ["pop-games", "Video Games", "pop"],
+  ["pop-adventure", "Action-Adventure & Platformers", "pop"], ["pop-pokemon", "Pokemon", "pop"], ["pop-rpg", "Role-Playing Games", "pop"],
+  ["pop-musicals", "Musicals", "pop"], ["pop-comics", "Comics", "pop"], ["pop-books", "Popular Books & Franchises", "pop"],
+  ["sports-major", "Major Sports", "sports"], ["sports-baseball", "Baseball", "sports"], ["sports-football", "Football", "sports"],
+  ["sports-basketball", "Basketball", "sports"], ["sports-minor", "Minor Sports", "sports"],
 ];
+// 15.121: retired subcategory trials (too small, or one too many in a crowded category) stay on the Trials page, with
+// their XP and badges, only for a player who has played them (index.js TRIAL_RETIRED).
+const TRIAL_RETIRED = new Set(["myth-heracles", "myth-odyssey", "myth-thebes", "myth-sacred", "hist-exploration", "hist-italian", "hist-namerica"]);
+const trialPlayed = (trials, key) => Object.keys(trials || {}).some((k) => k.startsWith(key + "|"));
 const SUB_LEN = 5;
 const isSubTrial = (key) => String(key || "").includes("-");
 // a trial's name, its category, and its rules, whichever kind it is
@@ -12945,7 +12972,7 @@ function trialsSectionHtml(info) {
     <div class="tr-grid">${TRIAL_CATS.map(([key, name]) => trialCardHtml(info, key, name, badges[key] || 0)).join("")}</div></section>` +
     `<section class="pf-trials tr-subs"><div class="pf-ach-head"><h2 class="eyebrow">Subcategories</h2><span class="pf-ach-n tr-total"><b class="num">${trialXpSum(trials, true).toLocaleString()}</b> XP</span></div>` +
     TRIAL_CATS.map(([ck, cname]) => {
-      const subs = TRIAL_SUBS.filter((x) => x[2] === ck);
+      const subs = TRIAL_SUBS.filter((x) => x[2] === ck && (!TRIAL_RETIRED.has(x[0]) || trialPlayed(trials, x[0])));
       return subs.length ? `<div class="tr-sub-group" style="--hue:${trialHue(ck)}"><h3 class="tr-sub-h">${escapeHtml(cname)}</h3><div class="tr-grid tr-sub-grid">${subs.map(([key, name]) => trialCardHtml(info, key, name, subBadges[key] || 0)).join("")}</div></div>` : "";
     }).join("") + `</section>`;
 }

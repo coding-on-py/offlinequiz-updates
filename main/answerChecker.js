@@ -2244,6 +2244,15 @@ function wordCands(w) {
 
 // a word with every run of one letter written once ("mississippi" → "misisipi")
 const undoubled = (s) => s.replace(/(\p{L})\1+/gu, "$1");
+// (15.121) a word's vowel groups as one mark each, its consonants kept ("eleanor" → "VlVnVr")
+const vowelShape = (s) => s.replace(/[aeiouy]+/g, "V");
+// two words the same but for one pair of neighbouring letters swapped ("bahc" / "bach")
+function swappedOnce(a, b) {
+  if (a.length !== b.length) return false;
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  return i < a.length - 1 && a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
+}
 function budgetFor(len, ctx) {
   let b = len <= 4 ? 0 : len <= 8 ? 1 : 2;
   if (len >= 3) b += ctx.extraBudget || 0;
@@ -2353,7 +2362,16 @@ function wordCost(w, r, ctx, fuzzy, required) {
         const dc = undoubled(c);
         if (dc.length >= 4 && dc === undoubled(rt)) best = 1;
       }
+      // (15.121) a word that differs only inside its vowel groups, each group where it was and the first letter right,
+      // is one typo even at two edits: "elinor" for Eleanor (e·l·ea·n·o·r, e·l·i·n·o·r). A name's only (a capitalised
+      // word: liqueur is not liquor) of six letters or more (Chung is not Chiang); every consonant stays put, so Mendel
+      // is not Mandela; the collision guard applies
+      if (best < 0 && w.cap && c[0] === rt[0] && c.length >= 6 && rt.length >= 6 && vowelShape(c) === vowelShape(rt) && osa(c, rt, bud + 1) <= bud + 1) best = 1;
     }
+    // (15.121) a four-letter word with two neighbouring letters swapped, past the first ("bahc" for Bach, "thro" for
+    // Thor): one typo, though four letters get no budget otherwise (a dropped, added or changed letter still fails:
+    // back, tor, bech)
+    if (best < 0 && c.length === 4 && rt.length === 4 && c[0] === rt[0] && swappedOnce(c, rt)) best = 1;
     if (best < 0 && ctx.lenientSpell && !r.split && c.length >= 6 && rt.length >= 5 && c[0] === rt[0]) {
       const kc = phonKey(c), kr = phonKey(rt);
       if (kc.length >= 3 && (kc === kr || (kc.length >= 4 && osa(kc, kr, 1) <= 1))) best = 1;

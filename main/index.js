@@ -60,8 +60,12 @@ const TRIAL_CATS = [
 // (app.js TRIAL_SUBS is the same list.)
 const TRIAL_SUBS = [
   ["lit-eng", "English Literature", "lit", "n35336fe01e"], ["lit-amlit", "American Literature", "lit", "n3f8e3710af"],
-  ["lit-britlit", "British Literature", "lit", "n1ebd9af611"], ["lit-world", "Non English Literature", "lit", "n4226830785"],
-  ["lit-eurolit", "European Literature", "lit", "n5b3364d764"], ["lit-worldlit", "World Literature", "lit", "n1eaddcfb59"],
+  ["lit-britlit", "British Literature", "lit", "n1ebd9af611"], ["lit-shakespeare", "Shakespeare", "lit", "n4987166a6b"],
+  ["lit-world", "Non English Literature", "lit", "n4226830785"], ["lit-eurolit", "European Literature", "lit", "n5b3364d764"],
+  ["lit-french", "French Literature", "lit", "nff4822533c"], ["lit-german", "German & Dutch Literature", "lit", "n94c7b99cc7"],
+  ["lit-russian", "Russian Literature", "lit", "n6b0f1c5a06"], ["lit-classics", "Classical Greek & Latin Literature", "lit", "ne6319d1f6c"],
+  ["lit-worldlit", "World Literature", "lit", "n1eaddcfb59"], ["lit-latam", "Latin American Literature", "lit", "n3308ee433f"],
+  ["lit-african", "African Literature", "lit", "na79b439d82"], ["lit-japanese", "Japanese Literature", "lit", "nf7101ebe62"],
   ["lit-young", "Young Reader Literature", "lit", "n8e75d37c66"],
   ["hist-am", "American History", "hist", "n1cf7b17e0c"], ["hist-ammil", "American Military History", "hist", "n9f3fff39bd"],
   ["hist-ampol", "American Political History", "hist", "nd82e260831"], ["hist-amsoc", "American Social History", "hist", "n00a0254c60"],
@@ -75,19 +79,26 @@ const TRIAL_SUBS = [
   ["hist-ancworld", "Non Classical Ancient History", "hist", "n508a691aac"], ["hist-religious", "Religious History", "hist", "nc7543b4426"],
   ["hist-exploration", "Exploration History", "hist", "na78f250f77"],
   ["sci-phys", "Physics", "sci", "n23858b9459"], ["sci-mech", "Mechanics & Electromagnetism", "sci", "n6473432daa"],
-  ["sci-thermo", "Thermodynamics, Optics & Nuclear", "sci", "n5337bb3209"], ["sci-astro", "Astronomy", "sci", "n8975ecf6e0"],
+  ["sci-thermo", "Thermodynamics, Optics & Nuclear", "sci", "n5337bb3209"], ["sci-modern", "Modern Physics", "sci", "n2a30a371c8"],
+  ["sci-astro", "Astronomy", "sci", "n8975ecf6e0"], ["sci-solar", "Solar System", "sci", "nb685e35848"],
   ["sci-stars", "Stars & Galaxies", "sci", "n91af139f7a"], ["sci-bio", "Biology", "sci", "n7c3ece61e4"],
   ["sci-anatomy", "Anatomy & Medicine", "sci", "n074ef13d56"], ["sci-cell", "Cell & Molecular Biology", "sci", "n0ef905a08d"],
   ["sci-organisms", "Organismal & Population Biology", "sci", "nc8abfe25a4"], ["sci-chem", "Chemistry", "sci", "ne559beba64"],
-  ["sci-cs", "Computer Science", "sci", "n28ae138fe8"], ["sci-earth", "Earth Science", "sci", "n5bc9597ef7"],
+  ["sci-organic", "Organic Chemistry", "sci", "n41881f4715"], ["sci-elements", "Chemical Elements", "sci", "n9a2d3cbbb0"],
+  ["sci-cs", "Computer Science", "sci", "n28ae138fe8"], ["sci-algorithms", "Algorithms & Data Structures", "sci", "n50e1dadf25"],
+  ["sci-earth", "Earth Science", "sci", "n5bc9597ef7"], ["sci-minerals", "Minerals & Rocks", "sci", "n1ddccc7fbb"],
   ["sci-eng", "Engineering", "sci", "nd45e0777da"],
-  ["math-theory", "Math Theory", "math", "n8f509b363e"], ["math-calc", "Calculus & Analysis", "math", "n616615f100"],
-  ["math-geom", "Geometry & Trigonometry", "math", "nee991e14c2"],
+  ["math-theory", "Math Theory", "math", "n8f509b363e"], ["math-algebra", "Numbers & Elementary Algebra", "math", "n924a6f30e5"],
+  ["math-ntheory", "Number Theory", "math", "n06c2ccf642"], ["math-calc", "Calculus & Analysis", "math", "n616615f100"],
+  ["math-geom", "Geometry & Trigonometry", "math", "nee991e14c2"], ["math-linalg", "Linear Algebra", "math", "nee098da834"],
+  ["math-prob", "Probability & Statistics", "math", "nf44466c47f"],
   ["fa-visual", "Visual Arts", "fa", "n770d122fff"], ["fa-painting", "Painting", "fa", "n672f5677d4"],
-  ["fa-arch", "Architecture", "fa", "nebfd5422bf"], ["fa-sculpture", "Sculpture", "fa", "n7540ecbd5e"],
+  ["fa-renaissance", "Italian Renaissance Painting", "fa", "ne95477025c"], ["fa-baroque", "Baroque & Dutch Golden Age Painting", "fa", "n6f1bb20747"],
+  ["fa-impressionism", "Impressionism & Post-Impressionism", "fa", "n829723ea36"], ["fa-arch", "Architecture", "fa", "nebfd5422bf"],
+  ["fa-sculpture", "Sculpture", "fa", "n7540ecbd5e"], ["fa-photo", "Photography", "fa", "n4d53cd0176"],
   ["fa-music", "Fine Arts Music", "fa", "ncd1d8777ca"], ["fa-composers", "Composers & Works", "fa", "nf3c9a5746a"],
   ["fa-jazz", "Jazz", "fa", "n8b46438892"], ["fa-instruments", "Instruments, Performers & Theory", "fa", "na69ea90ff3"],
-  ["fa-perf", "Performing Arts", "fa", "nf47165363d"], ["fa-opera", "Opera", "fa", "n917fb8d76c"],
+  ["fa-perf", "Performing Arts", "fa", "nf47165363d"], ["fa-opera", "Opera", "fa", "n917fb8d76c"], ["fa-dance", "Dance", "fa", "n42e0c17523"],
   ["myth-classical", "Classical Myth", "myth", "nf6b2135ea1"], ["myth-olympians", "Olympians & Major Gods", "myth", "n43a6a02eca"],
   ["myth-heracles", "Heracles & His Labors", "myth", "n50c2ddcafb"], ["myth-heroes", "Heroes of Athens, Argos & Crete", "myth", "nf7890416e3"],
   ["myth-troy", "Trojan War & the Iliad", "myth", "n658b1b6d65"], ["myth-odyssey", "The Odyssey & the Returns", "myth", "nde056c40f7"],
@@ -99,28 +110,47 @@ const TRIAL_SUBS = [
   ["myth-eastasia", "East Asian Myth", "myth", "ndcb8060afb"], ["myth-mesoamerica", "Mesoamerican & Andean Myth", "myth", "n9c4c721933"],
   ["myth-nonclassical", "Nonclassical Myth", "myth", "nb0539fb1c5"], ["myth-irish", "Irish & Gaelic Legend", "myth", "na0f0fe2a2d"],
   ["myth-arthur", "Arthurian Legend", "myth", "na4e3458f40"], ["myth-sacred", "Animals, Plants & Sacred Objects", "myth", "n770c2a9cf7"],
-  ["phil-ancient", "Ancient Philosophy", "phil", "n2a0c39e1d1"], ["phil-medieval", "Medieval & Renaissance Philosophy", "phil", "nc4ad5d0f22"],
-  ["phil-early", "Early Modern Philosophy", "phil", "nefd0811a1d"], ["phil-19c", "19th-Century Philosophy", "phil", "ndb4743fa2d"],
-  ["phil-analytic", "Analytic Philosophy", "phil", "nb8f3d8c1b4"], ["phil-continental", "Continental Philosophy", "phil", "nfd111ec97c"],
-  ["phil-problems", "Philosophical Problems & Concepts", "phil", "n036ba1244d"],
+  ["phil-ancient", "Ancient Philosophy", "phil", "n2a0c39e1d1"], ["phil-plato", "Socrates & Plato", "phil", "n5d78e035e3"],
+  ["phil-medieval", "Medieval & Renaissance Philosophy", "phil", "nc4ad5d0f22"], ["phil-early", "Early Modern Philosophy", "phil", "nefd0811a1d"],
+  ["phil-rationalists", "Continental Rationalists", "phil", "n62ccbb537a"], ["phil-empiricists", "British Empiricists", "phil", "n9a1fae71f1"],
+  ["phil-19c", "19th-Century Philosophy", "phil", "ndb4743fa2d"], ["phil-nietzsche", "Schopenhauer & Nietzsche", "phil", "n62ceceaa69"],
+  ["phil-pragmatism", "Transcendentalism & Pragmatism", "phil", "n91d9b8e403"], ["phil-analytic", "Analytic Philosophy", "phil", "nb8f3d8c1b4"],
+  ["phil-language", "Philosophy of Language", "phil", "n7189ef83a3"], ["phil-continental", "Continental Philosophy", "phil", "nfd111ec97c"],
+  ["phil-phenom", "Phenomenology & Existentialism", "phil", "nc1e46a09d2"],
+  ["phil-problems", "Philosophical Problems & Concepts", "phil", "n036ba1244d"], ["phil-eastasian", "East Asian Philosophy", "phil", "n876bea6d06"],
   ["rel-practice", "Theology and Practice", "rel", "n99a456d86f"], ["rel-jctheo", "Judeo Christian Theology", "rel", "n1f1e639721"],
-  ["rel-worldrel", "Non Judeo Christian Theology", "rel", "nb19eefed11"], ["rel-lit", "Religious Literature", "rel", "nd3841ca2c1"],
-  ["rel-bible", "Judeo Christian Literature", "rel", "n2bd1cc3cc5"],
+  ["rel-worldrel", "Non Judeo Christian Theology", "rel", "nb19eefed11"], ["rel-hindu", "Hinduism", "rel", "n9b64689f99"],
+  ["rel-lit", "Religious Literature", "rel", "nd3841ca2c1"], ["rel-bible", "Judeo Christian Literature", "rel", "n2bd1cc3cc5"],
+  ["rel-gospels", "Gospels & the Life of Jesus", "rel", "nefdbe5b5ca"], ["rel-otherlit", "Non Judeo Christian Literature", "rel", "ne11252153f"],
   ["geo-na", "North American Geography", "geo", "n6e6392c94f"], ["geo-usplaces", "US States & Cities", "geo", "n13ec6938b8"],
-  ["geo-usnature", "US Physical Features & Parks", "geo", "ncff7661ae6"], ["geo-world", "World Geography", "geo", "nb3bb9df196"],
-  ["geo-europe", "European Geography", "geo", "n94091fa842"], ["geo-asia", "Asian Geography", "geo", "nf4dee1e7a4"],
-  ["geo-africa", "African Geography", "geo", "nc034f36973"], ["geo-samerica", "South American Geography", "geo", "n43998544b0"],
-  ["ss-anth", "Anthropology & Sociology", "ss", "na456c7bbf0"], ["ss-econ", "Economics", "ss", "n1b3ed2760b"],
-  ["ss-gov", "Government", "ss", "nebb231dfda"], ["ss-law", "Jurisprudence", "ss", "nacea789c24"],
+  ["geo-usnature", "US Physical Features & Parks", "geo", "ncff7661ae6"], ["geo-canada", "Canada", "geo", "nb03dd06c79"],
+  ["geo-world", "World Geography", "geo", "nb3bb9df196"], ["geo-europe", "European Geography", "geo", "n94091fa842"],
+  ["geo-asia", "Asian Geography", "geo", "nf4dee1e7a4"], ["geo-africa", "African Geography", "geo", "nc034f36973"],
+  ["geo-samerica", "South American Geography", "geo", "n43998544b0"],
+  ["ss-anth", "Anthropology & Sociology", "ss", "na456c7bbf0"], ["ss-socio", "Classical Sociological Theory", "ss", "n3911724657"],
+  ["ss-culture", "Anthropological Theory", "ss", "nc808240ac7"], ["ss-econ", "Economics", "ss", "n1b3ed2760b"],
+  ["ss-macro", "Macroeconomics", "ss", "n752802ea97"], ["ss-micro", "Microeconomics", "ss", "n1d41b880ba"],
+  ["ss-econthought", "History of Economic Thought", "ss", "n67be6f01f2"], ["ss-gov", "Government", "ss", "nebb231dfda"],
+  ["ss-law", "Jurisprudence", "ss", "nacea789c24"], ["ss-conlaw", "Constitutional Law", "ss", "n613a77478b"],
   ["ss-polphil", "Political Philosophy", "ss", "n6331ed63c2"], ["ss-psych", "Psychology", "ss", "nca77abee6a"],
+  ["ss-socialpsych", "Social Psychology", "ss", "n0f7bb8a21b"], ["ss-freud", "Psychoanalysis", "ss", "n428ffffb05"],
   ["ss-ling", "Linguistics", "ss", "n6e9d108c72"],
-  ["ce-us", "US Current Events", "ce", "n1ac30d9c7c"], ["ce-world", "World Current Events", "ce", "nc4be452b9a"],
-  ["ce-biz", "Business", "ce", "nfaa1694bc6"],
-  ["pop-tv", "TV", "pop", "nb329af5c53"], ["pop-music", "Pop Music", "pop", "nb53f444bad"], ["pop-film", "Film", "pop", "n6fd4f2a4dc"],
-  ["pop-games", "Video Games", "pop", "nb309304bdc"], ["pop-musicals", "Musicals", "pop", "nb812346614"],
-  ["pop-comics", "Comics", "pop", "n3c6cbcc69e"],
-  ["sports-major", "Major Sports", "sports", "nc5f3adef24"], ["sports-minor", "Minor Sports", "sports", "nf90ed1d6e8"],
+  ["ce-us", "US Current Events", "ce", "n1ac30d9c7c"], ["ce-uspol", "US Politics", "ce", "n089b1e0ef6"],
+  ["ce-world", "World Current Events", "ce", "nc4be452b9a"], ["ce-biz", "Business", "ce", "nfaa1694bc6"],
+  ["pop-tv", "TV", "pop", "nb329af5c53"], ["pop-dramas", "TV Dramas", "pop", "n852795c41d"], ["pop-sitcoms", "Sitcoms", "pop", "n13e1c28886"],
+  ["pop-music", "Pop Music", "pop", "nb53f444bad"], ["pop-rock", "Rock & Metal", "pop", "nefeb154e90"], ["pop-film", "Film", "pop", "n6fd4f2a4dc"],
+  ["pop-classicfilm", "Silent & Classic Film", "pop", "n2d54763589"], ["pop-arthouse", "World & Art-House Cinema", "pop", "n4ba4ce6f05"],
+  ["pop-directors", "Directors & Film Technique", "pop", "n3f2ef8fa91"], ["pop-games", "Video Games", "pop", "nb309304bdc"],
+  ["pop-adventure", "Action-Adventure & Platformers", "pop", "n8beb8da375"], ["pop-pokemon", "Pokemon", "pop", "n3d6dd4a1e8"],
+  ["pop-rpg", "Role-Playing Games", "pop", "n08ab55635f"], ["pop-musicals", "Musicals", "pop", "nb812346614"],
+  ["pop-comics", "Comics", "pop", "n3c6cbcc69e"], ["pop-books", "Popular Books & Franchises", "pop", "nd00258133a"],
+  ["sports-major", "Major Sports", "sports", "nc5f3adef24"], ["sports-baseball", "Baseball", "sports", "nd2a3df04bb"],
+  ["sports-football", "Football", "sports", "n979856df89"], ["sports-basketball", "Basketball", "sports", "n1e4578bc18"],
+  ["sports-minor", "Minor Sports", "sports", "nf90ed1d6e8"],
 ];
+// 15.121: retired subcategory trials stay playable (and keep their XP and badges) for anyone who played them, and
+// are hidden from everyone else. (app.js TRIAL_RETIRED is the same set.)
+const TRIAL_RETIRED = new Set(["myth-heracles", "myth-odyssey", "myth-thebes", "myth-sacred", "hist-exploration", "hist-italian", "hist-namerica"]);
 const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3, SUB_LEN = 5;
 // 15.0 (XP): every attempt reads all ten; each power earns 10 × the level in XP, and the run is multiplied by 1.25
 // for 5 powers, 1.5 for 6–9 and 2.5 for all ten (which passes the level and opens the next). A level can be tried
@@ -129,7 +159,7 @@ const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3, SUB_LEN = 5;
 export const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
 // 15.12 regrades: bump when a checker fix (or a corrected database) should look at old wrong answers again. A run is
 // keyed by this and the question database's build, so a new database re-runs it too (only answers still wrong).
-export const REGRADE_V = "15.77";   // 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME); 15.61: subcategory trials refunded (_trialRepair); 15.77: a misspelled extra word, exact hidden accepts first
+export const REGRADE_V = "15.121";   // 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME); 15.61: subcategory trials refunded (_trialRepair); 15.77: a misspelled extra word, exact hidden accepts first; 15.121: a name misspelled after its required initial (15.118), vowel-only misspellings of a name, a 4-letter swap
 // two refund summaries as one window (an admin's refund and a regrade, or two refunds): their sums, their trials
 export function mergeRegrade(a, b) {
   const n = (x) => Number(x) || 0;
@@ -1362,7 +1392,7 @@ export class App {
     return { pid, t: t && typeof t === "object" && !Array.isArray(t) ? t : {} };
   }
   getTrials() {
-    return { trials: this._trialsOf().t, cats: TRIAL_CATS.map(([key, name, path]) => ({ key, name, path })), subs: TRIAL_SUBS.map(([key, name, cat]) => ({ key, name, cat })),
+    return { trials: this._trialsOf().t, cats: TRIAL_CATS.map(([key, name, path]) => ({ key, name, path })), subs: TRIAL_SUBS.map(([key, name, cat]) => (TRIAL_RETIRED.has(key) ? { key, name, cat, retired: true } : { key, name, cat })),
       cooldowns: Array.from({ length: 11 }, (_, l) => trialCooldownMs(l)), length: TRIAL_LEN, subLength: SUB_LEN, now: Date.now(), api: 4 };   // api 2: categories by node id (14.99); 3: XP and "finish" (15.0); 4: subcategories (15.58)
   }
   trialAction(action, category, level, powers, instance) {
