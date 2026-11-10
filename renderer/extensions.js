@@ -422,11 +422,19 @@
   // on or off on the account's other devices of the same kind (app or website; a plugin they
   // don't have yet is added there from the Store / the app's update; nothing is ever removed,
   // only turned off). A device with no list of its kind yet starts one from what it has.
-  const listable = (p) => !!(p && !p._builtin && PLUGIN_GROUP[p.id]);   // the Store's plugins (an imported one of your own stays on this machine)
+  // (15.117) the voices and reading aloud aren't offered on a phone or a tablet (touch, no mouse), where read aloud is
+  // off (15.94): the Store doesn't list them, the profile's list doesn't add or start them there (and keeps them on for
+  // the account's other devices), and a copy added before stays put away, out of Manage
+  const TOUCH_ONLY = (() => { try { return matchMedia("(hover: none) and (pointer: coarse)").matches; } catch (e) { return false; } })();
+  const NOT_ON_TOUCH = new Set(["kokoro-voice", "chatterbox-voice", "voice-answers", "listen"]);
+  const hiddenHere = (id) => TOUCH_ONLY && NOT_ON_TOUCH.has(id);
+  QB.pluginHiddenHere = hiddenHere;
+  const listable = (p) => !!(p && !p._builtin && PLUGIN_GROUP[p.id] && !hiddenHere(p.id));   // the Store's plugins (an imported one of your own stays on this machine)
   function localList() { return QB._plugins.filter((p) => listable(p) && p.enabled).map((p) => p.id).sort(); }
   function pluginListChanged() {
     if (!PD.data || PD.applying) return;
-    const cur = pdGet(LIST_ID, LIST_KEY), on = localList();
+    const cur = pdGet(LIST_ID, LIST_KEY), kept = cur && Array.isArray(cur.on) ? cur.on.filter((x) => typeof x === "string" && hiddenHere(x)) : [];
+    const on = [...new Set(localList().concat(kept))].sort();
     if (cur && Array.isArray(cur.on) && cur.on.slice().sort().join() === on.join()) return;
     pdSet(LIST_ID, LIST_KEY, { on });
   }
@@ -455,7 +463,7 @@
         else if (!on.has(p.id) && p.enabled) { QB.disablePlugin(p.id); changed = true; }
       }
       for (const id of on) {
-        if (QB._plugins.some((p) => p.id === id) || RETIRED_PLUGINS[id]) continue;
+        if (QB._plugins.some((p) => p.id === id) || RETIRED_PLUGINS[id] || hiddenHere(id)) continue;
         const bytes = await pluginSource(id);
         if (!bytes) continue;
         const p = await QB.installZipBytes(bytes);
@@ -1559,7 +1567,7 @@
       // starting what this machine had on isn't a change to the list (the profile's list says
       // what's on: applyPluginList, next)
       PD.applying = true;
-      try { QB._plugins.forEach((p) => { if (p.enabled && !p._enabledRuntime && (p._builtin || !QB._pluginsHeld)) QB.enablePlugin(p.id); }); }
+      try { QB._plugins.forEach((p) => { if (p.enabled && !p._enabledRuntime && !hiddenHere(p.id) && (p._builtin || !QB._pluginsHeld)) QB.enablePlugin(p.id); }); }
       finally { PD.applying = false; }
       if (ok) { try { if (await applyPluginList()) QB._emit("plugins:changed"); } catch (e) { console.error(e); } }
       else setTimeout(() => QB.reloadPluginData(), 3000);
@@ -1583,7 +1591,7 @@
       let n = 0;
       for (const item of list) {
         const have = QB._plugins.find((x) => x.id === item.id && !x._builtin);
-        if (!have || !verNewer(item.version, have.version)) continue;
+        if (!have || hiddenHere(item.id) || !verNewer(item.version, have.version)) continue;
         try { const z = await fetch("/store/" + encodeURIComponent(item.file)); if (z.ok && await QB.installZipBytes(new Uint8Array(await z.arrayBuffer()))) n++; } catch (e) {}
       }
       if (n && document.getElementById("extensions-container")?.offsetParent) QB.renderScreen();
@@ -2278,11 +2286,12 @@ QB.registerTheme({
       const locked = QB.pluginLocked(id);
       if (locked) h += buyBtn(id);
       else if (page) h += '<button type="button" class="btn btn-primary btn-sm" data-pg="open">Open</button>';
-      if (!locked && p) h += '<label class="pg-switch"><span>' + (p.enabled ? "On" : "Off") + '</span><span class="ext-switch"><input type="checkbox" data-pg="toggle"' + (p.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(name) + ' on or off"><span class="ext-slider"></span></span></label>';
+      if (hiddenHere(id)) { /* (15.117) not on a phone or a tablet */ }
+      else if (!locked && p) h += '<label class="pg-switch"><span>' + (p.enabled ? "On" : "Off") + '</span><span class="ext-switch"><input type="checkbox" data-pg="toggle"' + (p.enabled ? " checked" : "") + ' aria-label="Turn ' + esc(name) + ' on or off"><span class="ext-slider"></span></span></label>';
       else if (!locked && !p && item) h += '<button type="button" class="btn btn-primary btn-sm" data-pg="get"' + (busy ? " disabled" : "") + ">" + (busy ? esc(busy) : "Get") + "</button>";
-      if (p && item && verNewer(item.version, p.version)) h += '<button type="button" class="btn btn-sm" data-pg="get"' + (busy ? " disabled" : "") + ">" + (busy ? esc(busy) : "Update") + "</button>";
+      if (p && item && !hiddenHere(id) && verNewer(item.version, p.version)) h += '<button type="button" class="btn btn-sm" data-pg="get"' + (busy ? " disabled" : "") + ">" + (busy ? esc(busy) : "Update") + "</button>";
       // its download (15.71): how far it's got, or Download again when it stopped
-      const dl = !locked && p && p.enabled ? dlState(id) : "";
+      const dl = !locked && p && p.enabled && !hiddenHere(id) ? dlState(id) : "";
       if (dl === "on") h += '<button type="button" class="btn btn-sm" disabled data-dl-for="' + esc(id) + '">' + esc(QB.downloadText(id)) + "</button>";
       else if (dl === "failed") h += '<button type="button" class="btn btn-sm" data-pg="dl" title="The download stopped. Try again">Download</button>';
       a.innerHTML = h;
@@ -2311,7 +2320,7 @@ QB.registerTheme({
     if (!container) return;
     if (WEBSITE && QB._extTab === "themes") QB._extTab = "store";
     const tab = QB._extTab || "open";
-    const visible = QB._plugins.filter((p) => !p._builtin);
+    const visible = QB._plugins.filter((p) => !p._builtin && !hiddenHere(p.id));
     const tabs = (WEBSITE ? [["open", "Open"], ["manage", "Manage"], ["store", "Store"]] : [["open", "Open"], ["manage", "Manage"], ["store", "Store"], ["themes", "Themes"]]).map(([k, l]) =>
       '<button type="button" class="db-tab' + (tab === k ? " active" : "") + '" role="tab" aria-selected="' + (tab === k) + '" data-ext-tab="' + k + '">' + l + "</button>").join("");
     const bulk = tab === "manage" && visible.length
@@ -2435,7 +2444,7 @@ QB.registerTheme({
     }
     if (!st.list.length) return '<div class="ext-empty-state">The Store is empty right now</div>';
     // (15.63: no download or like counts on the cards; a search box over them instead, which filters as you type)
-    const items = st.list.slice().sort(byRank);   // (15.103) the best first
+    const items = st.list.filter((x) => !hiddenHere(x.id)).sort(byRank);   // (15.103) the best first (15.117: no voices on a phone)
     // a wide search box, then a chip for each kind of plugin with how many there are (15.65)
     const count = (g) => items.filter((x) => (g === "added" ? QB._plugins.some((p) => p.id === x.id && !p._builtin) : groupOf(x.id) === g)).length;
     const kinds = GROUP_ORDER.filter((g) => count(g) > 0);
