@@ -1696,7 +1696,8 @@ function foldChar(ch, plain) {
 }
 
 // Tokenise text into folded word tokens. attr(k) -> { r: required?, run: tag-run id, tb: tag boundary before k } or null (skip).
-function tokenize(text, attr, plain) {
+const NO_ARTICLE_BEFORE = new Set(["and", "or", "nor", "to", "at", "of", "dot", "cross", "times", "plus", "minus", "over", "sub", "prime", "squared", "cubed", "is", "equals"]);
+function tokenize(text, attr, plain, resp) {
   const out = [];
   let cur = null;
   const n = text.length;
@@ -1742,6 +1743,19 @@ function tokenize(text, attr, plain) {
     } else flush();
   }
   flush();
+  // (15.122) an "A" that is a letter, never the article: joined to the next word ("A-bomb", "A-Rod", "A-H", "A-4"), or,
+  // in an answer line or a hidden entry (not a response), a capital "A" before a word no article comes before ("A and B
+  // coefficients", "A to the minus 1", "A at 440 Hz") or before a lowercase word in a short name ("A minor", "A flat
+  // major", "A horizon", "A beta"). A title's article stays optional ("A Doll's House", "The Big Apple"), and so does a
+  // sentence-case quotation's or title's ("A thing of beauty is a joy for ever", "A hora da estrela")
+  for (let i = 0; i + 1 < out.length; i++) {
+    const w = out[i], nx = out[i + 1];
+    if (w.t !== "a" || w.sym || nx.sym) continue;
+    const gap = text.slice(w.k1, nx.k0);
+    if (/^[-‐‑–/]$/.test(gap)) { w.letter = true; continue; }
+    if (resp || w.orig !== "A" || !/^\s+$/.test(gap)) continue;
+    if (NO_ARTICLE_BEFORE.has(nx.t) || /^\d/.test(nx.t) || (/^\p{Ll}/u.test(nx.orig) && out.length - i <= 3)) w.letter = true;
+  }
   return out;
 }
 
@@ -2202,7 +2216,7 @@ function wordInfo(tok, prevTok) {
     const v = romanVal(tok.t);
     if (v) num = { v, kind: "roman" };
   }
-  return { t: tok.t, kind, segs, run: run === undefined ? -1 : run, cap: tok.cap, orig: tok.orig, num, k0: tok.k0, k1: tok.k1, it: !!tok.it, poss: !!tok.poss, fracWord: tok.fracWord };
+  return { t: tok.t, kind, segs, run: run === undefined ? -1 : run, cap: tok.cap, orig: tok.orig, num, k0: tok.k0, k1: tok.k1, it: !!tok.it, poss: !!tok.poss, fracWord: tok.fracWord, letter: !!tok.letter };
 }
 function allReqWords(toks) {
   return toks.map((t, i) => wordInfo({ ...t, r: [...t.t].map(() => true), runs: [...t.t].map(() => 0) }, toks[i - 1]));
@@ -3034,8 +3048,8 @@ function isLive(form, rc) {
 
 // ---------------------------------------------------------------- response tokens
 const FILLER_RX = /^\s*(?:(?:what|who|where|whom)\s+(?:is|are|was|were)|is\s+it|it\s+is|it'?s|i\s+think(?:\s+it'?s)?|i\s+believe|um+|uh+|er+|hmm+|the\s+answer\s+is|answer\s*:)\b[\s,:]*/i;
-function respTokens(resp, plain) {
-  let toks = tokenize(vulgar(resp), null, plain);
+function respTokens(resp, plain, entry) {   // entry: a hidden list's entry, read as an answer line's words are (15.122)
+  let toks = tokenize(vulgar(resp), null, plain, !entry);
   toks = mergeNumbers(toks);
   toks.forEach((t, i) => { t.num = respNum(t, toks[i - 1]); });
   return toks;
@@ -3077,7 +3091,7 @@ function groupMatchesAt(form, g, T, j, ctx, fuzzy) {
       const res = [];
       if (i === ws.length) { res.push({ e: jj, cost: 0 }); memo.set(key, res); return res; }
       // an article inside the required span is required (spec C6: "Los Angeles", "The Invisible Man"); below strictness 15 it may be left out
-      if (i === 0 && ws.length > 1 && ARTICLES_EN.has(ws[0].t) && ctx.articleOptional) for (const r of rec(1, jj)) res.push(r);
+      if (i === 0 && ws.length > 1 && ARTICLES_EN.has(ws[0].t) && !ws[0].letter && ctx.articleOptional) for (const r of rec(1, jj)) res.push(r);
       if (i === ws.length - 1 && i > 0 && ctx.qWords && ws[i].kind === "R" && (ctx.qWords.has(ws[i].t) || ctx.qWords.has(ws[i].t.replace(/s$/, "")))) res.push({ e: jj, cost: 0 });
       // regnal numerals: "Henry the Eighth", "Louis the 14th" for Henry VIII / Louis XIV (J§5.5)
       if (jj + 1 < T.length && i > 0 && T[jj].t === "the" && ws[i].num && ws[i - 1].cap && !ws[i - 1].num) for (const r of rec(i, jj + 1)) res.push(r);
@@ -3470,8 +3484,14 @@ export function m1(s) {
 // ---------------------------------------------------------------- strict comparisons (J4 rejects, hidden entries)
 function contentToks(toks) {
   let i = 0;
-  while (i < toks.length - 1 && ARTICLES_ALL.has(toks[i].t)) i++;
+  while (i < toks.length - 1 && ARTICLES_ALL.has(toks[i].t) && !toks[i].letter) i++;   // a letter A stays (15.122)
   return i ? toks.slice(i) : toks;
+}
+// the response's words against an item's: its leading article drops, unless the item starts with a letter A and the
+// response's "a" can be that letter, joined to the next word or a capital ("A-bomb", "A beta"; not "a bomb") (15.122)
+function respContentFor(item, T) {
+  if (item.length && item[0].letter && T.length > 1 && T[0].t === "a" && (T[0].letter || T[0].orig === "A")) return T;
+  return contentToks(T);
 }
 function tokEqLoose(a, b) {
   if (a.t === b.t) return true;
@@ -3483,7 +3503,7 @@ function tokEqLoose(a, b) {
 // protect: response words that are required words of a live accept form; folding (plural, abbreviation) never
 // turns a different reject word into one of them ("Metamorphoses" never catches "Metamorphosis")
 function strictEq(itemToks, T, ordered, protect) {
-  const a = contentToks(itemToks), b = contentToks(T);
+  const a = contentToks(itemToks), b = respContentFor(a, T);
   if (!a.length || !b.length) return false;
   if (a.map((t) => t.t).join("") === b.map((t) => t.t).join("")) return true;
   if (a.length !== b.length) return false;
@@ -3569,7 +3589,7 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     if (w.poss) protect.add(w.t + "s");
   }
   const hidden = opts.hidden && typeof opts.hidden === "object" && !Array.isArray(opts.hidden) ? opts.hidden : null;
-  const hTok = (list) => (Array.isArray(list) ? list : []).map((e) => respTokens(String(e), plain)).filter((t) => t.length);
+  const hTok = (list) => (Array.isArray(list) ? list : []).map((e) => respTokens(String(e), plain, true)).filter((t) => t.length);
   const H = hidden ? { accept: hTok(hidden.accept), prompt: hTok(hidden.prompt), antiprompt: hTok(hidden.antiprompt), reject: hTok(hidden.reject) } : null;
   // ---- (brief §8.0, 2026-11-04) the whole response is one of the release's hidden accepts, folded as J1 folds and
   // nothing more (no fuzzy match, no extra words): right, before J4 and the line's partial-prompt rules (J9, J11, J12)
@@ -3580,7 +3600,9 @@ function judgeOnce(resp, P, strictness, opts, rc, plain) {
     const lineSays = () => F.rejects.some((r) => live(r) && r.terms.some((t) => strictEq(t, T, false)))
       // (the entry itself, folded as J1 folds: "Saint Constantine" isn't the prompt "Constantine", "Abs" is "Ab")
       || F.prompts.concat(F.antis).some((f) => live(f) && f.words.length > 0 && strictEq(f.words.map((w) => ({ t: w.t, num: w.num })), T, true));
-    if (ha && !lineSays()) return verdict("accept", { rule: "J5", via: "hidden", matchedAnswer: ha.map((t) => t.orig).join(" ") });
+    // (an entry led by a letter A that the response has too, "A beta", isn't the line's prompt "beta": 15.122)
+    const lettered = ha && ha[0].letter && T[0] && T[0].t === "a";
+    if (ha && (lettered || !lineSays())) return verdict("accept", { rule: "J5", via: "hidden", matchedAnswer: ha.map((t) => t.orig).join(" ") });
   }
   // ---- J4 strict reject (and hidden rejects, G1); on a multi-answer line one rejected answer rejects the whole
   const pieces = [T];
@@ -3927,7 +3949,7 @@ function containsWordsLoose(T, term) {
 }
 
 function hiddenFuzzy(entry, T, ctx) {
-  const a = contentToks(entry), b = contentToks(T);
+  const a = contentToks(entry), b = respContentFor(a, T);
   if (!a.length || a.length !== b.length) return false;
   let total = 0;
   for (let i = 0; i < a.length; i++) {
@@ -3946,7 +3968,7 @@ function hiddenExtra(entry, T) {
   const a = contentToks(entry);
   if (!a.length || a.every((t) => numInfo(t.t))) return false; // number guard
   if (a.map((t) => t.t).join("").length <= 2) return false;    // a 1–2 character entry is the whole answer only ("vitamin C" isn't carbon's "C")
-  const b = contentToks(T);
+  const b = respContentFor(a, T);
   if (b.length <= a.length || b.some((t) => NEVER_ACCOUNTED.has(t.t))) return false;
   for (let i = 0; i + a.length <= b.length; i++) {
     let ok = true;
@@ -4099,8 +4121,8 @@ function tooGeneral(F, T, x) {
     if (!ws.slice(ws.length - said.length).every((w, i) => same(w.t, said[i]))) continue;
     // the head of "X of Y" is X: a span with a preposition, article or connector before the said words is skipped
     // ("Heights" isn't a more general Battle of Bemis Heights, nor "Stone" The Story of the Stone)
-    if (ws.slice(0, ws.length - said.length).some((w) => TG_FUNCTION.has(w.t))) continue;
-    if (opts.answerName == null && ws.filter((w) => !TG_FUNCTION.has(w.t)).every((w) => w.cap)) continue;
+    if (ws.slice(0, ws.length - said.length).some((w) => TG_FUNCTION.has(w.t) && !w.letter)) continue;   // (a letter A isn't one: "minor" for A minor)
+    if (opts.answerName == null && ws.filter((w) => !TG_FUNCTION.has(w.t) || w.letter).every((w) => w.cap)) continue;
     // a name or a title keeps its words (spec J12: "Strauss" for Richard Strauss); a place's name its capitalised ones
     if (opts.answerName === true || (opts.answerPlace === true && ws[ws.length - 1].cap)) continue;
     if (tgKnownElsewhere(T, F, H, opts, respKey)) return null;

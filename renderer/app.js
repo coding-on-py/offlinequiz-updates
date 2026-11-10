@@ -14861,6 +14861,13 @@ const DB_SORT_CMP = {   // client merge of the tossup + bonus page (Array#sort i
 let _dbLastSig = null, _dbRestoring = false, _dbPacketsFor = null;
 // Packet picker: enabled only when exactly one set matches. The reset runs
 // synchronously before the await so a stale fetch can't refill it.
+// A packet's label: its number and its name, without a name that only repeats the number ("06", "Round 11",
+// "PACKET11Weiner" → "Packet 11 · Weiner", "03. Columbia A, MCTC" → "Packet 3 · Columbia A, MCTC").
+function packetLabel(n, name) {
+  const s = String(name || "").trim().replace(new RegExp("^(?:packet|round|pack|rd)?[\\s_#.:-]*0*" + Number(n) + "(?![0-9])[\\s_.:,-]*", "i"), "").trim();
+  const t = s.replace(/\s*_+\s*/g, ", ").replace(/^[,\s]+|[,\s]+$/g, "");   // "Cornell A_Cornell B" → "Cornell A, Cornell B"
+  return t ? "Packet " + n + " · " + t : "Packet " + n;
+}
 async function dbSyncPackets(name) {
   const sel = document.getElementById("db-packet-filter");
   if (!sel || name === _dbPacketsFor) return;
@@ -14869,11 +14876,13 @@ async function dbSyncPackets(name) {
   _catSetDisabled(sel, !name);
   _syncSel(sel);
   if (!name) return;
-  let nums = [];
-  try { nums = (await API.get(`/api/set-packets?setName=${encodeURIComponent(name)}`)).packets || []; } catch (e) {}
+  // (15.122) each packet by its full name ("Packet 3 · Columbia A, MCTC"), the number alone when that's all it has
+  let pk = [];
+  try { pk = (await API.get(`/api/packets-for-set?setName=${encodeURIComponent(name)}`)).packets || []; } catch (e) {}
   if (_dbPacketsFor !== name) return;
-  nums.forEach((n) => _catAddOpt(sel, String(typeof n === "object" && n ? (n.number ?? n.packet_number ?? "") : n)));
-  _catSetDisabled(sel, !nums.length);
+  const seen = new Set();
+  pk.forEach((p) => { const n = p.packet_number; if (n == null || seen.has(n)) return; seen.add(n); _catAddOpt(sel, String(n), packetLabel(n, p.packet_name)); });
+  _catSetDisabled(sel, !seen.size);
   if (_dbq.packet && [...sel.options].some((o) => o.value === _dbq.packet)) sel.value = _dbq.packet;
   _syncSel(sel);
 }
@@ -14990,7 +14999,7 @@ async function openSet(setName) {
     packets = (res && (res.packets || (Array.isArray(res) ? res : []))) || [];
   } catch (e) { err = e.message || String(e); }
   document.getElementById("db-packet-list").innerHTML = packets.length
-    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}"><span class="lr-name"><span class="pk-n">Packet ${p.packet_number}</span>${p.packet_name && p.packet_name !== String(p.packet_number) ? '<span class="pk-sep"> · </span><span class="pk-name">' + escapeHtml(p.packet_name) + "</span>" : ""}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
+    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}"><span class="lr-name">${((l) => '<span class="pk-n">' + escapeHtml(l[0]) + "</span>" + (l[1] ? '<span class="pk-sep"> · </span><span class="pk-name">' + escapeHtml(l.slice(1).join(" · ")) + "</span>" : ""))(packetLabel(p.packet_number, p.packet_name).split(" · "))}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
     : `<div class="db-empty" style="border:0">${err ? "Couldn't load packets: " + escapeHtml(err) : "No packets in this set."}</div>`;
   document.querySelectorAll("#db-packet-list .db-row").forEach((r) => {
     r.addEventListener("click", () => openPacket(setName, parseInt(r.dataset.pkt)));
