@@ -8505,8 +8505,9 @@ function __qbMain(ctx) {
       html += kind === "teams"
         ? '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.team) + "</b>" + (e.mine ? '<span class="badge cl-you">Your team</span>' : "") + "<small>" + esc(e.org) + "</small></span>" +
           // (15.105) PTS first, as on the individuals' board (a phone shows it large on the right, the rest under the name)
-          stat(fmt(e.total), "PTS") + stat(e.active + (e.roster !== e.active ? '<small class="num"> /' + e.roster + "</small>" : ""), "active") + stat(fmt(e.avg), "Avg") + stat(e.acc == null ? "—" : e.acc + "%", "ACC") + "</div>"
-        : '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.name) + "</b>" + (e.mine ? '<span class="badge cl-you">Yours</span>' : "") + "<small>" + e.active + " of " + e.members + " active</small></span>" +
+          // (15.129) no "9 of 13 active": the count is gone from team and organization rows (the ⓘ says who is ranked)
+          stat(fmt(e.total), "PTS") + stat(fmt(e.avg), "Avg") + stat(e.acc == null ? "—" : e.acc + "%", "ACC") + "</div>"
+        : '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.name) + "</b>" + (e.mine ? '<span class="badge cl-you">Yours</span>' : "") + "</span>" +
           stat(fmt(e.total), "PTS") + stat(e.teams, e.teams === 1 ? "team" : "teams") + stat(e.members, "members") + stat(fmt(e.avg), "Avg") + "</div>";
     });
     return '<div class="fr-list lb-board">' + html + "</div>";
