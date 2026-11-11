@@ -40,14 +40,17 @@ html, body, button, input, select, textarea, kbd, .pill, .btn {
 }
 
 /* The default look's light mode (top-bar sun/moon): a soft grey page with
-   white cards, so panels stand off the page the way they do in dark. */
+   off-white cards, so panels stand off the page the way they do in dark.
+   (15.132: "too bright": the page was near-white under pure white cards, a glare
+   with little between them; now a cooler grey page, cards a step lighter, firmer
+   lines and a slightly softer text) */
 [data-theme="light"] {
-  --bg: #f4f6f8;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #eceff3;
-  --text: #1f2328;
+  --bg: #e9ecf0;
+  --bg-secondary: #f6f7f9;
+  --bg-tertiary: #e1e5ea;
+  --text: #24292f;
   --text-secondary: #57606a;
-  --text-muted: #8c959f;
+  --text-muted: #7d8691;
   --accent: #0969da;
   --accent-dim: #0969da1f;
   --green: #1a7f37;
@@ -56,8 +59,8 @@ html, body, button, input, select, textarea, kbd, .pill, .btn {
   --red-dim: #cf222e1c;
   --yellow: #9a6700;
   --yellow-dim: #9a67001f;
-  --border: #d3d9e0;
-  --border-light: #e3e7ec;
+  --border: #cdd3da;
+  --border-light: #dbe0e6;
   --error: #cf222e;
   --error-dim: #cf222e18;
   --power-mark: #b07800;
@@ -2629,7 +2632,7 @@ html[data-scheme="light"] .btn-lg.btn-primary { background: var(--accent-strong)
 html[data-scheme="light"] .btn-lg.btn-go { background: var(--go-strong); color: #fff; }
 html[data-scheme="light"] .btn-lg.btn-primary:hover { background: var(--accent); }
 html[data-scheme="light"] .btn-lg.btn-go:hover { background: var(--go); }
-html[data-scheme="light"] .home-veil { background: radial-gradient(ellipse 70% 55% at 50% 32%, color-mix(in srgb, var(--bg) 95%, transparent), color-mix(in srgb, var(--bg) 87%, transparent)); }
+html[data-scheme="light"] .home-veil { background: radial-gradient(ellipse 70% 55% at 50% 32%, color-mix(in srgb, var(--bg) 97%, transparent), color-mix(in srgb, var(--bg) 93%, transparent)); }   /* (15.132) the wall further back: it made the light home busy */
 html[data-scheme="light"] .home-bgq { background: color-mix(in srgb, var(--surface) 70%, transparent); }
 html[data-scheme="light"] .home-bgq b { color: var(--text-secondary); }
 html[data-scheme="light"] :is(.hotkey-sheet-box, .review-viewer-box, .confirm-box) { background: var(--surface); }
@@ -6042,6 +6045,8 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .tchip.pend { gap: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 /* Organization settings */
 .confirm-box.cl-settings { width: min(560px, calc(100vw - 32px)); height: min(640px, calc(100vh - 32px)); gap: 12px; }
+/* (15.132) a team's settings: the same window, as tall as its three settings */
+.confirm-box.cl-settings.cl-tset { height: auto; max-height: min(640px, calc(100vh - 32px)); }
 .cl-set-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; margin: 0 -4px; padding: 0 4px; }
 .cl-set-sec { display: flex; flex-direction: column; gap: 8px; }
 .cl-set-sec > .eyebrow { margin: 0; display: flex; align-items: center; }

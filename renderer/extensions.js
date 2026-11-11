@@ -6754,6 +6754,7 @@ function __qbMain(ctx) {
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
     link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
+    "eye-off": '<path d="M3 3l18 18M10.6 10.6a2 2 0 002.8 2.8M9.4 5.3A9.7 9.7 0 0112 5c5 0 9 4.5 10 7-.5 1.2-1.4 2.6-2.7 3.8M6.3 6.3C4.4 7.6 3 9.6 2 12c1 2.5 5 7 10 7 1.6 0 3.1-.4 4.4-1.1"/>',
   };
   const ico = (n, s, extra) => '<svg width="' + (s || 18) + '" height="' + (s || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || "") + ">" + (ICONS[n] || "") + "</svg>";
   // the site's ⓘ: explanations live here, never as visible text
@@ -7099,6 +7100,7 @@ function __qbMain(ctx) {
     const can = canManageTeam(t), admin = isAdmin();
     const roster = t.roster.slice().sort((a, b) => (b === t.captain) - (a === t.captain)).map(P).filter(Boolean);
     const menu = can ? '<div class="pop-wrap"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-menu="team-' + esc(t.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + esc(t.name) + ' options">' + ico("more", 16) + '</button><div class="pop right" role="menu" hidden>' +
+      (admin ? '<button type="button" class="pop-item" role="menuitem" data-cl="team-settings" data-team="' + esc(t.id) + '">' + ico("gear", 15) + "Team settings…</button>" : "") +
       '<button type="button" class="pop-item" role="menuitem" data-cl="team-rename" data-team="' + esc(t.id) + '">' + ico("pencil", 15) + "Rename…</button>" +
       (admin || (capsInvite() && capOf(t)) ? '<button type="button" class="pop-item" role="menuitem" data-cl="team-link" data-team="' + esc(t.id) + '">' + ico("link", 15) + "Share a link…</button>" : "") +
       (admin ? '<button type="button" class="pop-item danger" role="menuitem" data-cl="team-delete" data-team="' + esc(t.id) + '">' + ico("trash", 15) + "Delete team</button>" : "") + "</div></div>" : "";
@@ -7121,7 +7123,9 @@ function __qbMain(ctx) {
     const foot = '<div class="tcard-foot"><dl class="tstats"><div><dt>Avg this week</dt><dd>' + (t.avg != null && t.active ? fmt(t.avg) + " <small>pts</small>" : "—") + "</dd></div><div><dt>Last diagnostic</dt><dd>" +
       (t.last ? (t.last.conv != null ? t.last.conv + "% " : "") + "<small>" + esc(dayText(t.last.at)) + "</small>" : "<small>None yet</small>") + "</dd></div></dl>" +
       (canRunTeam(t) && runnable ? '<button type="button" class="btn btn-sm" data-cl="run" data-team="' + esc(t.id) + '">' + ico("target", 14) + "Diagnostic</button>" : "") + "</div>";
-    return '<section class="cl-card tcard" aria-label="' + esc(t.name) + '"><div class="tcard-head"><h3>' + esc(t.name) + '</h3><span class="count">' + plural(t.roster.length, "player") + "</span>" + menu + "</div>" + cap + '<ul class="cl-roster">' + rows + "</ul>" + add + foot + "</section>";
+    // (15.132) a team its admins keep off the Teams leaderboard says so (Team settings)
+    const offLb = t.lbShow === false || O().lbShow === false ? '<span class="tchip" title="' + (O().lbShow === false ? "The organization is off the leaderboards" : "Not ranked on the Teams leaderboard") + '">' + ico("eye-off", 11) + " Not on the leaderboard</span>" : "";
+    return '<section class="cl-card tcard" aria-label="' + esc(t.name) + '"><div class="tcard-head"><h3>' + esc(t.name) + '</h3><span class="count">' + plural(t.roster.length, "player") + "</span>" + offLb + menu + "</div>" + cap + '<ul class="cl-roster">' + rows + "</ul>" + add + foot + "</section>";
   }
 
   // ── Members: a grid, filtered by team ──
@@ -7360,6 +7364,7 @@ function __qbMain(ctx) {
       case "new-team": return promptDialog("New team", "", (name) => act(null, "/api/clubs/team/create", { org, name }), { placeholder: (["A team", "B team", "C team", "D team"][teams().length] || "Novice"), yes: "Create team", max: 24 });
       case "club-link": return shareDialog({ title: "Share " + o.name, note: "Anyone with this link can see " + o.name + ". Signed in, they can join right away.", req: { kind: "club", org } });
       case "team-link": return shareDialog({ title: "Share " + tm.name, note: "Anyone with this link can see " + tm.name + ". Signed in, they can join " + o.name + " on this team right away.", req: { kind: "team", org, team: tid } });
+      case "team-settings": return teamSettingsDialog(tm);
       case "team-rename": return promptDialog("Rename " + tm.name, tm.name, (name) => act(null, "/api/clubs/team/rename", { org, team: tid, name }), { yes: "Save", max: 24 });
       case "team-delete": return confirmDialog("Delete " + tm.name + "? Its players stay in " + o.name + ".", () => actGone([t.closest(".tcard")], "/api/clubs/team/delete", { org, team: tid }), { yes: "Delete", danger: true });
       case "roster-off": return act(t, "/api/clubs/team/roster", { org, team: tid, mid, on: false });
@@ -7451,6 +7456,36 @@ function __qbMain(ctx) {
       b.disabled = false;
       if (!r || r.error) { $f("cs-msg").textContent = (r && r.error) || OFFLINE; return; }
       closeOverlay(el); refresh();
+    };
+  }
+  // (15.132) a team's own settings (admins): its name, its captain, and whether it's ranked on the Teams leaderboard
+  // (the organization's settings hold the same switch for every team, under Leaderboards)
+  function teamSettingsDialog(t) {
+    const o = O(), roster = t.roster.map(P).filter((p) => p && !p.na);
+    const orgOff = o.lbShow === false;
+    const el = overlay('<form class="confirm-box cl-modal cl-settings cl-tset" novalidate><div class="cl-modal-head"><div class="confirm-title">' + esc(t.name) + ' settings</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-x aria-label="Close">' + ico("x", 16) + "</button></div>" +
+      '<div class="cl-set-body">' +
+      '<section class="cl-set-sec"><h3 class="eyebrow">Team</h3><label class="cl-field"><span class="cl-lbl">Name</span><input class="mode-input" id="ts-name" maxlength="24" value="' + esc(t.name) + '" autocomplete="off"></label>' +
+        '<label class="cl-field"><span class="cl-lbl">Captain' + info("A captain can manage this team's roster and, if the organization allows it, invite people and run its diagnostics.", "What a captain can do") + '</span><select class="mode-input" id="ts-cap"><option value="">No captain</option>' +
+        roster.map((p) => '<option value="' + esc(p.mid) + '"' + (p.mid === t.captain ? " selected" : "") + ">" + esc(p.name) + "</option>").join("") + "</select></label></section>" +
+      '<section class="cl-set-sec"><h3 class="eyebrow">Leaderboard</h3><label class="checkbox-row"><input type="checkbox" id="ts-lb"' + (t.lbShow !== false ? " checked" : "") + (orgOff ? " disabled" : "") + ">Show on the Teams leaderboard" +
+        info(orgOff ? "The whole organization is off the leaderboards. Turn that on in Organization settings first." : "When off, the team keeps playing as usual but isn't ranked on the Teams leaderboard. Its players still count for the organization.", "About the Teams leaderboard") + "</label></section>" +
+      '</div><p class="fr-msg err" id="ts-msg" role="status"></p><div class="confirm-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>');
+    const f = el.querySelector("form"), $f = (id) => f.querySelector("#" + id);
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const name = $f("ts-name").value.trim(), cap = $f("ts-cap").value || null, lb = $f("ts-lb").checked;
+      if (!name) { $f("ts-msg").textContent = "Give the team a name."; return; }
+      const b = f.querySelector("button[type=submit]"); b.disabled = true;
+      const steps = [];
+      if (name !== t.name) steps.push(["/api/clubs/team/rename", { org: S.orgId, team: t.id, name }]);
+      if ((cap || null) !== (t.captain || null)) steps.push(["/api/clubs/team/captain", { org: S.orgId, team: t.id, mid: cap }]);
+      if (!orgOff && lb !== (t.lbShow !== false)) steps.push(["/api/clubs/settings", { org: S.orgId, teamsLb: { [t.id]: lb } }]);
+      for (const [path, body] of steps) {
+        const r = await post(path, body);
+        if (!r || r.error) { b.disabled = false; $f("ts-msg").textContent = (r && r.error) || OFFLINE; return; }
+      }
+      b.disabled = false; closeOverlay(el); refresh();
     };
   }
   // the Join or create window: a code, or a new organization (you own it)
