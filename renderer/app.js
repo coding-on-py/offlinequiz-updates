@@ -451,8 +451,6 @@ const state = {
   correctCelerityHistory: [],
   incorrectCelerityHistory: [],
   subcategoryCache: {},
-  escTimer: null,
-  escOnce: false,
   settings: {
     theme: localStorage.getItem("qb-theme") || "dark",
     accent: localStorage.getItem("qb-accent") || "blue",
@@ -3092,9 +3090,6 @@ function goBack() {
   if (dbBrowseBack()) return;
   if (_navCurrent === "stats" && state.statsSessionId) { state.statsSessionId = null; loadStats(); return; }
   if (state.sessionActive) suspendSession();
-  state.escOnce = false;
-  clearTimeout(state.escTimer);
-  hideEscHint();
   const prev = _navStack.pop() || "title";
   _navBack = true;
   try { navigateTo(prev); } finally { _navBack = false; }
@@ -3171,45 +3166,13 @@ function crtFlash() {
 function goHome() {
   // Suspend, don't end — returning to practice resumes where you left off.
   if (state.sessionActive) suspendSession();
-  state.escOnce = false;
-  clearTimeout(state.escTimer);
-  hideEscHint();
   showScreen("title");
 }
 
-// Where a second [Esc] is required. Everywhere else one press goes back —
-// `state.sessionActive` stays true while a session is merely SUSPENDED, so
-// gating on it alone made every screen in the app demand two presses once the
-// user had ever started practising.
-function needsEscConfirm() {
-  const active = document.querySelector(".screen.active");
-  if (!active) return false;
-  // Mid-question in tossups/bonuses: leaving costs the buzz, so confirm.
-  if (active.id === "practice-screen") return !!state.sessionActive;
-  // Multiplayer: only inside a room (leaving drops you out of a live game for
-  // everyone else); the join screen leaves on one Esc.
-  return active.id.startsWith("ext-page-multiplayer-") && active.classList.contains("mp-in-room");
-}
-
-function showEscHint() {
-  let el = document.getElementById("esc-hint");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "esc-hint";
-    el.className = "esc-hint";
-    el.textContent = "Press [Esc] again to leave";
-    // Anchor to whatever is on screen: #question-area only exists on the
-    // practice screen, so on multiplayer the hint would be invisible and the
-    // first press would look like it did nothing.
-    const active = document.querySelector(".screen.active");
-    ($("#question-area")?.closest(".screen.active") ? $("#question-area") : active)?.appendChild(el);
-  }
-}
-
-function hideEscHint() {
-  const el = document.getElementById("esc-hint");
-  if (el) el.remove();
-}
+// (15.135) One [Esc] goes back everywhere. The second press ("Press [Esc] again to leave", on practice and in a room)
+// guarded nothing: leaving practice suspends the session and coming back resumes the same question, and a room plays
+// on behind other pages. What it really caught was an Esc while typing an answer, and that now never leaves.
+const answerBoxFocused = (t) => !!(t && t.matches && t.matches("#buzz-input, .bonus-answer-input, #mp-ans-input"));
 
 
 function toggleHotkeySheet() {
@@ -3299,26 +3262,11 @@ document.addEventListener("keydown", (e) => {
       ...document.querySelectorAll("#confirm-dialog, #save-menu, #review-menu, #review-viewer, #history-overlay, #hotkey-sheet, .qb-overlay:not(.settings-ovl), .fo-overlay, .ar-overlay"),
     ].filter((el) => !el.classList.contains("hidden") && getComputedStyle(el).display !== "none");
     if (overlays.length) { e.preventDefault(); animateRemove(overlays[overlays.length - 1]); return; }
-    if (needsEscConfirm()) {
-      if (state.escOnce) {
-        clearTimeout(state.escTimer);
-        state.escOnce = false;
-        // Leaving KEEPS the session (goBack suspends it) so returning resumes
-        // the same question. Ending is explicit: the End Session button or the
-        // end-session hotkey.
-        goBack();
-      } else {
-        e.preventDefault();
-        state.escOnce = true;
-        showEscHint();
-        state.escTimer = setTimeout(() => {
-          state.escOnce = false;
-          hideEscHint();
-        }, 1500);
-      }
-    } else {
-      goBack();
-    }
+    // typing an answer: Esc never leaves (it used to take a second press to)
+    if (answerBoxFocused(e.target) || isAnsweringNow()) { e.preventDefault(); return; }
+    // Leaving KEEPS the session (goBack suspends it) so returning resumes the same question. Ending is explicit: the
+    // End button or the end-session hotkey.
+    goBack();
     return;
   }
 

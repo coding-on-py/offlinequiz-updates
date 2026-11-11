@@ -1291,15 +1291,6 @@ input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 10px var(--acc
   flex: 1;
 }
 
-/* ── Esc Hint ─────────────────────────────────────────── */
-.esc-hint {
-  text-align: center;
-  font-size: 11px;
-  color: var(--accent);
-  padding: 6px;
-  animation: blink 0.8s step-end infinite;
-}
-
 /* ── History Panel ──────────────────────────────────── */
 .history-panel {
   border-top: 1px solid var(--border);
