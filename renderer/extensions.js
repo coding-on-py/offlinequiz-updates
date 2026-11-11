@@ -5299,6 +5299,8 @@ function __qbMain(ctx) {
             "</div>" +
           "</div>" +
         "</div>";
+      // the room's buttons pinned to the window's bottom over its column (app.js pinBars, 15.127)
+      try { if (window.qbPinBars) requestAnimationFrame(window.qbPinBars); } catch (e) {}
 
       // Chat is always present in the side panel — wire it once.
       var ci = body.querySelector("#mp-chat-input");

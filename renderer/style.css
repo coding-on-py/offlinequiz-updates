@@ -4626,6 +4626,13 @@ button.acct-row:hover { background: var(--raised); }
     order: 98; margin-top: auto; position: sticky; bottom: 0; z-index: 6; padding: 16px 0 22px;
     background: linear-gradient(to top, var(--bg) 72%, color-mix(in srgb, var(--bg) 0%, transparent));
   }
+  /* (15.127) "the buttons should be locked in place, no scrolling": pinned to the window's bottom over the question
+     column (app.js pinBars keeps --bar-left / --bar-width on the column), above everything on the page, so the page
+     scrolls under them and nothing passes over them; the column keeps their room at its foot */
+  #practice-screen .question-area > .practice-actions.pinned, .mp-room .question-area > .mp-actions.pinned {
+    position: fixed; bottom: 0; left: var(--bar-left); width: var(--bar-width); z-index: 40; margin: 0; box-sizing: border-box;
+  }
+  #practice-screen .question-area:has(> .practice-actions.pinned), .mp-room .question-area:has(> .mp-actions.pinned) { padding-bottom: 84px; }
   .mp-room .question-area { min-height: calc(100vh - var(--topbar-h) - 60px); min-height: calc(100dvh - var(--topbar-h) - 60px); }
   .mp-room .question-area > .mp-history { order: 99; }
   .ext-page-body.mp-flush:has(> .mp-room) { padding-bottom: 0; }

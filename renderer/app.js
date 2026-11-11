@@ -1063,6 +1063,25 @@ new MutationObserver((muts) => {
     if (top >= (parseInt(getComputedStyle(n).zIndex, 10) || 0)) n.style.zIndex = String(top + 1);
   }
 }).observe(document.body, { childList: true });
+// (15.127) the practice / room buttons are pinned to the window's bottom (ui.css .pinned, computers only): over their
+// question column, whose left edge and width they keep as the column moves (the Setup panel, the window, a screen
+// shown, a room opened). A column not on screen leaves its bar as it was (sticky).
+const pinBars = (() => {
+  const ro = "ResizeObserver" in window ? new ResizeObserver((es) => es.forEach((e) => place(e.target))) : null, seen = new WeakSet();
+  function place(area) {
+    const bar = area.querySelector(":scope > .practice-actions, :scope > .mp-actions"); if (!bar) return;
+    const r = area.getBoundingClientRect(), wide = window.innerWidth > 760 && r.width > 0;
+    bar.classList.toggle("pinned", wide);
+    if (wide) { bar.style.setProperty("--bar-left", Math.round(r.left) + "px"); bar.style.setProperty("--bar-width", Math.round(r.width) + "px"); }
+  }
+  function scan() {
+    document.querySelectorAll("#practice-screen .question-area, .mp-room .question-area").forEach((a) => { if (!seen.has(a)) { seen.add(a); if (ro) ro.observe(a); } place(a); });
+  }
+  window.addEventListener("resize", scan);
+  return scan;
+})();
+window.qbPinBars = pinBars;
+pinBars();
 function goTo(target) {
   if (_dbLocked) { openSettings("updates"); return; }
   closeSetupDrawer();
@@ -3095,6 +3114,7 @@ function showScreen(name, opts) {
   const mapped = pk ? "practice" : name === "starred" ? "database" : name;
   const screen = $(`#${mapped}-screen`);
   if (screen) screen.classList.add("active");
+  requestAnimationFrame(pinBars);   // its buttons over its column (15.127)
   const fromMode = state.mode;
   state.mode = name === "practice-tossups" ? "tossups" : name === "practice-bonuses" ? "bonuses" : pk ? (state._pageType || "tossups") : null;
   // Tossups / Bonuses after a page of its own: that page's session ends and yours comes back
