@@ -6942,6 +6942,9 @@ function __qbMain(ctx) {
     if (orgId) { S.orgId = orgId; ls.set("qb-club-org", orgId); }
     if (typeof goTo === "function") goTo("clubs");
   }
+  // (15.130) the newest load wins: a page load still on its way when an organization is created or joined (a fast
+  // click, a slow connection) painted its older answer, "not in an organization", over the new one
+  let loadGen = 0;
   async function renderClubs(opts) {
     opts = opts || {};
     const c = document.getElementById("clubs-container"); if (!c) return;
@@ -6950,12 +6953,15 @@ function __qbMain(ctx) {
     // what we had, at once; then the server's
     if (S.list && (S.org || !S.list.orgs.length)) paintClubs(c);
     else if (!opts.quiet) c.innerHTML = loading("Loading clubs…");
+    const gen = ++loadGen;
     const d = await get("/api/clubs");
+    if (gen !== loadGen) return;
     if (!d || d.error) { if (!S.list) c.innerHTML = '<div class="db-empty">' + esc((d && d.error) || OFFLINE) + "</div>"; return; }
     S.list = d; paintBadge(d.notify || 0);
     if (!d.orgs.some((o) => o.id === S.orgId)) S.orgId = d.orgs.length ? d.orgs[0].id : "";
     if (S.orgId) {
       const o = await get("/api/clubs/org?id=" + encodeURIComponent(S.orgId));
+      if (gen !== loadGen) return;
       if (o && !o.error) { S.org = o; ls.set("qb-club-org", S.orgId); }
       else if (o && o.error) { S.org = null; }
     } else S.org = null;
@@ -6964,7 +6970,9 @@ function __qbMain(ctx) {
   }
   // the organization again after a change (the list too: names, counts, the badge)
   async function refresh() {
+    const gen = ++loadGen;
     const [d, o] = await Promise.all([get("/api/clubs"), S.orgId ? get("/api/clubs/org?id=" + encodeURIComponent(S.orgId)) : null]);
+    if (gen !== loadGen) return;
     if (d && !d.error) { S.list = d; paintBadge(d.notify || 0); if (!d.orgs.some((x) => x.id === S.orgId)) { S.orgId = d.orgs.length ? d.orgs[0].id : ""; S.org = null; if (S.orgId) return refresh(); } }
     if (o && !o.error) S.org = o;
     if (!S.orgId) S.org = null;
@@ -7412,7 +7420,10 @@ function __qbMain(ctx) {
     const el = overlay('<form class="confirm-box cl-modal cl-settings" novalidate><div class="cl-modal-head"><div class="confirm-title">Organization settings</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-x aria-label="Close">' + ico("x", 16) + "</button></div>" +
       '<div class="cl-set-body">' +
       '<section class="cl-set-sec"><h3 class="eyebrow">Organization' + (owner ? "" : info("Only the owner can rename the organization.", "Who can rename it")) + '</h3><div class="two-in"><label class="cl-field"><span class="cl-lbl">Name</span><input class="mode-input" id="cs-name" maxlength="40" value="' + esc(o.name) + '" autocomplete="off"' + (owner ? "" : " disabled") + '></label><label class="cl-field"><span class="cl-lbl">Tag</span><input class="mode-input" id="cs-tag" maxlength="5" value="' + esc(o.tag) + '" autocomplete="off"' + (owner ? "" : " disabled") + "></label></div></section>" +
-      '<section class="cl-set-sec"><h3 class="eyebrow">Leaderboards</h3>' + sw("cs-lb", o.lbShow !== false, "Show on the Teams and Organizations leaderboards", "When off, your teams are left out of the global rankings.") + "</section>" +
+      '<section class="cl-set-sec"><h3 class="eyebrow">Leaderboards</h3>' + sw("cs-lb", o.lbShow !== false, "Show on the Teams and Organizations leaderboards", "When off, your teams are left out of the global rankings.") +
+        // (15.130) team by team: which teams show on the Teams leaderboard (all of them follow the switch above)
+        (teams().length ? '<div class="cs-teams"><p class="cl-lbl">Teams on the Teams leaderboard' + info("A team that's off keeps playing as usual. It just isn't ranked on the Teams leaderboard. Its players still count for the organization.", "About showing teams") + "</p>" +
+          teams().map((t) => sw("cs-tlb-" + t.id, t.lbShow !== false, esc(t.name), "", o.lbShow === false)).join("") + "</div>" : "") + "</section>" +
       '<section class="cl-set-sec"><h3 class="eyebrow">Joining</h3>' + sw("cs-code", o.codeJoin !== false, "Anyone with the invite code can join", "When this is off, people join only by an invite.") +
         sw("cs-approve", !!o.approve, "Admins approve code joins", TIP.approve, o.codeJoin === false) + "</section>" +
       '<section class="cl-set-sec"><h3 class="eyebrow">Permissions</h3>' +
@@ -7422,10 +7433,12 @@ function __qbMain(ctx) {
       '</div><p class="fr-msg err" id="cs-msg" role="status"></p><div class="confirm-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>');
     const f = el.querySelector("form"), $f = (id) => f.querySelector("#" + id);
     $f("cs-code").onchange = () => { $f("cs-approve").disabled = !$f("cs-code").checked; };
+    $f("cs-lb").onchange = () => { f.querySelectorAll('[id^="cs-tlb-"]').forEach((x) => { x.disabled = !$f("cs-lb").checked; }); };
     $f("cs-tag").oninput = () => { $f("cs-tag").value = $f("cs-tag").value.toUpperCase().replace(/[^A-Z0-9]/g, ""); };
     f.onsubmit = async (e) => {
       e.preventDefault();
       const body = { org: S.orgId, lbShow: $f("cs-lb").checked, codeJoin: $f("cs-code").checked, approve: $f("cs-approve").checked, inviteBy: $f("cs-invite").value, runBy: $f("cs-run").value, cardsFor: $f("cs-cards").value };
+      if (teams().length) body.teamsLb = Object.fromEntries(teams().map((t) => [t.id, !!(f.querySelector("#cs-tlb-" + CSS.escape(t.id)) || {}).checked]));
       if (owner) {
         const name = $f("cs-name").value.trim(), tag = $f("cs-tag").value.trim();
         if (!name) { $f("cs-msg").textContent = "Give it a name."; return; }
@@ -7772,8 +7785,8 @@ function __qbMain(ctx) {
     set("dx-s-format", FORMATS[d.format].label);
     set("dx-s-where", d.place === "own" ? "On their own, due " + whenText(atOf(d.dueDay, d.dueHour)) : d.place === "irl" ? "IRL Reading, read aloud in person" : "In a room, " + (d.when === "now" ? "now" : whenText(atOf(d.startDay, d.startHour))));
     set("dx-s-q", d.format === "tb" ? d.tu + " tossups, bonuses as earned" : d.format === "bo" ? d.bo + " bonuses" : d.tu + " tossups");
-    // (the draw leans to the easier end: "2–5, mostly 2–3")
-    set("dx-s-diff", !d.diff.length ? "Pick at least one" : d.diff.length >= 3 ? diffText(d.diff) + ", mostly " + diffText(d.diff.slice(0, 2)) : diffText(d.diff));
+    // (15.130: just the range, "2–5"; the "mostly 2–3" after it is gone)
+    set("dx-s-diff", !d.diff.length ? "Pick at least one" : diffText(d.diff));
     set("dx-s-years", yearsBad(d.years) ? "From is after To" : yearsText(d.years) || "Any");
     const ys = document.getElementById("dx-s-years"); if (ys) ys.classList.toggle("bad", yearsBad(d.years));
     const mins = d.format === "bo" ? Math.round(d.bo * 1.5 / 5) * 5 : d.format === "tu" ? Math.round(d.tu * 0.75 / 5) * 5 : Math.round(d.tu * 1.45 / 5) * 5;

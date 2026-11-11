@@ -5998,6 +5998,9 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .cl-set-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; margin: 0 -4px; padding: 0 4px; }
 .cl-set-sec { display: flex; flex-direction: column; gap: 8px; }
 .cl-set-sec > .eyebrow { margin: 0; display: flex; align-items: center; }
+/* (15.130) the teams on the Teams leaderboard, one switch each, under the organization's own */
+.cs-teams { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 0 26px; }
+.cs-teams > .cl-lbl { margin: 0; display: flex; align-items: center; }
 .cl-set-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 250px); align-items: center; gap: 12px; font-size: 13px; color: var(--text); }
 .cl-set-row > span { display: flex; align-items: center; }
 .cl-set-row .qb-select, .cl-set-row select { width: 100%; }
