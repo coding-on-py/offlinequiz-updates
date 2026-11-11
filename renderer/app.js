@@ -16991,7 +16991,7 @@ async function renderLeaderboards(note) {
   if (!lbPeriods().some(([k]) => k === _lb.period)) _lb.period = "week";   // an event's board that has closed
   // the account check runs alongside (it's a round trip) once the account is known
   if (!note) { const af = accountFresh(); if (!Account.known) await af; }
-  if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need onlinequiz accounts, which aren't open yet.</p></div>`; return; }
+  if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need OnlineQuiz accounts, which aren't open yet.</p></div>`; return; }
   if (_lb.kind !== "individuals" && window.QBClubs) {
     // teams and organizations rank by points only (an event's board is for players)
     if (!["week", "month", "all"].includes(_lb.period)) _lb.period = "week";
@@ -17554,7 +17554,7 @@ function paintAdminReports(c) {
 async function renderFriends(note) {
   const c = document.getElementById("friends-container"); if (!c) return;
   if (!note) await accountFresh();
-  if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Friends need an onlinequiz account. Accounts aren't open yet.</p></div>`; return; }
+  if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Friends need an OnlineQuiz account. Accounts aren't open yet.</p></div>`; return; }
   if (!Account.user) { c.innerHTML = accountPanelHtml("Sign in to add friends and see how they're practicing."); return; }
   if (!Account.user.handle) {
     c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Choose a username first so friends can add you.</p><div class="acct-panel-btns"><button type="button" class="btn btn-primary" id="fr-choose">Choose a username</button></div></div>`;

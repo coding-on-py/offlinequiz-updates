@@ -6833,7 +6833,7 @@ function __qbMain(ctx) {
     return a[a.length - 1] - a[0] === a.length - 1 ? a[0] + "–" + a[a.length - 1] : a.join(", ");
   };
   const TIP = {
-    na: "No onlinequiz account, so they can only play IRL Reading.",
+    na: "No OnlineQuiz account, so they can only play IRL Reading.",
     addName: "For a player without an account. They can play IRL Reading and switch to their account later.",
     replace: "They get an invite under Clubs. Once they accept, their account takes over this player's teams and results.",
     invite: "They see the invite under Clubs. Pick a team to add them to it right away.",
@@ -6893,8 +6893,8 @@ function __qbMain(ctx) {
   async function gate(container, icon, what) {
     if (typeof Account === "undefined") return true;
     if (!Account.known && typeof accountFresh === "function") { try { await accountFresh(); } catch (e) {} }
-    if (!Account.available) { container.innerHTML = plainPanel(icon, what + " need onlinequiz accounts, which aren't open yet."); return true; }
-    if (!Account.user) { container.innerHTML = signInPanel(icon, what === "Clubs" ? "Sign in to create an organization or join your school's." : what + " need an onlinequiz account."); return true; }
+    if (!Account.available) { container.innerHTML = plainPanel(icon, what + " need OnlineQuiz accounts, which aren't open yet."); return true; }
+    if (!Account.user) { container.innerHTML = signInPanel(icon, what === "Clubs" ? "Sign in to create an organization or join your school's." : what + " need an OnlineQuiz account."); return true; }
     if (!Account.user.handle) { container.innerHTML = plainPanel(icon, "Choose a username first.", '<button type="button" class="btn btn-primary" data-acct="account">Account</button>'); return true; }
     return false;
   }
@@ -7556,7 +7556,7 @@ function __qbMain(ctx) {
   }
   const LINK_TITLE = { friend: "Friend link", club: "Organization", team: "Team", diag: "Diagnostic report" };
   function paintLink(c) {
-    const L = S.link, d = L.d, home = '<button type="button" class="btn btn-primary" data-go="home">Go to onlinequiz</button>';
+    const L = S.link, d = L.d, home = '<button type="button" class="btn btn-primary" data-go="home">Go to OnlineQuiz</button>';
     const title = document.querySelector("#link-screen .top-bar-title"); if (title) title.textContent = (d && LINK_TITLE[d.kind]) || "Shared link";
     try { if (typeof updateTopbar === "function") updateTopbar(); if (typeof webTitleSync === "function") webTitleSync(); } catch (e) {}
     if (!d || d.error) { c.innerHTML = plainPanel("link", (d && d.error) || OFFLINE, home); return; }
