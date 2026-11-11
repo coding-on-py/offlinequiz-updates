@@ -2611,6 +2611,30 @@ function __qbMain(ctx) {
     // the host of the room you're in: in a relay room the one running it; on the game server the one
     // it says (the first in), or in a bought room its owner and admins
     function amHost() { if (inDiag()) return !!(dxInfo && dxInfo.amHost); return serverMode ? (roomInfo ? roomInfo.role === "owner" || roomInfo.role === "admin" : !!myId && srvHost === myId) : isHost; }
+    // ── (15.139) a controlled room: only its owner changes its settings (Setup, the room's rules, Public / Lock, and
+    // Controlled room itself). The owner: a bought room's owner, else the player who opened the room (its first
+    // host). The game server holds to it (mpserver/room.mjs canSet); in a relay or offline room the app hosting it
+    // does (onHostData). roomOwner: the owner's player id (the room's "state"; the hosting app's own here), null
+    // while they're away; roomOwnerName for the hint. ──
+    var roomOwner = null, roomOwnerName = "", ownerGoneAt = 0;
+    var OWNER_AWAY_MS = 5 * 60e3;   // a relay room's owner gone this long: the app hosting it owns it (as on the game server)
+    function amOwner() { return !watching && !!myId && roomOwner === myId; }
+    // may change this setting here (key "controlled": the switch); a diagnostic / official room has its own rules
+    function canEditRoom(key) {
+      if (watching) return false;
+      if (inDiag() || officialRoom) return true;
+      if (key === "controlled") return amOwner();
+      return !settings.controlled || amOwner();
+    }
+    function ownerOnlyText() {
+      var n = (roomOwner && players[roomOwner] && players[roomOwner].name) || roomOwnerName;
+      return n ? "Only " + n + ", the room’s owner, can change its settings." : "Only the room’s owner can change its settings.";
+    }
+    // ── (15.139) an admin watching a room on the game server (Site stats → Rooms → Watch: QB.mpWatch): the room as
+    // its players see it, and none of them sees the admin (no seat, no count, no join line; nothing is sent but
+    // the hello with the watch ticket). watching: { id: the room's id on the game server, code, back }. Rooms on
+    // the backup relay and offline rooms can't be watched (the website doesn't know them). ──
+    var watching = null, watchTicket = null;
     // ── a diagnostic room (Clubs → Team Diagnostic): a "dx-…" code on the game server, opened by
     // the website for the players picked for it. dxInfo: the room's "diaginfo" (team, format, total,
     // i, players / hosts by account, amHost = may run it now, host, waiting, done, settings);
@@ -2781,7 +2805,7 @@ function __qbMain(ctx) {
     // form stays, saying "Joining …" — or asking for the room's password on the same connection
     var admitting = false;
     function abandonJoin() {
-      admitting = false;
+      admitting = false; watching = null; watchTicket = null;
       try { if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); } } catch (e) {}
       ws = null; lobby = ""; markBusy(false);
     }
@@ -3009,6 +3033,8 @@ function __qbMain(ctx) {
 
     function onKey(e) {
       if (!active() || !lobby) return;
+      // (15.139) watching: only Q (leave) does anything
+      if (watching) { var tw = e.target.tagName; if ((e.key === "q" || e.key === "Q") && tw !== "INPUT" && tw !== "TEXTAREA") { e.preventDefault(); confirmLeave(); } return; }
       // the room settings panel sits BESIDE the room (it pushes it left), so the
       // room's keys keep working while it is open
       var t = e.target.tagName; if (t === "INPUT" || t === "TEXTAREA") return;
@@ -3033,6 +3059,8 @@ function __qbMain(ctx) {
     }
     function confirmLeave() {
       if (!lobby) return;
+      // (15.139) watching: straight back to where it was opened from (Site stats → Rooms), nothing to confirm
+      if (watching) { var back = watching.back; leave(); if (back) { try { back(); } catch (e) {} } return; }
       // a diagnostic room goes back to Clubs (its diagnostics); once it's over, without asking
       if (inDiag()) {
         if (dxDone) { leaveToClubs(); return; }
@@ -3056,7 +3084,7 @@ function __qbMain(ctx) {
     window.addEventListener("keydown", onDrawerEsc, true);
     // a click on a player in the room (the app's player menu): the host can take them out
     var dropUserItems = ctx.host && ctx.host.addUserMenuItems ? ctx.host.addUserMenuItems(function (u) {
-      if (!active() || !u || !u.pid || u.pid === myId || !players[u.pid] || !amHost() || inDiag()) return [];
+      if (!active() || !u || !u.pid || u.pid === myId || !players[u.pid] || !amHost() || inDiag() || watching || u.pid === roomOwner) return [];
       var nm = players[u.pid].name;
       return [{ label: "Take out of the room", danger: true, onClick: function () {
         var go = function () { kickPlayer(u.pid); };
@@ -3064,12 +3092,12 @@ function __qbMain(ctx) {
         else go();
       } }];
     }) : null;
-    ctx._cleanup = function () { regRoomVoice(false); if (dropUserItems) dropUserItems(); window.removeEventListener("keydown", onDrawerEsc, true); markBusy(false); returnPanel(); restoreSoloPanel(); document.removeEventListener("keydown", onKey); stopReveal(); stopAnswerTimer(); stopTick(); stopBuzzWindowTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); try { if (ws) ws.close(); } catch (e) {} };
+    ctx._cleanup = function () { clearInterval(ownerTimer); regRoomVoice(false); if (dropUserItems) dropUserItems(); window.removeEventListener("keydown", onDrawerEsc, true); markBusy(false); returnPanel(); restoreSoloPanel(); document.removeEventListener("keydown", onKey); stopReveal(); stopAnswerTimer(); stopTick(); stopBuzzWindowTimer(); stopBonusTimer(); stopClientRead(); stopAutoSub(); try { if (ws) ws.close(); } catch (e) {} };
 
     // ── networking helpers (transport-agnostic) ──
     function sendRelay(o) { if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify(o)); } catch (e) {} } }
     function broadcast(m) { sendRelay({ to: "all", d: m }); }
-    function toHost(m) { sendRelay({ to: "host", d: m }); }
+    function toHost(m) { if (watching) return; sendRelay({ to: "host", d: m }); }   // a watcher says nothing (its hello goes on its own)
     // A conn-shaped wrapper so the host code paths work identically on relay.
     function relayConn(id) {
       if (!_relayConns[id]) _relayConns[id] = { peer: id, send: function (d) { sendRelay({ to: id, d: d }); } };
@@ -3080,7 +3108,7 @@ function __qbMain(ctx) {
     // the derived roomFilters object cannot rebuild. roomFilters stays for
     // clients running an older base.
     function hostSel() { try { return (ctx.host && ctx.host.getFilterSelectionSnapshot) ? ctx.host.getFilterSelectionSnapshot() : null; } catch (e) { return null; } }
-    function stateMsg() { return { t: "state", players: order.map(function (id) { return players[id]; }), settings: settings, filterSummary: filterSummary, roomFilters: (roomConfig && roomConfig.filters) || null, roomSel: isHost ? hostSel() : null }; }
+    function stateMsg() { return { t: "state", players: order.map(function (id) { return players[id]; }), settings: settings, filterSummary: filterSummary, roomFilters: (roomConfig && roomConfig.filters) || null, roomSel: isHost ? hostSel() : null, owner: roomOwner, ownerName: roomOwner && players[roomOwner] ? players[roomOwner].name : "" }; }
     function pushState() { broadcast(stateMsg()); renderScores(); renderSettings(); updateTopBar(); }
 
     function addPlayer(id, name, team, spec, avatar, handle) {
@@ -3094,6 +3122,7 @@ function __qbMain(ctx) {
       if (!pid || pid === myId || !players[pid]) return;
       if (serverMode) { toHost({ t: "kick", id: pid }); return; }
       if (!isHost) return;
+      if (pid === roomOwner) { setStatus("The owner can’t be taken out of their room."); return; }   // (15.139)
       var p = players[pid];
       kickBans.push({ device: devOf[pid] || "", handle: p.handle || "", until: Date.now() + 30 * 60e3 });
       try { relayConn(pid).send({ t: "kicked", text: "You were removed from this room. You can rejoin in 30 minutes." }); } catch (e) {}
@@ -3222,7 +3251,7 @@ function __qbMain(ctx) {
     }
 
     // ── join ──
-    var ROOM_DEFAULTS = { answerSeconds: 10, buzzWindow: 10, rebuzz: false, bonusEvery: false, stopPower: false, allowSkips: true, locked: false, public: true, tournament: false };
+    var ROOM_DEFAULTS = { answerSeconds: 10, buzzWindow: 10, rebuzz: false, bonusEvery: false, stopPower: false, allowSkips: true, locked: false, public: true, tournament: false, controlled: false };
     // While in a room the app must not reload itself (it switches to a newly
     // downloaded question database only when nothing is busy).
     function markBusy(on) { try { if (ctx.host && ctx.host.setBusy) ctx.host.setBusy("multiplayer", on); } catch (e) {} }
@@ -3232,6 +3261,8 @@ function __qbMain(ctx) {
       // Every room starts from the SAME defaults — nothing carries over from a
       // previous room, and a reopened room starts fresh too.
       settings = JSON.parse(JSON.stringify(ROOM_DEFAULTS));
+      roomOwner = null; roomOwnerName = ""; ownerGoneAt = 0;
+      if (watching) { joinWatch(); return; }
       // Packet/set reading never carries across lobbies — always start at q1.
       setSig = ""; setIndex = 0; setQueue = null; impSig = ""; impIndex = 0;
       roomConfig = null; leftIntentionally = false;
@@ -3279,6 +3310,34 @@ function __qbMain(ctx) {
       render();
       setStatus("Couldn’t reach the diagnostic room. Try again in a moment.");
     }
+    // (15.139) an admin watching: a watch ticket from the website (admins only), then the game server's room with
+    // ?watch=1 (never the backup relay: a room there isn't the one being watched, and watching it would seat us)
+    async function joinWatch() {
+      roomConfig = null; leftIntentionally = false;
+      if (optNext) clearTimeout(optNext.t);
+      upNext = null; optNext = null; optConfirmRead = false; pressAgain = false;
+      roomInfo = null; roomOpErr = ""; mySpec = true;
+      if (!rejoining) { dxInfo = null; dxDone = null; }
+      sessionLog = []; logCollapsed = {}; chatHist = [];
+      var w = watching, srv = gameServerUrl();
+      if (!srv || srv === "off") { watchFail("Watching needs the game server, and this app isn’t using it."); return; }
+      if (!rejoining) admitting = true;
+      if (!rejoining) render();   // "Opening …" on the lobby until the room is in view
+      var r = null;
+      try { r = await hostApi().post("/api/admin/mp/watch", { id: w.id }); } catch (e) { r = null; }
+      if (watching !== w) return;   // left meanwhile
+      if (!r || !r.ticket) { if (rejoining) { serverMode = true; showDisconnected(); return; } watchFail((r && r.error) || "Couldn’t open the room to watch. Try again."); return; }
+      watchTicket = r.ticket;
+      serverMode = false;
+      joinRelay(srv, function () { if (rejoining) { serverMode = true; showDisconnected(); } else watchFail("Couldn’t reach the game server. Try again in a moment."); }, "?watch=1");
+    }
+    // the watch couldn't start or the room ended it: back on the lobby, saying why
+    function watchFail(text) {
+      try { if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); } } catch (e) {}
+      ws = null;
+      if (lobby) leave(); else { watching = null; watchTicket = null; admitting = false; markBusy(false); render(); }
+      setStatus(text || "The room closed.");
+    }
     // ── relay transport: one outbound WebSocket per player ──
     // `fallback` runs instead of an error when this server never answers.
     function joinRelay(relay, fallback, query) {
@@ -3287,7 +3346,7 @@ function __qbMain(ctx) {
       if (/^https?:/i.test(base)) base = base.replace(/^http/i, "ws").replace(/^HTTPS/i, "wss");
       if (!/^wss?:/i.test(base)) base = "wss://" + base;
       var sock;
-      try { sock = new WebSocket(base + "/lobby/" + encodeURIComponent(inDiag() ? dxRoomId(lobby) : lobbyId(lobby)) + (query || "")); }
+      try { sock = new WebSocket(base + "/lobby/" + encodeURIComponent(watching ? watching.id : inDiag() ? dxRoomId(lobby) : lobbyId(lobby)) + (query || "")); }
       catch (e) { if (fallback) { fallback(); return; } setStatus("Bad relay URL."); return; }
       ws = sock;
       var opened = false, fellBack = false;
@@ -3303,6 +3362,16 @@ function __qbMain(ctx) {
         var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
         if (m.t === "welcome") {
           opened = true;
+          // (15.139) watching: only a game server that knows watchers (it says so) hears the watch hello; anything
+          // else would seat us as a player
+          if (watching) {
+            if (!m.server || !m.watch) { try { sock.onclose = null; sock.close(); } catch (e) {} if (ws === sock) ws = null; watchFail("This game server can’t show a room to watch yet."); return; }
+            serverMode = true; myId = m.id; isHost = false;
+            sendRelay({ to: "host", d: { t: "hello", watch: watchTicket } });
+            admitting = !rejoining;
+            if (!rejoining) render();
+            return;
+          }
           serverMode = !!m.server;
           myId = m.id; isHost = !serverMode && !!m.host;
           setTimeout(rememberRoom, 1500);
@@ -3310,6 +3379,7 @@ function __qbMain(ctx) {
             if (rejoining || reconnectN) reconnected();
             try { if (ctx.host && ctx.host.resetPracticeFilters) ctx.host.resetPracticeFilters(); } catch (e) {}
             addPlayer(myId, myName, "", mySpec, myAv(), myHandle());
+            roomOwner = myId; ownerGoneAt = 0;   // (15.139) who opens a relay / offline room owns it
             sysChat(myName + " created the lobby");
             mpPrefetchNow();   // the FIRST question should serve instantly too
           } else {
@@ -3364,6 +3434,7 @@ function __qbMain(ctx) {
       if (isHost || !lobby) return;
       isHost = true;
       hostLocalSpeed = null;
+      ownerGoneAt = 0;   // (the room's owner, mirrored from its state, stays its owner: relayOwnerCheck)
       roomConfig = null;   // hostNext reads this (already-synced) panel instead
       mpPre = { key: "", q: null, busy: false };
       if (leftId && players[leftId]) players[leftId].off = true;
@@ -3382,6 +3453,22 @@ function __qbMain(ctx) {
       mpPrefetchNow();   // this machine serves questions now — fetch ahead
     }
 
+    // (15.139) a relay room's owner gone for good (five minutes away, or their seat gone): the app hosting the room
+    // owns it now, as the game server hands a free room to its host (room.mjs checkOwner). An offline room's owner
+    // is the app serving it, which never leaves without closing it
+    function relayOwnerCheck() {
+      if (!isHost || serverMode || !lobby || watching) return;
+      var p = roomOwner && players[roomOwner];
+      if (p && !p.off) { ownerGoneAt = 0; return; }
+      if (p) {
+        if (!ownerGoneAt) { ownerGoneAt = Date.now(); return; }
+        if (Date.now() - ownerGoneAt < OWNER_AWAY_MS) return;
+      }
+      roomOwner = myId; ownerGoneAt = 0;
+      if (settings.controlled) sysChat(myName + " is the room’s owner now");
+      pushState();
+    }
+    var ownerTimer = setInterval(relayOwnerCheck, 15000);
     // A player left: keep their seat and score so a rejoin
     // under the same name continues where they left off; abandon their bonus.
     function hostPeerGone(id) {
@@ -3427,6 +3514,7 @@ function __qbMain(ctx) {
           if (pendingBuzzer === oldId) pendingBuzzer = id;
           if (lockedIds[oldId]) { lockedIds[id] = lockedIds[oldId]; delete lockedIds[oldId]; }
           if (bonusView && bonusView.winner === oldId) bonusView.winner = id;
+          if (roomOwner === oldId) { roomOwner = id; ownerGoneAt = 0; }   // (15.139) the owner is back
           sysChat(seat.name + " rejoined");
         } else {
           var joinName = String(d.name || "").trim();
@@ -3451,6 +3539,7 @@ function __qbMain(ctx) {
             var g = players[x];
             if (x === id || x === myId || !g || !g.off || g.handle !== acctH) return;
             keep.score = (Number(keep.score) || 0) + (Number(g.score) || 0);
+            if (roomOwner === x) { roomOwner = id; ownerGoneAt = 0; }
             removePlayer(x); delete lockedIds[x];
           });
           var nm = String(d.name || "").trim();
@@ -3477,7 +3566,12 @@ function __qbMain(ctx) {
       }
       else if (d.t === "setName") { if (players[id]) { var old = players[id].name; players[id].name = d.name || old; sysChat(old + " is now " + players[id].name); pushState(); } }
       else if (d.t === "setTeam") { if (players[id]) { players[id].team = d.team || ""; pushState(); } }
-      else if (d.t === "setSetting") { settings[d.key] = d.val; sysChat((players[id] ? players[id].name : "?") + " " + describeSetting(d.key, d.val)); pushState(); }
+      // (15.139) a controlled room: only its owner's changes (and Controlled room itself, only theirs); the sender's
+      // panel goes back to the room's
+      else if ((d.t === "setSetting" || d.t === "setConfig") && (d.t === "setSetting" && d.key === "controlled" || settings.controlled) && id !== roomOwner) {
+        try { conn.send({ t: "status", text: ownerOnlyText() }); conn.send(stateMsg()); } catch (e) {}
+      }
+      else if (d.t === "setSetting") { if (!(d.key in ROOM_DEFAULTS)) return; settings[d.key] = d.key === "answerSeconds" || d.key === "buzzWindow" ? Math.max(3, Math.min(60, parseInt(d.val, 10) || 10)) : d.val; sysChat((players[id] ? players[id].name : "?") + " " + describeSetting(d.key, d.val)); pushState(); }
       else if (d.t === "setConfig") {
         if (d.config) { roomConfig = roomConfig || {}; ["filters", "strictness", "revealSpeed", "hidePron", "filterSummary"].forEach(function (k) { if (d.config[k] !== undefined) roomConfig[k] = d.config[k]; }); if (d.config.filterSummary != null) filterSummary = d.config.filterSummary; }
         if (d.change) sysChat((players[id] ? players[id].name : "?") + " " + d.change);
@@ -3541,6 +3635,7 @@ function __qbMain(ctx) {
     // Any player may advance: after a question ends it's a plain "next"; mid-
     // question it's a SKIP and only allowed when skips are on (host included).
     function requestNext() {
+      if (watching) return;
       if (inDiag()) { if (amHost() && !dxDone && !(dxInfo && dxInfo.done)) toHost({ t: "reqNext" }); return; }   // the host starts and goes on
       if (isHost) { hostNext(); return; }
       // weighted categories: the server draws each question from the asker's
@@ -3842,7 +3937,7 @@ function __qbMain(ctx) {
     // (the chat line comes once, when it settles: onAnyFilterChange); a room this app hosts changes at once
     var liveSpeedT = 0, liveSpeedAt = 0;
     function liveSpeed(ms) {
-      if (!(ms >= 0)) return;
+      if (!(ms >= 0) || !canEditRoom()) return;
       if (isHost && !serverMode) { hostLocalSpeed = ms; if (curRevealSpeed !== ms) { curRevealSpeed = ms; if (current && !ended && !paused && !pendingBuzzer) beginReveal(); } return; }
       clearTimeout(liveSpeedT);
       var go = function () { liveSpeedAt = Date.now(); toHost({ t: "setConfig", config: { revealSpeed: ms }, silent: true }); };
@@ -4183,6 +4278,7 @@ function __qbMain(ctx) {
       if (!paused && !pendingBuzzer && !ended) beginReveal();
     }
     function describeSetting(key, val) {
+      if (key === "controlled") return val ? "made this a controlled room. Only they can change its settings" : "turned off Controlled room. Anyone can change the settings";
       var label = key === "answerSeconds" ? "Answer time" : key === "buzzWindow" ? "Buzz window" : key === "rebuzz" ? "Rebuzzes" : key === "bonusEvery" ? "Bonus after a correct tossup" : key === "stopPower" ? "Stop on power" : key === "allowSkips" ? "Skips" : key === "locked" ? "Room lock" : key === "public" ? "Public room" : key === "tournament" ? "Tournament mode" : key;
       return "changed " + label + " to " + val;
     }
@@ -4222,6 +4318,7 @@ function __qbMain(ctx) {
         if (admitting) { admitting = false; door = null; render(); }   // let in: now the room shows
         if (rejoining || reconnectN) reconnected();
         srvHost = d.host || null;
+        roomOwner = d.owner || null; roomOwnerName = d.ownerName || "";   // (15.139)
         var wasOfficial = !!officialRoom;
         officialRoom = d.official || null;
         if (!!officialRoom !== wasOfficial && borrowedPanel && lobby && !admitting) { returnPanel(true); var lay = body && body.querySelector(".practice-layout"); if (lay) borrowPanel(lay); paintOfficial(); }
@@ -4311,6 +4408,8 @@ function __qbMain(ctx) {
       // host vanished — reset the question area (scores and log are kept).
       // render only when visible — renderRoom borrows the filters panel and
       // must never steal it from a practice screen in the foreground.
+      // (15.139) watching: the room said no (the ticket ran out, the room isn't open) or closed
+      else if (watching && (d.t === "watchno" || d.t === "denied" || d.t === "kicked")) { leftIntentionally = true; watchFail(d.text || "The room closed."); }
       // a bought room: not let in (its password / members only / taken off the list)
       else if (d.t === "denied") { onDenied(d); }
       // (15.105) a room closed for no activity: back to the lobby, no box (it said so with a Sign in button, signed in or not)
@@ -4334,6 +4433,7 @@ function __qbMain(ctx) {
 
     // ── local actions (sent to host or handled if host) ──
     function requestBuzz() {
+      if (watching) return;
       if (!current || ended || lockedOut() || pendingBuzzer || paused) return;   // locked out / someone answering / paused (the room takes no buzz): no buzz (and no answer box flashing open)
       if (inDiag() && players[myId] && players[myId].spec) return;   // a diagnostic's host who isn't playing
       if (players[myId] && players[myId].spec) { ctx.toast("Spectators can't buzz", "error"); return; }
@@ -4378,7 +4478,7 @@ function __qbMain(ctx) {
       return amHost() || (paused && powerPause);
     }
     function requestPause() {
-      if (!canPause()) return;
+      if (watching || !canPause()) return;
       if (isHost) { hostTogglePause(myId); return; }
       // a game-server room: the reading stops (or goes on) here at the press; the room's "pause" confirms it, and
       // "pauseno" (it couldn't: a bonus began, the question ended) puts it back
@@ -4401,7 +4501,10 @@ function __qbMain(ctx) {
     function submitAnswer(text) { if (isHost) hostHandleAnswer(myId, text); else toHost({ t: "answer", text: text }); }
     function changeName(name) { myName = name; try { ctx.setSetting("name", name); } catch (e) {} if (isHost) { var old = players[myId].name; players[myId].name = name; sysChat(old + " is now " + name); pushState(); } else toHost({ t: "setName", name: name }); }
     function changeTeam(team) { if (isHost) { players[myId].team = team; pushState(); } else toHost({ t: "setTeam", team: team }); }
-    function changeSetting(key, val) { settings[key] = val; if (isHost) { sysChat(myName + " " + describeSetting(key, val)); pushState(); } else toHost({ t: "setSetting", key: key, val: val }); renderSettings(); }
+    function changeSetting(key, val) {
+      if (!canEditRoom(key)) { setStatus(ownerOnlyText()); renderSettings(); return; }   // (15.139) a controlled room
+      settings[key] = val; if (isHost) { sysChat(myName + " " + describeSetting(key, val)); pushState(); } else toHost({ t: "setSetting", key: key, val: val }); renderSettings();
+    }
     function teamOf(id) { var p = players[id]; return (p && p.team) || ""; }
     function sendChat(text) {
       if (!text) return;
@@ -4660,7 +4763,7 @@ function __qbMain(ctx) {
       if (door) showDoor();
       else if (admitting) {
         var stj = body.querySelector("#mp-status");
-        if (stj) { stj.innerHTML = '<span class="mp-joining">Joining <b>' + esc(String(lobby).toUpperCase()) + '</b>\u2026</span> <button type="button" class="btn btn-sm btn-ghost" id="mp-join-cancel">Cancel</button>'; stj.querySelector("#mp-join-cancel").onclick = function () { abandonJoin(); render(); }; }
+        if (stj) { stj.innerHTML = '<span class="mp-joining">' + (watching ? "Opening " : "Joining ") + '<b>' + esc(String(lobby).toUpperCase()) + '</b>\u2026</span> <button type="button" class="btn btn-sm btn-ghost" id="mp-join-cancel">Cancel</button>'; stj.querySelector("#mp-join-cancel").onclick = function () { abandonJoin(); render(); }; }
       }
       try { if (ctx.host && ctx.host.tip) ctx.host.tip(body.querySelector(".mp-lobby"), "mp-lobby"); } catch (e) {}
       body.querySelectorAll(".mp-recent-row").forEach(function (r) { r.onclick = function () { go(r.dataset.code); }; });
@@ -5135,7 +5238,7 @@ function __qbMain(ctx) {
     }
     function recentRooms() { try { var r = ctx.storage.get("recent"); return Array.isArray(r) ? r.slice(0, 6) : []; } catch (e) { return []; } }
     function rememberRoom() {
-      if (!lobby || inDiag() || lan) return;   // a diagnostic room is opened from Clubs, an offline room by its address
+      if (!lobby || inDiag() || lan || watching) return;   // a diagnostic room is opened from Clubs, an offline room by its address (a watched one isn't yours)
       try {
         var list = recentRooms().filter(function (r) { return String(r.code).toLowerCase() !== lobby.toLowerCase(); });
         list.unshift({ code: lobby, at: Date.now(), players: order.filter(function (id) { return players[id] && !players[id].spec; }).length || 1, host: !!isHost });
@@ -5155,18 +5258,42 @@ function __qbMain(ctx) {
     // room) at the top, and the room's rules placed among the practice panel's own toggles and sliders, each
     // where its practice twin sits (that twin is hidden while the room holds the panel, ui.css)
     function lobbySectionHtml() {
-      return '<div class="filter-section mp-injected">' +
+      // (15.139) mp-lobby-sec: this player's own name and team, which stay theirs in a controlled room (syncControlled
+      // makes the rest read-only). A watcher has neither
+      return '<div class="filter-section mp-injected mp-lobby-sec">' +
         '<div class="filter-label">Room ' + esc(String(lobby).toUpperCase()) + (isHost ? ' <span class="badge rh-host">Host</span>' : "") + "</div>" +
-        '<label class="mode-field"><span>Your name</span><input id="mp-myname" class="mode-input" autocomplete="off"></label>' +
+        (watching ? "" : '<label class="mode-field"><span>Your name</span><input id="mp-myname" class="mode-input" autocomplete="off"></label>' +
         (mySpec ? '<div class="text-muted" style="font-size:11px">Spectating</div>'
-                : '<label class="mode-field"><span>Team</span><input id="mp-myteam" class="mode-input" placeholder="(none)" autocomplete="off"></label>') +
+                : '<label class="mode-field"><span>Team</span><input id="mp-myteam" class="mode-input" placeholder="(none)" autocomplete="off"></label>')) +
         '<div class="fp-checks mp-room-checks">' +
           // public rooms are listed in everyone's lobby (game server rooms only — the relay has no list)
           (serverMode ? '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-public"' + (settings.public !== false ? " checked" : "") + '> Public room</label><span class="qb-info" data-tip="Listed under Public rooms so anyone can join. Off, only people with the code or link can.">i</span></span>' : "") +
           '<label class="checkbox-row"><input type="checkbox" id="mp-lock"' + (settings.locked ? " checked" : "") + "> Lock room</label>" +
+          '<span class="checkbox-row-wrap"><label class="checkbox-row"><input type="checkbox" id="mp-controlled"' + (settings.controlled ? " checked" : "") + (canEditRoom("controlled") ? "" : " disabled") + '> Controlled room</label><span class="qb-info" data-tip="Only the room’s owner can change its settings. The owner is the one who opened the room, or who bought it.">i</span></span>' +
         "</div>" +
+        '<p class="mp-ro-note" id="mp-ro-note" role="note" hidden></p>' +
         '<div class="text-muted" id="mp-status" style="font-size:11px;min-height:14px;margin-top:4px"></div>' +
         "</div>";
+    }
+    // (15.139) the room's Setup as this player may use it: a controlled room's is read-only for everyone but its owner
+    // (greyed and out of reach, `inert`: categories, difficulty, years, options, reading and timers, the room's rules,
+    // Public / Lock and Controlled room itself), with a line saying whose it is; a watcher's always is. Their own
+    // name and team stay theirs. returnPanel takes it all off again
+    function syncControlled() {
+      var panel = borrowedPanel;
+      if (!panel || inDiag() || officialRoom) return;
+      var ro = !!watching || !canEditRoom();
+      panel.classList.toggle("mp-ro", ro);
+      [].forEach.call(panel.children, function (c) {
+        if (!c.classList.contains("filter-section") || c.classList.contains("mp-lobby-sec")) return;
+        if (ro) c.setAttribute("inert", ""); else c.removeAttribute("inert");
+        c.classList.toggle("mp-ro-sec", ro);
+      });
+      ["mp-public", "mp-lock"].forEach(function (id) { var el = panel.querySelector("#" + id); if (el) { el.disabled = ro; var row = el.closest(".checkbox-row"); if (row) row.classList.toggle("mp-ro-row", ro); } });
+      var cc = panel.querySelector("#mp-controlled");
+      if (cc) { var cOk = canEditRoom("controlled"); cc.checked = !!settings.controlled; cc.disabled = !cOk; var crow = cc.closest(".checkbox-row"); if (crow) crow.classList.toggle("mp-ro-row", !cOk); }
+      var note = panel.querySelector("#mp-ro-note");
+      if (note) { note.hidden = !ro; var t = watching ? "You’re watching. Players can’t see you, and nothing here can be changed." : ownerOnlyText(); if (ro && note.textContent !== t) note.textContent = t; }
     }
     // The room's rules, edited by every player and kept in sync (clients send setSetting to the host, which
     // re-broadcasts state). Each goes right after the practice control it stands in for.
@@ -5239,7 +5366,7 @@ function __qbMain(ctx) {
             '<span class="badge rh-off" id="mp-offbadge" hidden></span>' +
             (lan ? '<span class="badge rh-lan" id="mp-lanbadge"></span>' + (lan.key ? '<button type="button" class="btn btn-sm rh-invite" id="mp-lan-invite-btn">Invite</button>' : "") : "") +
             '<span class="badge rh-own" id="mp-ownbadge" hidden></span>' +
-            (mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
+            (watching ? '<span class="badge rh-spec rh-watch" id="mp-watchbadge">Watching <span class="qb-info" data-tip="Players can’t see you. You aren’t in the room’s players, counts or chat, and you can’t buzz or change anything.">i</span></span>' : mySpec ? '<span class="badge rh-spec">Spectating</span>' : "") +
             '<span class="spacer"></span>' +
             '<span class="rh-q num" id="mp-qcount"></span>' +
             // (15.94) Voice and Room settings over the Players and Chat box, as wide as it (ui.css .rh-side)
@@ -5287,10 +5414,11 @@ function __qbMain(ctx) {
               '<div class="panel-body" data-pane="sheet"' + (panelTab === "sheet" ? "" : " hidden") + '><div class="mp-sheet" id="mp-sheet"></div></div>' +
               '<div class="panel-body panel-chat" data-pane="chat"' + (panelTab === "chat" ? "" : " hidden") + '>' +
                 '<div class="mp-chat" id="mp-chat"></div>' +
+                (watching ? '<div class="mp-chatrow mp-watch-note" id="mp-watch-note">You’re watching. Nobody in the room can see you.</div>' :
                 '<div class="mp-chatrow">' +
                   '<button class="btn btn-sm btn-ghost mp-chat-scope" id="mp-chat-scope" title="Switch between chatting with everyone and only your team">All</button>' +
                   '<input id="mp-chat-input" class="mode-input" placeholder="Message everyone…" autocomplete="off">' +
-                "</div>" +
+                "</div>") +
               "</div>" +
             "</aside>" +
             '<div class="history-panel mp-history" id="mp-history-panel" style="display:none">' +
@@ -5406,7 +5534,7 @@ function __qbMain(ctx) {
     // the drawer shows the room's values; only a host moves them (everyone else: the ⓘ says why)
     function syncDiagDrawer() {
       var panel = borrowedPanel; if (!panel || !(inDiag() || officialRoom)) return;
-      var can = officialRoom ? true : amHost(), s = officialRoom ? { revealSpeed: officialRoom.revealSpeed, strictness: officialRoom.strictness } : (dxInfo && dxInfo.settings) || {};
+      var can = watching ? false : officialRoom ? true : amHost(), s = officialRoom ? { revealSpeed: officialRoom.revealSpeed, strictness: officialRoom.strictness } : (dxInfo && dxInfo.settings) || {};
       var setRange = function (id, v, label) {
         var el = panel.querySelector("#" + id); if (!el) return;
         var lockV = id === "mp-dx-speed" && rv.on && rvCan();   // (15.86) the voice reads at the room's pace while it's on
@@ -5726,6 +5854,14 @@ function __qbMain(ctx) {
       var b = body.querySelector("#mp-buzz-btn"), n = body.querySelector("#mp-next-btn"), p = body.querySelector("#mp-pause-btn");
       var reading = !!current && !ended && !bonusView;
       var answering = !!(body.querySelector("#mp-ans-input") || body.querySelector(".mp-binput"));
+      if (watching) {
+        // (15.139) an admin watching: no Buzz, Next or Pause (the room hears nothing from them); the counter stays
+        if (b) b.hidden = true; if (n) n.hidden = true; if (p) p.hidden = true;
+        var phw = body.querySelector("#mp-ph-line"); if (phw && phw.textContent !== "The room hasn’t started a question yet.") phw.textContent = "The room hasn’t started a question yet.";
+        var qcw = body.querySelector("#mp-qcount");
+        if (qcw) qcw.textContent = inDiag() ? (dxInfo && !dxInfo.waiting && dxInfo.total ? "Question " + Math.min(dxInfo.total, dxInfo.i + 1) + " of " + dxInfo.total : "") : qCount ? "Question " + qCount : "";
+        return;
+      }
       if (inDiag()) {
         // a diagnostic: the host (or, with none here, any player) starts, goes on and pauses; the
         // counter is "Question N of M"; once it's over, the report / Clubs
@@ -5801,6 +5937,8 @@ function __qbMain(ctx) {
       if (lk) lk.addEventListener("change", function (e) { changeSetting("locked", e.target.checked); });
       var pub = body.querySelector("#mp-public");
       if (pub) pub.addEventListener("change", function (e) { changeSetting("public", e.target.checked); });
+      var ctl = body.querySelector("#mp-controlled");
+      if (ctl) ctl.addEventListener("change", function (e) { changeSetting("controlled", e.target.checked); syncControlled(); });
       var nx = body.querySelector("#mp-next"); if (nx) nx.onclick = function () { requestNext(); };
       // a diagnostic room's reading speed (a level on the slider, ms per character in the room) and strictness
       var dsp = body.querySelector("#mp-dx-speed");
@@ -5883,6 +6021,7 @@ function __qbMain(ctx) {
       // to chat and re-sync the summary to everyone.
       panel.addEventListener("change", onAnyFilterChange, true);
       panel.addEventListener("input", onAnyFilterChange, true);
+      syncControlled();
     }
     var _filterTimer = null;
     // Human name of a category-tree row ("Fine Arts > Music" below level 1).
@@ -5953,6 +6092,7 @@ function __qbMain(ctx) {
       // NO events, so any change/input landing during a remote apply is a REAL
       // user edit — swallowing it would desync that player's panel for good.
       if (e && e.target && e.target.closest && e.target.closest(".mp-injected")) return; // ignore MP's own controls
+      if (!canEditRoom()) return;   // (15.139) a controlled room's setup is its owner's (the panel is read-only here)
       // (15.86) the reading speed goes to the room as the slider moves (its chat line once it settles, below)
       if (e && e.type === "input" && e.target && e.target.id === "panel-speed-slider" && panelHolds === "room" && window.qbSpeedMs) liveSpeed(window.qbSpeedMs(e.target.value));
       var msg = describeFilterChange(e && e.target);
@@ -6012,6 +6152,9 @@ function __qbMain(ctx) {
       borrowedPanel.removeEventListener("input", onAnyFilterChange, true);
       borrowedPanel.querySelectorAll(".mp-injected").forEach(function (n) { n.remove(); });
       dxHidden.forEach(function (x) { x[0].style.display = x[1]; }); dxHidden = [];   // a diagnostic room hid the practice sections
+      // (15.139) a controlled room's read-only Setup: the practice panel is this player's own again
+      borrowedPanel.classList.remove("mp-ro");
+      [].forEach.call(borrowedPanel.children, function (c) { if (c.classList.contains("mp-ro-sec")) { c.removeAttribute("inert"); c.classList.remove("mp-ro-sec"); } });
       borrowedPanel.classList.remove("mp-borrowed");
       try { if (window.syncVoiceRow) setTimeout(window.syncVoiceRow, 0); } catch (e) {}
       borrowedPanel.classList.remove("open");
@@ -6083,7 +6226,9 @@ function __qbMain(ctx) {
         var you = p.id === myId;
         var initial = (String(p.name || "?").trim()[0] || "?").toUpperCase();
         var nm = neonNameHtml(p.name, p);   // a bought neon name glows
-        var nameHtml = you && !dx ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + nm + ' <small>(you)</small><span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + nm + (you ? " <small>(you)</small>" : "") + "</b>";
+        // (15.139) a controlled room: who its owner is
+        var own = settings.controlled && !dx && p.id === roomOwner ? ' <small class="mp-owner-tag">(owner)</small>' : "";
+        var nameHtml = you && !dx ? '<button type="button" class="mp-edit mp-edit-name" title="Change your name">' + nm + ' <small>(you)</small>' + own + '<span class="mp-pen" aria-hidden="true">✎</span></button>' : "<b>" + nm + (you ? " <small>(you)</small>" : "") + own + "</b>";
         // (15.94) someone away isn't labelled "offline": the row is dimmed (a diagnostic still says who isn't here yet)
         var subHtml = p.off ? (dxWaiting ? "not here yet" : (p.team ? esc(p.team) : "&nbsp;")) : p.spec ? (dx ? "host" : "spectating")
           : you && !dx ? '<button type="button" class="mp-edit mp-edit-team" title="' + (p.team ? "Change your team" : "Join or make a team") + '">' + (p.team ? esc(p.team) : "+ Add team") + "</button>"
@@ -6123,6 +6268,7 @@ function __qbMain(ctx) {
       var sk3 = body.querySelector("#mp-skips"); if (sk3) sk3.checked = settings.allowSkips !== false;
       var lk3 = body.querySelector("#mp-lock"); if (lk3) lk3.checked = !!settings.locked;
       var pb3 = body.querySelector("#mp-public"); if (pb3) pb3.checked = settings.public !== false;
+      syncControlled();
       renderScoresheet();
     }
 
@@ -6626,12 +6772,15 @@ function __qbMain(ctx) {
       isHost = false; serverMode = false; current = null;
       players = {}; order = []; lobby = ""; qCount = 0; sessionLog = [];
       dxInfo = null; dxDone = null; dxMode = false; officialRoom = null;
+      roomOwner = null; roomOwnerName = ""; ownerGoneAt = 0;
+      if (watching) { watching = null; watchTicket = null; mySpec = false; }
       render();
     }
 
     // The website's addresses (app.js webRoute / webPathNow): /multiplayer/<room>
     // opens the lobby and joins that room; leaving the address leaves the room.
-    window.QB.mpRoom = function () { return lobby || ""; };
+    window.QB.mpRoom = function () { return watching ? "" : lobby || ""; };   // (watching: a reload never joins it as a player)
+    window.QB.mpWatching = function () { return watching ? { id: watching.id, code: watching.code } : null; };
     window.QB.mpLeave = function () { if (lobby) leave(); };
     window.QB.mpIsDiag = function () { return inDiag(); };
     // (15.93) plugins hear the room as they hear practice: Voice Answers' Clap or shout to buzz, and answering by voice,
@@ -6646,7 +6795,7 @@ function __qbMain(ctx) {
       front: function () { return !!(active() && lobby); },
       canBuzz: function () {
         var b = body && body.querySelector("#mp-buzz-btn");
-        if (!active() || !lobby || !current || ended || bonusView || paused || pendingBuzzer || optBuzz || lockedOut()) return false;
+        if (!active() || !lobby || watching || !current || ended || bonusView || paused || pendingBuzzer || optBuzz || lockedOut()) return false;
         if (players[myId] && players[myId].spec) return false;
         if (settings.tournament && !(players[myId] && players[myId].team)) return false;
         return !!(b && !b.hidden && !b.disabled && !body.querySelector("#mp-ans-input"));
@@ -6663,6 +6812,21 @@ function __qbMain(ctx) {
       dxPending = code.toLowerCase();
       var codeEl = body && body.querySelector("#mp-lobby"), joinBtn = body && body.querySelector("#mp-join");
       if (codeEl && joinBtn) { codeEl.value = code; joinBtn.click(); }
+    };
+    // (15.139) an admin watches a room on the game server unseen (Site stats → Rooms, or an account's rooms in Users):
+    // o = { id: the room's id there ("offlinequiz-mp-…" / "offlinequiz-dx-…"), code, back: what Leave goes back to }
+    window.QB.mpWatch = function (o) {
+      o = o || {};
+      var id = String(o.id || "").trim().toLowerCase();
+      if (!/^offlinequiz-(mp|dx)-[a-z0-9][a-z0-9-]*$/.test(id)) return false;
+      window.QB.showPage("multiplayer::lobby");
+      if (lobby) leave();
+      dxPending = null;
+      watching = { id: id, code: String(o.code || id.replace(/^offlinequiz-(mp|dx)-/, "")).slice(0, 48), back: typeof o.back === "function" ? o.back : null };
+      dxMode = /^offlinequiz-dx-/.test(id);
+      lobby = watching.code; mySpec = true;
+      join();
+      return true;
     };
     window.QB.mpJoin = function (code) {
       dxPending = null;

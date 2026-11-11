@@ -4028,6 +4028,14 @@ html[data-scheme="light"] #qb-tip-dock .qb-tip { box-shadow: 0 12px 32px rgba(15
 .mp-borrowed .mp-injected .slider-group > span:first-child { font-size: 12px; min-width: 0 !important; }
 .mp-borrowed .mp-injected .mode-field { margin-top: 10px; }
 .mp-borrowed .mp-injected .mode-input { width: 100%; }
+/* (15.139) a controlled room's Setup for everyone but its owner (and a watcher's): greyed and out of reach (inert),
+   with a line saying whose it is; their own name and team stay theirs */
+.mp-borrowed .filter-section.mp-ro-sec, .mp-borrowed .mp-ro-row { opacity: .5; }
+.mp-borrowed .mp-ro-row, .mp-borrowed .mp-ro-row input { cursor: not-allowed; }
+.mp-borrowed .mp-ro-note { margin: 10px 0 0; padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.mp-borrowed .mp-ro-note[hidden] { display: none; }
+.mp-watch-note { color: var(--muted); font-size: 12.5px; align-items: center; }
+.mp-owner-tag { color: var(--muted); font-weight: 400; }
 #mp-chat-scope:disabled, #mp-chat-scope:disabled:hover { opacity: 0.45; cursor: default; background: transparent; color: var(--muted); }
 #title-screen #title-art, #title-screen #title-streak, #title-screen #title-status { display: none !important; }
 
@@ -5409,8 +5417,12 @@ html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%
 /* (15.108) Users with nothing searched: every account, a filter above, a pill on the unverified */
 .adm-listhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .adm-listhead small, .adm-vhead small { color: var(--muted); font-size: 12px; }
+/* (15.138) four filters (All, Not verified, No account, Testers): the width of the list, each label on one line */
+.seg.adm-ufilter { display: flex; flex-wrap: wrap; width: 100%; }
+.seg.adm-ufilter > button { flex: 1 1 auto; padding: 0 5px; font-size: 12px; white-space: nowrap; }
 .adm-urow .adm-uname { flex: 1; }
 .adm-pill { flex: none; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+.adm-pill-tester { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }   /* (15.137) */
 .adm-more { align-self: center; margin: 6px auto 2px; }
 /* Site stats → where players are */
 .adm-geo { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; }
@@ -5438,6 +5450,12 @@ html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%
 .adm-vhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .adm-vtable th, .adm-vtable td { text-align: left; }
 .adm-vtable td.num, .adm-vtable th:nth-child(5) { text-align: right; }
+/* (15.139) Site stats → Rooms */
+.adm-mtable th, .adm-mtable td { text-align: left; vertical-align: top; }
+.adm-mtable td.num, .adm-mtable th.num { text-align: right; }
+.adm-mtable td small.adm-note { display: block; margin-top: 2px; }
+.adm-mtable .adm-chips { margin-top: 5px; gap: 4px; }
+.adm-mtable td:last-child { text-align: right; }
 .adm-ip { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--muted); }
 .adm-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
 .adm-link:hover { text-decoration: underline; }

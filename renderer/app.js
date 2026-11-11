@@ -1111,6 +1111,7 @@ function goTo(target) {
     case "settings": toggleSettings(); break;
     case "player": showScreen("player"); loadPlayer(); break;
     case "trials": showScreen("trials"); renderTrialsPage(); break;
+    case "lessons": openLessons([]); break;
     case "download": showScreen("download"); renderDownload(); break;
     case "friends": showScreen("friends"); renderFriends(); break;
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
@@ -1129,6 +1130,7 @@ function goTo(target) {
     case "admin-visitors": _adm.tab = "visitors"; showScreen("admin"); renderAdmin(); break;
     case "admin-clubs": _adm.tab = "clubs"; showScreen("admin"); renderAdmin(); break;
     case "admin-lessons": _adm.tab = "lessons"; showScreen("admin"); renderAdmin(); break;
+    case "admin-rooms": _adm.tab = "rooms"; showScreen("admin"); renderAdmin(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -1157,16 +1159,17 @@ function webPathNow() {
   switch (a.id) {
     case "title-screen": return "/";
     // (15.28: a page of its own isn't Tossups: a trial is under /trials, a review or a list leaves the address be)
-    case "practice-screen": return state.practiceKind === "trial" ? "/trials" : state.practiceKind && state.practiceKind !== "own" ? null : state.mode === "bonuses" ? "/bonuses" : "/tossups";
+    case "practice-screen": return state.practiceKind === "trial" ? (trialLq(trialNow()) ? trialNow().lq.path || "/lessons" : "/trials") : state.practiceKind && state.practiceKind !== "own" ? null : state.mode === "bonuses" ? "/bonuses" : "/tossups";
     case "database-screen": return "/" + (db.includes(state.dbTab) ? state.dbTab : "search");
     case "stats-screen": return "/stats";
     case "player-screen": return "/profile";
     case "trials-screen": return "/trials";
+    case "lessons-screen": return window.QBLessons ? window.QBLessons.webPath() : "/lessons";
     case "friends-screen": return "/friends";
     case "leaderboards-screen": return "/leaderboards";
     case "store-screen": return "/store";
     case "streaks-screen": return "/streaks";
-    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : _adm.tab === "visitors" ? "/admin/visitors" : _adm.tab === "clubs" ? "/admin/clubs" : _adm.tab === "lessons" ? "/admin/lessons" : "/admin";
+    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : _adm.tab === "visitors" ? "/admin/visitors" : _adm.tab === "clubs" ? "/admin/clubs" : _adm.tab === "lessons" ? "/admin/lessons" : _adm.tab === "rooms" ? "/admin/rooms" : "/admin";
     case "download-screen": return "/download";
     case "clubs-screen": case "diagnostic-screen": case "irl-screen": case "report-screen": case "link-screen": return window.QBClubs ? window.QBClubs.webPath(a.id) : "/";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
@@ -1227,9 +1230,12 @@ function webRoute(path) {
       goTo("plugins");
       if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
     } else if (a === "admin") {
-      goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : b === "visitors" ? "admin-visitors" : b === "clubs" ? "admin-clubs" : b === "lessons" ? "admin-lessons" : "admin");
+      goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : b === "visitors" ? "admin-visitors" : b === "clubs" ? "admin-clubs" : b === "lessons" ? "admin-lessons" : b === "rooms" ? "admin-rooms" : "admin");
     } else if ((a === "clubs" || a === "diagnostic" || a === "report" || a === "l") && window.QBClubs) {
       window.QBClubs.route(seg);
+    } else if (a === "lessons") {
+      // (15.137) Lessons (admins and testers): its own module, loaded only for them
+      openLessons(seg.slice(1));
     } else if (a === "tags" && window.QBTopics) {
       // Database → Tags, or one tag's page (topic tags on, 15.29)
       if (b) QBTopics.openTag(b); else goTo("db-topics");
@@ -1288,9 +1294,10 @@ function updateTopbar() {
   }
   // the top bar's link for the page on screen reads as current
   let here = { "trials-screen": "tb-trials", "clubs-screen": "tb-clubs", "diagnostic-screen": "tb-clubs", "irl-screen": "tb-clubs", "report-screen": "tb-clubs", "store-screen": "tb-store", "leaderboards-screen": "tb-leaderboards", "extensions-screen": "tb-plugins" }[active && active.id];
-  if (active && active.id === "practice-screen" && state.practiceKind === "trial") here = "tb-trials";
+  if (active && active.id === "practice-screen" && state.practiceKind === "trial") here = trialLq(trialNow()) ? "tb-lessons" : "tb-trials";
   if (active && active.id === "streaks-screen") here = "tb-streak";
-  ["tb-streak", "tb-trials", "tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
+  if (active && active.id === "lessons-screen") here = "tb-lessons";
+  ["tb-streak", "tb-lessons", "tb-trials", "tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
   renderTopbarProfile();
   fitTopbar();
 }
@@ -3885,7 +3892,7 @@ function practicePageTitle(mode) {
   const k = state.practiceKind || "own";
   if (k === "own") return mode === "bonuses" ? "Bonuses" : "Tossups";
   const t = trialNow();
-  if (k === "trial") return t ? trialName(t.key, t.level) + " trial" : PRACTICE_TITLES.trial;
+  if (k === "trial") return t ? trialTitleOf(t) : PRACTICE_TITLES.trial;
   return state._pageTitle || PRACTICE_TITLES[k];
 }
 // the reader with no session on it: nothing recorded, nothing announced (a park, not an end)
@@ -3959,7 +3966,7 @@ function enterPracticeKind(kind, fresh) {
 // A running trial is never left without asking (it ends, with the XP so far): true = asked, go() runs on Leave
 function leaveTrialFirst(go) {
   if (state.practiceKind !== "trial" || !trialRunning()) return false;
-  confirmDialog("Leave the trial? You keep the XP you've earned.", () => { endSpecialPractice(); go(); }, { yes: "Leave" });
+  confirmDialog(trialLq(trialNow()) ? "Leave the quiz?" : "Leave the trial? You keep the XP you've earned.", () => { endSpecialPractice(); go(); }, { yes: "Leave" });
   return true;
 }
 // back to a trial that's still going (the Trials page's Continue)
@@ -12734,6 +12741,15 @@ function startWaitTicker() {
   }, 1000);
 }
 let _trial = null;   // the trial being played: { key, name, level, ids, n, powered, servedId, answeredId, done }
+// (15.137) a lesson quiz (lessons.js, for those who may use Lessons) plays as a trial: the same page, bar, rules and
+// result window, with "Quiz" for "Trial" and points for XP, and nothing recorded on the server. Its _trial.lq is
+// { pack, title, hue, len, path, pick() → ids, onResult(q), again(), back() }
+const trialLq = (t) => (t && t.lq) || null;
+const trialLen = (t) => (trialLq(t) ? t.lq.len : trialLenOf(t.key));
+const trialTitleOf = (t) => (trialLq(t) ? t.lq.title + " quiz" : trialName(t.key, t.level) + " trial");
+const trialHueOf = (t) => (trialLq(t) ? t.lq.hue : trialHue(t.key));
+function startLessonQuiz(lq) { if (!lq || typeof lq.pick !== "function") return false; prepTrial({ key: "lq:" + lq.pack, name: lq.title, level: 0, lq }); return true; }
+window.qbStartLessonQuiz = startLessonQuiz;
 let _trialInfo = null, _trialSkew = 0;
 const trialName = (key, level) => { const m = trialMeta(key); return (m ? m.name : key) + " " + (ROMAN[level] || level); };
 const trialHue = (key) => { const m = trialMeta(key); return (m && ROOT_COLOR[m.path]) || "var(--accent)"; };
@@ -13023,7 +13039,7 @@ async function renderTrialsPage() {
     const badges = trialBadgesHtml(trials, "");
     const going = state.practiceKind === "trial" && trialRunning() ? trialNow() : null;
     c.innerHTML = `<div class="pf-page tr-page">` +
-      (going ? `<div class="tr-going" style="--hue:${trialHue(going.key)}">${ic("award", 16)}<span><b>${escapeHtml(trialName(going.key, going.level))}</b> is still going</span><span class="spacer"></span><button type="button" class="btn btn-primary btn-sm" id="tr-continue">${ic("play", 14)}Continue</button></div>` : "") +
+      (going && !going.lq ? `<div class="tr-going" style="--hue:${trialHue(going.key)}">${ic("award", 16)}<span><b>${escapeHtml(trialName(going.key, going.level))}</b> is still going</span><span class="spacer"></span><button type="button" class="btn btn-primary btn-sm" id="tr-continue">${ic("play", 14)}Continue</button></div>` : "") +
       `<p class="tr-intro">Power every tossup at a level to unlock the next. A subcategory trial is five tossups.</p>` +
       (badges ? `<section class="tr-badge-row">${badges}</section>` : "") + trialsSectionHtml(info) + `</div>`;
     c.querySelector("#tr-continue")?.addEventListener("click", resumeTrialPage);
@@ -13120,6 +13136,7 @@ function prepTrial(t) {
 }
 async function beginTrial() {
   const t = _trial; if (!t || !t.pending || t.starting) return;
+  if (t.lq) { let ids = []; try { ids = t.lq.pick() || []; } catch (e) { console.error(e); } if (!ids.length) return; closeSetupDrawer(); runTrial({ key: t.key, name: t.name, level: t.level, lq: t.lq, ids }); return; }
   t.starting = true;
   const b = document.getElementById("btn-drawer-start"), err = document.getElementById("trial-setup-err");
   if (b) b.disabled = true; if (err) err.textContent = "";
@@ -13153,7 +13170,7 @@ function syncTrialSetup() {
   const on = !!(_trial && !_trial.done), here = !!p.closest("#practice-screen");
   p.classList.toggle("trial-setup", on);
   const title = p.querySelector(".fp-title");
-  if (title && here) title.textContent = on ? trialName(_trial.key, _trial.level) + " trial" : "Practice setup";
+  if (title && here) title.textContent = on ? trialTitleOf(_trial) : "Practice setup";
   let n = p.querySelector("#trial-setup-note");
   if (!on || !_trial.pending) { n?.remove(); syncDrawerStart(); return; }   // the note is for before Start
   if (!n) { n = document.createElement("div"); n.id = "trial-setup-note"; n.className = "tr-setup-note"; const head = p.querySelector(":scope > .fp-head"); head ? head.after(n) : p.prepend(n); }
@@ -13180,13 +13197,13 @@ function paintTrialBar() {
   if (!_trial) { bar?.remove(); return; }
   const area = document.getElementById("question-area"); if (!area) return;
   if (!bar) { bar = document.createElement("div"); bar.id = "trial-bar"; bar.className = "trial-bar"; area.insertBefore(bar, area.firstChild); }
-  bar.style.setProperty("--hue", trialHue(_trial.key));
+  bar.style.setProperty("--hue", trialHueOf(_trial));
   const res = _trial.res || [];
-  const LEN = trialLenOf(_trial.key);
+  const LEN = trialLen(_trial), lq = trialLq(_trial);
   const pips = Array.from({ length: LEN }, (_, i) => `<i class="${i < res.length ? (res[i] === "p" ? "on" : "miss") : i === res.length && !_trial.done && _trial.n > i ? "now" : ""}"></i>`).join("");
-  bar.innerHTML = `<span class="tb-k">${ic("award", 14)}Trial</span><b class="tb-name">${escapeHtml(trialName(_trial.key, _trial.level))}</b>` +
+  bar.innerHTML = `<span class="tb-k">${ic("award", 14)}${lq ? "Quiz" : "Trial"}</span><b class="tb-name">${escapeHtml(lq ? lq.title : trialName(_trial.key, _trial.level))}</b>` +
     `<span class="tb-pips" aria-label="${_trial.powered} of ${LEN} powered">${pips}</span><span class="tb-n num">${_trial.powered}/${LEN}</span>` +
-    `<span class="tb-xp num">+${fmtXp(trialXpFor(_trial.key, _trial.level, _trial.powered))}</span>` +
+    `<span class="tb-xp num">${lq ? ((_trial.pts || 0) >= 0 ? "+" : "") + (_trial.pts || 0) + " pts" : "+" + fmtXp(trialXpFor(_trial.key, _trial.level, _trial.powered))}</span>` +
     // over: Result reopens its window; Done is the page's main button (and the start-skip key), not one here too
     (_trial.done ? `<button type="button" class="btn btn-sm btn-ghost" id="tb-result">Result</button>`
       : `<button type="button" class="btn btn-sm btn-ghost" id="tb-leave">Leave</button>`);
@@ -13194,7 +13211,7 @@ function paintTrialBar() {
   if (rb) rb.onclick = () => { if (tt.shown && !document.getElementById("trial-done")) showTrialResult(tt, tt.shown.passed, tt.shown.why); };
   const lv = bar.querySelector("#tb-leave");
   if (lv && _trial.pending) lv.onclick = () => { closeSetupDrawer(); trialEnd("left"); };
-  else if (lv) lv.onclick = () => confirmDialog("Leave the trial? You keep the XP you've earned.", () => trialEnd("left"), { yes: "Leave" });
+  else if (lv) lv.onclick = () => confirmDialog(lq ? "Leave the quiz?" : "Leave the trial? You keep the XP you've earned.", () => trialEnd("left"), { yes: "Leave" });
 }
 // a finished trial's question stays on the page until Done (the bar, the page's main button, the start-skip key)
 function trialShown() { try { return !!(_trial && _trial.done); } catch (e) { return false; } }
@@ -13205,6 +13222,7 @@ function trialDismiss() {
 }
 function trialOnResult(result) {
   const power = !!(result && result.isPower);
+  if (_trial && _trial.lq && _trial.answeredId !== _trial.servedId) _trial.pts = (_trial.pts || 0) + (Number(result && result.points) || 0);
   trialMark(power, power ? "" : result && result.correct ? "answered after the power mark" : result && result.points < 0 ? "a neg" : "a wrong answer");
 }
 // one question done: a power goes on (the tenth passes), anything else ends the trial
@@ -13215,7 +13233,9 @@ function trialMark(power, why) {
   t.res.push(power ? "p" : "x");
   if (power) t.powered++;
   paintTrialBar();
-  if (!power || t.res.length >= trialLenOf(t.key)) { t.ending = true; setTimeout(() => trialEnd(power ? "" : why || "not a power"), 700); }
+  // a lesson quiz marks the lessons' clues in the question and links each to its lesson (once the result is drawn)
+  if (t.lq && typeof t.lq.onResult === "function") { const q = state.currentQuestion; setTimeout(() => { try { if (_trial === t) t.lq.onResult(q); } catch (e) { console.error(e); } }, 0); }
+  if (!power || t.res.length >= trialLen(t)) { t.ending = true; setTimeout(() => trialEnd(power ? "" : why || "not a power"), 700); }
 }
 // the trial is over: its result shows, or will in a moment (the last verdict is in)
 function trialOver() { try { return !!(_trial && !_trial.pending && (_trial.done || _trial.ending)); } catch (e) { return false; } }
@@ -13235,12 +13255,14 @@ function playSetting(k) {
   }
   return state.settings[k];
 }
-const trialComplete = () => !!(_trial && !_trial.done && !_trial.pending && (_trial.res || []).length >= trialLenOf(_trial.key));
+const trialComplete = () => !!(_trial && !_trial.done && !_trial.pending && (_trial.res || []).length >= trialLen(_trial));
 async function trialEnd(why, quiet) {
   if (!_trial || _trial.done) return;
   if (_trial.pending) { _trial = null; paintTrialBar(); return; }   // never started: nothing to record
   const t = _trial; t.done = true;
   const powers = t.powered;
+  // a lesson quiz: nothing to record, its own words in the result
+  if (t.lq) { t.passed = powers >= trialLen(t); if (quiet) { _trial = null; paintTrialBar(); return; } paintTrialBar(); showTrialResult(t, t.passed, why); return; }
   t.badgeBefore = trialBadgeOf((_trialInfo || {}).trials, t.key);
   let r = null;
   try { r = await API.post("/api/trials", { action: "finish", category: t.key, level: t.level, powers }); } catch (e) {}
@@ -13259,6 +13281,7 @@ async function trialEnd(why, quiet) {
   showTrialResult(t, passed, why);
 }
 function showTrialResult(t, passed, why) {
+  if (t && t.lq) return showLessonQuizResult(t, passed, why);
   document.getElementById("trial-done")?.remove();
   const el = document.createElement("div");
   el.id = "trial-done";
@@ -13302,6 +13325,73 @@ function showTrialResult(t, passed, why) {
   if (ag) ag.onclick = () => { finish(false); prepTrial({ key: t.key, name: meta.name, level: t.level }); };
   growProgress(el);
   if ((passed || upgraded) && !t._sounded) { t._sounded = true; try { Sound.achievement(); } catch (e) {} }
+  try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
+}
+
+// ── (15.137) Lessons: for admins and testers on the website (the server answers "not found" to everyone else, for its
+// page and its files). Its code, styles and lessons come from /lessons-files/ (lesson-writer/pipeline/web/make.mjs
+// builds lessons/app/), loaded the first time it opens; window.QBLessons draws it on #lessons-screen ──
+const canUseLessons = () => !!(IS_WEB && Account.user && Array.isArray(Account.user.features) && Account.user.features.includes("lessons"));
+let _lessonsLoad = null;
+function loadLessons() {
+  if (window.QBLessons) return Promise.resolve(window.QBLessons);
+  if (_lessonsLoad) return _lessonsLoad;
+  const add = (tag, attrs) => new Promise((ok, no) => { const n = document.createElement(tag); Object.assign(n, attrs); n.onload = ok; n.onerror = () => no(new Error("couldn't load " + (attrs.src || attrs.href))); document.head.appendChild(n); });
+  _lessonsLoad = add("link", { rel: "stylesheet", href: "/lessons-files/app/lessons.css" })
+    .then(() => add("script", { src: "/lessons-files/app/models.js" }))
+    .then(() => add("script", { src: "/lessons-files/app/lessons.js" }))
+    .then(() => { if (!window.QBLessons) throw new Error("no lessons"); return window.QBLessons; })
+    .catch((e) => { _lessonsLoad = null; throw e; });
+  return _lessonsLoad;
+}
+// seg: the address after /lessons (pack, lesson, level; or "packs"; or pack, "quiz")
+async function openLessons(seg) {
+  if (!Account.known) await accountKnownP;
+  if (!canUseLessons()) { if (!document.querySelector("#title-screen.active")) goHome(); return; }
+  if (!document.querySelector("#lessons-screen.active")) showScreen("lessons");
+  const box = document.getElementById("lessons-container");
+  if (!window.QBLessons && box) box.innerHTML = loadingBarHtml("Loading the lessons…");
+  try { const L = await loadLessons(); L.route(seg || []); }
+  catch (e) { console.error(e); if (box) box.innerHTML = '<div class="db-empty">The lessons couldn\'t load. Reload the page to try again.</div>'; }
+}
+// (15.137) a lesson quiz's result: the trial's window, in a quiz's words (points, no badge), with the lessons of the
+// questions it missed to read again, Lessons (its pack) and Again (five more)
+function showLessonQuizResult(t, passed, why) {
+  document.getElementById("trial-done")?.remove();
+  const lq = t.lq, el = document.createElement("div");
+  el.id = "trial-done";
+  el.className = "qb-overlay review-ovl ach-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "td-h");
+  const pts = t.pts || 0, missed = typeof lq.missed === "function" ? (lq.missed(t) || []) : [];
+  el.innerHTML = `
+    <div class="settings-modal tp-modal td-modal" tabindex="-1" style="--hue:${lq.hue}">
+      <div class="achd-body td-body">
+        <span class="td-medal${passed ? " on" : ""}">${ic("award", 40)}</span>
+        <h2 id="td-h">${passed ? "Quiz passed" : why === "left" ? "Quiz left" : "Quiz over"}</h2>
+        <p class="td-name">${escapeHtml(lq.title)}</p>
+        <p class="td-xp num">${pts >= 0 ? "+" : ""}${pts} pts</p>
+        <p class="td-why">${passed || why === "left" || !why ? "" : "Ended on question " + (t.res || []).length + " (" + escapeHtml(why) + "). "}You powered ${t.powered} of ${trialLen(t)}.${passed ? " Every clue landed." : ""}</p>
+        ${missed.length ? `<div class="topics td-lessons"><div class="trow"><span class="trow-k">Read again</span><div class="trow-v">${missed.map((m) => `<button type="button" class="tchip" style="--c:${lq.hue}" data-lq-lesson="${escapeHtml(m.id)}">${escapeHtml(m.title)}</button>`).join("")}</div></div></div>` : ""}
+      </div>
+      <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn" id="td-trials">${ic("book", 14)}Lessons</button><button type="button" class="btn btn-primary" id="td-again">${ic("review", 14)}Again</button></div>
+    </div>`;
+  t.shown = { passed, why };
+  const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); paintTrialBar(); };
+  const finish = () => { close(); trialDismiss(); };
+  const onKey = (e) => {
+    if (e.key === "Tab") return;
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "Enter") { e.preventDefault(); el.querySelector("#td-again")?.click(); }
+    else if (!e.metaKey && !e.ctrlKey) e.preventDefault();
+  };
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(el);
+  el.querySelector("#td-close").onclick = () => close();
+  el.querySelector("#td-trials").onclick = () => { finish(); try { lq.back(); } catch (e) { console.error(e); } };
+  el.querySelector("#td-again").onclick = () => { finish(); try { lq.again(); } catch (e) { console.error(e); } };
+  el.querySelectorAll("[data-lq-lesson]").forEach((b) => b.onclick = () => { finish(); try { lq.open(b.dataset.lqLesson); } catch (e) { console.error(e); } });
+  if (passed && !t._sounded) { t._sounded = true; try { Sound.achievement(); } catch (e) {} }
   try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 
@@ -15911,6 +16001,7 @@ function renderAccountMenu() {
   const lbBtn = document.getElementById("tb-leaderboards"); if (lbBtn) lbBtn.hidden = false;
   const lbItem = document.getElementById("tbm-leaderboards"); if (lbItem) lbItem.hidden = false;
   const clBtn = document.getElementById("tb-clubs"); if (clBtn) clBtn.hidden = false;
+  { const ls = document.getElementById("tb-lessons"); if (ls) { const was = ls.hidden; ls.hidden = !canUseLessons(); if (was !== ls.hidden) requestAnimationFrame(fitTopbar); } }
   const head = document.querySelector("#tb-profile-menu .tbm-who");
   if (head) {
     let em = head.querySelector(".tbm-email");
@@ -17125,7 +17216,7 @@ const _adm = { metric: "visitors", data: null, tab: "stats" };
 const ADM_GRANT_NAMES = { "plugin:keyword-freq": "Keyword Frequency", "plugin:canon-tracker": "Canon Tracker", "plugin:buzz-words": "Buzzwords", "plugin:fact-sheet": "Fact Sheet", neon: "Neon name" };
 const _admu = { q: "", list: null, id: null, d: null, gen: 0, all: null, total: 0, unverified: 0, filter: "all", allGen: 0, err: false,
   part: "overview", pd: {}, profile: "", sess: null, sd: null };   // (15.131) the part of the account shown, its data, the profile, an open session
-const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"], ["visitors", "Visitors"], ["clubs", "Clubs"], ["lessons", "Lessons"], ["reports", "Reports"]].map(([k, l]) =>
+const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"], ["visitors", "Visitors"], ["rooms", "Rooms"], ["clubs", "Clubs"], ["lessons", "Lessons"], ["reports", "Reports"]].map(([k, l]) =>
   `<button type="button" class="db-tab${(_adm.tab || "stats") === k ? " active" : ""}" role="tab" aria-selected="${(_adm.tab || "stats") === k}" data-adm-tab="${k}">${l}${k === "reports" && _admr.counts && _admr.counts.open ? ` <span class="adm-tabn num">${_admr.counts.open}</span>` : ""}${k === "lessons" && _adml.counts && _adml.counts.open ? ` <span class="adm-tabn num">${_adml.counts.open}</span>` : ""}</button>`).join("")}</div>`;
 function wireAdmTabs(c) {
   c.querySelectorAll("[data-adm-tab]").forEach((b) => b.onclick = () => { _adm.tab = b.dataset.admTab; renderAdmin(); window.qbWebPathSync?.(); });
@@ -17138,7 +17229,7 @@ function paintAdminUsers(c) {
   c.innerHTML = `<div class="adm-page">${admTabsHtml()}
     <div class="adm-users">
       <aside class="adm-find">
-        <form id="adm-find" class="adm-search" autocomplete="off"><input id="adm-q" class="mode-input" placeholder="Username, name or email" value="${escapeHtml(_admu.q)}" aria-label="Find an account" spellcheck="false" autocapitalize="off"></form>
+        <form id="adm-find" class="adm-search" autocomplete="off"><input id="adm-q" class="mode-input" placeholder="Username, name, email or IP" value="${escapeHtml(_admu.q)}" aria-label="Find an account or a visitor" spellcheck="false" autocapitalize="off"></form>
         <div class="adm-listhead" id="adm-listhead"></div>
         <div class="adm-results" id="adm-results"></div>
       </aside>
@@ -17154,13 +17245,16 @@ function paintAdminUsers(c) {
 async function admLoadAll(more) {
   const my = ++_admu.allGen, from = more && _admu.all ? _admu.all.length : 0;
   _admu.loadingMore = !!more; if (more) paintAdmResults();
-  let d = null; try { d = await API.get("/api/admin/users?limit=100&offset=" + from + (_admu.filter === "unverified" ? "&filter=unverified" : "")); } catch (e) {}
+  let d = null; try { d = await API.get("/api/admin/users?limit=100&offset=" + from + (["unverified", "testers", "visitors"].includes(_admu.filter) ? "&filter=" + _admu.filter : "")); } catch (e) {}
   if (my !== _admu.allGen) return;
   _admu.loadingMore = false;
   if (!d || !Array.isArray(d.users)) { _admu.err = true; if (!more) _admu.all = null; paintAdmResults(); return; }
   _admu.err = false;
   _admu.all = more ? (_admu.all || []).concat(d.users) : d.users;
   _admu.total = d.total || 0; _admu.unverified = d.unverified || 0;
+  // (15.138) No account: the server was still counting the visitor files, so the list is asked for again shortly
+  _admu.counting = !!d.counting; clearTimeout(_admu.countT);
+  if (d.counting && !more) _admu.countT = setTimeout(() => { if (_admu.filter === "visitors" && document.getElementById("adm-results") && (_admu.all || []).length <= 100) admLoadAll(); }, 4000);
   paintAdmResults();
 }
 async function admSearch() {
@@ -17173,14 +17267,23 @@ async function admSearch() {
 }
 // where an account is: its last address's country, else its time zone's
 const admPlace = (u) => u.country ? admCountry(u.country) : u.zoneCountry ? admCountry(u.zoneCountry) : "";
-const admUserRow = (u) => `<button type="button" class="adm-urow${u.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(u.id)}">${admAv(u.displayName || u.handle || u.email, u.neon)}<span class="adm-uname"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b><small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : ""}${escapeHtml(u.email || "")}</small><small>${[admPlace(u), "joined " + admAgo(u.createdAt)].filter(Boolean).map(escapeHtml).join(" · ")}</small></span>${u.verified ? "" : '<span class="adm-pill">Not verified</span>'}</button>`;
+// (15.138) a signed-out visitor who keeps something here (No account, or found by their address): where and when they
+// were last seen, when first, and what they saved. Known by the start of their key, never their cookie
+const admVisitorName = (v) => "Visitor " + String(v.key || "").slice(0, 6);
+const admSaved = (v) => [[v.answers, "answer", "answers"], [v.sessions, "session", "sessions"], [v.stars, "star", "stars"], [v.plugins, "plugin entry", "plugin entries"]]
+  .filter(([n]) => n > 0).map(([n, one, many]) => Number(n).toLocaleString() + " " + (n === 1 ? one : many)).join(" · ");
+const admVisitorRow = (v) => `<button type="button" class="adm-urow${v.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(v.id)}"><span class="fr-av na" aria-hidden="true">?</span><span class="adm-uname"><b>${escapeHtml(admVisitorName(v))}</b>` +
+  `<small>${escapeHtml([v.country ? admCountry(v.country) : "", v.ip || ""].filter(Boolean).join(" · ") || "Location not known")}</small>` +
+  `<small>${escapeHtml([v.lastAt ? "last seen " + admAgo(v.lastAt) : "", v.firstAt ? "first " + admWhen(v.firstAt) : ""].filter(Boolean).join(" · "))}</small>` +
+  `<small>${escapeHtml(admSaved(v) || "Nothing saved")}</small></span>${v.signedUp ? '<span class="adm-pill">Signed up</span>' : ""}</button>`;
+const admUserRow = (u) => u.visitor ? admVisitorRow(u) : `<button type="button" class="adm-urow${u.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(u.id)}">${admAv(u.displayName || u.handle || u.email, u.neon)}<span class="adm-uname"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b><small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : ""}${escapeHtml(u.email || "")}</small><small>${[admPlace(u), "joined " + admAgo(u.createdAt)].filter(Boolean).map(escapeHtml).join(" · ")}</small></span>${u.tester ? '<span class="adm-pill adm-pill-tester">Tester</span>' : ""}${u.verified ? "" : '<span class="adm-pill">Not verified</span>'}</button>`;
 function paintAdmResults() {
   const el = document.getElementById("adm-results"), head = document.getElementById("adm-listhead"); if (!el) return;
   const searching = !!_admu.q.trim();
   if (head) {
     head.hidden = searching;
-    head.innerHTML = searching ? "" : `<div class="seg adm-ufilter" role="group" aria-label="Which accounts">${[["all", "All"], ["unverified", "Not verified"]].map(([k, l]) => `<button type="button" data-adm-ufilter="${k}" aria-pressed="${_admu.filter === k}">${l}</button>`).join("")}</div>
-      <small>${_admu.all ? (_admu.total.toLocaleString() + (_admu.filter === "unverified" ? " not verified" : _admu.total === 1 ? " account" : " accounts")) : ""}</small>`;
+    head.innerHTML = searching ? "" : `<div class="seg adm-ufilter" role="group" aria-label="Which accounts">${[["all", "All"], ["unverified", "Not verified"], ["visitors", "No account"], ["testers", "Testers"]].map(([k, l]) => `<button type="button" data-adm-ufilter="${k}" aria-pressed="${_admu.filter === k}">${l}</button>`).join("")}</div>
+      <small>${_admu.all ? (_admu.total.toLocaleString() + (_admu.filter === "unverified" ? " not verified" : _admu.filter === "testers" ? (_admu.total === 1 ? " tester" : " testers") : _admu.filter === "visitors" ? (_admu.total === 1 ? " visitor" : " visitors") + (_admu.counting ? ", still counting" : "") : _admu.total === 1 ? " account" : " accounts")) : ""}</small>`;
     head.querySelectorAll("[data-adm-ufilter]").forEach((b) => b.onclick = () => { if (_admu.filter === b.dataset.admUfilter) return; _admu.filter = b.dataset.admUfilter; _admu.all = null; paintAdmResults(); admLoadAll(); });
   }
   if (searching) {
@@ -17189,7 +17292,7 @@ function paintAdmResults() {
   } else if (!_admu.all) {
     el.innerHTML = _admu.err ? '<p class="adm-none">Couldn\'t load the accounts.</p>' : loadingBarHtml("");
   } else {
-    el.innerHTML = (_admu.all.length ? _admu.all.map(admUserRow).join("") : `<p class="adm-none">${_admu.filter === "unverified" ? "Every account is verified." : "No accounts yet."}</p>`) +
+    el.innerHTML = (_admu.all.length ? _admu.all.map(admUserRow).join("") : `<p class="adm-none">${_admu.filter === "unverified" ? "Every account is verified." : _admu.filter === "testers" ? "No testers yet. Give the role on an account's page." : _admu.filter === "visitors" ? (_admu.counting ? "Still counting the visitors." : "No one without an account has saved anything yet.") : "No accounts yet."}</p>`) +
       (_admu.all.length < _admu.total ? `<button type="button" class="btn btn-sm btn-ghost adm-more" id="adm-umore"${_admu.loadingMore ? " disabled" : ""}>${_admu.loadingMore ? "Loading…" : "Show more"}</button>` : "");
     el.querySelector("#adm-umore")?.addEventListener("click", () => admLoadAll(true));
   }
@@ -17199,12 +17302,16 @@ async function admOpen(id, keep) {
   if (_admu.id !== id) { _admu.pd = {}; _admu.profile = ""; _admu.sess = null; _admu.sd = null; }
   else if (keep) _admu.pd = {};
   _admu.id = id; if (!keep) _admu.d = null;
+  if (admIsVisitor() && _admu.part === "social") _admu.part = "overview";   // (15.138) a visitor has no People
   paintAdmResults(); paintAdmUser();
-  let d = null; try { d = await API.get("/api/admin/user?id=" + encodeURIComponent(id)); } catch (e) {}
+  let d = null; try { d = await API.get(admIsVisitor() ? "/api/admin/visitor?id=" + encodeURIComponent(id.slice(2)) : "/api/admin/user?id=" + encodeURIComponent(id)); } catch (e) {}
   if (_admu.id !== id) return;
-  _admu.d = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that account." };
+  _admu.d = d && !d.error ? d : { error: (d && d.error) || (admIsVisitor() ? "Couldn't load that visitor." : "Couldn't load that account.") };
   paintAdmUser();
 }
+// (15.138) the one open is a signed-out visitor ("v:<key>"), whose parts come from /api/admin/visitor/data
+const admIsVisitor = () => String(_admu.id || "").startsWith("v:");
+const admDataUrl = (params) => (admIsVisitor() ? "/api/admin/visitor/data?id=" + encodeURIComponent(_admu.id.slice(2)) : "/api/admin/user/data?id=" + encodeURIComponent(_admu.id)) + "&" + params;
 // (15.108) where the account was last seen: when, the country, the address, its time zone
 function admWhere(w) {
   w = w || {};
@@ -17218,6 +17325,7 @@ function paintAdmUser() {
   const d = _admu.d;
   if (!d) { el.innerHTML = loadingBarHtml(""); return; }
   if (d.error) { el.innerHTML = `<div class="db-empty">${escapeHtml(d.error)}</div>`; return; }
+  if (d.visitor) { paintAdmVisitor(el, d); return; }
   const u = d.user, owned = new Map(d.grants.map((g) => [g.what, g]));
   const given = new Set((d.orders || []).filter((o) => o.note === "given by the admin").map((o) => o.id));
   const src = (g) => !g ? "" : g.order === "admin" || given.has(g.order) ? "given by you" : g.order ? "bought" : "";
@@ -17226,6 +17334,7 @@ function paintAdmUser() {
       `<span class="ext-switch"><input type="checkbox" data-adm-grant="${escapeHtml(w)}"${on ? " checked" : ""}${u.admin ? " disabled" : ""} aria-label="${escapeHtml(ADM_GRANT_NAMES[w] || w)}"><span class="ext-slider"></span></span></label>`; }).join("");
   const skus = Object.entries(d.catalog).map(([k, c]) => `<option value="${k}" data-room="${c.room ? 1 : ""}">${escapeHtml(c.name)} ($${(c.price / 100).toFixed(2)})</option>`).join("");
   const rooms = (d.rooms || []).map((r) => `<div class="adm-room"><span><b class="num">${escapeHtml(String(r.name).toUpperCase())}</b><small>${escapeHtml(r.role)} · ${escapeHtml(r.access === "members" ? "Locked" : r.access === "password" ? "Password" : "Open")} · ${r.players || 0} players</small></span>` +
+    `<button type="button" class="btn btn-sm" data-adm-watch="${escapeHtml(r.name)}" title="Open the room unseen">Watch</button>` +   // (15.139)
     (r.role === "owner" ? `<form class="adm-move" data-adm-move="${escapeHtml(r.name)}"><input class="mode-input" placeholder="New owner's username" aria-label="New owner of ${escapeHtml(r.name)}"><button type="submit" class="btn btn-sm">Transfer</button></form><button type="button" class="btn btn-sm btn-danger-ghost" data-adm-drop="${escapeHtml(r.name)}">Remove</button>` : "") + "</div>").join("");
   const orders = (d.orders || []).map((o) => `<tr><td>${escapeHtml(admWhen(o.createdAt))}</td><td>${escapeHtml((d.catalog[o.kind] || {}).name || o.kind)}</td><td>${escapeHtml(o.item ? o.item.toUpperCase() : "")}</td><td class="num">$${(o.amount / 100).toFixed(2)}</td><td><span class="adm-st adm-st-${escapeHtml(o.status)}">${escapeHtml(o.status)}</span></td><td>${escapeHtml(o.note || "")}</td></tr>`).join("");
   const dd = d.data || {};
@@ -17245,6 +17354,9 @@ function paintAdmUser() {
         <label class="checkbox-row"><input type="checkbox" id="adm-lb"${u.onLeaderboard ? " checked" : ""}> On the global leaderboard</label>
         <div class="adm-formfoot"><button type="submit" class="btn btn-primary btn-sm">Save</button><span class="adm-msg" id="adm-profile-msg" role="status"></span></div>
       </form></section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Roles</h3>
+      <div class="adm-grants"><label class="adm-grant"><span><b>Tester</b><small>${u.admin ? "admin account, has every experimental feature" : u.tester ? "gets the experimental features, Lessons for now" : "doesn't see the experimental features"}</small></span>` +
+      `<span class="ext-switch"><input type="checkbox" id="adm-tester"${u.tester || u.admin ? " checked" : ""}${u.admin ? " disabled" : ""} aria-label="Tester"><span class="ext-slider"></span></span></label></div></section>
     <section class="fr-card adm-sec"><h3 class="eyebrow">Products</h3>
       <div class="adm-grants">${grantRows}</div>
       <form id="adm-give" class="adm-give"><select id="adm-sku" class="mode-input" aria-label="Product">${skus}</select><input id="adm-room" class="mode-input" placeholder="Room name" maxlength="24" hidden aria-label="Room name" autocapitalize="off" spellcheck="false"><button type="submit" class="btn btn-sm btn-primary">Give for free</button><span class="adm-msg" id="adm-give-msg" role="status"></span></form></section>
@@ -17262,6 +17374,13 @@ function paintAdmUser() {
     msg.textContent = r && r.ok ? "Saved" : (r && r.error) || "Couldn't save that.";
     if (r && r.ok) admOpen(id, true);
   };
+  // (15.137) the Tester role: the experimental features (Lessons) for an account that isn't an admin
+  { const tc = el.querySelector("#adm-tester"); if (tc) tc.addEventListener("change", async () => {
+    const on = tc.checked; let r = null;
+    try { r = await API.post("/api/admin/tester", { id, on }); } catch (e) {}
+    if (!r || !r.ok) { tc.checked = !on; failBubble(tc.closest(".adm-grant"), (r && r.error) || "Couldn't change that."); return; }
+    admOpen(id, true);
+  }); }
   el.querySelectorAll("[data-adm-grant]").forEach((cb) => cb.addEventListener("change", async () => {
     const on = cb.checked; let r = null;
     try { r = await API.post("/api/admin/grant", { id, what: cb.dataset.admGrant, on }); } catch (e) {}
@@ -17277,6 +17396,8 @@ function paintAdmUser() {
     if (!r || !r.ok) { msg.textContent = (r && r.error) || "Couldn't give that."; return; }
     msg.textContent = "Given"; admOpen(id, true);
   };
+  // (15.139) watch one of its rooms unseen; Leave there comes back to this account
+  el.querySelectorAll("[data-adm-watch]").forEach((b) => b.onclick = () => admWatch(b, "offlinequiz-mp-" + String(b.dataset.admWatch).toLowerCase(), b.dataset.admWatch, () => { goTo("admin-users"); admOpen(id, true); }));
   el.querySelectorAll("[data-adm-drop]").forEach((b) => b.onclick = () => confirmDialog("Remove the room " + b.dataset.admDrop.toUpperCase() + "? Everyone is sent out, and its members and settings are deleted.", async () => {
     let r = null; try { r = await API.post("/api/admin/room", { action: "remove", name: b.dataset.admDrop }); } catch (e) {}
     if (!r || !r.ok) { failBubble(b, (r && r.error) || "Couldn't remove it."); return; }
@@ -17309,7 +17430,32 @@ function admUserHeadHtml(d) {
         <small>${escapeHtml(admWhere(u.where))}</small></div>
       <span class="adm-badges">${u.admin ? '<span class="badge">Admin</span>' : ""}${u.verified ? '<span class="badge">Verified</span>' : '<span class="badge">Not verified</span>'}${u.google ? '<span class="badge">Google</span>' : ""}</span></div>`;
 }
-const admPartsHtml = () => `<div class="db-tabs adm-parts" role="tablist" aria-label="About this account">${ADM_PARTS.map(([k, l]) =>
+// (15.138) a signed-out visitor's page: who they are as far as anyone knows (their key's start, where and when they were
+// seen, how often), then Overview (what their file holds) and the read-only parts an account has, without People
+function admVisitorHeadHtml(d) {
+  const v = d.visitor;
+  const where = [v.country ? admCountry(v.country) : "", v.ip || ""].filter(Boolean).join(" · ") || "Location not known yet";
+  const seen = [v.firstAt ? "First seen " + admWhen(v.firstAt) : "", v.lastAt ? "last seen " + admAgo(v.lastAt) : "", v.visits ? admNum(v.visits) + (v.visits === 1 ? " visit" : " visits") : ""].filter(Boolean).join(" · ");
+  return `<div class="fr-card adm-uhead"><span class="fr-av na" aria-hidden="true">?</span>
+      <div class="adm-uhead-txt"><b>${escapeHtml(admVisitorName(v))}</b>
+        <small>${escapeHtml(where)}</small>
+        ${seen ? `<small>${escapeHtml(seen)}</small>` : ""}
+        <small>${escapeHtml(v.savedLast ? "Last saved " + admTime(v.savedLast) : "Nothing saved")}${v.signedUp ? ` · made an account later, <button type="button" class="adm-link" data-adm-open="${escapeHtml(v.signedUp.id)}">${escapeHtml(v.signedUp.handle ? "@" + v.signedUp.handle : v.signedUp.displayName || "their account")}</button>` : ""}</small></div>
+      <span class="adm-badges"><span class="badge">No account</span></span></div>`;
+}
+function paintAdmVisitor(el, d) {
+  const wire = () => { wireAdmParts(el); el.querySelectorAll(".adm-uhead [data-adm-open]").forEach((b) => b.onclick = () => { _admu.part = "overview"; admOpen(b.dataset.admOpen); }); };
+  if (_admu.part !== "overview") { el.innerHTML = admVisitorHeadHtml(d) + admPartsHtml() + '<div class="adm-part" id="adm-part"></div>'; wire(); loadAdmPart(); return; }
+  const dd = d.data || {};
+  const plug = (dd.plugin || []).map((p) => `<tr><td>${escapeHtml(p.plugin)}</td><td>${escapeHtml(p.key)}</td><td class="num">${admNum(p.bytes)} B</td><td class="adm-prev">${escapeHtml(p.preview)}</td></tr>`);
+  el.innerHTML = admVisitorHeadHtml(d) + admPartsHtml() + `
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Stored on the server</h3>
+      ${dd.error ? `<p class="adm-none">${escapeHtml(dd.error)}</p>` : admTiles([["Answers", admNum(dd.answers)], ["Sessions", admNum(dd.sessions)], ["Stars", admNum(dd.starred)], ["Profiles", admNum(dd.profiles)], ["Plugin entries", admNum((dd.plugin || []).length)]]) +
+        admTable(["Plugin", "Key", "#Size", "Starts with"], plug, "adm-plug")}
+      <p class="adm-note">A visitor's time zone isn't known, so Stats and Progress count their days in UTC.</p></section>`;
+  wire();
+}
+const admPartsHtml = () => `<div class="db-tabs adm-parts" role="tablist" aria-label="${admIsVisitor() ? "About this visitor" : "About this account"}">${ADM_PARTS.filter(([k]) => !(admIsVisitor() && k === "social")).map(([k, l]) =>
   `<button type="button" class="db-tab${_admu.part === k ? " active" : ""}" role="tab" aria-selected="${_admu.part === k}" data-adm-part="${k}">${l}</button>`).join("")}</div>`;
 function wireAdmParts(el) {
   el.querySelectorAll("[data-adm-part]").forEach((b) => b.onclick = () => { if (_admu.part === b.dataset.admPart) return; _admu.part = b.dataset.admPart; paintAdmUser(); });
@@ -17324,7 +17470,7 @@ async function loadAdmPart() {
   if (_admu.pd[key]) { paintAdmPart(); return; }
   const box = document.getElementById("adm-part"); if (box) box.innerHTML = loadingBarHtml("");
   let d = null;
-  try { d = await API.get("/api/admin/user/data?id=" + encodeURIComponent(id) + "&part=" + part + (_admu.profile && part !== "social" ? "&profile=" + encodeURIComponent(_admu.profile) : "")); } catch (e) {}
+  try { d = await API.get(admDataUrl("part=" + part + (_admu.profile && part !== "social" ? "&profile=" + encodeURIComponent(_admu.profile) : ""))); } catch (e) {}
   if (_admu.id !== id || _admu.part !== part) return;
   _admu.pd[key] = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that." };
   if (d && d.profile && !_admu.profile) _admu.profile = d.profile;
@@ -17370,7 +17516,7 @@ function admStatsHtml(d) {
   const head = ["", "#Questions", "#TUH", "#P", "#N", "#Acc", "#Points"];
   return `<section class="fr-card adm-sec"><h3 class="eyebrow">All time</h3>${admTiles(admStatLine(s))}</section>
     <section class="fr-card adm-sec"><h3 class="eyebrow">The last 30 days they played</h3>${bars}</section>
-    <section class="fr-card adm-sec"><h3 class="eyebrow">Leaderboards</h3>${lbHtml}</section>
+    ${d.visitor ? "" : `<section class="fr-card adm-sec"><h3 class="eyebrow">Leaderboards</h3>${lbHtml}</section>`}
     <section class="fr-card adm-sec"><h3 class="eyebrow">By category</h3>${admTable(["Category", ...head.slice(1)], admBreakdownRows(s.byCategory)) || '<p class="adm-none">Nothing yet.</p>'}</section>
     <section class="fr-card adm-sec"><h3 class="eyebrow">By difficulty</h3>${admTable(["Difficulty", ...head.slice(1)], admBreakdownRows(Object.fromEntries(diffKeysOf(s.byDifficulty).map((k) => [k, s.byDifficulty[k]])), (k) => "Difficulty " + k)) || '<p class="adm-none">Nothing yet.</p>'}</section>`;
 }
@@ -17398,7 +17544,7 @@ function wireAdmSessions(box) {
       const sid = tr.dataset.admSess, id = _admu.id;
       if (_admu.sess === sid) { _admu.sess = null; _admu.sd = null; paintAdmPart(); return; }
       _admu.sess = sid; _admu.sd = null; paintAdmPart();
-      let d = null; try { d = await API.get("/api/admin/user/data?id=" + encodeURIComponent(id) + "&part=session&session=" + encodeURIComponent(sid) + (_admu.profile ? "&profile=" + encodeURIComponent(_admu.profile) : "")); } catch (e) {}
+      let d = null; try { d = await API.get(admDataUrl("part=session&session=" + encodeURIComponent(sid) + (_admu.profile ? "&profile=" + encodeURIComponent(_admu.profile) : ""))); } catch (e) {}
       if (_admu.id !== id || _admu.sess !== sid) return;
       _admu.sd = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that session." };
       const sec = document.getElementById("adm-sess"); if (sec) { sec.hidden = false; sec.innerHTML = admSessionHtml(); sec.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
@@ -17595,6 +17741,53 @@ function admWireOpenUser(el) {
   el.querySelectorAll("[data-adm-open]").forEach((b) => b.onclick = () => { _adm.tab = "users"; _admu.part = "overview"; renderAdmin(); window.qbWebPathSync?.(); admOpen(b.dataset.admOpen); });
 }
 
+// ── (15.139) Site stats → Rooms (admins): every room open on the game server (free, bought, official, diagnostic):
+// who's in it, what it plays, its owner, whether it's controlled, and Watch, which opens it unseen (multiplayer.js
+// QB.mpWatch: no seat, no count, nothing said in it). Rooms on the backup relay and offline rooms aren't on the game
+// server, so they aren't here. Refreshed every 10 seconds while it shows ──
+const _admm = { d: null, show: "live", gen: 0, t: 0 };
+const ADMM_KIND = { free: "Room", bought: "Bought room", official: "Official room", diag: "Diagnostic" };
+async function renderAdminRooms(c) {
+  if (!c.querySelector(".adm-mpage")) { c.innerHTML = `<div class="adm-page adm-mpage">${admTabsHtml()}<div id="admm-body">${loadingBarHtml("")}</div></div>`; wireAdmTabs(c); if (_admm.d) paintAdminRooms(); }
+  const my = ++_admm.gen;
+  let d = null; try { d = await API.get("/api/admin/mp/rooms"); } catch (e) {}
+  if (my !== _admm.gen || !document.getElementById("admm-body")) return;
+  _admm.d = d && !d.error ? d : { error: (d && d.error) || "Couldn't load the rooms." };
+  paintAdminRooms();
+  clearTimeout(_admm.t);
+  _admm.t = setTimeout(() => { if (_adm.tab === "rooms" && document.querySelector("#admin-screen.active") && document.getElementById("admm-body")) renderAdminRooms(document.getElementById("admin-container")); }, 10000);
+}
+function paintAdminRooms() {
+  const el = document.getElementById("admm-body"); if (!el) return;
+  const d = _admm.d;
+  if (!d) { el.innerHTML = loadingBarHtml(""); return; }
+  if (d.error) { el.innerHTML = `<div class="db-empty">${escapeHtml(d.error)}</div>`; return; }
+  const all = d.rooms || [], withPeople = all.filter((r) => r.online || r.spectators || r.watchers);
+  const list = _admm.show === "all" ? all : withPeople;
+  const seg = `<div class="seg" role="group" aria-label="Which rooms">${[["live", "With people"], ["all", "All open"]].map(([k, l]) => `<button type="button" data-admm-show="${k}" aria-pressed="${_admm.show === k}">${l}</button>`).join("")}</div>`;
+  const people = (r) => `${admNum(r.online)} here${r.players > r.online ? ` · ${admNum(r.players - r.online)} away` : ""}${r.spectators ? ` · ${admNum(r.spectators)} spectating` : ""}`;
+  const tags = (r) => [r.controlled ? "Controlled" : "", r.kind !== "diag" && !r.public ? "Private" : "", r.locked ? "Locked" : "", r.access === "members" ? "Members only" : r.access === "password" ? "Password" : "", r.watchers ? `${r.watchers} watching` : ""].filter(Boolean).map((x) => `<span class="adm-pill">${escapeHtml(x)}</span>`).join("");
+  const rows = list.map((r) => `<tr>
+      <td><b class="num">${escapeHtml(String(r.code || "").toUpperCase())}</b><small class="adm-note">${escapeHtml(ADMM_KIND[r.kind] || "Room")}${r.name ? " · " + escapeHtml(r.name) : ""}</small><div class="adm-chips">${tags(r)}</div></td>
+      <td>${escapeHtml(people(r))}${r.names && r.names.length ? `<small class="adm-note adm-prev">${escapeHtml(r.names.join(", "))}</small>` : ""}</td>
+      <td class="adm-prev">${escapeHtml(r.summary || "—")}</td>
+      <td>${r.owner ? escapeHtml(r.owner) : "—"}${r.host && r.host !== r.owner ? `<small class="adm-note">host ${escapeHtml(r.host)}</small>` : ""}</td>
+      <td class="num">${admNum(r.questions)}</td>
+      <td>${escapeHtml(r.reading ? "reading now" : admDur(r.idleMs) + " ago")}</td>
+      <td><button type="button" class="btn btn-sm" data-admm-watch="${escapeHtml(r.id)}" data-code="${escapeHtml(r.code || "")}">Watch</button></td></tr>`);
+  const head = `<div class="adm-vhead">${seg}<small>${d.reached === false ? "" : `${admNum(withPeople.length)} with people · ${admNum(all.length)} open`}</small></div>`;
+  el.innerHTML = head + (d.reached === false ? '<p class="adm-none">The game server can\'t be reached right now.</p>'
+    : list.length ? `<section class="fr-card adm-recent">${admTable(["Room", "People", "Plays", "Owner", "#Questions", "Last activity", ""], rows, "adm-mtable")}</section>`
+    : `<p class="adm-none">${_admm.show === "all" ? "No rooms are open." : "Nobody is in a room right now."}</p>`) +
+    '<p class="adm-geo-foot">Watching opens the room as its players see it. Nobody in it can see you. Rooms on the backup relay and offline rooms aren\'t on the game server, so they can\'t be watched.</p>';
+  el.querySelectorAll("[data-admm-show]").forEach((b) => b.onclick = () => { if (_admm.show === b.dataset.admmShow) return; _admm.show = b.dataset.admmShow; paintAdminRooms(); });
+  el.querySelectorAll("[data-admm-watch]").forEach((b) => b.onclick = () => admWatch(b, b.dataset.admmWatch, b.dataset.code, () => goTo("admin-rooms")));
+}
+// open a room to watch (multiplayer.js); Leave there comes back here
+function admWatch(btn, id, code, back) {
+  if (!(window.QB && window.QB.mpWatch && window.QB.mpWatch({ id, code, back }))) failBubble(btn, "Couldn't open that room.");
+}
+
 async function renderAdmin() {
   const c = document.getElementById("admin-container"); if (!c) return;
   if (_adm.tab === "users") { paintAdminUsers(c); return; }
@@ -17602,6 +17795,7 @@ async function renderAdmin() {
   if (_adm.tab === "visitors") { renderAdminVisitors(c); return; }
   if (_adm.tab === "clubs") { renderAdminClubs(c); return; }
   if (_adm.tab === "lessons") { renderAdminLessons(c); return; }
+  if (_adm.tab === "rooms") { renderAdminRooms(c); return; }
   if (!c.querySelector(".adm-page") || c.querySelector(".adm-users, .adm-rpage, .adm-vpage")) c.innerHTML = loadingBarHtml("Loading…");
   loadAdmGeo();
   let d;
