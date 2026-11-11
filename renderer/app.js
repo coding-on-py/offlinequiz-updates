@@ -12926,7 +12926,7 @@ function openBadgeDetail(key, trials, own, extra) {
     const go = Math.min(10, open + 1);
     if (own) {
       const st = trialState(normTrialInfo({ trials }), key, go);
-      next = `<button type="button" class="btn btn-primary" id="bd-next" data-lv="${go}"${st.wait ? " disabled" : ""}>${ic("play", 14)}${st.wait ? escapeHtml(trialName(key, go)) + " in " + waitHtml(st.wait, "Try " + trialName(key, go)) : "Try " + escapeHtml(trialName(key, go))}</button>`;
+      next = `<button type="button" class="btn btn-primary" id="bd-next" data-lv="${go}"${st.wait ? " disabled" : ""}>${ic("play", 14)}${st.wait ? "Level " + ROMAN[go] + " in " + waitHtml(st.wait, "Try level " + ROMAN[go]) : "Try level " + ROMAN[go]}</button>`;
     }
   }
   el.innerHTML = `
@@ -13259,7 +13259,7 @@ function showTrialResult(t, passed, why) {
         ${trialProgressHtml((_trialInfo || {}).trials, t.key, before.xp)}
         ${t.waitMs ? `<p class="td-wait">Try ${escapeHtml(trialName(t.key, t.level))} again in ${waitHtml(t.waitMs, "Ready to try " + trialName(t.key, t.level) + " again.")}</p>` : ""}
       </div>
-      <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn${next || again ? "" : " btn-primary"}" id="td-trials">${ic("award", 14)}Trials</button>${next ? `<button type="button" class="btn btn-primary" id="td-next">${ic("play", 14)}Try ${escapeHtml(trialName(t.key, next))}</button>` : again ? `<button type="button" class="btn btn-primary" id="td-again">${ic("review", 14)}Again</button>` : ""}</div>
+      <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn${next || again ? "" : " btn-primary"}" id="td-trials">${ic("award", 14)}Trials</button>${next ? `<button type="button" class="btn btn-primary" id="td-next">${ic("play", 14)}Try level ${ROMAN[next]}</button>` : again ? `<button type="button" class="btn btn-primary" id="td-again">${ic("review", 14)}Again</button>` : ""}</div>
     </div>`;
   // Close (or Esc) only shuts the window: the question and its answer stay on the page to look over, the trial bar
   // offers Result / Done. Trials, Try next and Again clear the trial first.

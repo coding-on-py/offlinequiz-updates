@@ -6393,6 +6393,13 @@ html.hw .tb-scheme.hw-zap { color: #fff; }
 .tb-pips i.miss { background: color-mix(in srgb, var(--red, #f85149) 60%, var(--surface-2)); }
 .td-xp { margin: 4px 0 2px; font-size: 26px; font-weight: 800; color: color-mix(in srgb, var(--hue) 75%, var(--strong)); }
 .td-wait { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+/* (15.126) the trial windows' buttons say "Try level III" (the name is in the window); on a narrow screen they wrap, never past the edge */
+.td-modal .modal-foot, .bd-modal .modal-foot { flex-wrap: wrap; row-gap: 8px; }
+@media (max-width: 480px) {   /* a phone: the main button across the window, Close and Trials side by side under it */
+  .td-modal .modal-foot .spacer { display: none; }
+  .td-modal .modal-foot > .btn { flex: 1 1 0; justify-content: center; }
+  .td-modal .modal-foot > .btn-primary { order: -1; flex-basis: 100%; }
+}
 .tp-lv .tr-wait { font-size: 11px; }
 
 /* 15.1: XP badges — how close the next one is; a trial's Setup has no Start of its own (the page's starts it) */
