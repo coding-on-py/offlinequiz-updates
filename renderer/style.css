@@ -2263,7 +2263,7 @@ input.ext-setting-input[type="text"] { min-width: 200px; }
 .rv-lbl { font-size: 11px; color: var(--text-secondary); flex: 0 0 72px; }
 .rv-dual { flex: 1; min-width: 160px; }
 .rv-difficulties { align-items: center; }
-/* All 11 difficulty chips stay on one line — no wrapping. */
+/* All 10 difficulty chips stay on one line — no wrapping. */
 .rv-diff-grid { display: flex; flex-wrap: nowrap; gap: 5px; flex: 1; }
 .rv-diff-chip {
   display: inline-flex; align-items: center; justify-content: center; gap: 3px;
@@ -3178,7 +3178,7 @@ html[data-scheme="light"] :is(#practice-screen, .mp-room) .filters-panel { box-s
 #sec-timing .slider-group[style*="none"] { display: none !important; }
 .filters-panel .filter-section.filter-disabled { opacity: 0.45; }
 
-/* difficulty: 0–10 toggles (the checkboxes stay real, just visually hidden) */
+/* difficulty: 1–10 toggles (the checkboxes stay real, just visually hidden) */
 #difficulty-filters.diff-checks, .diff-toggles {
   display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; max-width: 100%;
   padding: 4px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface);
@@ -4456,7 +4456,7 @@ button.acct-row:hover { background: var(--raised); }
   #sec-timing .slider-group > .sg-label, .mp-borrowed .mp-injected .slider-group > .sg-label { grid-area: l; font-size: 13.5px; }
   #sec-timing .slider-group > input[type="range"], .mp-borrowed .mp-injected .slider-group > input[type="range"] { grid-area: s; width: 100%; }
   #sec-timing .slider-group > .slider-value, .mp-borrowed .mp-injected .slider-group > .slider-value { grid-area: v; text-align: right; }
-  #difficulty-filters.diff-checks, .diff-toggles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); width: 100%; gap: 4px; }
+  #difficulty-filters.diff-checks, .diff-toggles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); width: 100%; gap: 4px; }   /* 1–10: two rows of five */
   #difficulty-filters .diff-row, .diff-toggles label { width: auto; height: 40px; font-size: 14px; }
   .diff-toggles .dt-lbl { grid-column: 1 / -1; padding: 2px 4px; }
 
@@ -6827,13 +6827,13 @@ html:not(.shop-on) #tb-store { display: none !important; }
   #db-searchbar .sbar-right { order: 5; flex: 1 1 100%; margin: 0 0 0 -6px; }
   #db-searchbar .sbar-right .seg { display: flex; flex: 1 1 auto; }
   #db-searchbar .sbar-right .seg button { flex: 1 1 0; }
-  /* the filters: Categories, Years and More share a row; Difficulty is one row of 0 to 10 */
+  /* the filters: Categories, Years and More share a row; Difficulty is one row of 1 to 10 */
   .db-search .qrow { flex-wrap: wrap; gap: 8px; }
   .db-search .qrow > .btn, .db-search .qrow > .pop-wrap { flex: 1 1 auto; min-width: 0; }
   .db-search .qrow > .btn { width: auto; justify-content: center; padding: 0 10px; }
   .db-search .qrow > .pop-wrap > .btn { width: 100%; justify-content: center; padding: 0 10px; }
   .db-search .qrow > .spacer { display: none; }
-  .db-search .qrow > #db-diffs { order: 9; flex: 1 1 100%; display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 3px; padding: 6px; }
+  .db-search .qrow > #db-diffs { order: 9; flex: 1 1 100%; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 3px; padding: 6px; }
   .db-search #db-diffs .dt-lbl { grid-column: 1 / -1; padding: 0 2px 4px; font-size: 11.5px; }
   .db-search #db-diffs label { height: 34px; min-width: 0; font-size: 13px; padding: 0; }
   /* More: two columns, Search in across the top */

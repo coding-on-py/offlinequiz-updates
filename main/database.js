@@ -41,6 +41,9 @@ const ROLE_MASK = { any: 31, about: SRC.aboutClue | SRC.about | SRC.answer, answ
 // (15.113: and practice's own, Powers only, Clean only, canon tiers, standard sets, with or without categories)
 const QUICK_KEYS = new Set(["random", "limit", "offset", "sort", "categories", "categoryIds", "difficulties", "yearMin", "yearMax", "powermarkOnly", "cleanOnly", "canon", "standard"]);
 export const isTopicTagId = (v) => typeof v === "string" && /^t[0-9a-f]{12}$/.test(v);
+// (15.134) a difficulty filter's levels: 1 to 10. A 0 (unrated, from an old client or an old saved setting) is left
+// out, not an error, so [0] alone is no difficulty filter at all.
+export const realDifficulties = (list) => (Array.isArray(list) ? list : []).map(Number).filter((d) => Number.isInteger(d) && d >= 1 && d <= 10);
 // A topic-tag filter list (query string JSON or IPC array): at most 8 of { id, r: any|about|answer|theme|mention, x }.
 export function normalizeTopicFilters(raw) {
   let list = raw;
@@ -457,10 +460,11 @@ export class QuestionDatabase {
       if (ors.length > 0) clauses.push(ors.length > 1 ? `(${ors.join(" OR ")})` : ors[0]);
     }
 
-    if (filters.difficulties && filters.difficulties.length > 0) {
-      const placeholders = filters.difficulties.map((_, i) => `:diff${i}`);
+    const diffs = realDifficulties(filters.difficulties);
+    if (diffs.length > 0) {
+      const placeholders = diffs.map((_, i) => `:diff${i}`);
       clauses.push(`${col("difficulty")} IN (${placeholders.join(",")})`);
-      filters.difficulties.forEach((d, i) => {
+      diffs.forEach((d, i) => {
         params[`diff${i}`] = d;
       });
     }
@@ -920,7 +924,7 @@ export class QuestionDatabase {
       const pools = ids.length ? [...new Set(ids)].map((id) => this.catPool(table, id, every)) : [this.catPool(table, "*", every)];   // no category: all of them
       pool = pools.length === 1 ? pools[0] : Int32Array.from(new Set(pools.flatMap((p) => Array.from(p))));
     } catch (e) { return null; }
-    const diffs = f.difficulties && f.difficulties.length ? new Set(f.difficulties.map(Number)) : null;
+    const dl = realDifficulties(f.difficulties), diffs = dl.length ? new Set(dl) : null;
     const ymin = f.yearMin, ymax = f.yearMax;
     if (!diffs && ymin === undefined && ymax === undefined && !bytes.length) return pool;
     const m = this._pickMeta(table); if (!m) return null;
@@ -1342,7 +1346,7 @@ export class QuestionDatabase {
   getDifficultyRange(type = "tossups") {
     const table = type === "tossups" ? "tossups" : "bonuses";
     return this.db
-      .prepare(`SELECT MIN(difficulty) as min, MAX(difficulty) as max FROM ${table}`)
+      .prepare(`SELECT MIN(difficulty) as min, MAX(difficulty) as max FROM ${table} WHERE difficulty >= 1`)   // (15.134) never 0
       .get();
   }
 

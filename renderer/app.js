@@ -694,7 +694,17 @@ const TAG_FAM = {
   topic: { label: "topic", name: "Topic", color: "#d2a8ff" },   // a topic tag (15.29, topics.js): its kind is its label
 };
 const TAG_FAM_ORDER = ["era", "place", "theme", "form", "answer_type", "format"];
-const DIFF_FULL = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
+// (15.134) difficulty is 1 to 10. 0 (unrated) is never offered or shown: no toggle, no badge, no "?" row
+const DIFF_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const DIFF_FULL = ["", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
+// a difficulty as shown, 1 to 10, else null (none, or unrated)
+function shownDiff(d) { const n = Number(d); return Number.isInteger(n) && n >= 1 && n <= 10 ? n : null; }
+function diffBadgeHtml(d) { const n = shownDiff(d); return n == null ? "" : `<span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[n])}">Diff ${n}</span>`; }
+// the square difficulty toggles (Review, Stats, Search; Setup's are in index.html); on: the ticked levels
+function diffTogglesHtml(on, cls) {
+  const set = new Set((on || []).map(Number));
+  return DIFF_LEVELS.map((d) => `<label title="${escapeHtml(DIFF_FULL[d])}"><input type="checkbox"${cls ? ` class="${cls}"` : ""} value="${d}"${set.has(d) ? " checked" : ""}><span>${d}</span></label>`).join("");
+}
 
 // (15.93) how the question database's working names for a few category-tree nodes read on screen ("Any Biology",
 // "FluidMechanics Thermo Optics Nuclear", "Pop Culture TV Any Time"). Display only: filters go by node id and the
@@ -798,8 +808,7 @@ function questionMetaRowHtml(q, where, opts) {
   const tags = tagChipsHtml(q, where);
   // noCat: a phone still shows them here (.qm-dup, with the difficulty): its row above the question never fills in,
   // as that pushed the question down at the end of every question (ui.css)
-  const d = parseInt(q.difficulty);
-  const dup = o.noCat ? `<span class="qm-dup">${catBadgeHtml(qPathOf(q))}${q.difficulty != null ? `<span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[d] || "")}">Diff ${escapeHtml(String(q.difficulty))}</span>` : ""}${yearBadgeHtml(q.set_year)}</span>` : "";
+  const dup = o.noCat ? `<span class="qm-dup">${catBadgeHtml(qPathOf(q))}${diffBadgeHtml(q.difficulty)}${yearBadgeHtml(q.set_year)}</span>` : "";
   const lead = (o.noCat ? dup : catBadgeHtml(qPathOf(q)) + yearBadgeHtml(q.set_year)) + srcHtml(src, q.set_name, q.packet_number);
   return `<div class="qmeta-row">${lead}${tags ? (lead ? '<span class="vsep" aria-hidden="true"></span>' : "") + tags : ""}</div>`;
 }
@@ -3621,7 +3630,7 @@ function openReviewMenu(items) {
   el.className = "qb-overlay review-ovl";
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "rv-h");
   const seg = [["", "All"], ["tossup", "Tossups"], ["bonus", "Bonuses"]].map(([v, l]) => `<button type="button" data-rvtype="${v}" aria-pressed="${!v}">${l}</button>`).join("");
-  const diffs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((d) => `<label title="${escapeHtml(DIFF_FULL[d] || "")}"><input type="checkbox" class="rv-diff" value="${d}"><span>${d}</span></label>`).join("");
+  const diffs = diffTogglesHtml([], "rv-diff");
   el.innerHTML = `
     <div class="settings-modal rv-modal" tabindex="-1">
       <div class="modal-head"><h2 id="rv-h">Review</h2><span class="rv-due num">${items.length.toLocaleString()} to review</span><span class="spacer"></span>
@@ -6963,7 +6972,7 @@ async function fetchMatchingBonus(q) {
   const params = new URLSearchParams();
   params.set("random", "1");
   if (q.category) params.set("categories", q.category);
-  if (q.difficulty != null) params.set("difficulties", String(q.difficulty));
+  if (shownDiff(q.difficulty)) params.set("difficulties", String(shownDiff(q.difficulty)));   // an unrated tossup: any difficulty
   if ($("#mode-select")?.value === "set") {
     const sn = $("#mode-set-name")?.value;
     const set = sn && (_allSets || []).find((x) => x.name === sn);
@@ -7036,9 +7045,6 @@ function renderQuestion(question) {
   const setInfo = question.set_name
     ? `${question.set_name} (${question.set_year || "?"})`
     : "Unknown set";
-  const diffLabel = question.difficulty || "?";
-
-  const diffName = DIFFICULTY_NAMES[parseInt(diffLabel)] || "";
   $("#question-meta").classList.toggle("hidden", !state.settings.showQuestionMeta);
   // Category, difficulty and year stay hidden while the question is read; the
   // result (renderResultTags) reveals them.
@@ -7046,7 +7052,7 @@ function renderQuestion(question) {
   $("#question-meta").innerHTML = `
     <span class="q-num">Question ${state.questionCount || 1}${isTossup ? seasonMarkHtml(question) : ""}</span>
     <span class="qm-info">${catBadgeHtml(qPathOf(question))}${questionWarnHtml(question)}
-    <span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[parseInt(diffLabel)] || diffName)}">Diff ${escapeHtml(String(diffLabel))}</span>
+    ${diffBadgeHtml(question.difficulty)}
     ${yearBadgeHtml(question.set_year)}</span>
     <span class="spacer q-spacer"></span>
     <span class="star-btn report-btn" id="report-indicator" role="button" tabindex="0" title="Report this question" aria-label="Report this question">⚑</span>
@@ -8586,7 +8592,7 @@ function qcardHtml(o) {
       <div class="qcard-tags qmeta-row">${catBadgeHtml(path)}${yearBadgeHtml(year)}${srcHtml(src, q && q.set_name, q && q.packet_number)}${tags ? '<span class="vsep" aria-hidden="true"></span>' + tags : ""}</div>
     </div>`;
   }
-  const diffBadge = diff !== null && diff !== undefined && diff !== "" ? `<span class="badge diff-badge" title="${escapeHtml(DIFF_FULL[parseInt(diff)] || "")}">Diff ${escapeHtml(String(diff))}</span>` : "";
+  const diffBadge = diffBadgeHtml(diff);
   return `<div class="${cls}"${o.attrs || ""}>
     <div class="qcard-head">
       <span class="qcard-chev" aria-hidden="true"></span>
@@ -10620,21 +10626,23 @@ function drawStatsGraph(canvas, stats) {
   const points = entries.map(([date, d]) => { cum += d.points; const dt = new Date(date + "T00:00:00"); return { x: (dt.getMonth() + 1) + "/" + dt.getDate(), y: cum }; });
   lineChart(canvas, points, { title: "Cumulative Points Over Time", fmt: (v) => String(Math.round(v)) });
 }
+// (15.134) the difficulties a stats breakdown shows: 1 to 10, lowest first (an older backend's "?" or "0" left out)
+const diffKeysOf = (by) => Object.keys(by || {}).filter((k) => shownDiff(k) && String(shownDiff(k)) === k).sort((a, b) => a - b);
 function drawDiffAccuracy(canvas, stats) {
   const t = chartTheme();
-  const bars = Object.keys(stats.byDifficulty || {}).sort((a, b) => a - b).map((k) => { const d = stats.byDifficulty[k]; const ans = d.tossupsAttempted - (d.tossupsSkipped || 0); return ans > 0 ? { label: k, value: (d.tossupsCorrect / ans) * 100, color: t.green } : null; }).filter(Boolean);
+  const bars = diffKeysOf(stats.byDifficulty).map((k) => { const d = stats.byDifficulty[k]; const ans = d.tossupsAttempted - (d.tossupsSkipped || 0); return ans > 0 ? { label: k, value: (d.tossupsCorrect / ans) * 100, color: t.green } : null; }).filter(Boolean);
   barChart(canvas, bars, { title: "Tossup Accuracy by Difficulty", fmt: (v) => Math.round(v) + "%", yMax: 100, empty: "No tossup data yet" });
 }
 function drawDiffCelerity(canvas, stats) {
   const t = chartTheme();
   const all = ["power", "early", "mid", "late", "end"].reduce((acc, z) => acc.concat(stats.celerityDistribution?.[z] || []), []);
-  const byD = {}; all.forEach((e) => { (byD[e.difficulty] = byD[e.difficulty] || []).push(1 - (e.celerity || 0)); });   // (15.81) what was left, as practice says
-  const bars = Object.keys(byD).sort((a, b) => a - b).map((k) => ({ label: k, value: (byD[k].reduce((s, x) => s + x, 0) / byD[k].length) * 100, color: t.accent }));
+  const byD = {}; all.forEach((e) => { if (shownDiff(e.difficulty)) (byD[e.difficulty] = byD[e.difficulty] || []).push(1 - (e.celerity || 0)); });   // (15.81) what was left, as practice says
+  const bars = diffKeysOf(byD).map((k) => ({ label: k, value: (byD[k].reduce((s, x) => s + x, 0) / byD[k].length) * 100, color: t.accent }));
   barChart(canvas, bars, { title: "Avg Celerity by Difficulty", fmt: (v) => Math.round(v) + "%", yMax: 100, empty: "No celerity data yet" });
 }
 function drawDiffBonus(canvas, stats) {
   const t = chartTheme();
-  const bars = Object.keys(stats.byDifficulty || {}).sort((a, b) => a - b).map((k) => { const d = stats.byDifficulty[k]; return d.bonusesAttempted > 0 ? { label: k, value: d.bonusPoints / d.bonusesAttempted, color: t.yellow } : null; }).filter(Boolean);
+  const bars = diffKeysOf(stats.byDifficulty).map((k) => { const d = stats.byDifficulty[k]; return d.bonusesAttempted > 0 ? { label: k, value: d.bonusPoints / d.bonusesAttempted, color: t.yellow } : null; }).filter(Boolean);
   barChart(canvas, bars, { title: "Bonus Conversion by Difficulty", fmt: (v) => v.toFixed(1), yMax: 30, empty: "No bonus data yet" });
 }
 
@@ -11086,7 +11094,7 @@ async function loadStats(preserveScroll = false) {
         const res = isBonus ? ((en.bonus_parts_correct || 0) >= (en.part_count || 3) ? "correct" : en.points > 0 ? "partial" : "miss") : (en.points >= 15 ? "power" : en.correct ? "correct" : en.points < 0 ? "neg" : "miss");
         return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" data-res="' + res + '" data-path="' + escapeHtml(en.category_path || en.category || "") + '" data-ans="' + escapeHtml((en.given_answer || "").toLowerCase()) + '" style="cursor:pointer" title="Show the question & answer">' +
           '<td><span class="qh-res"><span class="qh-chev">▸</span><span class="qh-badge ' + cls + '">' + label + "</span></span></td>" +
-          "<td>" + escapeHtml(en.category || "") + (en.difficulty != null ? ' <span class="text-muted">d' + en.difficulty + "</span>" : "") + "</td>" +
+          "<td>" + escapeHtml(en.category || "") + (shownDiff(en.difficulty) ? ' <span class="text-muted">d' + en.difficulty + "</span>" : "") + "</td>" +
           "<td>" + ans + "</td>" +
           "<td>" + buzzBar + "</td>" +
           '<td style="text-align:right">' + (en.points > 0 ? "+" : "") + en.points + "</td>" +
@@ -11175,7 +11183,7 @@ async function loadStats(preserveScroll = false) {
       </div>`;
     }
 
-    const diffKeys = Object.keys(stats.byDifficulty || {}).sort((a,b) => parseInt(a) - parseInt(b));
+    const diffKeys = diffKeysOf(stats.byDifficulty);
     if (diffKeys.length >= 2) {
       html += `<div class="stats-section" data-coll="stats:by-difficulty">
         <div class="stats-section-title">By difficulty</div>
@@ -11189,7 +11197,7 @@ async function loadStats(preserveScroll = false) {
 
     if (!sid) html += `<div class="stats-section" data-coll="stats:breakdown">
       <div class="stats-section-title">Session breakdown
-        <div class="diff-toggles" id="graph-filter-diff" role="group" aria-label="Difficulty">${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((d) => `<label title="${escapeHtml(DIFF_FULL[d] || "")}"><input type="checkbox" value="${d}"${_bdDiffs.includes(d) ? " checked" : ""}><span>${d}</span></label>`).join("")}</div>
+        <div class="diff-toggles" id="graph-filter-diff" role="group" aria-label="Difficulty">${diffTogglesHtml(_bdDiffs)}</div>
       </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <canvas id="graph-session-outcomes" class="chart-canvas" width="800" height="400" style="flex:1;min-width:480px;max-width:880px"></canvas>
@@ -14347,13 +14355,11 @@ async function renderProviderTab(id) {
 }
 
 let _dbTimer = null;
-const DIFFICULTY_NAMES = ["Unrated", "Middle School", "Easy HS", "Regular HS", "Hard HS", "National HS", "Easy College", "Medium College", "Regionals College", "Nationals College", "Open"];
 function renderSearchTab() {
   const c = document.getElementById("db-content"); if (!c) return;
   setTimeout(() => tipInto(c.querySelector(".db-page"), "search-tags", null, c.querySelector("#db-searchbar")), 0);
   const q = _dbq;
-  const diffs = DIFFICULTY_NAMES.map((name, i) =>
-    `<label title="${escapeHtml(DIFF_FULL[i] || name)}"><input type="checkbox" class="db-diff-cb" value="${i}"${q.diffs.includes(String(i)) ? " checked" : ""}><span>${i}</span></label>`).join("");
+  const diffs = diffTogglesHtml(q.diffs, "db-diff-cb");
   const seg = [["all", "All"], ["tossup", "Tossups"], ["bonus", "Bonuses"]].map(([v, l]) => `<button type="button" data-qtype="${v}" aria-pressed="${q.qtype === v}">${l}</button>`).join("");
   const opt = (v, l, cur) => `<option value="${v}"${cur === v ? " selected" : ""}>${l}</option>`;
   // a phone: "Search in" goes into More, so the search field keeps to the words, the tag button and the type
@@ -14676,7 +14682,7 @@ function dbSearchPlan(q, sets, pkt) {
   const textType = q.field || "all";
   const match = q.match || "phrase";
   const prefix = !!q.prefix;
-  const diffs = q.diffs.slice();
+  const diffs = q.diffs.filter((d) => shownDiff(d));
   const yearMin = q.yearMin || 2000, yearMax = q.yearMax || 2026;
   const sort = q.sort || "relevance";
   const std = false;   // set standard-ness doesn't matter (no toggle since 15.62)
@@ -14851,7 +14857,7 @@ function renderSearchResult(q, where) {
   const starred = _dbStarred && _dbStarred.has(type + ":" + q.id);
   const star = `<span class="qb-star${starred ? " on" : ""}" data-qid="${q.id}" data-type="${type}" title="Star">${starred ? "★" : "☆"}</span>`;
   let title, kind, body;
-  const diff = q.difficulty != null ? ` · Diff ${q.difficulty}` : "";
+  const diff = shownDiff(q.difficulty) ? ` · Diff ${q.difficulty}` : "";
   if (isTossup) {
     title = escapeHtml(primaryAnswerText(q.answer_sanitized || "") || "?");
     kind = "Tossup" + diff;
@@ -14976,7 +14982,7 @@ async function applySearchState(s) {
   Object.assign(_dbq, dbQueryDefaults(), {
     text: s.query != null ? s.query : (s.text || ""), field: s.field || "all", qtype: s.qtype || "all",
     match: s.match || (s.exact === false ? "all" : "phrase"), prefix: !!s.prefix, exclude: s.exclude || "", hideAns: !!s.hideAns,
-    tags: Array.isArray(s.tags) ? s.tags : [], diffs: (s.diffs || []).map(String),
+    tags: Array.isArray(s.tags) ? s.tags : [], diffs: (s.diffs || []).filter((d) => shownDiff(d)).map(String),   // (15.134) an old search's 0 dropped
     yearMin: s.yearMin && +s.yearMin > 2000 ? +s.yearMin : null, yearMax: s.yearMax && +s.yearMax < 2026 ? +s.yearMax : null,
     set: s.set || "", packet: s.packet || "", sort: s.sort || "relevance", standard: !!s.standard, powermark: !!s.powermark, starred: !!s.starred,
   });
@@ -17418,7 +17424,7 @@ function admStatsHtml(d) {
     <section class="fr-card adm-sec"><h3 class="eyebrow">The last 30 days they played</h3>${bars}</section>
     <section class="fr-card adm-sec"><h3 class="eyebrow">Leaderboards</h3>${lbHtml}</section>
     <section class="fr-card adm-sec"><h3 class="eyebrow">By category</h3>${admTable(["Category", ...head.slice(1)], admBreakdownRows(s.byCategory)) || '<p class="adm-none">Nothing yet.</p>'}</section>
-    <section class="fr-card adm-sec"><h3 class="eyebrow">By difficulty</h3>${admTable(["Difficulty", ...head.slice(1)], admBreakdownRows(s.byDifficulty, (k) => k === "0" ? "Unrated" : "Difficulty " + k)) || '<p class="adm-none">Nothing yet.</p>'}</section>`;
+    <section class="fr-card adm-sec"><h3 class="eyebrow">By difficulty</h3>${admTable(["Difficulty", ...head.slice(1)], admBreakdownRows(Object.fromEntries(diffKeysOf(s.byDifficulty).map((k) => [k, s.byDifficulty[k]])), (k) => "Difficulty " + k)) || '<p class="adm-none">Nothing yet.</p>'}</section>`;
 }
 function admSessionsHtml(d) {
   const list = d.sessions || [];
@@ -17433,7 +17439,7 @@ function admSessionHtml() {
   if (!d) return loadingBarHtml("");
   if (d.error) return `<p class="adm-none">${escapeHtml(d.error)}</p>`;
   const res = (e) => e.type === "bonus" ? (e.bonus_parts_correct || 0) + " parts" : !e.correct ? (Number(e.points) < 0 ? "Neg" : "Wrong") : Number(e.points) >= 15 ? "Power" : "Right";
-  const rows = (d.entries || []).map((e) => `<tr><td>${escapeHtml(new Date(e.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }))}</td><td>${e.type === "bonus" ? "Bonus" : "Tossup"}</td><td title="${escapeHtml(e.category_path || e.category || "")}"><div class="adm-cat">${escapeHtml(admCatShort(e.category_path || e.category || ""))}</div></td><td class="num">${e.difficulty == null ? "—" : escapeHtml(String(e.difficulty))}</td><td>${escapeHtml(e.given_answer || "")}${e.prompt_reply ? `<small class="adm-note"> then ${escapeHtml(e.prompt_reply)}</small>` : ""}</td><td class="adm-prev">${escapeHtml(e.answer || "")}</td><td><span class="adm-res adm-res-${res(e).split(" ")[0].toLowerCase()}">${res(e)}</span></td><td class="num">${admNum(e.points)}</td><td class="num">${e.type === "bonus" || e.celerity == null ? "—" : Math.round(e.celerity * 100) + "%"}</td></tr>`);
+  const rows = (d.entries || []).map((e) => `<tr><td>${escapeHtml(new Date(e.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }))}</td><td>${e.type === "bonus" ? "Bonus" : "Tossup"}</td><td title="${escapeHtml(e.category_path || e.category || "")}"><div class="adm-cat">${escapeHtml(admCatShort(e.category_path || e.category || ""))}</div></td><td class="num">${shownDiff(e.difficulty) == null ? "—" : escapeHtml(String(e.difficulty))}</td><td>${escapeHtml(e.given_answer || "")}${e.prompt_reply ? `<small class="adm-note"> then ${escapeHtml(e.prompt_reply)}</small>` : ""}</td><td class="adm-prev">${escapeHtml(e.answer || "")}</td><td><span class="adm-res adm-res-${res(e).split(" ")[0].toLowerCase()}">${res(e)}</span></td><td class="num">${admNum(e.points)}</td><td class="num">${e.type === "bonus" || e.celerity == null ? "—" : Math.round(e.celerity * 100) + "%"}</td></tr>`);
   return `<h3 class="eyebrow">This session's answers</h3>${admTiles(admStatLine(d.stats || {}))}
     ${admTable(["Time", "Kind", "Category", "#Diff", "Their answer", "Answer line", "Result", "#Pts", "#Celerity"], rows, "adm-answers") || '<p class="adm-none">No answers.</p>'}`;
 }
@@ -17862,7 +17868,7 @@ function adminReportHtml(r) {
     ? `<button type="button" class="adm-rwho" data-ruser="${escapeHtml(r.by.id)}" title="Open this account in Users">${admAv(r.by.name || r.by.handle || "?", r.by.neon)}<span class="adm-uname"><b>${neonName(r.by.name || r.by.handle || "(no name)", r.by.neon)}</b><small>${r.by.handle ? "@" + escapeHtml(r.by.handle) : "no username yet"}</small></span></button>`
     : `<span class="adm-rwho guest">${admAv("?")}<span class="adm-uname"><b>Guest</b><small>not signed in</small></span></span>`;
   const meta = [r.kind === "bonus" ? "Bonus" : "Tossup", q && q.path, q && yearAndSet(q.year, q.set),
-    q && q.packet != null ? "Packet " + q.packet + (q.number != null ? " · #" + q.number : "") : "", q && q.difficulty != null ? "Diff " + q.difficulty : ""].filter(Boolean).join(" · ");
+    q && q.packet != null ? "Packet " + q.packet + (q.number != null ? " · #" + q.number : "") : "", q && shownDiff(q.difficulty) ? "Diff " + q.difficulty : ""].filter(Boolean).join(" · ");
   let body;
   if (!q) body = `<p class="adm-rgone">This question isn't in the database anymore (${escapeHtml(r.kind)} ${escapeHtml(r.qid)}).</p>`;
   else if (r.kind === "bonus") {

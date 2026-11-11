@@ -4081,7 +4081,7 @@ function __qbMain(ctx) {
     function bonusQuery(cat, q) {
       var parts = ["random=1", "limit=1"];
       if (cat) parts.push("categories=" + encodeURIComponent(cat));
-      if (q && q.difficulty != null && q.difficulty !== "") parts.push("difficulties=" + q.difficulty);
+      if (q && Number(q.difficulty) >= 1) parts.push("difficulties=" + q.difficulty);   // an unrated (0) tossup: any difficulty
       return parts.join("&");
     }
     async function fetchBonusForTossup(q) {
@@ -6824,13 +6824,13 @@ function __qbMain(ctx) {
     tb: { label: "Tossups + Bonuses", tip: "Like a real game. Your team gets a bonus whenever it gets the tossup." },
   };
   const PLACE = { room: "in a room", own: "on their own", irl: "IRL Reading" };
-  const DIFF_NAMES = ["Unrated", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
+  const DIFF_NAMES = ["", "Middle school", "Easy high school", "Regular high school", "Hard high school", "National high school", "Easy college", "Medium college", "Regionals college", "Nationals college", "Open"];
   // a set-year range (web/clubs.mjs yearsText): "2015–2024", "2015 on", "to 2010", "" for any year
   const yearsText = (y) => (!y || (y.min == null && y.max == null) ? "" : y.min != null && y.max != null ? (y.min === y.max ? String(y.min) : y.min + "–" + y.max) : y.min != null ? y.min + " on" : "to " + y.max);
   // (15.99) what a diagnostic played, in a few words: "20 tossups with bonuses", "20 tossups", "12 bonuses"
   const playedText = (d) => (d.format === "bo" ? plural(d.bo, "bonus", "bonuses") : plural(d.tu, "tossup") + (d.format === "tb" ? " with bonuses" : ""));
   const diffText = (d) => {
-    const a = (d || []).slice().sort((x, y) => x - y);
+    const a = (d || []).map(Number).filter((x) => x >= 1 && x <= 10).sort((x, y) => x - y);   // (15.134) an old diagnostic's 0 isn't shown
     if (!a.length) return "all";
     if (a.length === 1) return String(a[0]);
     return a[a.length - 1] - a[0] === a.length - 1 ? a[0] + "–" + a[a.length - 1] : a.join(", ");
@@ -7753,7 +7753,7 @@ function __qbMain(ctx) {
   function setupHtml() {
     const d = S.dx;
     const targets = teams().map((t) => [t.id, t.name]).concat([["org", "Whole organization"]]);
-    let diff = ""; for (let i = 0; i <= 10; i++) diff += '<label title="' + esc(DIFF_NAMES[i]) + '"><input type="checkbox" data-diff="' + i + '"' + (d.diff.includes(i) ? " checked" : "") + "><span>" + i + "</span></label>";
+    let diff = ""; for (let i = 1; i <= 10; i++) diff += '<label title="' + esc(DIFF_NAMES[i]) + '"><input type="checkbox" data-diff="' + i + '"' + (d.diff.includes(i) ? " checked" : "") + "><span>" + i + "</span></label>";
     return '<form id="dx-form" class="dx-grid" novalidate><div class="cl-card dx-main">' +
       '<div class="fsec" role="group" aria-label="Team"><h2 class="fsec-label">Team' + info(TIP.roster, "About the roster") + '</h2><div class="fsec-body"><div class="seg cl-seg-scroll" role="group" aria-label="Team">' +
         targets.map((x) => '<button type="button" data-target="' + esc(x[0]) + '" aria-pressed="' + (d.target === x[0]) + '"' + (canRunTarget(x[0]) ? "" : " disabled") + ">" + esc(x[1]) + "</button>").join("") + '</div><div id="dx-who"></div></div></div>' +
@@ -8291,7 +8291,7 @@ function __qbMain(ctx) {
       out += rpCard("By category", rpTable(["Category", "Bonuses", "Points", "PPB"], bc.map((b) => ['<span class="dot-c" style="--c:' + catColor(b.cat) + '"></span>' + esc(b.cat), b.heard, b.pts, dash(b.ppb, (v) => v.toFixed(1))]),
         ["All", s.bonuses || 0, s.boPoints ?? "—", dash(s.ppb, (v) => v.toFixed(1))]));
     }
-    const lv = d.levels || [];
+    const lv = (d.levels || []).filter((l) => l.d >= 1 && l.d <= 10);   // (15.134) an older report's unrated row left out
     if (lv.length) {
       const head = ["Difficulty"].concat(hasTu ? ["Heard", "Got", "Powers", "Negs", "Conversion"] : []).concat(hasBo ? ["Bonuses", "PPB", "Parts"] : []);
       out += rpCard("By difficulty", rpTable(head, lv.map((l) => [esc(String(l.d)) + ' <small class="cl-dim">' + esc(DIFF_NAMES[l.d] || "") + "</small>"]
@@ -8340,7 +8340,7 @@ function __qbMain(ctx) {
     const tus = items.filter((x) => x.k === "tu").sort((a, b) => a.n - b.n);
     const bos = []; for (const x of items.filter((y) => y.k === "bp")) { let b = bos.find((y) => y.n === x.n); if (!b) bos.push(b = { n: x.n, qid: x.qid, parts: [] }); b.parts.push(x); }
     bos.sort((a, b) => a.n - b.n);
-    const meta = (x) => [esc(x.cat) + (x.area && x.area !== "General" ? " › " + esc(x.area) : "") + (x.topic ? " › " + esc(x.topic) : ""), x.diff != null ? "difficulty " + x.diff : "", [x.set, x.year && !String(x.set).includes(String(x.year)) ? x.year : ""].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+    const meta = (x) => [esc(x.cat) + (x.area && x.area !== "General" ? " › " + esc(x.area) : "") + (x.topic ? " › " + esc(x.topic) : ""), x.diff >= 1 ? "difficulty " + x.diff : "", [x.set, x.year && !String(x.set).includes(String(x.year)) ? x.year : ""].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
     const tuRow = (x) => '<div class="qv-row ' + (x.ok ? "ok" : "miss") + '"><span class="qv-n">Tossup ' + x.n + '</span><span class="qv-main"><b>' + esc(x.answer || "—") + "</b><small>" + meta(x) + '</small><span class="qv-bz">' + buzzLine(x, who) + "</span></span>" +
       '<span class="qv-pts ' + (x.pts > 0 ? "pos" : x.pts < 0 ? "neg" : "") + '">' + (x.pts ? signed(x.pts) : "0") + "</span>" + (x.qid ? '<button type="button" class="btn btn-ghost btn-sm" data-qx="tu:' + esc(x.qid) + '" aria-expanded="false">Question</button>' : "") +
       '<div class="qv-text" hidden></div></div>';

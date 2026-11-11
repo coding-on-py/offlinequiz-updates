@@ -186,8 +186,12 @@ function addToCategoryStats(byCategory, entry, type) {
   }
 }
 
+// (15.134) by difficulty is 1 to 10 only: an answer on an unrated (0) question still counts in the totals, but has
+// no row of its own here (no "?" row)
 function addToDifficultyStats(byDifficulty, entry, type) {
-  const diff = String(entry.difficulty || "?");
+  const n = Number(entry.difficulty);
+  if (!Number.isInteger(n) || n < 1 || n > 10) return;
+  const diff = String(n);
   if (!byDifficulty[diff]) {
     byDifficulty[diff] = {
       difficulty: diff,
@@ -272,7 +276,7 @@ export function computeSessionBreakdown(sessionList, allEntries, filters = {}) {
   const catFilter = filters.category || "";
   // difficulty: one value or a comma list ("3,4,5" — the Stats square toggles)
   const diffs = filters.difficulty != null && filters.difficulty !== ""
-    ? new Set(String(filters.difficulty).split(",").map((d) => d.trim()).filter(Boolean)) : null;
+    ? new Set(String(filters.difficulty).split(",").map((d) => d.trim()).filter((d) => /^([1-9]|10)$/.test(d))) : null;   // (15.134) a 0 is left out
   const diffFilter = diffs && diffs.size ? diffs : null;
   const filtering = !!(catFilter || diffFilter);
   const matches = (e) =>
