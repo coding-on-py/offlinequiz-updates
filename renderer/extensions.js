@@ -6846,7 +6846,7 @@ function __qbMain(ctx) {
     own: "Only Tossups only can be played on your own.",
     irl: "The team meets in person. One person reads the packet aloud from this page and records every buzz.",
     dist: "Picked at random to match NAQT's high school distribution, with every category at least once. Clean questions come first, and easier levels come up more often.",
-    avg: "Ranked by average points per active member, so big rosters don't win by size. Teams need 3 active members and organizations need 4.",
+    avg: "Ranked by average points per active member, so big rosters don't win by size. A team ranks once 3 of its players have played, an organization once 4. Smaller ones show below, unranked.",
     cov: "The share of tossups the team got. Strength is 70% or more, middling is 30 to 69%, and a gap is under 30%. An overlap is two or more players each getting 40% of an area.",
     plan: "Gaps come first, then habits that cost points, then overlaps.",
     find: "What stands out in this diagnostic, with the numbers behind it.",
@@ -8544,18 +8544,20 @@ function __qbMain(ctx) {
   function groupsHtml(d, kind) {
     if (!d || d.error) return '<div class="db-empty">' + esc((d && d.error) || OFFLINE) + "</div>";
     const rows = d.rows || [];
-    if (!rows.length) return '<div class="db-empty">No ' + (kind === "teams" ? "team" : "organization") + " is ranked yet.</div>";
+    if (!rows.length) return '<div class="db-empty">No ' + (kind === "teams" ? "team" : "organization") + " has played yet.</div>";
     const stat = (v, l) => '<span class="fr-stat"><b class="num">' + v + "</b><small>" + l + "</small></span>";
-    let html = "", last = 0;
+    let html = "", last = 0, waitShown = false;
     rows.forEach((e) => {
-      if (e.rank > last + 1 && last) html += '<div class="lb-gap">…</div>';
-      last = e.rank;
+      // (15.136) too small to rank yet: after the ranked ones, with no rank, under a line saying when it will rank
+      if (e.rank == null && !waitShown) { waitShown = true; html += '<div class="lb-wait">Not ranked yet. ' + (kind === "teams" ? "A team ranks once " + (d.need || 3) + " of its players have played." : "An organization ranks once " + (d.need || 4) + " of its members have played.") + "</div>"; }
+      if (e.rank != null && e.rank > last + 1 && last) html += '<div class="lb-gap">…</div>';
+      if (e.rank != null) last = e.rank;
       html += kind === "teams"
-        ? '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.team) + "</b>" + (e.mine ? '<span class="badge cl-you">Your team</span>' : "") + "<small>" + esc(e.org) + "</small></span>" +
+        ? '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + (e.rank == null ? "—" : e.rank) + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.team) + "</b>" + (e.mine ? '<span class="badge cl-you">Your team</span>' : "") + "<small>" + esc(e.org) + "</small></span>" +
           // (15.105) PTS first, as on the individuals' board (a phone shows it large on the right, the rest under the name)
           // (15.129) no "9 of 13 active": the count is gone from team and organization rows (the ⓘ says who is ranked)
           stat(fmt(e.total), "PTS") + stat(fmt(e.avg), "Avg") + stat(e.acc == null ? "—" : e.acc + "%", "ACC") + "</div>"
-        : '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + e.rank + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.name) + "</b>" + (e.mine ? '<span class="badge cl-you">Yours</span>' : "") + "</span>" +
+        : '<div class="lb-row' + (e.mine ? " lb-you" : "") + '"><span class="lb-rank num">' + (e.rank == null ? "—" : e.rank) + '</span><span class="club-tile sm" aria-hidden="true">' + esc(e.tag) + '</span><span class="fr-name"><b>' + esc(e.name) + "</b>" + (e.mine ? '<span class="badge cl-you">Yours</span>' : "") + "</span>" +
           stat(fmt(e.total), "PTS") + stat(e.teams, e.teams === 1 ? "team" : "teams") + stat(e.members, "members") + stat(fmt(e.avg), "Avg") + "</div>";
     });
     return '<div class="fr-list lb-board">' + html + "</div>";

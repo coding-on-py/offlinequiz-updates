@@ -4385,6 +4385,9 @@ button.acct-row:hover { background: var(--raised); }
 .lb-board .lb-row:nth-child(2) .lb-rank { color: #b1bac4; }
 .lb-board .lb-row:nth-child(3) .lb-rank { color: #d18b47; }
 .lb-gap { padding: 2px 0 2px 26px; color: var(--muted); border-top: 1px solid var(--line-soft); }
+/* (15.136) teams and organizations too small to rank yet, listed after the ranked ones */
+.lb-wait { padding: 12px 16px 8px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line-soft); }
+.lb-board > .lb-wait:first-child { border-top: 0; }
 .lb-head { display: flex; align-items: center; gap: 10px; }
 .lb-title { flex: 1 1 auto; min-width: 0; }
 .lb-title b { display: block; color: var(--strong); font-size: 17px; }
