@@ -2829,7 +2829,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px 
 }
 .tb-pill[hidden] { display: none; }
 .tb-pill:hover { border-color: var(--line-strong); color: var(--strong); }
-.tb-pill.tb-streak { color: var(--yellow); }
+/* (15.123) the streak is a top-bar link like the others (it was a bordered yellow pill that stood apart): the flame warm,
+   the count and "days" as the other links' words */
+.tb-link.tb-streak[hidden] { display: none; }
+.tb-link.tb-streak svg { color: var(--yellow); }
+.tb-link.tb-streak .num { font-variant-numeric: tabular-nums; }
+
 .tb-icon { color: var(--muted); }
 .tb-link { height: 36px; padding: 0 12px 0 10px; gap: 8px; color: var(--muted); font-weight: 500; }
 .tb-link:hover { color: var(--strong); }
@@ -3026,7 +3031,7 @@ html[data-scheme="light"] .hcard { box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08
   .adm-rmine-none, .depth-scale, .cl-or, .acct-or span, #tb-streak .lbl) { text-transform: none; }
 :is(#live-stats .sb-cap, #live-stats .sb-sub, .fr-stat small, .up-stats small, .stk-stat small, .tstats small, .irl-score small,
   .pf-tile span, .pf-ach-n, .ev-card-n, .rv-total span, .hk-scope, .mp-plan-price small, .st-price small, .adm-chart-head small,
-  .adm-rmine-none, .cl-or, .acct-or span, #tb-streak .lbl)::first-letter { text-transform: uppercase; }
+  .adm-rmine-none, .cl-or, .acct-or span)::first-letter { text-transform: uppercase; }
 #live-stats[data-kind="bonuses"] .sb-rates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 /* Appearance > Layout (app.js applyLayoutPrefs; index.html sets the attributes before the first paint) */
@@ -6890,6 +6895,10 @@ html.tb-compact .tb-pill .lbl, html.tb-compact .tb-crumb { display: none; }
 html.tb-compact .tb-pill { padding: 0 10px; }
 html.tb-compact .tb-link span { display: none; }
 html.tb-compact .tb-link { width: 36px; padding: 0; justify-content: center; }
+/* (15.123) a narrow top bar keeps the streak's number beside its flame */
+html.tb-compact .tb-link.tb-streak { width: auto; padding: 0 10px; gap: 6px; }
+html.tb-compact .tb-link.tb-streak .num { display: inline; }
+@media (max-width: 760px) { .tb-link.tb-streak { width: auto; padding: 0 10px; gap: 6px; } .tb-link.tb-streak .num { display: inline; } }
 html.tb-compact .tb-link.tb-clubs.has-n span.tb-n { display: inline-grid; position: absolute; top: 1px; right: -2px; min-width: 16px; height: 16px; padding: 0 4px; font-size: 9.5px; box-shadow: 0 0 0 2px var(--bg); }
 .tb-menu .tbm-narrow { display: none; }
 html.tb-tight .tb-right > :is(#tb-leaderboards, #tb-store, #tb-plugins) { display: none !important; }

@@ -1261,7 +1261,8 @@ function updateTopbar() {
   // the top bar's link for the page on screen reads as current
   let here = { "trials-screen": "tb-trials", "clubs-screen": "tb-clubs", "diagnostic-screen": "tb-clubs", "irl-screen": "tb-clubs", "report-screen": "tb-clubs", "store-screen": "tb-store", "leaderboards-screen": "tb-leaderboards", "extensions-screen": "tb-plugins" }[active && active.id];
   if (active && active.id === "practice-screen" && state.practiceKind === "trial") here = "tb-trials";
-  ["tb-trials", "tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
+  if (active && active.id === "streaks-screen") here = "tb-streak";
+  ["tb-streak", "tb-trials", "tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
   renderTopbarProfile();
   fitTopbar();
 }
