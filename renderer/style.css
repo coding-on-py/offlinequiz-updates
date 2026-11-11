@@ -5452,6 +5452,53 @@ html[data-scheme="light"] .neon-name { color: color-mix(in srgb, var(--neon) 72%
   .adm-reg { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: baseline; gap: 8px; }
 }
 .adm-tots { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+/* (15.131) Users → an account's parts (Stats, Sessions, Settings, Progress, People) and Clubs */
+.adm-parts { margin: -2px 0 0; }
+.adm-part { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.adm-partbar { display: flex; justify-content: flex-end; }
+.adm-profile { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+.adm-profile select { min-width: 160px; }
+.adm-note { margin: 0; color: var(--muted); font-size: 12px; font-weight: 400; }
+.adm-sec > h3 .adm-note { margin-left: 8px; }
+.adm-sub { margin: 4px 0 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+.adm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.adm-chip { padding: 3px 10px; border: 1px solid var(--line-soft); border-radius: 999px; color: var(--text); font-size: 12px; }
+.adm-people { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.adm-people small, .adm-link small { color: var(--muted); }
+.adm-bars.adm-mini { height: 110px; }
+.adm-srow { cursor: pointer; }
+.adm-srow:hover td, .adm-srow:focus-visible td { background: var(--surface-2); }
+.adm-srow.on td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.adm-res { padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.adm-res-power { background: color-mix(in srgb, var(--yellow) 18%, transparent); color: var(--yellow); }
+.adm-res-right { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.adm-res-neg { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+.adm-kv td:first-child { width: 34%; color: var(--muted); }
+.adm-val { overflow-wrap: anywhere; }
+.adm-answers td { vertical-align: top; }
+.adm-user .adm-table th.num { text-align: right; }
+.adm-answers .adm-cat { width: 190px; white-space: normal; line-height: 1.35; }
+.adm-answers .adm-prev { max-width: 180px; }
+.adm-answers td:nth-child(5) { min-width: 110px; overflow-wrap: anywhere; }
+.adm-clubs .club-tile.sm { flex: none; }
+/* (15.131) Site stats → Lessons */
+.adm-lpage { display: flex; flex-direction: column; gap: 14px; }
+.adm-lnone { padding: 4px 2px; }
+#adml-body { display: flex; flex-direction: column; gap: 14px; }
+.adm-lpage .adm-table th, .adm-lpage .adm-table td { text-align: left; }
+.adm-lpage .adm-table .num { text-align: right; }
+.adm-lcards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.adm-lgrid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; align-items: start; }
+.adm-lreports { display: flex; flex-direction: column; gap: 10px; }
+.adm-lrhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.adm-lrhead h2 { margin: 0; font-size: 16px; color: var(--strong); }
+.adm-lrep { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; }
+.adm-lrep header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.adm-lrep header b { color: var(--strong); font-size: 13.5px; }
+.adm-lwhere, .adm-lwhat { margin: 0; font-size: 13px; color: var(--text); }
+.adm-lnote { margin: 2px 0 0; padding: 8px 12px; border-left: 3px solid var(--line); color: var(--text); font-size: 13px; white-space: pre-wrap; }
+.adm-lact { display: flex; gap: 8px; justify-content: flex-end; }
+@media (max-width: 860px) { .adm-lcards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .adm-lgrid { grid-template-columns: minmax(0, 1fr); } }
 .adm-prev { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11.5px; }
 @media (max-width: 860px) {
   .adm-users { grid-template-columns: minmax(0, 1fr); }

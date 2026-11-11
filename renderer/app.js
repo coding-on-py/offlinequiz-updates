@@ -1120,6 +1120,8 @@ function goTo(target) {
     case "admin-users": _adm.tab = "users"; showScreen("admin"); renderAdmin(); break;
     case "admin-reports": _adm.tab = "reports"; showScreen("admin"); renderAdmin(); break;
     case "admin-visitors": _adm.tab = "visitors"; showScreen("admin"); renderAdmin(); break;
+    case "admin-clubs": _adm.tab = "clubs"; showScreen("admin"); renderAdmin(); break;
+    case "admin-lessons": _adm.tab = "lessons"; showScreen("admin"); renderAdmin(); break;
   }
 }
 document.addEventListener("click", (e) => {
@@ -1157,7 +1159,7 @@ function webPathNow() {
     case "leaderboards-screen": return "/leaderboards";
     case "store-screen": return "/store";
     case "streaks-screen": return "/streaks";
-    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : _adm.tab === "visitors" ? "/admin/visitors" : "/admin";
+    case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : _adm.tab === "visitors" ? "/admin/visitors" : _adm.tab === "clubs" ? "/admin/clubs" : _adm.tab === "lessons" ? "/admin/lessons" : "/admin";
     case "download-screen": return "/download";
     case "clubs-screen": case "diagnostic-screen": case "irl-screen": case "report-screen": case "link-screen": return window.QBClubs ? window.QBClubs.webPath(a.id) : "/";
     case "extensions-screen": return window.QB && window.QB._extTab === "store" ? "/plugins/store" : "/plugins";
@@ -1218,7 +1220,7 @@ function webRoute(path) {
       goTo("plugins");
       if (b === "store" || b === "manage") { window.QB._extTab = b; window.QB.renderScreen(); }
     } else if (a === "admin") {
-      goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : b === "visitors" ? "admin-visitors" : "admin");
+      goTo(b === "users" ? "admin-users" : b === "reports" ? "admin-reports" : b === "visitors" ? "admin-visitors" : b === "clubs" ? "admin-clubs" : b === "lessons" ? "admin-lessons" : "admin");
     } else if ((a === "clubs" || a === "diagnostic" || a === "report" || a === "l") && window.QBClubs) {
       window.QBClubs.route(seg);
     } else if (a === "tags" && window.QBTopics) {
@@ -17126,9 +17128,10 @@ const _adm = { metric: "visitors", data: null, tab: "stats" };
 // ── Site stats → Users (admins): any account by username — its products (switch each one, or give a
 // whole product, rooms included), its profile, its rooms, its orders and what it keeps here ──
 const ADM_GRANT_NAMES = { "plugin:keyword-freq": "Keyword Frequency", "plugin:canon-tracker": "Canon Tracker", "plugin:buzz-words": "Buzzwords", "plugin:fact-sheet": "Fact Sheet", neon: "Neon name" };
-const _admu = { q: "", list: null, id: null, d: null, gen: 0, all: null, total: 0, unverified: 0, filter: "all", allGen: 0, err: false };
-const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"], ["visitors", "Visitors"], ["reports", "Reports"]].map(([k, l]) =>
-  `<button type="button" class="db-tab${(_adm.tab || "stats") === k ? " active" : ""}" role="tab" aria-selected="${(_adm.tab || "stats") === k}" data-adm-tab="${k}">${l}${k === "reports" && _admr.counts && _admr.counts.open ? ` <span class="adm-tabn num">${_admr.counts.open}</span>` : ""}</button>`).join("")}</div>`;
+const _admu = { q: "", list: null, id: null, d: null, gen: 0, all: null, total: 0, unverified: 0, filter: "all", allGen: 0, err: false,
+  part: "overview", pd: {}, profile: "", sess: null, sd: null };   // (15.131) the part of the account shown, its data, the profile, an open session
+const admTabsHtml = () => `<div class="db-tabs adm-tabs" role="tablist">${[["stats", "Site stats"], ["users", "Users"], ["visitors", "Visitors"], ["clubs", "Clubs"], ["lessons", "Lessons"], ["reports", "Reports"]].map(([k, l]) =>
+  `<button type="button" class="db-tab${(_adm.tab || "stats") === k ? " active" : ""}" role="tab" aria-selected="${(_adm.tab || "stats") === k}" data-adm-tab="${k}">${l}${k === "reports" && _admr.counts && _admr.counts.open ? ` <span class="adm-tabn num">${_admr.counts.open}</span>` : ""}${k === "lessons" && _adml.counts && _adml.counts.open ? ` <span class="adm-tabn num">${_adml.counts.open}</span>` : ""}</button>`).join("")}</div>`;
 function wireAdmTabs(c) {
   c.querySelectorAll("[data-adm-tab]").forEach((b) => b.onclick = () => { _adm.tab = b.dataset.admTab; renderAdmin(); window.qbWebPathSync?.(); });
 }
@@ -17198,6 +17201,8 @@ function paintAdmResults() {
   el.querySelectorAll("[data-adm-user]").forEach((b) => b.onclick = () => admOpen(b.dataset.admUser));
 }
 async function admOpen(id, keep) {
+  if (_admu.id !== id) { _admu.pd = {}; _admu.profile = ""; _admu.sess = null; _admu.sd = null; }
+  else if (keep) _admu.pd = {};
   _admu.id = id; if (!keep) _admu.d = null;
   paintAdmResults(); paintAdmUser();
   let d = null; try { d = await API.get("/api/admin/user?id=" + encodeURIComponent(id)); } catch (e) {}
@@ -17231,13 +17236,12 @@ function paintAdmUser() {
   const dd = d.data || {};
   const plug = (dd.plugin || []).map((p) => `<tr><td>${escapeHtml(p.plugin)}</td><td>${escapeHtml(p.key)}</td><td class="num">${Number(p.bytes).toLocaleString()} B</td><td class="adm-prev">${escapeHtml(p.preview)}</td><td><button type="button" class="btn btn-sm btn-ghost" data-adm-clear="${escapeHtml(JSON.stringify([p.profile, p.plugin, p.key]))}">Clear</button></td></tr>`).join("");
   const neonOpts = `<option value="">Off</option>` + Object.keys(NEON_COLORS).map((k) => `<option value="${k}"${u.neon === k ? " selected" : ""}>${k[0].toUpperCase() + k.slice(1)}</option>`).join("");
-  el.innerHTML = `
-    <div class="fr-card adm-uhead">${admAv(u.displayName || u.handle || u.email, u.neon)}
-      <div class="adm-uhead-txt"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b>
-        <small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : "no username · "}${escapeHtml(u.email || "")}</small>
-        <small>Joined ${escapeHtml(admWhen(u.createdAt))} · last sign-in ${escapeHtml(admWhen(u.lastLogin))} · ${d.friends} ${d.friends === 1 ? "friend" : "friends"}</small>
-        <small>${escapeHtml(admWhere(u.where))}</small></div>
-      <span class="adm-badges">${u.admin ? '<span class="badge">Admin</span>' : ""}${u.verified ? '<span class="badge">Verified</span>' : '<span class="badge">Not verified</span>'}${u.google ? '<span class="badge">Google</span>' : ""}</span></div>
+  if (_admu.part !== "overview") {
+    el.innerHTML = admUserHeadHtml(d) + admPartsHtml() + '<div class="adm-part" id="adm-part"></div>';
+    wireAdmParts(el); loadAdmPart(); return;
+  }
+  el.innerHTML = admUserHeadHtml(d) + admPartsHtml() + `
+
     <section class="fr-card adm-sec"><h3 class="eyebrow">Profile</h3>
       <form id="adm-profile" class="adm-form">
         <label class="mode-field"><span>Display name</span><input id="adm-dn" class="mode-input" maxlength="24" value="${escapeHtml(u.displayName || "")}"></label>
@@ -17255,6 +17259,7 @@ function paintAdmUser() {
       ${dd.error ? `<p class="adm-none">${escapeHtml(dd.error)}</p>` : `<div class="adm-tots">${[["Answers", dd.answers], ["Sessions", dd.sessions], ["Stars", dd.starred], ["Profiles", dd.profiles], ["Plugin entries", (dd.plugin || []).length]].map(([l, v]) => `<div class="adm-tot"><b class="num">${Number(v || 0).toLocaleString()}</b><small>${l}</small></div>`).join("")}</div>
       ${plug ? `<div class="adm-scroll"><table class="adm-table adm-plug"><thead><tr><th>Plugin</th><th>Key</th><th>Size</th><th>Starts with</th><th></th></tr></thead><tbody>${plug}</tbody></table></div>` : ""}`}</section>`;
   // ── wiring ──
+  wireAdmParts(el);
   const id = u.id;
   el.querySelector("#adm-profile").onsubmit = async (e) => {
     e.preventDefault(); const msg = el.querySelector("#adm-profile-msg"); msg.textContent = "Saving…";
@@ -17296,11 +17301,312 @@ function paintAdmUser() {
     }, { yes: "Clear", danger: true }); });
 }
 
+// ── (15.131) Users → an account's parts: Overview (above), and what it keeps here: Stats, Sessions (each session's
+// answers), Settings (its practice setup and everything else saved), Progress (trials, achievements, streak) and
+// People (friends, organizations, reports, sign-ins, private leaderboards, Store plugins). Read only. ──
+const ADM_PARTS = [["overview", "Overview"], ["stats", "Stats"], ["sessions", "Sessions"], ["settings", "Settings"], ["progress", "Progress"], ["social", "People"]];
+function admUserHeadHtml(d) {
+  const u = d.user;
+  return `<div class="fr-card adm-uhead">${admAv(u.displayName || u.handle || u.email, u.neon)}
+      <div class="adm-uhead-txt"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b>
+        <small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : "no username · "}${escapeHtml(u.email || "")}</small>
+        <small>Joined ${escapeHtml(admWhen(u.createdAt))} · last sign-in ${escapeHtml(admWhen(u.lastLogin))} · ${d.friends} ${d.friends === 1 ? "friend" : "friends"}</small>
+        <small>${escapeHtml(admWhere(u.where))}</small></div>
+      <span class="adm-badges">${u.admin ? '<span class="badge">Admin</span>' : ""}${u.verified ? '<span class="badge">Verified</span>' : '<span class="badge">Not verified</span>'}${u.google ? '<span class="badge">Google</span>' : ""}</span></div>`;
+}
+const admPartsHtml = () => `<div class="db-tabs adm-parts" role="tablist" aria-label="About this account">${ADM_PARTS.map(([k, l]) =>
+  `<button type="button" class="db-tab${_admu.part === k ? " active" : ""}" role="tab" aria-selected="${_admu.part === k}" data-adm-part="${k}">${l}</button>`).join("")}</div>`;
+function wireAdmParts(el) {
+  el.querySelectorAll("[data-adm-part]").forEach((b) => b.onclick = () => { if (_admu.part === b.dataset.admPart) return; _admu.part = b.dataset.admPart; paintAdmUser(); });
+}
+const admNum = (v) => Number(v || 0).toLocaleString();
+const admPct = (v) => (v == null || isNaN(v) ? "—" : Math.round(Number(v) * 100) + "%");
+const admTime = (t) => (t ? new Date(t).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
+const admDur = (ms) => { const m = Math.round((Number(ms) || 0) / 60000); return m < 1 ? "under a minute" : m < 60 ? m + " min" : Math.floor(m / 60) + " h " + (m % 60) + " min"; };
+const admTable = (head, rows, cls) => rows.length ? `<div class="adm-scroll"><table class="adm-table${cls ? " " + cls : ""}"><thead><tr>${head.map((h) => (h[0] === "#" ? `<th class="num">${h.slice(1)}</th>` : `<th>${h}</th>`)).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` : "";
+async function loadAdmPart() {
+  const part = _admu.part, id = _admu.id, key = part + "|" + (part === "social" ? "" : _admu.profile);
+  if (_admu.pd[key]) { paintAdmPart(); return; }
+  const box = document.getElementById("adm-part"); if (box) box.innerHTML = loadingBarHtml("");
+  let d = null;
+  try { d = await API.get("/api/admin/user/data?id=" + encodeURIComponent(id) + "&part=" + part + (_admu.profile && part !== "social" ? "&profile=" + encodeURIComponent(_admu.profile) : "")); } catch (e) {}
+  if (_admu.id !== id || _admu.part !== part) return;
+  _admu.pd[key] = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that." };
+  if (d && d.profile && !_admu.profile) _admu.profile = d.profile;
+  paintAdmPart();
+}
+function paintAdmPart() {
+  const box = document.getElementById("adm-part"); if (!box) return;
+  const part = _admu.part, d = _admu.pd[part + "|" + (part === "social" ? "" : _admu.profile)] || _admu.pd[part + "|"];
+  if (!d) { box.innerHTML = loadingBarHtml(""); return; }
+  if (d.error) { box.innerHTML = `<div class="db-empty">${escapeHtml(d.error)}</div>`; return; }
+  // an account with more than one profile: which one is shown
+  const pick = d.profiles && d.profiles.length > 1 ? `<label class="adm-profile">Profile <select class="mode-input" id="adm-prof">${d.profiles.map((p) => `<option value="${escapeHtml(p.id)}"${p.id === d.profile ? " selected" : ""}>${escapeHtml(p.name || p.id)}</option>`).join("")}</select></label>` : "";
+  const html = part === "stats" ? admStatsHtml(d) : part === "sessions" ? admSessionsHtml(d) : part === "settings" ? admSettingsHtml(d) : part === "progress" ? admProgressHtml(d) : admSocialHtml(d);
+  box.innerHTML = (pick ? `<div class="adm-partbar">${pick}</div>` : "") + html;
+  const sel = box.querySelector("#adm-prof");
+  if (sel) sel.onchange = () => { _admu.profile = sel.value; _admu.sess = null; _admu.sd = null; loadAdmPart(); };
+  if (part === "sessions") wireAdmSessions(box);
+  if (part === "social") box.querySelectorAll("[data-adm-open]").forEach((b) => b.onclick = () => { _admu.part = "overview"; admOpen(b.dataset.admOpen); });
+  box.querySelectorAll("[data-adm-club]").forEach((b) => b.onclick = () => { _admc.id = b.dataset.admClub; _adm.tab = "clubs"; renderAdmin(); window.qbWebPathSync?.(); });
+  if (part === "progress") { try { wireBadges(box, d.trials || {}, false); } catch (e) {} }
+}
+// the NAQT numbers: TUH heard, P powers, G gets (right, not powers), N negs, PPTU, PPB
+function admStatLine(s) {
+  const tuh = s.tossupsAttempted || 0, p = s.tossupPowers || 0, n = s.tossupNegs || 0, g = Math.max(0, (s.tossupsCorrect || 0) - p);
+  return [["TUH", admNum(tuh)], ["P", admNum(p)], ["G", admNum(g)], ["N", admNum(n)], ["Acc", admPct(s.tossupAccuracy)],
+    ["PPTU", tuh ? ((s.tossupTotalPoints || 0) / tuh).toFixed(2) : "—"], ["Celerity", s.tossupAvgCelerity ? s.tossupAvgCelerity.toFixed(2) : "—"],
+    ["Bonuses", admNum(s.bonusesAttempted)], ["PPB", s.bonusesAttempted ? ((s.bonusTotalPoints || 0) / s.bonusesAttempted).toFixed(1) : "—"], ["Points", admNum(s.totalPoints)]];
+}
+const admTiles = (pairs) => `<div class="adm-tots">${pairs.map(([l, v]) => `<div class="adm-tot"><b class="num">${v}</b><small>${l}</small></div>`).join("")}</div>`;
+function admBreakdownRows(obj, label) {
+  return Object.entries(obj || {}).map(([k, c]) => [k, c]).sort((a, b) => (b[1].totalQuestions || 0) - (a[1].totalQuestions || 0)).map(([k, c]) => {
+    const tuh = c.tossupsAttempted || 0;
+    return `<tr><td>${escapeHtml(label ? label(k) : k)}</td><td class="num">${admNum(c.totalQuestions)}</td><td class="num">${admNum(tuh)}</td><td class="num">${admNum(c.tossupPowers)}</td><td class="num">${admNum(c.tossupNegs)}</td><td class="num">${tuh ? Math.round(((c.tossupsCorrect || 0) / tuh) * 100) + "%" : "—"}</td><td class="num">${admNum((c.tossupPoints || 0) + (c.bonusPoints || 0))}</td></tr>`;
+  });
+}
+function admStatsHtml(d) {
+  const s = d.stats || {}, lb = d.lb;
+  const days = Object.entries(s.questionsByDate || {}).sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(-30);
+  const max = Math.max(1, ...days.map(([, v]) => (v && v.questions) || 0));
+  const bars = days.length ? `<div class="adm-bars adm-mini">${days.map(([day, v]) => `<div class="adm-bar" title="${escapeHtml(day)}: ${admNum(v && v.questions)} questions"><i style="height:${Math.max(3, Math.round((((v && v.questions) || 0) / max) * 100))}%"></i><span>${escapeHtml(day.slice(8))}</span></div>`).join("")}</div>` : '<p class="adm-none">No answers yet.</p>';
+  const lbRow = (k, l) => { const r = lb && lb[k]; if (!r) return ""; return `<tr><td>${l}</td>${["q", "pts", "tu", "cor", "pw"].map((x) => `<td class="num">${r[x] == null ? "—" : admNum(r[x])}</td>`).join("")}<td class="num">${r.tu ? Math.round((r.cor / r.tu) * 100) + "%" : "—"}</td></tr>`; };
+  const lbHtml = lb ? admTable(["", "#Questions", "#Points", "#TUH", "#Right", "#P", "#Acc"], [lbRow("week", "This week"), lbRow("month", "This month"), lbRow("alltime", "All time")].filter(Boolean)) + `<p class="adm-note">Counted ${escapeHtml(admAgo(lb.at || 0))}, as the leaderboards show it.</p>` : '<p class="adm-none">Not on the leaderboards yet.</p>';
+  const head = ["", "#Questions", "#TUH", "#P", "#N", "#Acc", "#Points"];
+  return `<section class="fr-card adm-sec"><h3 class="eyebrow">All time</h3>${admTiles(admStatLine(s))}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">The last 30 days they played</h3>${bars}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Leaderboards</h3>${lbHtml}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">By category</h3>${admTable(["Category", ...head.slice(1)], admBreakdownRows(s.byCategory)) || '<p class="adm-none">Nothing yet.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">By difficulty</h3>${admTable(["Difficulty", ...head.slice(1)], admBreakdownRows(s.byDifficulty, (k) => k === "0" ? "Unrated" : "Difficulty " + k)) || '<p class="adm-none">Nothing yet.</p>'}</section>`;
+}
+function admSessionsHtml(d) {
+  const list = d.sessions || [];
+  if (!list.length) return '<section class="fr-card adm-sec"><p class="adm-none">No practice sessions on this profile.</p></section>';
+  const rows = list.map((s) => `<tr class="adm-srow${_admu.sess === s.session_id ? " on" : ""}" data-adm-sess="${escapeHtml(s.session_id)}" tabindex="0"><td>${escapeHtml(admTime(s.started_at))}</td><td>${escapeHtml(admDur((s.ended_at || 0) - (s.started_at || 0)))}</td><td class="num">${admNum(s.question_count)}</td><td class="num">${admNum(s.total_points)}</td><td class="adm-prev">${escapeHtml(s.categories || "")}</td></tr>`);
+  return `<section class="fr-card adm-sec"><h3 class="eyebrow">${admNum(list.length)} ${list.length === 1 ? "session" : "sessions"} <small class="adm-note">Click one to see its answers</small></h3>
+    ${admTable(["Started", "Length", "#Questions", "#Points", "Categories"], rows, "adm-sessions")}</section>
+    <section class="fr-card adm-sec" id="adm-sess"${_admu.sess ? "" : " hidden"}>${_admu.sess ? admSessionHtml() : ""}</section>`;
+}
+function admSessionHtml() {
+  const d = _admu.sd;
+  if (!d) return loadingBarHtml("");
+  if (d.error) return `<p class="adm-none">${escapeHtml(d.error)}</p>`;
+  const res = (e) => e.type === "bonus" ? (e.bonus_parts_correct || 0) + " parts" : !e.correct ? (Number(e.points) < 0 ? "Neg" : "Wrong") : Number(e.points) >= 15 ? "Power" : "Right";
+  const rows = (d.entries || []).map((e) => `<tr><td>${escapeHtml(new Date(e.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }))}</td><td>${e.type === "bonus" ? "Bonus" : "Tossup"}</td><td title="${escapeHtml(e.category_path || e.category || "")}"><div class="adm-cat">${escapeHtml(admCatShort(e.category_path || e.category || ""))}</div></td><td class="num">${e.difficulty == null ? "—" : escapeHtml(String(e.difficulty))}</td><td>${escapeHtml(e.given_answer || "")}${e.prompt_reply ? `<small class="adm-note"> then ${escapeHtml(e.prompt_reply)}</small>` : ""}</td><td class="adm-prev">${escapeHtml(e.answer || "")}</td><td><span class="adm-res adm-res-${res(e).split(" ")[0].toLowerCase()}">${res(e)}</span></td><td class="num">${admNum(e.points)}</td><td class="num">${e.type === "bonus" || e.celerity == null ? "—" : Math.round(e.celerity * 100) + "%"}</td></tr>`);
+  return `<h3 class="eyebrow">This session's answers</h3>${admTiles(admStatLine(d.stats || {}))}
+    ${admTable(["Time", "Kind", "Category", "#Diff", "Their answer", "Answer line", "Result", "#Pts", "#Celerity"], rows, "adm-answers") || '<p class="adm-none">No answers.</p>'}`;
+}
+const admCatShort = (p) => { const a = String(p || "").split(" > ").filter(Boolean); return a.length > 2 ? a[0] + " › " + a[a.length - 1] : a.join(" › "); };
+function wireAdmSessions(box) {
+  box.querySelectorAll("[data-adm-sess]").forEach((tr) => {
+    const go = async () => {
+      const sid = tr.dataset.admSess, id = _admu.id;
+      if (_admu.sess === sid) { _admu.sess = null; _admu.sd = null; paintAdmPart(); return; }
+      _admu.sess = sid; _admu.sd = null; paintAdmPart();
+      let d = null; try { d = await API.get("/api/admin/user/data?id=" + encodeURIComponent(id) + "&part=session&session=" + encodeURIComponent(sid) + (_admu.profile ? "&profile=" + encodeURIComponent(_admu.profile) : "")); } catch (e) {}
+      if (_admu.id !== id || _admu.sess !== sid) return;
+      _admu.sd = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that session." };
+      const sec = document.getElementById("adm-sess"); if (sec) { sec.hidden = false; sec.innerHTML = admSessionHtml(); sec.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+    };
+    tr.onclick = go; tr.onkeydown = (e) => { if (e.key === "Enter") go(); };
+  });
+}
+// a saved value, readable: lists joined, switches On / Off, objects as their JSON
+function admVal(v) {
+  if (v === true) return "On"; if (v === false) return "Off"; if (v == null || v === "") return "—";
+  if (Array.isArray(v)) return v.length ? v.map((x) => (typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ") : "None";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+function admSettingsHtml(d) {
+  const st = d.settings && typeof d.settings === "object" ? d.settings : null;
+  const rows = st ? Object.keys(st).sort().map((k) => `<tr><td>${escapeHtml(k)}</td><td class="adm-val">${escapeHtml(admVal(st[k]))}</td></tr>`) : [];
+  const saved = (d.saved || []).map((c) => `<tr><td>${escapeHtml(c.key)}</td><td class="num">${admNum(c.bytes)} B</td><td class="adm-prev">${escapeHtml(c.head)}</td></tr>`);
+  return `<section class="fr-card adm-sec"><h3 class="eyebrow">Practice setup</h3><p class="adm-note">What the Setup panel holds now (sessions don't keep their own settings, only each answer's category and difficulty).</p>
+      ${rows.length ? admTable(["Setting", "Value"], rows, "adm-kv") : '<p class="adm-none">Never changed from the defaults.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Everything else saved</h3>${admTable(["Key", "#Size", "Starts with"], saved) || '<p class="adm-none">Nothing else.</p>'}</section>`;
+}
+function admProgressHtml(d) {
+  const s = d.stats || {}, p = d.powers || {}, a = d.activity || {};
+  let achHtml = '<p class="adm-none">Couldn\'t work out the achievements.</p>';
+  try {
+    const ach = computeAchievementData(s, p.answer_counts || {}, p.answer_classes || {}, achRecordsFrom(p), p.ach_at);
+    const got = ACHIEVEMENT_LIST.filter((x) => ach[x.id] && ach[x.id].earned).sort((x, y) => (ach[y.id].at || 0) - (ach[x.id].at || 0));
+    achHtml = `<p class="adm-note">${admNum(got.length)} of ${admNum(ACHIEVEMENT_LIST.length)} earned</p>` +
+      (got.length ? `<div class="adm-chips">${got.map((x) => `<span class="adm-chip" title="${escapeHtml(x.desc || "")}${ach[x.id].at ? " · " + escapeHtml(admWhen(ach[x.id].at)) : ""}">${escapeHtml(x.name)}</span>`).join("")}</div>` : "");
+  } catch (e) {}
+  let trialsHtml = "";
+  try { trialsHtml = trialBadgesHtml(d.trials || {}); } catch (e) {}
+  return `<section class="fr-card adm-sec"><h3 class="eyebrow">Streak</h3>${admTiles([["Days in a row", admNum(a.streak)], ["Best streak", admNum(a.best)], ["Days played", admNum((a.days || []).length)]])}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Trials</h3>${trialsHtml || '<p class="adm-none">No trials played.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Achievements</h3>${achHtml}</section>`;
+}
+function admSocialHtml(d) {
+  const who = (f) => `<button type="button" class="adm-link" data-adm-open="${escapeHtml(f.id)}">${escapeHtml(f.displayName || f.handle || "?")}${f.handle ? ` <small>@${escapeHtml(f.handle)}</small>` : ""}</button>`;
+  const friends = (d.friends || []).map((f) => `<li>${who(f)}</li>`).join("");
+  const pend = [...(d.incoming || []).map((f) => `<li>${who(f)} <small class="adm-note">asked them</small></li>`), ...(d.outgoing || []).map((f) => `<li>${who(f)} <small class="adm-note">they asked</small></li>`)].join("");
+  const clubs = (d.clubs || []).map((c) => `<tr><td><button type="button" class="adm-link" data-adm-club="${escapeHtml(c.org)}">${escapeHtml(c.name)}</button> <small class="adm-note">${escapeHtml(c.tag)}</small></td><td>${escapeHtml(c.role)}</td><td>${escapeHtml((c.teams || []).join(", ") || "—")}</td><td>${escapeHtml(admWhen(c.joined))}</td><td>${c.left ? escapeHtml(admWhen(c.left)) : "—"}</td></tr>`);
+  const reports = (d.reports || []).map((r) => `<tr><td>${escapeHtml(admWhen(r.created_at))}</td><td>${escapeHtml(r.kind)}</td><td>${escapeHtml((REPORT_REASONS.find(([k]) => k === r.reason) || [])[1] || r.reason)}</td><td>${escapeHtml(r.status)}</td><td class="adm-prev">${escapeHtml((r.question && (r.question.answer || (r.question.answers || []).join(" / "))) || r.qid)}</td></tr>`);
+  const logins = (d.logins || []).map((l) => `<tr><td>${escapeHtml(admTime(l.at))}</td><td>${l.app ? "App" : "Website"}</td><td>${l.live ? "Signed in until " + escapeHtml(admWhen(l.until)) : "Ended " + escapeHtml(admWhen(l.until))}</td></tr>`);
+  const boards = (d.boards || []).map((b) => `<tr><td>${escapeHtml(b.name)}</td><td>${b.mine ? "Theirs" : b.owner ? "@" + escapeHtml(b.owner) : "—"}</td><td>${escapeHtml(b.status)}</td><td class="num">${admNum(b.members)}</td><td>${escapeHtml(admWhen(b.at))}</td></tr>`);
+  const plugs = [...(d.installs || []).map((x) => [x.plugin, "Got it", x.at]), ...(d.likes || []).map((x) => [x.plugin, "Likes it", x.at])].map(([pl, what, at]) => `<tr><td>${escapeHtml(pl)}</td><td>${what}</td><td>${escapeHtml(admWhen(at))}</td></tr>`);
+  return `<section class="fr-card adm-sec"><h3 class="eyebrow">Friends · ${admNum((d.friends || []).length)}</h3>${friends ? `<ul class="adm-people">${friends}</ul>` : '<p class="adm-none">No friends yet.</p>'}${pend ? `<h4 class="adm-sub">Requests</h4><ul class="adm-people">${pend}</ul>` : ""}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Organizations</h3>${admTable(["Organization", "Role", "Teams", "Joined", "Left"], clubs) || '<p class="adm-none">Not in an organization.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Question reports · ${admNum((d.reports || []).length)}</h3>${admTable(["Sent", "Kind", "Reason", "Status", "Answer line"], reports) || '<p class="adm-none">No reports.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Sign-ins</h3>${admTable(["Started", "Where", "Now"], logins) || '<p class="adm-none">No sign-ins kept.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Private leaderboards</h3>${admTable(["Name", "Owner", "They are", "#Members", "Made"], boards) || '<p class="adm-none">None.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Store plugins</h3>${admTable(["Plugin", "", "When"], plugs) || '<p class="adm-none">None.</p>'}</section>`;
+}
+// ── (15.131) Clubs (admins): every organization (its owner, size, teams, diagnostics) and one in full (members,
+// teams and who's on them, invites, requests, diagnostics), and every private leaderboard. Read only. ──
+const _admc = { d: null, id: null, od: null, q: "", gen: 0 };
+async function renderAdminClubs(c) {
+  c.innerHTML = `<div class="adm-page">${admTabsHtml()}
+    <div class="adm-users adm-clubs">
+      <aside class="adm-find">
+        <form id="admc-find" class="adm-search" autocomplete="off"><input id="admc-q" class="mode-input" placeholder="Organization, tag or owner" value="${escapeHtml(_admc.q)}" aria-label="Find an organization" spellcheck="false"></form>
+        <div class="adm-listhead" id="admc-head"></div>
+        <div class="adm-results" id="admc-list"></div>
+      </aside>
+      <section class="adm-user" id="admc-org"></section>
+    </div></div>`;
+  wireAdmTabs(c);
+  const q = c.querySelector("#admc-q");
+  q.addEventListener("input", () => { _admc.q = q.value; paintAdmClubList(); });
+  c.querySelector("#admc-find").addEventListener("submit", (e) => e.preventDefault());
+  paintAdmClubList(); paintAdmClub();
+  const my = ++_admc.gen;
+  let d = null; try { d = await API.get("/api/admin/clubs"); } catch (e) {}
+  if (my !== _admc.gen) return;
+  _admc.d = d && !d.error ? d : { error: (d && d.error) || "Couldn't load the organizations." };
+  paintAdmClubList(); paintAdmClub();
+  if (_admc.id && !_admc.od) admOpenClub(_admc.id);
+}
+function paintAdmClubList() {
+  const list = document.getElementById("admc-list"), head = document.getElementById("admc-head"); if (!list) return;
+  const d = _admc.d;
+  if (!d) { list.innerHTML = loadingBarHtml(""); return; }
+  if (d.error) { list.innerHTML = `<p class="adm-none">${escapeHtml(d.error)}</p>`; return; }
+  const q = _admc.q.trim().toLowerCase();
+  const orgs = (d.orgs || []).filter((o) => !q || [o.name, o.tag, o.owner, o.ownerName].some((x) => String(x || "").toLowerCase().includes(q)));
+  head.innerHTML = `<small>${admNum(orgs.length)} of ${admNum((d.orgs || []).length)} organizations</small>`;
+  list.innerHTML = orgs.map((o) => `<button type="button" class="adm-urow${o.id === _admc.id ? " on" : ""}" data-admc="${escapeHtml(o.id)}"><span class="club-tile sm" aria-hidden="true">${escapeHtml(o.tag)}</span><span class="adm-uname"><b>${escapeHtml(o.name)}</b><small>${admNum(o.members)} ${o.members === 1 ? "member" : "members"} · ${admNum(o.teams)} ${o.teams === 1 ? "team" : "teams"}${o.diags ? " · " + admNum(o.diags) + " diagnostics" : ""}</small></span></button>`).join("") || '<p class="adm-none">No organization matches.</p>';
+  list.querySelectorAll("[data-admc]").forEach((b) => b.onclick = () => admOpenClub(b.dataset.admc));
+}
+async function admOpenClub(id) {
+  _admc.id = id; _admc.od = null; paintAdmClubList(); paintAdmClub();
+  let d = null; try { d = await API.get("/api/admin/club?id=" + encodeURIComponent(id)); } catch (e) {}
+  if (_admc.id !== id) return;
+  _admc.od = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that organization." };
+  paintAdmClub();
+}
+function paintAdmClub() {
+  const el = document.getElementById("admc-org"); if (!el) return;
+  if (!_admc.id) {
+    const boards = ((_admc.d && _admc.d.boards) || []).map((b) => `<tr><td>${escapeHtml(b.name)}</td><td>${b.owner ? `<button type="button" class="adm-link" data-adm-open="${escapeHtml(b.ownerId)}">@${escapeHtml(b.owner)}</button>` : "—"}</td><td class="num">${admNum(b.members)}</td><td class="num">${admNum(b.pending)}</td><td>${escapeHtml(admWhen(b.at))}</td></tr>`);
+    el.innerHTML = `<p class="adm-none">Pick an organization to see its members, teams and diagnostics.</p>
+      <section class="fr-card adm-sec"><h3 class="eyebrow">Private leaderboards · ${admNum(((_admc.d && _admc.d.boards) || []).length)}</h3>${admTable(["Name", "Owner", "#Members", "#Invited", "Made"], boards) || '<p class="adm-none">None yet.</p>'}</section>`;
+    admWireOpenUser(el); return;
+  }
+  const d = _admc.od;
+  if (!d) { el.innerHTML = loadingBarHtml(""); return; }
+  if (d.error) { el.innerHTML = `<div class="db-empty">${escapeHtml(d.error)}</div>`; return; }
+  const o = d.org, owner = (d.members || []).find((m) => m.role === "owner");
+  const person = (m) => m.userId ? `<button type="button" class="adm-link" data-adm-open="${escapeHtml(m.userId)}">${escapeHtml(m.name)}</button>${m.handle ? ` <small class="adm-note">@${escapeHtml(m.handle)}</small>` : ""}` : `${escapeHtml(m.name)} <small class="adm-note">no account</small>`;
+  const live = (d.members || []).filter((m) => !m.left), gone = (d.members || []).filter((m) => m.left);
+  const mrow = (m) => `<tr><td>${person(m)}</td><td>${escapeHtml(m.role)}</td><td>${escapeHtml((m.teams || []).join(", ") || "—")}</td><td>${escapeHtml(admWhen(m.joined))}</td>${m.left ? `<td>${escapeHtml(admWhen(m.left))}</td>` : ""}</tr>`;
+  const teams = (d.teams || []).map((t) => `<tr><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.captain || "—")}</td><td class="num">${admNum((t.roster || []).length)}</td><td class="adm-prev">${escapeHtml((t.roster || []).join(", "))}</td><td>${t.lbShow ? "Shown" : "Hidden"}</td></tr>`);
+  const diags = (d.diags || []).map((x) => `<tr><td>${escapeHtml(admWhen(x.at))}</td><td>${escapeHtml(x.team)}</td><td>${escapeHtml(x.format)}</td><td>${escapeHtml(x.place)}</td><td>${escapeHtml(x.status)}</td><td class="num">${admNum(x.tu)} / ${admNum(x.bo)}</td><td class="num">${admNum(x.players)}</td><td>${x.released ? escapeHtml(admWhen(x.released)) : "—"}</td><td>${escapeHtml(x.by || "—")}</td></tr>`);
+  const inv = [...(d.invites || []).map((i) => `<tr><td>Invite</td><td>${i.handle ? "@" + escapeHtml(i.handle) : "—"}</td><td>${i.by ? "@" + escapeHtml(i.by) : "—"}</td><td>${escapeHtml(i.team || "—")}</td><td>${escapeHtml(admWhen(i.at))}</td></tr>`),
+    ...(d.requests || []).map((r) => `<tr><td>Asked to join</td><td>${r.handle ? "@" + escapeHtml(r.handle) : "—"}</td><td>—</td><td>—</td><td>${escapeHtml(admWhen(r.at))}</td></tr>`)];
+  const sets = [o.lbShow ? "On the leaderboards" : "Off the leaderboards", o.codeJoin ? "Joins with the code" + (o.approve ? ", approved by admins" : "") : "Joins by invite only",
+    "Invites: " + (o.inviteBy === "admins" ? "admins" : "captains and admins"), "Diagnostics: " + (o.runBy === "admins" ? "admins" : "captains and admins"), "Player cards: " + (o.cardsFor || "captains")];
+  el.innerHTML = `<div class="fr-card adm-uhead"><span class="club-tile" aria-hidden="true">${escapeHtml(o.tag)}</span>
+      <div class="adm-uhead-txt"><b>${escapeHtml(o.name)}</b><small>Code ${escapeHtml(o.code)} · made ${escapeHtml(admWhen(o.at))}${owner ? " · owner " : ""}${owner ? person(owner) : ""}</small>
+        <small>${admNum(live.length)} ${live.length === 1 ? "member" : "members"} · ${admNum((d.teams || []).length)} teams · ${admNum((d.diags || []).length)} diagnostics</small></div></div>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Settings</h3><div class="adm-chips">${sets.map((x) => `<span class="adm-chip">${escapeHtml(x)}</span>`).join("")}</div></section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Teams</h3>${admTable(["Team", "Captain", "#Players", "On it", "Teams board"], teams) || '<p class="adm-none">No teams.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Members · ${admNum(live.length)}</h3>${admTable(["Name", "Role", "Teams", "Joined"], live.map(mrow))}</section>
+    ${gone.length ? `<section class="fr-card adm-sec"><h3 class="eyebrow">Left · ${admNum(gone.length)}</h3>${admTable(["Name", "Role", "Teams", "Joined", "Left"], gone.map(mrow))}</section>` : ""}
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Invites and requests</h3>${admTable(["", "Who", "By", "Team", "When"], inv) || '<p class="adm-none">None waiting.</p>'}</section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Diagnostics</h3>${admTable(["Made", "Team", "Format", "Where", "Status", "#TU / B", "#Players", "Released", "Made by"], diags) || '<p class="adm-none">None yet.</p>'}</section>`;
+  admWireOpenUser(el);
+}
+// ── (15.131) Lessons (admins): how much each lesson is read on the website (views, and readers counted once a lesson
+// a day; the last 30 days), and the reports and feedback readers send on a lesson, a visual, a photo or a picture ──
+const _adml = { d: null, status: "open", gen: 0, counts: null };
+const ADML_KIND = { lesson: "Lesson", visual: "Visual", photo: "Photo", picture: "Gallery picture" };
+async function renderAdminLessons(c) {
+  if (!c.querySelector(".adm-lpage")) c.innerHTML = `<div class="adm-page adm-lpage">${admTabsHtml()}<div id="adml-body">${loadingBarHtml("")}</div></div>`;
+  wireAdmTabs(c);
+  const my = ++_adml.gen;
+  let d = null; try { d = await API.get("/api/admin/lessons?status=" + _adml.status + "&limit=100"); } catch (e) {}
+  if (my !== _adml.gen || !document.getElementById("adml-body")) return;
+  _adml.d = d && !d.error ? d : { error: (d && d.error) || "Couldn't load the lessons' numbers." };
+  if (_adml.d.counts) _adml.counts = _adml.d.counts;
+  paintAdminLessons(c);
+}
+function paintAdminLessons(c) {
+  const body = document.getElementById("adml-body"), d = _adml.d; if (!body || !d) return;
+  const tabs = c.querySelector(".adm-tabs"); if (tabs) tabs.outerHTML = admTabsHtml(); wireAdmTabs(c);
+  if (d.error) { body.innerHTML = `<div class="db-empty">${escapeHtml(d.error)}</div>`; return; }
+  const name = (r) => escapeHtml(r.title || r.lesson);
+  const pack = (r) => escapeHtml(r.packTitle || r.pack);
+  const max = Math.max(1, ...(d.days || []).map((r) => r.views || 0));
+  const bars = (d.days || []).map((r, i, a) => `<div class="adm-bar${i === a.length - 1 ? " today" : ""}" title="${escapeHtml(r.day)}: ${admNum(r.views)} views, ${admNum(r.readers)} readers"><i style="height:${Math.max(r.views ? 3 : 0, Math.round(((r.views || 0) / max) * 100))}%"></i><span>${escapeHtml(r.day.slice(8))}</span></div>`).join("");
+  const tile = (l, t) => `<div class="fr-card adm-card"><small>${l}</small><b class="num">${admNum(t && t.views)}</b><span>${admNum(t && t.readers)} readers</span><span>${admNum(t && t.lessons)} lessons</span></div>`;
+  const lessons = (d.lessons || []).map((r) => `<tr><td>${name(r)}</td><td>${pack(r)}</td><td class="num">${admNum(r.views)}</td><td class="num">${admNum(r.readers)}</td></tr>`);
+  const packs = (d.packs || []).map((r) => `<tr><td>${pack(r)}</td><td class="num">${admNum(r.views)}</td><td class="num">${admNum(r.readers)}</td></tr>`);
+  const LV = { ms1: "MS Beginner", ms2: "MS Advanced", ms3: "MS Extra", hs1: "HS Beginner", hs2: "HS Intermediate", hs3: "HS Advanced", hs4: "HS Extra", c1: "College Beginner", c2: "College Advanced", c3: "College Extra" };
+  const levels = (d.levels || []).map((r) => `<span class="adm-chip">${escapeHtml(LV[r.level] || r.level || "No level")} · ${admNum(r.views)}</span>`).join("");
+  const seg = `<div class="seg adm-lseg" role="tablist">${[["open", "Open"], ["done", "Done"], ["all", "All"]].map(([k, l]) => `<button type="button" class="${_adml.status === k ? "on" : ""}" data-adml-status="${k}" aria-pressed="${_adml.status === k}">${l}${k !== "all" && d.counts ? " " + admNum(d.counts[k]) : ""}</button>`).join("")}</div>`;
+  const rep = (r) => {
+    const what = r.kind === "visual" ? r.visual + (r.chapter ? " · " + r.chapter : "") : r.kind === "picture" ? [r.picture, r.visual].filter(Boolean).join(" · ") : r.kind === "photo" ? r.visual : "";
+    const who = r.by ? `<button type="button" class="adm-link" data-adm-open="${escapeHtml(r.by.id)}">${escapeHtml(r.by.name || r.by.handle || "?")}</button>` : "a signed-out reader";
+    return `<article class="fr-card adm-lrep" data-adml="${escapeHtml(r.id)}">
+      <header><span class="adm-chip">${escapeHtml(ADML_KIND[r.kind] || r.kind)}</span><b>${escapeHtml(r.reason)}</b><span class="adm-note">${escapeHtml(admAgo(r.at))}, from ${who}</span></header>
+      <p class="adm-lwhere">${escapeHtml(r.title || r.lesson)} <small class="adm-note">${escapeHtml(r.packTitle || r.pack)}${r.level ? " · " + escapeHtml(LV[r.level] || r.level) : ""}</small></p>
+      ${what ? `<p class="adm-lwhat">${escapeHtml(what)}${r.credit ? ` <small class="adm-note">${escapeHtml(r.credit)}</small>` : ""}</p>` : ""}
+      ${r.note ? `<blockquote class="adm-lnote">${escapeHtml(r.note)}</blockquote>` : ""}
+      <div class="adm-lact">${r.status === "open" ? `<button type="button" class="btn btn-sm btn-primary" data-adml-act="done">Mark done</button>` : `<button type="button" class="btn btn-sm" data-adml-act="reopen">Reopen</button>`}<button type="button" class="btn btn-sm btn-danger-ghost" data-adml-act="delete">Delete</button></div>
+    </article>`;
+  };
+  const none = !d.onSite && !(d.all && d.all.views) ? `<p class="adm-note adm-lnone">Lessons aren't on the website yet. Their views and reports show here once they are.</p>` : "";
+  body.innerHTML = `${none}
+    <div class="adm-cards adm-lcards">${tile("Views today", d.today)}${tile("Views, 7 days", d.week)}${tile("Views, 30 days", d.month)}${tile("Views, all time", d.all)}</div>
+    <section class="fr-card adm-chart"><div class="adm-chart-head"><h2>Lesson views</h2><small>last 30 days</small></div><div class="adm-bars">${bars}</div></section>
+    <section class="fr-card adm-sec"><h3 class="eyebrow">Levels read, 30 days</h3>${levels ? `<div class="adm-chips">${levels}</div>` : '<p class="adm-none">Nothing read yet.</p>'}</section>
+    <div class="adm-lgrid">
+      <section class="fr-card adm-sec"><h3 class="eyebrow">Most read lessons, 30 days</h3>${admTable(["Lesson", "Pack", "#Views", "#Readers"], lessons) || '<p class="adm-none">Nothing read yet.</p>'}</section>
+      <section class="fr-card adm-sec"><h3 class="eyebrow">Packs, 30 days</h3>${admTable(["Pack", "#Views", "#Readers"], packs) || '<p class="adm-none">Nothing read yet.</p>'}</section>
+    </div>
+    <section class="adm-lreports"><div class="adm-lrhead"><h2>Reports and feedback</h2>${seg}</div>
+      ${(d.reports || []).length ? (d.reports || []).map(rep).join("") : `<p class="adm-none">${_adml.status === "open" ? "Nothing open." : "None."}</p>`}</section>`;
+  body.querySelectorAll("[data-adml-status]").forEach((b) => b.onclick = () => { _adml.status = b.dataset.admlStatus; renderAdminLessons(c); });
+  body.querySelectorAll("[data-adml-act]").forEach((b) => b.onclick = () => {
+    const card = b.closest("[data-adml]"), id = card.dataset.adml, action = b.dataset.admlAct;
+    const run = async () => {
+      let r = null; try { r = await API.post("/api/admin/lessons", { id, action }); } catch (e) {}
+      if (!r || !r.ok) { failBubble(b, (r && r.error) || "Couldn't do that."); return; }
+      if (r.counts) _adml.counts = r.counts;
+      renderAdminLessons(c);
+    };
+    if (action === "delete") confirmDialog("Delete this report for good?", run, { yes: "Delete", danger: true }); else run();
+  });
+  admWireOpenUser(body);
+}
+// a name in Clubs opens that account in Users
+function admWireOpenUser(el) {
+  el.querySelectorAll("[data-adm-open]").forEach((b) => b.onclick = () => { _adm.tab = "users"; _admu.part = "overview"; renderAdmin(); window.qbWebPathSync?.(); admOpen(b.dataset.admOpen); });
+}
+
 async function renderAdmin() {
   const c = document.getElementById("admin-container"); if (!c) return;
   if (_adm.tab === "users") { paintAdminUsers(c); return; }
   if (_adm.tab === "reports") { renderAdminReports(c); return; }
   if (_adm.tab === "visitors") { renderAdminVisitors(c); return; }
+  if (_adm.tab === "clubs") { renderAdminClubs(c); return; }
+  if (_adm.tab === "lessons") { renderAdminLessons(c); return; }
   if (!c.querySelector(".adm-page") || c.querySelector(".adm-users, .adm-rpage, .adm-vpage")) c.innerHTML = loadingBarHtml("Loading…");
   loadAdmGeo();
   let d;
@@ -17309,6 +17615,7 @@ async function renderAdmin() {
   if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml(d && d.error === "Not found" ? "Nothing here." : (d && d.error) || "Couldn't load the stats.")}</div>`; return; }
   _adm.data = d;
   if (d.reports) _admr.counts = d.reports;   // the Reports tab's count
+  if (d.lessonReports) _adml.counts = d.lessonReports;   // and the Lessons tab's
   paintAdmin(c);
 }
 function paintAdmin(c) {

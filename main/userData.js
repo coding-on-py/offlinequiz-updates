@@ -585,6 +585,18 @@ export class UserData {
     return { profiles: one("SELECT COUNT(*) AS n FROM profiles"), starred: one("SELECT COUNT(*) AS n FROM starred"),
       answers: one("SELECT COUNT(*) AS n FROM sessions"), sessions: one("SELECT COUNT(DISTINCT session_id) AS n FROM sessions"), plugin };
   }
+  // (15.131) for the site's admins: what a profile keeps in config besides its plugin data (its settings, trials,
+  // review lists, achievement dates, notes …) and the account-wide keys, each with its size and its start
+  adminConfig(profile) {
+    const out = [];
+    for (const r of this.db.prepare("SELECT key, length(value) AS n, substr(value, 1, 240) AS head FROM config ORDER BY key").all()) {
+      if (/^plug:/.test(r.key)) continue;
+      const m = /^(.+):([^:]+)$/.exec(r.key), owner = m ? m[2] : "";
+      if (m && owner !== String(profile) && this.db.prepare("SELECT 1 FROM profiles WHERE id = ?").get(owner)) continue;   // another profile's
+      out.push({ key: r.key, bytes: Number(r.n) || 0, head: r.head == null ? "" : String(r.head) });
+    }
+    return out;
+  }
   adminClearPluginData(profile, pluginId, key) {
     const k = "plug:" + profile + ":" + pluginId + ":" + key;
     if (this.getConfig(k) == null) return { error: "Nothing stored there." };
