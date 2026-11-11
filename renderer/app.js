@@ -641,7 +641,7 @@ const ICON = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 010 7M18 15c2 .7 3.2 2.3 3.8 5"/>',
   star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   puzzle: '<path d="M9 3h6v3a2 2 0 004 0V3h2v8h-3a2 2 0 000 4h3v6h-8v-3a2 2 0 00-4 0v3H3v-6h3a2 2 0 000-4H3V3z"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',   // (15.133) a real cog: the old one was a sun (a circle and eight rays)
   review: '<path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
@@ -12898,13 +12898,54 @@ function trialBadgesHtml(trials, extra) {
   const keys = order(best), subKeys = order(subs);
   if (!keys.length && !subKeys.length && !extra && !xp && !subXp) return "";
   const emb = (k, lv, size) => `<button type="button" class="tr-emb lv${lv}" data-badge="${k}" data-lv="${lv}" title="${escapeHtml(trialName(k, lv))}" aria-label="${escapeHtml(trialName(k, lv))} badge">${trialEmblem(k, lv, size)}<span class="tr-emb-name">${escapeHtml(trialName(k, lv))}</span></button>`;
+  // (15.133) a category's subcategory badges are one stack (its best on top, the count on it), so a player with
+  // all 164 still has two short rows. A click opens that category's badges (openBadgeGroup); one badge stays a badge.
+  const groups = TRIAL_CATS.map(([ck, cname], i) => ({ ck, cname, i, keys: subKeys.filter((k) => trialMeta(k).cat === ck) })).filter((g) => g.keys.length)
+    .sort((a, b) => subs[b.keys[0]] - subs[a.keys[0]] || a.i - b.i);
+  const stack = (g) => {
+    if (g.keys.length === 1) return emb(g.keys[0], subs[g.keys[0]], 46);
+    const top = g.keys[0], n = g.keys.length, label = `${g.cname} subcategories, ${n} badges`;
+    return `<button type="button" class="tr-emb tr-stack lv${subs[top]}" data-stack="${g.ck}" style="--hue:${trialHue(g.ck)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">` +
+      `<span class="tr-stack-back" aria-hidden="true">${trialEmblem(g.keys[1], subs[g.keys[1]], 46)}</span>${trialEmblem(top, subs[top], 46)}<span class="tr-stack-n num" aria-hidden="true">${n}</span></button>`;
+  };
   return `<div class="tr-badge-sets">` +
     (keys.length || extra || xp ? `<div class="tr-badges" aria-label="Category badges">${xp ? `<span class="tr-xp-pill num" title="Category trial XP">${fmtXp(xp)}</span>` : ""}${extra || ""}${keys.map((k) => emb(k, best[k], 62)).join("")}</div>` : "") +
-    (subKeys.length || subXp ? `<div class="tr-badges tr-badges-sub" aria-label="Subcategory badges">${subXp ? `<span class="tr-xp-pill num" title="Subcategory trial XP">${fmtXp(subXp)}</span>` : ""}${subKeys.map((k) => emb(k, subs[k], 46)).join("")}</div>` : "") + `</div>`;
+    (subKeys.length || subXp ? `<div class="tr-badges tr-badges-sub" aria-label="Subcategory badges">${subXp ? `<span class="tr-xp-pill num" title="Subcategory trial XP">${fmtXp(subXp)}</span>` : ""}${groups.map(stack).join("")}</div>` : "") + `</div>`;
 }
 // a badge's details: the emblem big, when it was won, the road through the ten, and (your own) the next level
 function wireBadges(container, trials, own) {
   container.querySelectorAll(".tr-emb[data-badge]").forEach((b) => { b.onclick = () => openBadgeDetail(b.dataset.badge, trials, own, b.dataset.extra); });
+  container.querySelectorAll(".tr-stack[data-stack]").forEach((b) => { b.onclick = () => openBadgeGroup(b.dataset.stack, trials, own); });
+}
+// (15.133) one category's subcategory badges, each with its name and level; a click opens that badge's details on top
+function openBadgeGroup(ck, trials, own) {
+  document.getElementById("badge-group")?.remove();
+  const cat = TRIAL_CATS.find((c) => c[0] === ck); if (!cat) return;
+  const subs = subTrialBadges(trials);
+  const keys = TRIAL_SUBS.filter((x) => x[2] === ck && subs[x[0]]).map((x) => x[0]).sort((a, b) => subs[b] - subs[a]);
+  const xp = keys.reduce((n, k) => n + trialXpOf(trials, k), 0);
+  const el = document.createElement("div");
+  el.id = "badge-group";
+  el.className = "qb-overlay review-ovl ach-ovl";
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "bgr-h");
+  el.innerHTML = `
+    <div class="settings-modal tp-modal bgr-modal" tabindex="-1" style="--hue:${trialHue(ck)}">
+      <div class="modal-head"><h2 id="bgr-h">${escapeHtml(cat[1])} subcategories</h2><span class="spacer"></span>
+        <button type="button" class="btn btn-ghost btn-icon" id="bgr-x" aria-label="Close">${ic("x")}</button></div>
+      <div class="achd-body bgr-body"><p class="bd-sub">${keys.length} ${keys.length === 1 ? "badge" : "badges"} · ${fmtXp(xp)}</p>
+        <div class="bgr-grid">${keys.map((k) => `<button type="button" class="bgr-cell" data-badge="${k}" title="${escapeHtml(trialMeta(k).name)}" aria-label="${escapeHtml(trialName(k, subs[k]))} badge">${trialEmblem(k, subs[k], 56)}<span class="bgr-name">${escapeHtml(trialMeta(k).name)}</span><span class="bgr-lv">Level ${ROMAN[subs[k]]}</span></button>`).join("")}</div></div>
+      <div class="modal-foot"><button type="button" class="btn" id="bgr-close">Close</button></div>
+    </div>`;
+  const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); };
+  // Escape closes a badge's details first (both listen on the document)
+  const onKey = (e) => { if (e.key === "Escape" && !document.getElementById("badge-detail")) { e.preventDefault(); e.stopPropagation(); close(); } };
+  document.addEventListener("keydown", onKey, true);
+  el.addEventListener("click", (ev) => { if (ev.target === el) close(); });
+  document.body.appendChild(el);
+  el.querySelector("#bgr-x").onclick = close;
+  el.querySelector("#bgr-close").onclick = close;
+  el.querySelectorAll(".bgr-cell").forEach((b) => { b.onclick = () => openBadgeDetail(b.dataset.badge, trials, own); });
+  try { el.querySelector(".bgr-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 function openBadgeDetail(key, trials, own, extra) {
   document.getElementById("badge-detail")?.remove();
@@ -12966,7 +13007,7 @@ function openBadgeDetail(key, trials, own, extra) {
   el.querySelector("#bd-x").onclick = close;
   el.querySelector("#bd-close").onclick = close;
   const nx = el.querySelector("#bd-next");
-  if (nx) nx.onclick = () => { const m = trialMeta(key); close(); prepTrial({ key, name: m.name, level: parseInt(nx.dataset.lv, 10) || 1 }); };
+  if (nx) nx.onclick = () => { const m = trialMeta(key); close(); document.getElementById("badge-group")?.remove(); prepTrial({ key, name: m.name, level: parseInt(nx.dataset.lv, 10) || 1 }); };
   try { el.querySelector(".bd-modal").focus({ preventScroll: true }); } catch (e) {}
 }
 function trialState(info, key, level) {
