@@ -1427,12 +1427,17 @@ export class App {
       const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
       let ids = pick("pure");
       if (ids.length < LEN) ids = shuffle([...new Set([...ids, ...pick("home")])].slice(0, LEN));
-      // a branch short at its level borrows from the levels next to it, then the ones beside those (15.119: and the
-      // ones beside those, for the small myth branches)
-      if (sub) for (const d of [[level - 1, level + 1], [level - 2, level + 2], [level - 3, level + 3]]) {
-        if (ids.length >= LEN) break;
-        const ds = d.filter((x) => x >= 0 && x <= 10);
-        ids = shuffle([...new Set([...ids, ...pick("pure", ds), ...pick("home", ds)])].slice(0, LEN));
+      // a branch short at its level borrows from the levels next to it, then the ones beside those, one step further
+      // each time until it has its five (15.119: the small myth branches). Never difficulty 0: that's unrated, not
+      // easiest (15.128), so level I reads difficulty 1 and borrows only from above (Mesopotamian myth's 1–4 are
+      // nearly all Gilgamesh, so its level I takes its last answers from 5)
+      if (sub) for (let k = 1; k <= 9 && ids.length < LEN; k++) {
+        const ds = [level - k, level + k].filter((x) => x >= 1 && x <= 10);
+        if (!ds.length) continue;
+        // the nearer levels' questions stay; the new ones fill what's left (in a random order), and the five are read
+        // in a random order
+        ids = [...new Set([...ids, ...shuffle([...pick("pure", ds), ...pick("home", ds)])])].slice(0, LEN);
+        if (ids.length >= LEN) ids = shuffle(ids);
       }
       if (ids.length < LEN) return { ok: false, error: "There aren't enough power-marked questions for this trial yet." };
       t.s = now; t.run = me; save();
@@ -1577,13 +1582,14 @@ export class App {
     return { ...out, attempt };
   }
   // a trial's rules by its key: a category's ten at its level (the category by name, as before), or a subcategory's
-  // five (15.58), whose questions lie under its node and may come from the levels beside it (± 2)
+  // five (15.58), whose questions lie under its node and may come from the levels beside it (as far as it takes to
+  // find five answers; never difficulty 0, unrated, 15.128)
   _trialSpec(ck) {
     const sub = TRIAL_SUBS.find((c) => c[0] === ck);
     if (sub) {
       let node = null; try { node = this.questionDb.getCategoryNode(sub[3]); } catch {}
       if (!node) return null;
-      return { name: sub[1], len: SUB_LEN, xpOf: subTrialXp, fits: (q, level) => Math.abs(Number(q.difficulty) - level) <= 2 && Number(q.category_ord) >= node.ord && Number(q.category_ord) <= node.ord_end };
+      return { name: sub[1], len: SUB_LEN, xpOf: subTrialXp, fits: (q, level) => Number(q.difficulty) >= 1 && Number(q.category_ord) >= node.ord && Number(q.category_ord) <= node.ord_end };
     }
     const cat = TRIAL_CATS.find((c) => c[0] === ck);
     return cat ? { name: cat[1], len: TRIAL_LEN, xpOf: trialXp, fits: (q, level) => Number(q.difficulty) === level && (q.category === cat[2] || String(q.category_path || "").split(" > ")[0] === cat[2]) } : null;

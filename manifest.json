@@ -1,5 +1,5 @@
 {
-  "version": "15.127",
+  "version": "15.128",
   "renderer": [
     "index.html",
     "style.css",
@@ -170,7 +170,7 @@
     }
   ],
   "main": true,
-  "notes": "minor ui fixes",
+  "notes": "bug fixes",
   "files": {
     "renderer/index.html": "ce02c7e174c4d1dbc6bee1ca1f0b576a533d3c68d744dd5d15323934eb9c9f74",
     "renderer/style.css": "ee666ee9bedbc439248affb028bc08d1894fdaaf30ca048f1068382c75b7fe3b",
@@ -210,5 +210,5 @@
     "plugins/voice-answers.zip": "0f7d2928186eee4a99d04ba36d4d0840816b65ed294d357a0a23735088905a84",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "F8LaAkrYemvstx5qTlAbeGlTHIG090QjTQjIJ2FQ/QFK8hNQQ8CG8Rq0oocHzj64Xlm5grgS9hy3cxEcqg1PDw=="
+  "signature": "fxnoaXyWKbb5/veIPXdEOT8fqgndWUHA0fhJJgEKt1wymlmliK8KWThOoNP28ULVRuKpnDhkCMUYtFEfUsi4DA=="
 }
