@@ -18,9 +18,20 @@ export function calculateCelerity(buzzCharIndex, totalQuestionLength) {
   return Math.round(ratio * 1000) / 1000;
 }
 
+// (15.125) the power lasts until the first word after the mark starts: a buzz with "(*)" read but nothing of the next
+// word (only the space after it, or an opening quote) is still a power. The index of that word's first letter or
+// digit (the text's length when nothing follows), -1 without a mark. Positions count question_sanitized as stored,
+// "(*)" included: a buzz at n has read the n characters before it.
+export function powerLimit(questionText, markIdx) {
+  const text = String(questionText || ""), i = markIdx == null ? findPowerMark(text) : markIdx;
+  if (i < 0) return -1;
+  const m = /[\p{L}\p{N}]/u.exec(text.slice(i + 3));
+  return m ? i + 3 + m.index : text.length;
+}
+
 export function isPowerBuzz(buzzCharIndex, questionText) {
   const powerMarkIdx = findPowerMark(questionText);
-  const isPower = powerMarkIdx >= 0 && buzzCharIndex <= powerMarkIdx;
+  const isPower = powerMarkIdx >= 0 && buzzCharIndex <= powerLimit(questionText, powerMarkIdx);
   return { isPower, powerPosition: powerMarkIdx };
 }
 

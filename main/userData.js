@@ -769,6 +769,17 @@ export class UserData {
     return this.db.prepare(`SELECT id, session_id, type, question_id, points, correct, celerity, buzz_position, given_answer, timestamp FROM sessions
       WHERE profile_id = ? AND type = 'tossup' AND correct = 0 AND question_id IS NOT NULL AND given_answer IS NOT NULL AND TRIM(given_answer) != ''`).all(this.getActiveProfileId());
   }
+  // (15.125) right answers scored 10 with a buzz position: a buzz between "(*)" and the next word's first letter was
+  // scored as after the mark; the regrade makes those powers
+  powerGapCandidates() {
+    return this.db.prepare(`SELECT id, session_id, type, question_id, points, correct, celerity, buzz_position, given_answer, timestamp FROM sessions
+      WHERE profile_id = ? AND type = 'tossup' AND correct = 1 AND points = 10 AND question_id IS NOT NULL AND buzz_position IS NOT NULL`).all(this.getActiveProfileId());
+  }
+  // a right answer made a power (more points at the same buzz); only ever up
+  applyPowerUp(rowId, points, celerity) {
+    return this.db.prepare("UPDATE sessions SET points = ?, celerity = COALESCE(?, celerity), mtime = ?, seq = ?, src = NULL WHERE id = ? AND correct = 1 AND points < ?")
+      .run(Number(points), celerity == null ? null : Number(celerity), Date.now(), this._nextSeq(), Number(rowId), Number(points));
+  }
   // the tossups answered from `from` to `to` (a trial attempt's window), in order
   tossupsBetween(from, to) {
     return this.db.prepare(`SELECT id, session_id, type, question_id, points, correct, given_answer, buzz_position, timestamp FROM sessions

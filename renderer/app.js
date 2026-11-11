@@ -8410,7 +8410,8 @@ async function judgeWithPluginRules(answer) {
   }
 
   const correct = verdict.status === "accept";
-  const isPower = correct && state.prePowerEnd > 0 && state.buzzPosition <= state.prePowerEnd;
+  // (15.125) a power until the first word after the mark starts (a buzz with only the space or a quote after "(*)" read)
+  const isPower = correct && state.prePowerEnd > 0 && !/[\p{L}\p{N}]/u.test((state.currentDisplayText || "").slice(state.prePowerEnd, state.buzzPosition));
   const textLen = (state.currentDisplayText || q.question_sanitized || "").length || 1;
   const celerity = fullyRead ? 1 : Math.min(1, state.buzzPosition / textLen);
   const basePoints = correct ? (isPower ? 15 : 10) : (fullyRead ? 0 : -5);
@@ -17477,7 +17478,14 @@ function adminRefundHtml(r) {
     return `<span class="adm-rrefunded">${ic("check", 13)}Refunded ${f.points > 0 ? "+" : ""}${Number(f.points) || 0}${extra ? ", " + escapeHtml(extra) : ""}${f.system ? " <small>by the system</small>" : f.by ? ` <small>by @${escapeHtml(f.by)}</small>` : ""}</span>`;
   }
   const a = r.answer;
-  if (!a || (r.kind !== "bonus" && a.correct) || (r.kind === "bonus" && a.got && a.got.length && a.got.every(Boolean))) return "";
+  // (15.125) and a right answer scored 10 that was a power at its buzz: between "(*)" and the next word's first letter
+  const gap = () => {
+    const t = String((r.question && r.question.text) || ""), m = t.indexOf("(*)");
+    if (m < 0 || !a || a.buzz == null || !(a.buzz > m)) return false;
+    const w = /[\p{L}\p{N}]/u.exec(t.slice(m + 3));
+    return a.buzz <= (w ? m + 3 + w.index : t.length);
+  };
+  if (!a || (r.kind !== "bonus" && a.correct && !(Number(a.points) === 10 && gap())) || (r.kind === "bonus" && a.got && a.got.length && a.got.every(Boolean))) return "";
   return `<button type="button" class="btn btn-sm adm-rrefund" data-ract="refund">${ic("undo", 14)}Refund points</button>`;
 }
 function adminReportHtml(r) {

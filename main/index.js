@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { QuestionDatabase } from "./database.js";
 import { UserData, EVENT, EVENTS, eventOn, eventItemNow, mergeAchDates, shownAchDates } from "./userData.js";
 import { checkAnswer, checkBonus, evaluateAnswer, answerContext, parseDirectives, frequencyKey, similarityKeys, similarKeysMatch, primaryAnswer, normalizeText, achievementNames } from "./answerChecker.js";
-import { scoreTossup, scoreBonus } from "./scoring.js";
+import { scoreTossup, scoreBonus, isPowerBuzz } from "./scoring.js";
 import { computeStats, computeSessionBreakdown } from "./stats.js";
 // this machine's time zone: the desktop app's player is the one at it (15.110)
 const LOCAL_ZONE = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
@@ -159,7 +159,7 @@ const TRIAL_LEN = 10, TRIAL_RUN_MS = 20 * 60e3, SUB_LEN = 5;
 export const trialCooldownMs = (level) => (level <= 1 ? 0 : level <= 3 ? 5 * 60e3 : 10 * 60e3);
 // 15.12 regrades: bump when a checker fix (or a corrected database) should look at old wrong answers again. A run is
 // keyed by this and the question database's build, so a new database re-runs it too (only answers still wrong).
-export const REGRADE_V = "15.121";   // 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME); 15.61: subcategory trials refunded (_trialRepair); 15.77: a misspelled extra word, exact hidden accepts first; 15.121: a name misspelled after its required initial (15.118), vowel-only misspellings of a name, a 4-letter swap
+export const REGRADE_V = "15.125";   // 15.125: a buzz between "(*)" and the next word is a power; 15.20: "accept either nickname or number"; 15.41: one name's spellings (SAME_NAME); 15.61: subcategory trials refunded (_trialRepair); 15.77: a misspelled extra word, exact hidden accepts first; 15.121: a name misspelled after its required initial (15.118), vowel-only misspellings of a name, a 4-letter swap
 // two refund summaries as one window (an admin's refund and a regrade, or two refunds): their sums, their trials
 export function mergeRegrade(a, b) {
   const n = (x) => Number(x) || 0;
@@ -1552,16 +1552,18 @@ export class App {
       if (!U.applyBonusRefund(row.id, add, parts).changes) return { error: "Couldn't refund that answer." };
       out.points = add;
     } else {
-      if (Number(row.correct)) return { error: "That answer already counts." };
+      // (15.125) a right answer counts unless it was a power at its buzz (scored 10 between "(*)" and the next word)
+      const right = !!Number(row.correct);
+      if (right && !(Number(row.points) < 15)) return { error: "That answer already counts." };
       let q = null; try { q = this.questionDb.getTossup(qid); } catch {}
       if (!q) return { error: "That question isn't in the database." };
-      const was = Number(row.points) || 0, text0 = String(q.question_sanitized || q.question || ""), len = text0.length, fullyRead = was === 0;
+      const was = Number(row.points) || 0, text0 = String(q.question_sanitized || q.question || ""), len = text0.length, fullyRead = !right && was === 0;
       const pos = row.buzz_position != null ? Number(row.buzz_position) : len;
       // the trial this answer ended, found before it's written right (written, it no longer ends anything)
       const { trials, trialRow } = this._trialEnders(), trial = trialRow.get(row.id);
       // right at its own buzz: the scoring a right answer gets there (no checker)
       const res = scoreTossup({ userAnswer: String(row.given_answer || ""), answerline: q.answer, sanitizedAnswer: q.answer_sanitized, buzzCharIndex: fullyRead ? len : pos, questionText: text0, fullyRead }, () => ({ correct: true }));
-      if (!U.applyRegrade(row.id, res.points, res.celerity).changes) return { error: "That answer already counts." };
+      if (right ? !(Number(res.points) > was) || !U.applyPowerUp(row.id, res.points, res.celerity).changes : !U.applyRegrade(row.id, res.points, res.celerity).changes) return { error: "That answer already counts." };
       out.points = Number(res.points) - was; if (was < 0) out.negs = 1; if (res.isPower) out.powers = 1;
       if (trial && res.isPower) {
         const c = this._creditTrial(trials, trial, Number(row.timestamp) || Date.now());
@@ -1689,6 +1691,23 @@ export class App {
       log.push({ id: r.id, q: r.question_id, from: was, to: Number(res.points), at: Date.now() });
       // a trial that ended here: one more power, and it ends there (the tenth passes)
       if (trial && res.isPower) {
+        const c = this._creditTrial(trials, trial, Number(r.timestamp) || Date.now());
+        if (c) { out.trials.push(c); out.xp += c.xp; }
+      }
+    }
+    // (15.125) right answers scored 10 whose buzz fell between "(*)" and the next word's first letter: powers now (an
+    // answer marked right by hand too: only where it was buzzed changes)
+    for (const r of U.powerGapCandidates()) {
+      if (++n % 150 === 0) await new Promise((res) => setImmediate(res));
+      const q = tossupOf(r.question_id); if (!q) continue;
+      const text0 = String(q.question_sanitized || q.question || ""), mark = text0.indexOf("(*)"), pos = Number(r.buzz_position);
+      if (mark < 0 || !(pos > mark) || !isPowerBuzz(pos, text0).isPower) continue;
+      const res = scoreTossup({ userAnswer: String(r.given_answer || ""), answerline: q.answer, sanitizedAnswer: q.answer_sanitized, buzzCharIndex: pos, questionText: text0, fullyRead: false }, () => ({ correct: true }));
+      if (!(Number(res.points) > 10) || !U.applyPowerUp(r.id, res.points, res.celerity).changes) continue;
+      out.regraded++; out.points += Number(res.points) - 10; out.powers++;
+      log.push({ id: r.id, q: r.question_id, from: 10, to: Number(res.points), at: Date.now() });
+      const trial = trialRow.get(r.id);
+      if (trial) {
         const c = this._creditTrial(trials, trial, Number(r.timestamp) || Date.now());
         if (c) { out.trials.push(c); out.xp += c.xp; }
       }
