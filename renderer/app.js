@@ -17791,8 +17791,9 @@ function paintAdminRooms() {
   const all = d.rooms || [], withPeople = all.filter((r) => r.online || r.spectators || r.watchers);
   const list = _admm.show === "all" ? all : withPeople;
   const seg = `<div class="seg" role="group" aria-label="Which rooms">${[["live", "With people"], ["all", "All open"]].map(([k, l]) => `<button type="button" data-admm-show="${k}" aria-pressed="${_admm.show === k}">${l}</button>`).join("")}</div>`;
-  // (15.152) bots: the server's own players keeping an official room company (mpserver/bots.mjs), counted among those here
-  const people = (r) => `${admNum(r.online)} here${r.bots ? ` (${admNum(r.bots)} ${r.bots === 1 ? "bot" : "bots"})` : ""}${r.players > r.online ? ` · ${admNum(r.players - r.online)} away` : ""}${r.spectators ? ` · ${admNum(r.spectators)} spectating` : ""}`;
+  // (15.152) bots: the server's own players keeping an official room company (mpserver/bots.mjs). (15.154) the real
+  // players first: the people playing in it now (an older game server sends no "real": everyone here but its bots)
+  const people = (r) => { const real = r.real != null ? r.real : Math.max(0, (r.online || 0) - (r.bots || 0)); return `${admNum(real)} real ${real === 1 ? "player" : "players"}${r.bots ? ` · ${admNum(r.bots)} ${r.bots === 1 ? "bot" : "bots"}` : ""}${r.players > r.online ? ` · ${admNum(r.players - r.online)} away` : ""}${r.spectators ? ` · ${admNum(r.spectators)} spectating` : ""}`; };
   const tags = (r) => [r.controlled ? "Controlled" : "", r.kind !== "diag" && !r.public ? "Private" : "", r.locked ? "Locked" : "", r.access === "members" ? "Members only" : r.access === "password" ? "Password" : "", r.watchers ? `${r.watchers} watching` : ""].filter(Boolean).map((x) => `<span class="adm-pill">${escapeHtml(x)}</span>`).join("");
   const rows = list.map((r) => `<tr>
       <td><b class="num">${escapeHtml(String(r.code || "").toUpperCase())}</b><small class="adm-note">${escapeHtml(ADMM_KIND[r.kind] || "Room")}${r.name ? " · " + escapeHtml(r.name) : ""}</small><div class="adm-chips">${tags(r)}</div></td>
@@ -17802,7 +17803,8 @@ function paintAdminRooms() {
       <td class="num">${admNum(r.questions)}</td>
       <td>${escapeHtml(r.reading ? "reading now" : admDur(r.idleMs) + " ago")}</td>
       <td><button type="button" class="btn btn-sm" data-admm-watch="${escapeHtml(r.id)}" data-code="${escapeHtml(r.code || "")}">Watch</button></td></tr>`);
-  const head = `<div class="adm-vhead">${seg}<small>${d.reached === false ? "" : `${admNum(withPeople.length)} with people · ${admNum(all.length)} open`}</small></div>`;
+  const realAll = all.reduce((n, r) => n + (r.real != null ? r.real : Math.max(0, (r.online || 0) - (r.bots || 0))), 0);
+  const head = `<div class="adm-vhead">${seg}<small>${d.reached === false ? "" : `${admNum(realAll)} real ${realAll === 1 ? "player" : "players"} · ${admNum(withPeople.length)} with people · ${admNum(all.length)} open`}</small></div>`;
   el.innerHTML = head + (d.reached === false ? '<p class="adm-none">The game server can\'t be reached right now.</p>'
     : list.length ? `<section class="fr-card adm-recent">${admTable(["Room", "People", "Plays", "Owner", "#Questions", "Last activity", ""], rows, "adm-mtable")}</section>`
     : `<p class="adm-none">${_admm.show === "all" ? "No rooms are open." : "Nobody is in a room right now."}</p>`) +

@@ -4372,7 +4372,9 @@ function __qbMain(ctx) {
       else if (d.t === "buzz") {
         var early = optBuzz; clearOptBuzz(); pendingBuzzer = d.id || null; rvStop();
         // (the answerer's own box runs `lag` short of the room's time: it closes before the room gives the buzz on)
-        stopClientRead(); if (typeof d.index === "number") { revealIdx = d.index; applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000) - (d.id === myId ? (d.lag || 0) : 0); applyBuzz(d.id, d.name, d.index, answerDeadline);
+        // (15.153) someone else's buzz never takes back text this page shows already (its reading ran on while the buzz
+        // was on its way: the last letters used to vanish); the buzz is marked where they buzzed
+        stopClientRead(); if (typeof d.index === "number") { revealIdx = d.id === myId ? d.index : Math.max(revealIdx, d.index); applyReveal(revealIdx); } answerDeadline = Date.now() + ((d.secs || settings.answerSeconds || 10) * 1000) - (d.id === myId ? (d.lag || 0) : 0); applyBuzz(d.id, d.name, d.index, answerDeadline);
         if (early && d.id === myId) {   // typed (or entered) before the room said it was ours
           var inp0 = body && body.querySelector("#mp-ans-input"), typed = early.answer != null ? early.answer : early.typed.replace(/^\s+/, "") || (early.boxed && inp0 ? inp0.value : "");
           if (inp0 && typed) { inp0.value = typed; resetTyping(); sendTyping(typed); }
@@ -4387,7 +4389,7 @@ function __qbMain(ctx) {
         if (current && d.qid) current.id = d.qid;   // a server room names the question only now
         // a wrong answer with rebuzzes off locks its player (and their team) out of this question
         if (!d.correct && !d.noBuzz && d.id && !settings.rebuzz && current) { var bz = players[d.id], me0 = players[myId]; if (d.id === myId || (bz && me0 && bz.team && bz.team === me0.team)) lockedOn = current; outIds[d.id] = 1; if (bz && bz.team) outTeams[bz.team] = 1; }
-        if (current && d.fullText && d.fullText.length > current.text.length) current.text = d.fullText; if (typeof d.index === "number" && !d.ended) revealIdx = d.index; buzzHistory = d.history || buzzHistory; if (d.ended) ended = true; applyResult(d); renderBuzzes(); }
+        if (current && d.fullText && d.fullText.length > current.text.length) current.text = d.fullText; if (typeof d.index === "number" && !d.ended) revealIdx = Math.max(revealIdx, d.index); buzzHistory = d.history || buzzHistory; if (d.ended) ended = true; applyResult(d); renderBuzzes(); }
       else if (d.t === "reading") { /* the host's "read" message restarts the local ticker */ }
       else if (d.t === "pause") {
         if (optPause) { clearTimeout(optPause.t); optPause = null; }
