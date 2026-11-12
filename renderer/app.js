@@ -15520,17 +15520,23 @@ async function renderStarredTab() {
       "</div>" +
       '<div class="results search-results" id="db-results"></div>' +
     "</div>";
+  // (15.144) what's starred NOW: a question unstarred on this page since it drew is left out (it used to be read)
+  const starredNow = async () => { try { const d = await API.get("/api/starred"); if (d && Array.isArray(d.starred)) return d.starred; } catch (e) {} return items; };
   // your starred tossups, shuffled, on a page of their own (15.28: the Tossups filters are left alone)
-  document.getElementById("db-practice-starred")?.addEventListener("click", () => {
-    const ids = items.filter((it) => (it.type || "tossup") === "tossup" && it.question_id).map((it) => String(it.question_id));
+  document.getElementById("db-practice-starred")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget; if (btn.disabled) return; btn.disabled = true;
+    const now = await starredNow(); btn.disabled = false;
+    const ids = now.filter((it) => (it.type || "tossup") === "tossup" && it.question_id).map((it) => String(it.question_id));
+    if (!ids.length) { renderStarredTab(); return; }
     for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
     startListSession("starred", "tossups", ids);
   });
   c.querySelectorAll("[data-star-action]").forEach((b) => {
-    b.addEventListener("click", () => {
+    b.addEventListener("click", async () => {
       const a = actions[parseInt(b.dataset.starAction)];
       if (a && typeof a.run === "function") {
-        try { a.run(items); b.classList.remove("is-failed"); b.removeAttribute("title"); }
+        const now = await starredNow();
+        try { a.run(now); b.classList.remove("is-failed"); b.removeAttribute("title"); }
         catch (e) { console.error(e); b.classList.add("is-failed"); b.title = "Failed: " + (e.message || e); }
       }
     });
