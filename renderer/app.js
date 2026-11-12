@@ -636,7 +636,7 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const ICON = {
   play: '<path d="M7 4l13 8-13 8z"/>',
   book: '<path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2V5z"/><path d="M4 19a2 2 0 012-2h12"/>',
-  lessons: '<path d="M21.42 10.92a1 1 0 0 0-.02-1.84L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.83l8.57 3.91a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',   // (15.141) Lessons' own: a graduation cap
+  lessons: '<path d="M22 8.5 12 3.5 2 8.5l10 5 10-5z"/><path d="M6 10.5v6c0 1.9 2.7 3.5 6 3.5s6-1.6 6-3.5v-6"/><path d="M22 8.5v7"/>',   // (15.141) Lessons' own: a graduation cap
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 010 7M18 15c2 .7 3.2 2.3 3.8 5"/>',
   star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   puzzle: '<path d="M9 3h6v3a2 2 0 004 0V3h2v8h-3a2 2 0 000 4h3v6h-8v-3a2 2 0 00-4 0v3H3v-6h3a2 2 0 000-4H3V3z"/>',
@@ -9249,7 +9249,9 @@ function openReportDialog(question, type) {
     send.disabled = true; send.textContent = "Sending…"; err.textContent = "";
     let r = null;
     const answer = reportAnswerOnScreen(question, type);
-    try { r = await API.post("/api/reports", { type, questionId: question.id, reason, note: el.querySelector("#rp-note").value.trim(), ...(answer ? { answer } : {}) }); } catch (e) { r = null; }
+    // (15.143) and the strictness it was judged at (the admins see it beside the report)
+    let strictness = null; try { strictness = Number(playSetting("strictness")); } catch (e) {}
+    try { r = await API.post("/api/reports", { type, questionId: question.id, reason, note: el.querySelector("#rp-note").value.trim(), ...(answer ? { answer } : {}), ...(Number.isFinite(strictness) ? { strictness } : {}) }); } catch (e) { r = null; }
     if (!el.isConnected) return;
     if (!r || !r.ok) {
       send.disabled = false; send.textContent = "Send report";
@@ -9893,7 +9895,8 @@ function resetQuestionUI() {
   if (ph) { ph.classList.remove("hidden"); ph.innerHTML = startPromptHtml(); }
   $("#buzz-area").classList.add("hidden");
   $("#result-area").classList.add("hidden");
-  document.querySelectorAll("#result-area .ext-result-panel, #result-area .topics-result").forEach((el) => el.remove());
+  // (15.143) and a lesson quiz's rows (lessons.js markClues), which nothing else clears
+  document.querySelectorAll("#result-area .ext-result-panel, #result-area .topics-result, #result-area .lq-topics").forEach((el) => el.remove());
   { const rt = document.getElementById("result-tags"); if (rt) rt.innerHTML = ""; }
   showResultActions(false);
   $("#bonus-parts-area").classList.add("hidden");
@@ -10341,7 +10344,9 @@ function endOfQueue(msg) {
 
 function showError(msg) {
   showResultActions(false);
-  document.querySelectorAll("#result-area .topics-result").forEach((el) => el.remove());
+  // (15.143) the message alone: an earlier question's answer rows (a lesson quiz's, say) stayed under it
+  document.querySelectorAll("#result-area .topics-result, #result-area .ext-result-panel, #result-area .lq-topics").forEach((el) => el.remove());
+  { const ra = document.getElementById("result-answer"); if (ra) ra.innerHTML = ""; const rt = document.getElementById("result-tags"); if (rt) rt.innerHTML = ""; }
   const banner = $("#result-banner");
   const area = $("#result-area");
   area.classList.remove("hidden");
@@ -13230,7 +13235,8 @@ function trialMark(power, why) {
   paintTrialBar();
   // a lesson quiz marks the lessons' clues in the question and links each to its lesson (once the result is drawn)
   if (t.lq && typeof t.lq.onResult === "function") { const q = state.currentQuestion; setTimeout(() => { try { if (_trial === t) t.lq.onResult(q); } catch (e) { console.error(e); } }, 0); }
-  if (!power || t.res.length >= trialLen(t)) { t.ending = true; setTimeout(() => trialEnd(power ? "" : why || "not a power"), 700); }
+  // (15.142) a lesson quiz reads all ten whatever happens; a trial ends at the first tossup not powered
+  if ((!power && !t.lq) || t.res.length >= trialLen(t)) { t.ending = true; setTimeout(() => trialEnd(power || t.lq ? "" : why || "not a power"), 700); }
 }
 // the trial is over: its result shows, or will in a moment (the last verdict is in)
 function trialOver() { try { return !!(_trial && !_trial.pending && (_trial.done || _trial.ending)); } catch (e) { return false; } }
@@ -13362,10 +13368,10 @@ function showLessonQuizResult(t, passed, why) {
     <div class="settings-modal tp-modal td-modal" tabindex="-1" style="--hue:${lq.hue}">
       <div class="achd-body td-body">
         <span class="td-medal${passed ? " on" : ""}">${ic("award", 40)}</span>
-        <h2 id="td-h">${passed ? "Quiz passed" : why === "left" ? "Quiz left" : "Quiz over"}</h2>
+        <h2 id="td-h">${passed ? "Quiz passed" : why === "left" ? "Quiz left" : "Quiz done"}</h2>
         <p class="td-name">${escapeHtml(lq.title)}</p>
         <p class="td-xp num">${pts >= 0 ? "+" : ""}${pts} pts</p>
-        <p class="td-why">${passed || why === "left" || !why ? "" : "Ended on question " + (t.res || []).length + " (" + escapeHtml(why) + "). "}You powered ${t.powered} of ${trialLen(t)}.${passed ? " Every clue landed." : ""}</p>
+        <p class="td-why">${why === "left" ? "Left after " + (t.res || []).length + " of " + trialLen(t) + ". " : ""}You powered ${t.powered} of ${trialLen(t)}.${passed ? " Every clue landed." : ""}</p>
         ${missed.length ? `<div class="topics td-lessons"><div class="trow"><span class="trow-k">Read again</span><div class="trow-v">${missed.map((m) => `<button type="button" class="tchip" style="--c:${lq.hue}" data-lq-lesson="${escapeHtml(m.id)}">${escapeHtml(m.title)}</button>`).join("")}</div></div></div>` : ""}
       </div>
       <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn" id="td-trials">${ic("lessons", 14)}Lessons</button><button type="button" class="btn btn-primary" id="td-again">${ic("review", 14)}Again</button></div>
@@ -18019,7 +18025,7 @@ function adminReportHtml(r) {
   const settled = r.status === "done" ? `<small class="adm-rdone">Done ${escapeHtml(admAgo(r.doneAt))}${r.doneBy ? " by @" + escapeHtml(r.doneBy) : ""}</small>` : "";
   return `<article class="fr-card adm-report" data-rid="${escapeHtml(r.id)}">
     <header class="adm-rtop"><span class="adm-rreason adm-rr-${escapeHtml(r.reason)}">${escapeHtml(r.reasonLabel || r.reason)}</span><span class="adm-rmeta">${escapeHtml(meta)}</span></header>
-    <div class="adm-rby">${who}<small>${escapeHtml(admAgo(r.at))} · ${r.source === "app" ? "in the app" : "on the website"}${r.openOnQuestion > 1 && r.status === "open" ? ` · <b>${r.openOnQuestion} open reports on this question</b>` : ""}</small></div>
+    <div class="adm-rby">${who}<small>${escapeHtml(admAgo(r.at))} · ${r.source === "app" ? "in the app" : "on the website"}${r.strictness != null ? " · strictness " + escapeHtml(String(r.strictness)) : ""}${r.openOnQuestion > 1 && r.status === "open" ? ` · <b>${r.openOnQuestion} open reports on this question</b>` : ""}</small></div>
     ${r.note ? `<blockquote class="adm-rnote">${escapeHtml(r.note)}</blockquote>` : `<p class="adm-rnote none">No note</p>`}
     <div class="adm-rqwrap"><div class="adm-rq${long && !_admr.open.has(r.id) ? " clamp" : ""}">${body}</div>
       ${long ? `<button type="button" class="adm-rexpand" data-rexp="${escapeHtml(r.id)}">${_admr.open.has(r.id) ? "Show less" : "Show all"}</button>` : ""}${tuAns}${mine}</div>

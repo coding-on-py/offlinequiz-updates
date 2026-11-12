@@ -2004,7 +2004,7 @@ export class App {
       // what you answered: the page's (the question on screen), else your latest attempt on this computer (15.19)
       let answer = body.answer && typeof body.answer === "object" ? body.answer : null;
       if (!answer) { try { answer = this.userData.lastAttempt(body.type === "bonus" ? "bonus" : "tossup", String(body.questionId || "")); } catch { answer = null; } }
-      return this._cloudFetch("POST", path, { type: body.type, questionId: body.questionId, reason: body.reason, note: body.note, source: "app", answer }, c && c.token);
+      return this._cloudFetch("POST", path, { type: body.type, questionId: body.questionId, reason: body.reason, note: body.note, source: "app", answer, strictness: body.strictness }, c && c.token);
     }
     if (/^(GET|POST) \/api\/(clubs|diag)(\/[a-z-]+)*$/.test(key)) {
       if (!c) return { error: "Sign in first.", authRequired: true };
