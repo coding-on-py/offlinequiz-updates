@@ -17791,7 +17791,8 @@ function paintAdminRooms() {
   const all = d.rooms || [], withPeople = all.filter((r) => r.online || r.spectators || r.watchers);
   const list = _admm.show === "all" ? all : withPeople;
   const seg = `<div class="seg" role="group" aria-label="Which rooms">${[["live", "With people"], ["all", "All open"]].map(([k, l]) => `<button type="button" data-admm-show="${k}" aria-pressed="${_admm.show === k}">${l}</button>`).join("")}</div>`;
-  const people = (r) => `${admNum(r.online)} here${r.players > r.online ? ` · ${admNum(r.players - r.online)} away` : ""}${r.spectators ? ` · ${admNum(r.spectators)} spectating` : ""}`;
+  // (15.152) bots: the server's own players keeping an official room company (mpserver/bots.mjs), counted among those here
+  const people = (r) => `${admNum(r.online)} here${r.bots ? ` (${admNum(r.bots)} ${r.bots === 1 ? "bot" : "bots"})` : ""}${r.players > r.online ? ` · ${admNum(r.players - r.online)} away` : ""}${r.spectators ? ` · ${admNum(r.spectators)} spectating` : ""}`;
   const tags = (r) => [r.controlled ? "Controlled" : "", r.kind !== "diag" && !r.public ? "Private" : "", r.locked ? "Locked" : "", r.access === "members" ? "Members only" : r.access === "password" ? "Password" : "", r.watchers ? `${r.watchers} watching` : ""].filter(Boolean).map((x) => `<span class="adm-pill">${escapeHtml(x)}</span>`).join("");
   const rows = list.map((r) => `<tr>
       <td><b class="num">${escapeHtml(String(r.code || "").toUpperCase())}</b><small class="adm-note">${escapeHtml(ADMM_KIND[r.kind] || "Room")}${r.name ? " · " + escapeHtml(r.name) : ""}</small><div class="adm-chips">${tags(r)}</div></td>
