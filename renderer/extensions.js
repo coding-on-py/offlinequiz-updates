@@ -4743,6 +4743,14 @@ function __qbMain(ctx) {
           osec.querySelector("#mp-official-list").innerHTML = off.map(function (r) { return roomRow(r, r.official.name); }).join("");
           osec.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });
         }
+        // (15.140) an official room in Recent rooms reads as it does in Official rooms: its name, the same numbers
+        off.forEach(function (r) {
+          body.querySelectorAll('.mp-recent-row:not(.mp-pub-row)[data-code="' + String(r.code).replace(/"/g, "") + '" i]').forEach(function (row) {
+            row.classList.add("mp-off-row");
+            var nm = row.querySelector(".mp-rcode"); if (nm) nm.textContent = r.official.name;
+            var ct = row.querySelector(".mp-rcount"); if (ct) ct.textContent = countText(r.online == null ? { players: r.players, online: r.players } : r);
+          });
+        });
         var list = sec.querySelector("#mp-public-list");
         list.innerHTML = rooms.length ? rooms.map(function (r) { return roomRow(r, String(r.code).toUpperCase()); }).join("") : '<p class="mp-pub-empty">No public rooms right now.</p>';
         list.querySelectorAll(".mp-pub-row").forEach(function (b) { b.onclick = function () { go(b.dataset.code); }; });

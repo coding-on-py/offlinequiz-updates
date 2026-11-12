@@ -7026,7 +7026,7 @@ html.tb-tight:not(.shop-on) #tbm-store, html.lan .tbm-narrow { display: none !im
 html.cat-ovl-open :is(#practice-screen, .mp-room) .filters-panel { z-index: 9500; }
 /* ── 15.38 ── */
 /* official rooms have names, not codes: no code spacing ("H a u n t e d  H o u s e") */
-.mp-official .mp-rcode { letter-spacing: normal; }
+.mp-official .mp-rcode, .mp-off-row .mp-rcode { letter-spacing: normal; }   /* (15.140) an official room in Recent rooms too */
 /* phones: who's there and when always go under the room and its Join (a short name let "empty" trail Join) */
 @media (max-width: 560px) {
   .mp-recent-row { row-gap: 2px; }
