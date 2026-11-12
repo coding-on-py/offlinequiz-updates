@@ -636,7 +636,7 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const ICON = {
   play: '<path d="M7 4l13 8-13 8z"/>',
   book: '<path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2V5z"/><path d="M4 19a2 2 0 012-2h12"/>',
-  lessons: '<path d="M22 8.5 12 3.5 2 8.5l10 5 10-5z"/><path d="M6 10.5v6c0 1.9 2.7 3.5 6 3.5s6-1.6 6-3.5v-6"/><path d="M22 8.5v7"/>',   // (15.141) Lessons' own: a graduation cap
+  lessons: '<path d="M2 3h20"/><path d="M3 3v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V3"/><path d="m7 21 5-5 5 5"/><path d="M7 8h6M7 11h9"/>',   // (15.146) Lessons' own: a classroom board, flat and from the front like the rest (15.141's cap was in perspective)
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 010 7M18 15c2 .7 3.2 2.3 3.8 5"/>',
   star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   puzzle: '<path d="M9 3h6v3a2 2 0 004 0V3h2v8h-3a2 2 0 000 4h3v6h-8v-3a2 2 0 00-4 0v3H3v-6h3a2 2 0 000-4H3V3z"/>',
@@ -13345,6 +13345,20 @@ function loadLessons() {
     .catch((e) => { _lessonsLoad = null; throw e; });
   return _lessonsLoad;
 }
+// (15.146) read ahead for admins and testers, so Lessons opens at once: once the page has settled (or the moment the
+// Lessons button is pointed at), its code and styles, then its packs' list, search index and quizzes' list
+let _lessonsWarm = false;
+function preloadLessons() {
+  if (_lessonsWarm || !canUseLessons()) return;
+  _lessonsWarm = true;
+  loadLessons().then((L) => (L.preload ? L.preload() : null)).catch(() => { _lessonsWarm = false; });
+}
+function armLessonsPreload(btn) {
+  if (!btn || btn._warmArmed) return;
+  btn._warmArmed = true;
+  ["pointerenter", "focus", "pointerdown"].forEach((t) => btn.addEventListener(t, preloadLessons, { passive: true }));
+  setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(preloadLessons, { timeout: 4000 }) : preloadLessons()), 2500);
+}
 // seg: the address after /lessons (pack, lesson, level; or "packs"; or pack, "quiz")
 async function openLessons(seg) {
   if (!Account.known) await accountKnownP;
@@ -16008,7 +16022,7 @@ function renderAccountMenu() {
   const lbBtn = document.getElementById("tb-leaderboards"); if (lbBtn) lbBtn.hidden = false;
   const lbItem = document.getElementById("tbm-leaderboards"); if (lbItem) lbItem.hidden = false;
   const clBtn = document.getElementById("tb-clubs"); if (clBtn) clBtn.hidden = false;
-  { const ls = document.getElementById("tb-lessons"); if (ls) { const was = ls.hidden; ls.hidden = !canUseLessons(); if (was !== ls.hidden) requestAnimationFrame(fitTopbar); } }
+  { const ls = document.getElementById("tb-lessons"); if (ls) { const was = ls.hidden; ls.hidden = !canUseLessons(); if (was !== ls.hidden) requestAnimationFrame(fitTopbar); if (!ls.hidden) armLessonsPreload(ls); } }
   const head = document.querySelector("#tb-profile-menu .tbm-who");
   if (head) {
     let em = head.querySelector(".tbm-email");

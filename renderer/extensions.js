@@ -7018,7 +7018,7 @@ function __qbMain(ctx) {
     own: "Only Tossups only can be played on your own.",
     irl: "The team meets in person. One person reads the packet aloud from this page and records every buzz.",
     dist: "Picked at random to match NAQT's high school distribution, with every category at least once. Clean questions come first, and easier levels come up more often.",
-    avg: "Ranked by average points per active member, so big rosters don't win by size. A team ranks once 3 of its players have played, and smaller teams show below, unranked. Every organization ranks once one member has played.",
+    avg: "Ranked by average points per active member, so big rosters don't win by size. A team or organization ranks once one of its players has played.",
     cov: "The share of tossups the team got. Strength is 70% or more, middling is 30 to 69%, and a gap is under 30%. An overlap is two or more players each getting 40% of an area.",
     plan: "Gaps come first, then habits that cost points, then overlaps.",
     find: "What stands out in this diagnostic, with the numbers behind it.",
@@ -8718,11 +8718,8 @@ function __qbMain(ctx) {
     const rows = d.rows || [];
     if (!rows.length) return '<div class="db-empty">No ' + (kind === "teams" ? "team" : "organization") + " has played yet.</div>";
     const stat = (v, l) => '<span class="fr-stat"><b class="num">' + v + "</b><small>" + l + "</small></span>";
-    let html = "", last = 0, waitShown = false;
+    let html = "", last = 0;
     rows.forEach((e) => {
-      // (15.136) a team too small to rank yet: after the ranked ones, with no rank, under a line saying when it will rank.
-      // (15.145) every organization ranks, so an unranked one (an older server) gets no line
-      if (e.rank == null && !waitShown && kind === "teams") { waitShown = true; html += '<div class="lb-wait">Not ranked yet. A team ranks once ' + (d.need || 3) + " of its players have played.</div>"; }
       if (e.rank != null && e.rank > last + 1 && last) html += '<div class="lb-gap">…</div>';
       if (e.rank != null) last = e.rank;
       html += kind === "teams"
