@@ -1,5 +1,5 @@
 {
-  "version": "15.149",
+  "version": "15.150",
   "renderer": [
     "index.html",
     "style.css",
@@ -194,7 +194,7 @@
     "plugins/chatterbox-voice.zip": "7a4809e6156943992c488b14f46485ee0f3ddd6f56ccb47725988cb601325772",
     "plugins/coach-mode.zip": "f63a57263b1c980a371a53addd9195f579da4c227636344d0fd843ddf0c49a57",
     "plugins/fact-sheet.zip": "aacd4cc8479760985040f65cae1f638403480974255023cf388805a9ccb49aa6",
-    "plugins/fast-calculations.zip": "4998d115b09fe99c81131d0f651bce59c1b14aec904af51a517789b55c496cc4",
+    "plugins/fast-calculations.zip": "ef01b587b24a18939a2a68dca6e1378d4841e9dfa41b0806ea39dd934c6b5f04",
     "plugins/first-lines.zip": "517adb90726553d17acea2ebfea5b3c39eb305cab18614ce77ea5b7324f1a2c7",
     "plugins/flashcards.zip": "56c06d9da95a2f961ce9e09dcad1ff31c2f57b67230edc89805254e96a4bbe82",
     "plugins/folders.zip": "7dab5600e8983ce1072270d60322c99259e175f94f06a888dd04ce7c5ec162ec",
@@ -216,5 +216,5 @@
     "plugins/voice-answers.zip": "0f7d2928186eee4a99d04ba36d4d0840816b65ed294d357a0a23735088905a84",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "74D//gZnAycozezIlN7Q2XMsRPEaErLJw2x1xqDOiafK1quy2na8SYUMBDnTmExiooXZ3ZzXS5rRfHfS8fGRCw=="
+  "signature": "RhvJTLXLRxvxaTjw3x+mET6Puv3b1tj55TReq6aON/dlhQ0xpF4O+mTZ3wRqnJ7ITNJBGy4pR7/xIXp26JP/AQ=="
 }
