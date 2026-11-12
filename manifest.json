@@ -1,5 +1,5 @@
 {
-  "version": "15.153",
+  "version": "15.154",
   "renderer": [
     "index.html",
     "style.css",
@@ -178,9 +178,9 @@
   "notes": "minor bug fixes",
   "files": {
     "renderer/index.html": "dfa48ae50f41582735c6cae4df46118a77535a3006e5678b785ed51fcab326a2",
-    "renderer/style.css": "b12c24be4ffdcd09beed89bf09537fdb4ae97a00a36d7b39ef4a6453ef889070",
+    "renderer/style.css": "99019e761e4719a3b9268e94f5373d251c246362a41e99c74467e2938b9987d7",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
-    "renderer/extensions.js": "d8f4721c8a57580a1c34a33c30022934cecc9e122fe6ce112577e347ad1e77c0",
+    "renderer/extensions.js": "c375a82998a0f3921ea135dd98c9aaf6ed562f31a96dfa1253295c12f8df26f7",
     "renderer/app.js": "fb2153c39191be6e0522f87b78b5be8bd62b400ae10de0f73ab9d19823ac8b21",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "333864eccb097e643bc52de7219f2bf203b10c95176938d0e5ea378a7e0b3062",
@@ -205,8 +205,8 @@
     "plugins/lightning.zip": "5ecb77e119a61141ec7a58aa97a77984ccb9b99d1211b04df8fe41deb608b4a7",
     "plugins/listen.zip": "024d50bdd7c9bf5a18f12f394c85b163ec6093ce11ddd4f0837d86f380c8b49c",
     "plugins/missed-clues.zip": "406e16670ce2e85172d389c501a470914363f3c415f1831adc09580544e392d8",
-    "plugins/moderator.zip": "b3652620d7e26fc27d464e8294a315177e528f3459e9703add33e9413b55987b",
-    "plugins/neg-check.zip": "186e5f8fee9adfeb580f8091eb09bda089ceff0f0502aaf07bbe87bc63e908bc",
+    "plugins/moderator.zip": "e5615ec08cfe9a5f7a8d3213cc431d773e740743e891862951d10140535175ff",
+    "plugins/neg-check.zip": "117fb16386ce083b4d80ece15565908adbada2318a2db681d4dff0e6d887e233",
     "plugins/packet-builder.zip": "c3cc64f08a4c89b054469c5104b106717a884429aa4c78ea9e4cb25b20346f78",
     "plugins/pyramid-check.zip": "e5e5aa4757dc49e56361c454b3c769c2cf5625a81362adf1dcc6e2256f297b76",
     "plugins/quotations.zip": "c10ea9f49ba1efad5644c92dbfb03a831d74cb18bfe66f9849b8dd1f92f1855a",
@@ -216,5 +216,5 @@
     "plugins/voice-answers.zip": "0f7d2928186eee4a99d04ba36d4d0840816b65ed294d357a0a23735088905a84",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "R8aUl6ZZlcYQ2zYFeAyzlD8HMjT0cl3euFsoOMax3rTdblfjU2LpfICSMHPUCXJeYSy5Af0kkZyNU03lrOEYDg=="
+  "signature": "6/Afo2h4nleynQphQGbK3dpZrfK80QvwUeRmEGGvEL3MGjljOWmJVWU6YCIUkwsWq/CMW7lWmx8SWiqWknm0Aw=="
 }

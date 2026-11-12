@@ -3704,6 +3704,11 @@ mark.db-hl { background: color-mix(in srgb, var(--yellow) 22%, transparent); col
 .mp-who-txt { display: flex; flex-direction: column; gap: 1px; }
 .mp-who-txt .eyebrow { font-size: 10px; }
 .mp-who input { width: 200px; border: 0; outline: 0; background: transparent; color: var(--strong); font-family: var(--font); font-weight: 700; font-size: 15px; padding: 0; }
+/* (15.154) a name you can change looks like a text box on hover and while you type in it (the same space either way) */
+.mp-who input:not([readonly]) { border: 1px solid transparent; border-radius: 6px; padding: 3px 7px; margin: -4px -8px; transition: border-color .15s, background-color .15s; }
+.mp-who:hover input:not([readonly]) { border-color: var(--line-strong); background: var(--sunken); }
+.mp-who input:not([readonly]):focus { border-color: var(--accent); background: var(--sunken); }
+.mp-who:has(input[readonly]) { cursor: default; }
 .mp-card { display: flex; flex-direction: column; gap: 14px; padding: 24px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); min-height: 270px; }
 .mp-card h2 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 18px; color: var(--strong); }
 .mp-card .btn-lg { width: 100%; }
@@ -6201,7 +6206,6 @@ html[data-scheme="light"] { --c-gold: #9a6700; --c-silver: #6e7781; --c-bronze: 
 .achievement-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .achievement-top .achievement-done, .achievement-top .achievement-progress { padding-top: 1px; }
 /* an official room's Setup: what's fixed, and that these two are the room's */
-.mp-off-note { margin: 4px 16px 14px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 
 /* ── 14.88: trial badges (profile top), the Trials section, a trial's bar and dialogs, achievement details ── */
 .tr-badges { display: flex; flex-wrap: wrap; gap: 8px; }

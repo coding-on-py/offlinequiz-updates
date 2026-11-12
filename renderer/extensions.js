@@ -4502,7 +4502,7 @@ function __qbMain(ctx) {
       paused = !o.want; applyPause(paused);
     }
     function submitAnswer(text) { if (isHost) hostHandleAnswer(myId, text); else toHost({ t: "answer", text: text }); }
-    function changeName(name) { myName = name; try { ctx.setSetting("name", name); } catch (e) {} if (isHost) { var old = players[myId].name; players[myId].name = name; sysChat(old + " is now " + name); pushState(); } else toHost({ t: "setName", name: name }); }
+    function changeName(name) { myName = name; keepName(name); if (isHost) { var old = players[myId].name; players[myId].name = name; sysChat(old + " is now " + name); pushState(); } else toHost({ t: "setName", name: name }); }
     function changeTeam(team) { if (isHost) { players[myId].team = team; pushState(); } else toHost({ t: "setTeam", team: team }); }
     function changeSetting(key, val) {
       if (!canEditRoom(key)) { setStatus(ownerOnlyText()); renderSettings(); return; }   // (15.139) a controlled room
@@ -4617,16 +4617,31 @@ function __qbMain(ctx) {
     // a player who isn't signed in (website) / hasn't named themselves (app): Player + four digits
     var _guest = null;
     function guestName() { return _guest || (_guest = "Player" + (1000 + Math.floor(Math.random() * 9000))); }
+    // (15.155) a signed-out player on the website names themselves: the name is kept (their visitor profile, and this
+    // browser) for every visit after; signing in plays under the account's name instead
+    function webGuest() { var s = (ctx.host && ctx.host.getState && ctx.host.getState()) || {}; return !!(s.web && !s.account); }
+    function savedGuestName() {
+      var v = ""; try { v = ctx.getSetting("guestName") || ""; } catch (e) {}
+      if (!v) { try { v = localStorage.getItem("qb-mp-guest") || ""; } catch (e) {} }
+      return String(v).trim().slice(0, 24);
+    }
+    function saveGuestName(v) {
+      v = String(v || "").trim().slice(0, 24); if (!v) return;
+      try { ctx.setSetting("guestName", v); } catch (e) {}
+      try { localStorage.setItem("qb-mp-guest", v); } catch (e) {}
+    }
+    function keepName(v) { if (webGuest()) saveGuestName(v); else { try { ctx.setSetting("name", v); } catch (e) {} } }
     function renderForm() {
       if (LAN_PAGE) { renderLanForm(); return; }
       // The website: an account plays under its display name; a signed-out
       // player is "Player" + four digits (kept for this visit). The app: the name
       // last used here, else the account's display name, else the profile's.
       var st = (ctx.host && ctx.host.getState && ctx.host.getState()) || {};
-      var acct = st.account || null, fixedName = !!st.web;
+      var acct = st.account || null, fixedName = !!(st.web && acct);
       if (st.web) {
-        // never a name saved here before (an old guest one like "unregistered12345" would win)
-        myName = acct ? (acct.displayName || acct.handle) : guestName();
+        // never the app's saved name (an old guest one like "unregistered12345" would win); a signed-out player's own
+        // name if they set one, else "Player" + four digits
+        myName = acct ? (acct.displayName || acct.handle) : (savedGuestName() || guestName());
         // drawn before the page knew who's signed in: draw it again once it does
         if (!st.accountKnown && ctx.host && ctx.host.whenAccountKnown) ctx.host.whenAccountKnown().then(function () { if (body && !lobby && body.querySelector("#mp-name")) renderForm(); });
       } else {
@@ -4646,7 +4661,7 @@ function __qbMain(ctx) {
           '<div class="mp-lobby-main">' +
           '<label class="mp-who"><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.myNeon && window.QB.neonAvatar(window.QB.myNeon())) || "") + '">' + esc(initial) + '</span><span class="mp-who-txt"><span class="eyebrow">Playing as</span>' +
             '<input id="mp-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name"' + (fixedName ? " readonly" : "") + '></span>' +
-            (fixedName ? '<span class="qb-info" data-tip="' + (acct ? "Your display name. Change it in Account." : "Sign in to play under your own name.") + '">i</span>' : "") + '</label>' +
+            (fixedName ? '<span class="qb-info" data-tip="Your display name. Change it in Account.">i</span>' : "") + '</label>' +
           '<section class="mp-card mp-join-card">' +
             '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="The grey code is a new room. Press Join/Create Room to open it, or type another code to join that room.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code" placeholder="' + esc(suggested) + '"></label>' +
             (app ? '<label class="checkbox-row" id="mp-lan-row"><input type="checkbox" id="mp-lan"' + (offline ? " checked disabled" : "") + '> Create offline room ' + lanHelpBtn("Play with no internet, on the same Wi-Fi. Click for how to set one up.") + "</label>" : "") +
@@ -4711,12 +4726,13 @@ function __qbMain(ctx) {
       }
       codeEl.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); goTyped(); } });
       codeEl.addEventListener("input", function () { clearTimeout(codeEl._door); var v = codeEl.value.trim(); if (v.length >= 3 && !offline && !LAN_ADDR.test(v)) codeEl._door = setTimeout(function () { doorInfo(v); }, 250); });
-      nameEl.addEventListener("change", function () { var v = nameEl.value.trim(); if (v) { myName = v; ctx.setSetting("name", v); var av = body.querySelector(".mp-who .avatar"); if (av) av.textContent = (v[0] || "?").toUpperCase(); } });
+      nameEl.addEventListener("change", function () { var v = nameEl.value.trim(); if (v) { myName = v; keepName(v); var av = body.querySelector(".mp-who .avatar"); if (av) av.textContent = (v[0] || "?").toUpperCase(); } else nameEl.value = myName; });
+      nameEl.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); nameEl.blur(); } });
       var go = goJoin = function (code) {
         if (door && String(door.code).toLowerCase() !== String(code || "").trim().toLowerCase()) door = null;
         if (admitting) abandonJoin();
         myName = (nameEl.value.trim()) || myName;
-        if (!fixedName) ctx.setSetting("name", myName); // remember for next time (the app)
+        if (!fixedName) keepName(myName); // remember for next time (the app; a signed-out player on the website)
         lobby = String(code || "").trim();
         // a diagnostic only when QB.dxJoin asked for this code; anything typed or picked here is ordinary
         dxMode = !!(dxPending && dxPending === lobby.toLowerCase()); dxPending = null;
@@ -5342,8 +5358,7 @@ function __qbMain(ctx) {
       return '<div class="filter-section mp-injected"><div class="filter-label">Reading</div>' +
           slider("mp-dx-speed", "Reading speed", "Reading speed for everyone, from 1 (slowest) to 50. Past 50 the whole question shows at once.", 1, 51, lvl, window.qbSpeedLabel ? window.qbSpeedLabel(ms) : String(lvl)) +
           slider("mp-dx-strict", "Strictness", "How exact answers must be. Higher is stricter.", 0, 20, strict, String(strict)) +
-        "</div>" +
-        '<p class="mp-off-note mp-injected">This room always plays ' + esc(o.name || "") + '. These settings are the room\u2019s.</p>';
+        "</div>";
     }
     function diagSectionsHtml() {
       var s = (dxInfo && dxInfo.settings) || {};
