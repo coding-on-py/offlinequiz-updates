@@ -3089,6 +3089,8 @@ function navigateTo(name, opts) {
 function goBack() {
   if (window.QBClubs?.beforeBack?.()) return;   // IRL Reading asks before it's left (clubs.js)
   if (window.QB?.handleBack?.()) return;
+  // (15.147) Lessons steps back inside itself first: a lesson to its pack, a pack to its list (QBLessons.back)
+  if (document.querySelector("#lessons-screen.active") && window.QBLessons?.back?.()) return;
   if (dbBrowseBack()) return;
   if (_navCurrent === "stats" && state.statsSessionId) { state.statsSessionId = null; loadStats(); return; }
   if (state.sessionActive) suspendSession();
