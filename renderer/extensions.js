@@ -2094,6 +2094,7 @@ QB.registerTheme({
     "first-lines": "Study", "quotations": "Study", "missed-clues": "Study", "listen": "Study", "answer-notes": "Study",
     "buzz-tracker": "Analysis", "gap-finder": "Analysis", "neg-check": "Analysis", "answer-clusters": "Analysis",
     "weekly-plan": "Tools", "tournament-prep": "Tools", "pyramid-check": "Tools", "moderator": "Tools", "layout-customizer": "Tools", "kokoro-voice": "Play", "chatterbox-voice": "Play",
+    "fast-calculations": "Play",   // 15.148
     // 15.67: plugins that only change how the app looks
     "buzz-effects": "Cosmetic", "reading-style": "Cosmetic", "backdrops": "Cosmetic",
   };
@@ -2393,7 +2394,7 @@ QB.registerTheme({
     "fact-sheet": ["Analysis", "Answers", "Study"], "canon-tracker": ["Analysis", "Canon", "Progress"],
     "achievement-glyphs": ["Cosmetic", "Achievements", "Icons"],
     "rival": ["Play", "Buzzing", "Adaptive"], "challenge": ["Play", "Friends", "Compare"],
-    "lightning": ["Play", "Speed", "Recall"], "voice-answers": ["Play", "Voice", "Tournament"],
+    "lightning": ["Play", "Speed", "Recall"], "voice-answers": ["Play", "Voice", "Tournament"], "fast-calculations": ["Play", "Math", "Speed"],
     "first-lines": ["Study", "Power", "Clues"], "quotations": ["Study", "Literature", "Quotes"], "missed-clues": ["Study", "Review", "Memory"],
     "listen": ["Study", "Audio", "Hands free"], "answer-notes": ["Study", "Notes", "Answers"],
     "buzz-tracker": ["Analysis", "Buzzing", "Progress"], "gap-finder": ["Analysis", "Distribution", "Practice"], "neg-check": ["Analysis", "Negs", "Patterns"], "answer-clusters": ["Analysis", "Answers", "Mix-ups"],

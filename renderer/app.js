@@ -636,7 +636,7 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const ICON = {
   play: '<path d="M7 4l13 8-13 8z"/>',
   book: '<path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2V5z"/><path d="M4 19a2 2 0 012-2h12"/>',
-  lessons: '<path d="M2 3h20"/><path d="M3 3v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V3"/><path d="m7 21 5-5 5 5"/><path d="M7 8h6M7 11h9"/>',   // (15.146) Lessons' own: a classroom board, flat and from the front like the rest (15.141's cap was in perspective)
+  lessons: '<path d="M12 6.5c-1.8-1.6-4.6-2.3-9-2v13c4.4-.3 7.2.4 9 2 1.8-1.6 4.6-2.3 9-2v-13c-4.4-.3-7.2.4-9 2z"/><path d="M12 6.5v13"/><path d="M6 9c1.3 0 2.5.2 3.5.6M6 12.5c1.3 0 2.5.2 3.5.6M18 9c-1.3 0-2.5.2-3.5.6M18 12.5c-1.3 0-2.5.2-3.5.6"/>',   // (15.148) Lessons' own: an open book, flat and from the front (the Database tab's book is closed)
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 010 7M18 15c2 .7 3.2 2.3 3.8 5"/>',
   star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   puzzle: '<path d="M9 3h6v3a2 2 0 004 0V3h2v8h-3a2 2 0 000 4h3v6h-8v-3a2 2 0 00-4 0v3H3v-6h3a2 2 0 000-4H3V3z"/>',
