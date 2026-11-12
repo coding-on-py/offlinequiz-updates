@@ -7331,3 +7331,6 @@ html.voice-gen #question-area:not(.read-hidden) #question-text:empty::before {
 html.voice-gen #question-area:not(.read-hidden) #question-text:empty::before { margin-left: 0; }
 @keyframes voice-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { html.voice-gen .revealed:has(+ .unrevealed)::after, html.voice-gen #question-text:empty::before { animation-duration: 2.4s; } }
+
+/* (15.149) a trial's result: its focused button shows it (Enter presses it), mouse or keyboard */
+#trial-done .modal-foot .btn:focus { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px color-mix(in srgb, var(--accent) 75%, transparent); }

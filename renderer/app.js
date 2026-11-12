@@ -13316,7 +13316,8 @@ function showTrialResult(t, passed, why) {
     if (e.key === "Tab") return;
     e.stopPropagation();
     if (e.key === "Escape") { e.preventDefault(); close(); }
-    else if (e.key === "Enter") { e.preventDefault(); (el.querySelector("#td-next") || el.querySelector("#td-again") || el.querySelector("#td-trials"))?.click(); }
+    // (15.149) Enter presses the focused button (the main one, focused when the window opens: Again, or Try level …)
+    else if (e.key === "Enter") { e.preventDefault(); const f = document.activeElement; (f && f.tagName === "BUTTON" && el.contains(f) ? f : el.querySelector("#td-next") || el.querySelector("#td-again") || el.querySelector("#td-trials"))?.click(); }
     else if (!e.metaKey && !e.ctrlKey) e.preventDefault();
   };
   document.addEventListener("keydown", onKey, true);
@@ -13328,7 +13329,8 @@ function showTrialResult(t, passed, why) {
   if (ag) ag.onclick = () => { finish(false); prepTrial({ key: t.key, name: meta.name, level: t.level }); };
   growProgress(el);
   if ((passed || upgraded) && !t._sounded) { t._sounded = true; try { Sound.achievement(); } catch (e) {} }
-  try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
+  // (15.149) the main button has the focus (and shows it), so Enter is plainly Again or the next level
+  try { (el.querySelector("#td-next") || el.querySelector("#td-again") || el.querySelector("#td-trials") || el.querySelector(".td-modal")).focus({ preventScroll: true }); } catch (e) {}
 }
 
 // ── (15.137) Lessons: for admins and testers on the website (the server answers "not found" to everyone else, for its
@@ -13399,7 +13401,7 @@ function showLessonQuizResult(t, passed, why) {
     if (e.key === "Tab") return;
     e.stopPropagation();
     if (e.key === "Escape") { e.preventDefault(); close(); }
-    else if (e.key === "Enter") { e.preventDefault(); el.querySelector("#td-again")?.click(); }
+    else if (e.key === "Enter") { e.preventDefault(); const f = document.activeElement; (f && f.tagName === "BUTTON" && el.contains(f) ? f : el.querySelector("#td-again"))?.click(); }
     else if (!e.metaKey && !e.ctrlKey) e.preventDefault();
   };
   document.addEventListener("keydown", onKey, true);
@@ -13409,7 +13411,7 @@ function showLessonQuizResult(t, passed, why) {
   el.querySelector("#td-again").onclick = () => { finish(); try { lq.again(); } catch (e) { console.error(e); } };
   el.querySelectorAll("[data-lq-lesson]").forEach((b) => b.onclick = () => { finish(); try { lq.open(b.dataset.lqLesson); } catch (e) { console.error(e); } });
   if (passed && !t._sounded) { t._sounded = true; try { Sound.achievement(); } catch (e) {} }
-  try { el.querySelector(".td-modal").focus({ preventScroll: true }); } catch (e) {}
+  try { (el.querySelector("#td-again") || el.querySelector(".td-modal")).focus({ preventScroll: true }); } catch (e) {}
 }
 
 // ── Seasonal events (14.90 Halloween, 15.29 Thanksgiving) ───────────────────────────────────────────────────
