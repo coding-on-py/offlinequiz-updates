@@ -636,6 +636,7 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const ICON = {
   play: '<path d="M7 4l13 8-13 8z"/>',
   book: '<path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2V5z"/><path d="M4 19a2 2 0 012-2h12"/>',
+  lessons: '<path d="M21.42 10.92a1 1 0 0 0-.02-1.84L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.83l8.57 3.91a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',   // (15.141) Lessons' own: a graduation cap
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5 6.5-5s5.5 1.5 6.5 5"/><path d="M16 4.5a3.5 3.5 0 010 7M18 15c2 .7 3.2 2.3 3.8 5"/>',
   star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   puzzle: '<path d="M9 3h6v3a2 2 0 004 0V3h2v8h-3a2 2 0 000 4h3v6h-8v-3a2 2 0 00-4 0v3H3v-6h3a2 2 0 000-4H3V3z"/>',
@@ -1115,12 +1116,8 @@ function goTo(target) {
     case "download": showScreen("download"); renderDownload(); break;
     case "friends": showScreen("friends"); renderFriends(); break;
     case "leaderboards": showScreen("leaderboards"); renderLeaderboards(); break;
-    case "store":
-      // the Store is hidden while the shop is closed (no payment company set up yet): its address goes home
-      if (_shop.info && !_shop.info.on) { goHome(); break; }
-      showScreen("store"); renderStore(); refreshOwned();
-      if (!_shop.info) loadShopInfo().then(() => { if (_shop.info && !_shop.info.on && document.querySelector("#store-screen.active")) goHome(); });
-      break;
+    // (15.141) the Store page is gone (the shop is closed for good): its old links go home
+    case "store": goHome(); break;
     // Clubs & Team Diagnostic (clubs.js)
     case "clubs": case "diagnostic": case "irl": case "report": case "link": showScreen(target); window.QBClubs?.onScreen(target); break;
     case "streaks": showScreen("streaks"); renderStreaks(); break;
@@ -1148,7 +1145,7 @@ document.addEventListener("click", (e) => {
 // move between pages, and the tab title names the page. server.js answers these
 // paths with the app's page (WEB_PAGE_PATHS). The desktop app (file://) has none.
 const WEB_PATHS = { tossups: "practice-tossups", bonuses: "practice-bonuses", multiplayer: "multiplayer", search: "db-search", sets: "db-sets",
-  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", trials: "trials", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin", store: "store" };   // (clubs, diagnostic, report: clubs.js route / webPath)
+  frequency: "db-frequency", starred: "db-starred", stats: "stats", profile: "player", trials: "trials", friends: "friends", plugins: "plugins", download: "download", leaderboards: "leaderboards", streaks: "streaks", admin: "admin" };   // (clubs, diagnostic, report: clubs.js route / webPath)
 let _webRouting = false;
 // the address of what is on screen now (null: leave the address alone)
 function webPathNow() {
@@ -1167,7 +1164,6 @@ function webPathNow() {
     case "lessons-screen": return window.QBLessons ? window.QBLessons.webPath() : "/lessons";
     case "friends-screen": return "/friends";
     case "leaderboards-screen": return "/leaderboards";
-    case "store-screen": return "/store";
     case "streaks-screen": return "/streaks";
     case "admin-screen": return _adm.tab === "users" ? "/admin/users" : _adm.tab === "reports" ? "/admin/reports" : _adm.tab === "visitors" ? "/admin/visitors" : _adm.tab === "clubs" ? "/admin/clubs" : _adm.tab === "lessons" ? "/admin/lessons" : _adm.tab === "rooms" ? "/admin/rooms" : "/admin";
     case "download-screen": return "/download";
@@ -1221,7 +1217,7 @@ function webRoute(path) {
       // back from the payment page: the order's progress, then the new room (Multiplayer) or
       // what it unlocked (the Store)
       const q = new URLSearchParams(location.search), id = q.get("order"), sku = q.get("for");
-      if (sku && sku !== "captain") { goTo("store"); if (id) Promise.resolve(window.QB?.whenReady?.()).then(() => window.QB?.shopWatch?.(id)); }
+      if (sku && sku !== "captain") { goHome(); if (id) Promise.resolve(window.QB?.whenReady?.()).then(() => window.QB?.shopWatch?.(id)); }
       else { goTo("multiplayer"); if (id) window.QB?.mpOrder?.(id); }
     } else if (a === "plugins" && b && c) {
       // plugins start once the profile's plugin data is loaded
@@ -1293,11 +1289,11 @@ function updateTopbar() {
     requestAnimationFrame(fitTopbar);   // a longer name may not fit (tb-nocrumb)
   }
   // the top bar's link for the page on screen reads as current
-  let here = { "trials-screen": "tb-trials", "clubs-screen": "tb-clubs", "diagnostic-screen": "tb-clubs", "irl-screen": "tb-clubs", "report-screen": "tb-clubs", "store-screen": "tb-store", "leaderboards-screen": "tb-leaderboards", "extensions-screen": "tb-plugins" }[active && active.id];
+  let here = { "trials-screen": "tb-trials", "clubs-screen": "tb-clubs", "diagnostic-screen": "tb-clubs", "irl-screen": "tb-clubs", "report-screen": "tb-clubs", "leaderboards-screen": "tb-leaderboards", "extensions-screen": "tb-plugins" }[active && active.id];
   if (active && active.id === "practice-screen" && state.practiceKind === "trial") here = trialLq(trialNow()) ? "tb-lessons" : "tb-trials";
   if (active && active.id === "streaks-screen") here = "tb-streak";
   if (active && active.id === "lessons-screen") here = "tb-lessons";
-  ["tb-streak", "tb-lessons", "tb-trials", "tb-clubs", "tb-store", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
+  ["tb-streak", "tb-lessons", "tb-trials", "tb-clubs", "tb-leaderboards", "tb-plugins"].forEach((id) => { const b = document.getElementById(id); if (b) { if (id === here) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); } });
   renderTopbarProfile();
   fitTopbar();
 }
@@ -3048,7 +3044,6 @@ function buildScreen(name) {
   else if (name === "extensions") window.QB?.renderScreen();
   else if (name === "friends") renderFriends();
   else if (name === "leaderboards") renderLeaderboards();
-  else if (name === "store") renderStore();
   else if (name === "admin") renderAdmin();
   else if (name === "clubs" || name === "diagnostic" || name === "irl" || name === "report" || name === "link") window.QBClubs?.onScreen(name);
 }
@@ -13373,7 +13368,7 @@ function showLessonQuizResult(t, passed, why) {
         <p class="td-why">${passed || why === "left" || !why ? "" : "Ended on question " + (t.res || []).length + " (" + escapeHtml(why) + "). "}You powered ${t.powered} of ${trialLen(t)}.${passed ? " Every clue landed." : ""}</p>
         ${missed.length ? `<div class="topics td-lessons"><div class="trow"><span class="trow-k">Read again</span><div class="trow-v">${missed.map((m) => `<button type="button" class="tchip" style="--c:${lq.hue}" data-lq-lesson="${escapeHtml(m.id)}">${escapeHtml(m.title)}</button>`).join("")}</div></div></div>` : ""}
       </div>
-      <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn" id="td-trials">${ic("book", 14)}Lessons</button><button type="button" class="btn btn-primary" id="td-again">${ic("review", 14)}Again</button></div>
+      <div class="modal-foot"><button type="button" class="btn" id="td-close">Close</button><span class="spacer"></span><button type="button" class="btn" id="td-trials">${ic("lessons", 14)}Lessons</button><button type="button" class="btn btn-primary" id="td-again">${ic("review", 14)}Again</button></div>
     </div>`;
   t.shown = { passed, why };
   const close = () => { document.removeEventListener("keydown", onKey, true); animateRemove(el); paintTrialBar(); };
@@ -16922,6 +16917,7 @@ function confettiBurst(from) {
   requestAnimationFrame(step);
 }
 function openStore(sku) {
+  return;   // (15.141) no Store page any more
   goTo("store");
   if (!sku) return;
   const card = document.querySelector(`#store-container [data-sku="${sku}"]`);
