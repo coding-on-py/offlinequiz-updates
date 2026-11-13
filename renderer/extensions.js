@@ -4630,18 +4630,26 @@ function __qbMain(ctx) {
       try { ctx.setSetting("guestName", v); } catch (e) {}
       try { localStorage.setItem("qb-mp-guest", v); } catch (e) {}
     }
-    function keepName(v) { if (webGuest()) saveGuestName(v); else { try { ctx.setSetting("name", v); } catch (e) {} } }
+    function keepName(v) {
+      if (webGuest()) { saveGuestName(v); return; }
+      // signed in on the website, the account's own display name isn't kept: the name follows it if it changes
+      var s = (ctx.host && ctx.host.getState && ctx.host.getState()) || {}, a = s.web && s.account;
+      if (a && String(v || "").trim() === String(a.displayName || a.handle || "").trim()) v = "";
+      try { ctx.setSetting("name", v); } catch (e) {}
+    }
     function renderForm() {
       if (LAN_PAGE) { renderLanForm(); return; }
       // The website: an account plays under its display name; a signed-out
       // player is "Player" + four digits (kept for this visit). The app: the name
       // last used here, else the account's display name, else the profile's.
       var st = (ctx.host && ctx.host.getState && ctx.host.getState()) || {};
-      var acct = st.account || null, fixedName = !!(st.web && acct);
+      // (15.155) everyone may change the name they play under: signed in, it's kept in the profile (it follows the account
+      // between the app and the website), else the account's display name; signed out, kept on this browser
+      var acct = st.account || null, fixedName = false;
       if (st.web) {
-        // never the app's saved name (an old guest one like "unregistered12345" would win); a signed-out player's own
-        // name if they set one, else "Player" + four digits
-        myName = acct ? (acct.displayName || acct.handle) : (savedGuestName() || guestName());
+        var mine = ""; try { mine = String(ctx.getSetting("name") || "").trim(); } catch (e) {}
+        if (/^(unregistered\d*|Player\d{4})$/i.test(mine)) mine = "";   // a guest name saved before, not one they chose
+        myName = acct ? (mine || acct.displayName || acct.handle) : (savedGuestName() || guestName());
         // drawn before the page knew who's signed in: draw it again once it does
         if (!st.accountKnown && ctx.host && ctx.host.whenAccountKnown) ctx.host.whenAccountKnown().then(function () { if (body && !lobby && body.querySelector("#mp-name")) renderForm(); });
       } else {
@@ -4661,7 +4669,8 @@ function __qbMain(ctx) {
           '<div class="mp-lobby-main">' +
           '<label class="mp-who"><span class="avatar" style="' + ((window.QB.neonAvatar && window.QB.myNeon && window.QB.neonAvatar(window.QB.myNeon())) || "") + '">' + esc(initial) + '</span><span class="mp-who-txt"><span class="eyebrow">Playing as</span>' +
             '<input id="mp-name" value="' + esc(myName) + '" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name"' + (fixedName ? " readonly" : "") + '></span>' +
-            (fixedName ? '<span class="qb-info" data-tip="Your display name. Change it in Account.">i</span>' : "") + '</label>' +
+            (fixedName ? ""
+              : '<span class="mp-who-edit" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>') + '</label>' +
           '<section class="mp-card mp-join-card">' +
             '<label class="mp-field"><span>Room code <span class="qb-info" data-tip="The grey code is a new room. Press Join/Create Room to open it, or type another code to join that room.">i</span></span><input id="mp-lobby" class="code-input" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Room code" placeholder="' + esc(suggested) + '"></label>' +
             (app ? '<label class="checkbox-row" id="mp-lan-row"><input type="checkbox" id="mp-lan"' + (offline ? " checked disabled" : "") + '> Create offline room ' + lanHelpBtn("Play with no internet, on the same Wi-Fi. Click for how to set one up.") + "</label>" : "") +
@@ -4732,7 +4741,7 @@ function __qbMain(ctx) {
         if (door && String(door.code).toLowerCase() !== String(code || "").trim().toLowerCase()) door = null;
         if (admitting) abandonJoin();
         myName = (nameEl.value.trim()) || myName;
-        if (!fixedName) keepName(myName); // remember for next time (the app; a signed-out player on the website)
+        if (!fixedName) keepName(myName); // remember for next time (the app; the website, signed in or out)
         lobby = String(code || "").trim();
         // a diagnostic only when QB.dxJoin asked for this code; anything typed or picked here is ordinary
         dxMode = !!(dxPending && dxPending === lobby.toLowerCase()); dxPending = null;
@@ -5885,7 +5894,8 @@ function __qbMain(ctx) {
         if (b) b.hidden = true; if (n) n.hidden = true; if (p) p.hidden = true;
         var phw = body.querySelector("#mp-ph-line"); if (phw && phw.textContent !== "The room hasn’t started a question yet.") phw.textContent = "The room hasn’t started a question yet.";
         var qcw = body.querySelector("#mp-qcount");
-        if (qcw) qcw.textContent = inDiag() ? (dxInfo && !dxInfo.waiting && dxInfo.total ? "Question " + Math.min(dxInfo.total, dxInfo.i + 1) + " of " + dxInfo.total : "") : qCount ? "Question " + qCount : "";
+        // (15.155) no running question number in a room; a diagnostic shows how far through it is
+        if (qcw) qcw.textContent = inDiag() ? (dxInfo && !dxInfo.waiting && dxInfo.total ? "Question " + Math.min(dxInfo.total, dxInfo.i + 1) + " of " + dxInfo.total : "") : "";
         return;
       }
       if (inDiag()) {
@@ -5926,8 +5936,8 @@ function __qbMain(ctx) {
       var phl = body.querySelector("#mp-ph-line"); if (phl) { var pt = mySpec ? "The first question starts when a player presses Start." : "Press Start to read the first question."; if (phl.textContent !== pt) phl.textContent = pt; }
       if (p) { p.hidden = !reading || mySpec || answering || !canPause(); setLabel(p, paused ? "Resume" : "Pause"); }
       var qc = body.querySelector("#mp-qcount");
-      // a seasonal event's item tossup shows its mark (app.js seasonMarkHtml)
-      if (qc) qc.innerHTML = qCount ? "Question " + qCount + (window.qbEventMark ? window.qbEventMark(current) : "") : "";
+      // a seasonal event's item tossup shows its mark (app.js seasonMarkHtml); (15.155) the question number no longer shows
+      if (qc) qc.innerHTML = qCount && current && window.qbEventMark ? window.qbEventMark(current) : "";
     }
 
     // Wire the MP control sections (lobby/you/timer/next) wherever they live.

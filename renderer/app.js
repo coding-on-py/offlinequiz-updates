@@ -7002,7 +7002,7 @@ function renderQuestion(question) {
   // result (renderResultTags) reveals them.
   $("#question-meta").classList.add("qm-reading");
   $("#question-meta").innerHTML = `
-    <span class="q-num">Question ${state.questionCount || 1}${isTossup ? seasonMarkHtml(question) : ""}</span>
+    ${isTossup ? (seasonMarkHtml(question) ? `<span class="q-num">${seasonMarkHtml(question)}</span>` : "") : `<span class="q-num">Question ${state.questionCount || 1}</span>`}
     <span class="qm-info">${catBadgeHtml(qPathOf(question))}${questionWarnHtml(question)}
     ${diffBadgeHtml(question.difficulty)}
     ${yearBadgeHtml(question.set_year)}</span>
@@ -17738,6 +17738,13 @@ function paintAdminLessons(c) {
       <div class="adm-lact">${r.status === "open" ? `<button type="button" class="btn btn-sm btn-primary" data-adml-act="done">Mark done</button>` : `<button type="button" class="btn btn-sm" data-adml-act="reopen">Reopen</button>`}<button type="button" class="btn btn-sm btn-danger-ghost" data-adml-act="delete">Delete</button></div>
     </article>`;
   };
+  // (15.155) who read what: a line a reader (the latest first), opening to the lessons they read
+  const reader = (p) => {
+    const who = p.id ? `${escapeHtml(p.name || p.handle || "?")}${p.handle ? ` <small class="adm-note">@${escapeHtml(p.handle)}</small>` : ""}` : "A signed-out visitor";
+    const rows = (p.lessons || []).map((l) => `<tr><td>${name(l)}</td><td>${pack(l)}</td><td>${escapeHtml(LV[l.level] || l.level || "—")}</td><td class="num">${admNum(l.views)}</td><td>${escapeHtml(admAgo(l.last))}</td></tr>`);
+    return `<details class="adm-reader"><summary><span class="adm-rwho">${who}</span><span class="adm-note">${admNum((p.lessons || []).length)} ${(p.lessons || []).length === 1 ? "lesson" : "lessons"} · ${admNum(p.views)} ${p.views === 1 ? "view" : "views"} · ${escapeHtml(admAgo(p.last))}</span></summary>
+      <div class="adm-rbody">${admTable(["Lesson", "Pack", "Level", "#Views", "Last read"], rows)}${p.id ? `<button type="button" class="btn btn-sm" data-adm-open="${escapeHtml(p.id)}">Open account</button>` : ""}</div></details>`;
+  };
   const none = !d.onSite && !(d.all && d.all.views) ? `<p class="adm-note adm-lnone">Lessons aren't on the website yet. Their views and reports show here once they are.</p>` : "";
   body.innerHTML = `${none}
     <div class="adm-cards adm-lcards">${tile("Views today", d.today)}${tile("Views, 7 days", d.week)}${tile("Views, 30 days", d.month)}${tile("Views, all time", d.all)}</div>
@@ -17747,6 +17754,7 @@ function paintAdminLessons(c) {
       <section class="fr-card adm-sec"><h3 class="eyebrow">Most read lessons, 30 days</h3>${admTable(["Lesson", "Pack", "#Views", "#Readers"], lessons) || '<p class="adm-none">Nothing read yet.</p>'}</section>
       <section class="fr-card adm-sec"><h3 class="eyebrow">Packs, 30 days</h3>${admTable(["Pack", "#Views", "#Readers"], packs) || '<p class="adm-none">Nothing read yet.</p>'}</section>
     </div>
+    <section class="fr-card adm-sec adm-readers"><h3 class="eyebrow">Readers, 30 days</h3>${(d.readers || []).length ? `<div class="adm-rlist">${d.readers.map(reader).join("")}</div>` : '<p class="adm-none">Nobody has read a lesson yet.</p>'}</section>
     <section class="adm-lreports"><div class="adm-lrhead"><h2>Reports and feedback</h2>${seg}</div>
       ${(d.reports || []).length ? (d.reports || []).map(rep).join("") : `<p class="adm-none">${_adml.status === "open" ? "Nothing open." : "None."}</p>`}</section>`;
   body.querySelectorAll("[data-adml-status]").forEach((b) => b.onclick = () => { _adml.status = b.dataset.admlStatus; renderAdminLessons(c); });
