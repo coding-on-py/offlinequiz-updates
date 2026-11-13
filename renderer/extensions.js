@@ -3112,9 +3112,14 @@ function __qbMain(ctx) {
     function stateMsg() { return { t: "state", players: order.map(function (id) { return players[id]; }), settings: settings, filterSummary: filterSummary, roomFilters: (roomConfig && roomConfig.filters) || null, roomSel: isHost ? hostSel() : null, owner: roomOwner, ownerName: roomOwner && players[roomOwner] ? players[roomOwner].name : "" }; }
     function pushState() { broadcast(stateMsg()); renderScores(); renderSettings(); updateTopBar(); }
 
+    // (15.155) a newcomer's history starts empty, as on the game server (room.mjs logSeq / logFrom): entries numbered,
+    // each seat's first entry kept here (never sent); a seat taken back keeps its own
+    var logSeq = 0, logFrom = typeof WeakMap === "function" ? new WeakMap() : null;
     function addPlayer(id, name, team, spec, avatar, handle) {
+      var prevSeat = players[id];
       if (!players[id]) order.push(id);
       players[id] = { id: id, name: name || ("Player" + order.length), team: team || "", score: (players[id] && players[id].score) || 0, spec: !!spec, avatar: avatar || (players[id] && players[id].avatar) || "", handle: validHandle(handle) || (players[id] && players[id].handle) || "" };
+      if (logFrom) logFrom.set(players[id], prevSeat ? (logFrom.get(prevSeat) || 0) : logSeq);
     }
     function removePlayer(id) { delete players[id]; order = order.filter(function (x) { return x !== id; }); }
     // the host takes someone out (a click on their name → Take out of the room): on the game server it
@@ -3548,7 +3553,8 @@ function __qbMain(ctx) {
         }
         pushState();
         // bring the newcomer up to speed
-        sessionLog.forEach(function (e) { conn.send({ t: "logentry", entry: e }); });
+        var from = logFrom && players[id] ? logFrom.get(players[id]) || 0 : 0;   // (15.155) only since they sat down
+        sessionLog.forEach(function (e) { if (!(e.n >= 0) || e.n >= from) conn.send({ t: "logentry", entry: e }); });
         if (current) {
           conn.send(questionMsg());
           var reading = !paused && !pendingBuzzer && !ended && revealIdx < current.text.length;
@@ -4299,6 +4305,7 @@ function __qbMain(ctx) {
         buzzes: buzzHistory.slice(),
         marks: buzzCharMarks.slice(),
       };
+      entry.n = logSeq++;
       sessionLog.push(entry); broadcast({ t: "logentry", entry: entry }); renderSessionLog();
     }
 
