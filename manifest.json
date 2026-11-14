@@ -1,5 +1,5 @@
 {
-  "version": "15.156",
+  "version": "15.157",
   "renderer": [
     "index.html",
     "style.css",
@@ -175,13 +175,13 @@
     }
   ],
   "main": true,
-  "notes": "minor bug fixes",
+  "notes": "minor ui fixes",
   "files": {
     "renderer/index.html": "dfa48ae50f41582735c6cae4df46118a77535a3006e5678b785ed51fcab326a2",
     "renderer/style.css": "5e9efc196a9d20c7a292cf8be903318af52c3ed393a9dc21f0c75c1417598b10",
     "renderer/art_data.js": "0b77863b9c7a046a3ef013db326d9dd6284d19e3f19666da9fea3a291abc2adc",
     "renderer/extensions.js": "0f0f628c2bf109ab4af61125dad1750a5bdb9c0e37e8e934708ea62c9112e9b5",
-    "renderer/app.js": "29c01fddfc70add7c240e1ed9c80e82d2d6bf049b520b6d5f6dc5cdec293647a",
+    "renderer/app.js": "8ffddd99256972d4cdf505662ceac5849333676cccdd2c6c27cafe468630df75",
     "plugins/achievement-glyphs.zip": "795f10c10e42936c091ab7c43928cd397080346d54bf57cf58dae6b902b01f28",
     "plugins/answer-clusters.zip": "333864eccb097e643bc52de7219f2bf203b10c95176938d0e5ea378a7e0b3062",
     "plugins/answer-notes.zip": "57194a5555a806ca53d56198beee48964b10fd11005a65ae78b47d42ee386241",
@@ -205,7 +205,7 @@
     "plugins/lightning.zip": "5ecb77e119a61141ec7a58aa97a77984ccb9b99d1211b04df8fe41deb608b4a7",
     "plugins/listen.zip": "024d50bdd7c9bf5a18f12f394c85b163ec6093ce11ddd4f0837d86f380c8b49c",
     "plugins/missed-clues.zip": "406e16670ce2e85172d389c501a470914363f3c415f1831adc09580544e392d8",
-    "plugins/moderator.zip": "e5615ec08cfe9a5f7a8d3213cc431d773e740743e891862951d10140535175ff",
+    "plugins/moderator.zip": "bd69cfc80f25d23d6de84e53a8dfe8b353194a7e9912cb55528ec6be42022a2f",
     "plugins/neg-check.zip": "117fb16386ce083b4d80ece15565908adbada2318a2db681d4dff0e6d887e233",
     "plugins/packet-builder.zip": "c3cc64f08a4c89b054469c5104b106717a884429aa4c78ea9e4cb25b20346f78",
     "plugins/pyramid-check.zip": "e5e5aa4757dc49e56361c454b3c769c2cf5625a81362adf1dcc6e2256f297b76",
@@ -216,5 +216,5 @@
     "plugins/voice-answers.zip": "0f7d2928186eee4a99d04ba36d4d0840816b65ed294d357a0a23735088905a84",
     "plugins/weekly-plan.zip": "9e67d040ff6b41aec70840c8b82dae70cc0186897e23a2774dfefa5fbbaa5484"
   },
-  "signature": "6CdoXmnH997TYVp7zBO/u59/w8LY7V8DEEpNTcpofbZq0E5xopbcXlBiNZwCADyshWABnvWXSd/qWCkhD7Z/CA=="
+  "signature": "aVoC0V4TsxIFCXPT7m0v190msgZI1p29XWFDp9MfMYLTPGPSTe628EjWuBkhNpPdz6qZlgcxzTxvBunVwLeDBg=="
 }

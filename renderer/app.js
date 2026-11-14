@@ -5432,12 +5432,24 @@ function makeUnitsPicker(cfg) {
       commit([...u]);
     },
     clear() { commit([]); },
-    supportsWeights: false, weightsOn: () => false, setWeightsOn() {}, weight: () => 10, setWeight() {},
+    // (15.157) weights, when the caller keeps them (CategoryButton opts.weights): how much of each pick to draw
+    supportsWeights: !!cfg.weights,
+    weightsOn: () => !!(cfg.weights && cfg.weights.on()),
+    setWeightsOn(on) { if (cfg.weights) { cfg.weights.setOn(!!on); cfg.changed(); } },
+    weight: (id) => (cfg.weights ? cfg.weights.get(id) : 10),
+    setWeight(id, val) { if (cfg.weights) { cfg.weights.set(id, val); cfg.changed(); } },
     unitCount: () => cfg.get().length,
     total() { const t = T(); return cfg.get().reduce((a, id) => a + ((t && t.byId.get(id)?.count) || 0), 0); },
     presets() {
       const cur = JSON.stringify(cfg.get().slice().sort());
-      const out = [{ name: "All", apply: () => commit([]), active: !cfg.get().length }];
+      const out = [{ name: "All", apply: () => { if (cfg.weights) cfg.weights.setOn(false); commit([]); }, active: !cfg.get().length }];
+      // (15.157) the practice picker's ACF distribution, where the caller keeps weights: ACF's categories, weighted
+      if (cfg.weights) out.push({ name: "ACF distribution", apply: () => {
+        const t = catTreeView(T()); if (!t) return;
+        const ids = [];
+        t.roots.forEach((r) => { const w = ACF_DISTRIBUTION[r.name]; if (w) { ids.push(r.id); cfg.weights.set(r.id, w); } });
+        cfg.weights.setOn(true); commit(ids);
+      } });
       if (presetKind) catPresetsLoad(presetKind).forEach((p, i) => out.push({ name: p.name, user: true, idx: i, active: JSON.stringify((p.units || []).slice().sort()) === cur, apply: () => { const t = T(); commit((p.units || []).filter((id) => t && t.byId.has(id))); } }));
       return out;
     },
@@ -5529,14 +5541,21 @@ function CategoryButton(btn, opts) {
   };
   const summary = () => {
     if (!units.length || !view) return "All";
+    // (15.157) the ACF distribution preset, as chosen
+    if (opts.weights && wOn && units.length === Object.keys(ACF_DISTRIBUTION).length && units.every((u) => { const n = view.byId.get(u); return n && !n.parentId && ACF_DISTRIBUTION[n.name] === wMap[u]; })) return "ACF distribution";
     const names = units.map((u) => view.byId.get(u)?.name).filter(Boolean);
     return !names.length ? "All" : names.length <= 2 ? names.join(", ") : names.slice(0, 2).join(", ") + " +" + (names.length - 2);
   };
   const label = opts.label != null ? opts.label : "Categories";   // "" = just the picks (a labelled row)
   const paint = () => { el.innerHTML = `${label ? escapeHtml(label) + " " : ""}<span class="accent-val">${escapeHtml(summary())}</span>${ic("down", 14)}`; el.setAttribute("aria-label", "Categories: " + summary()); };
-  const fire = () => { try { if (opts.onChange) opts.onChange(units.slice()); } catch (e) { console.error(e); } };
+  const wState = () => ({ on: wOn, weights: Object.fromEntries(units.map((u) => [u, weights ? weights.get(u) : 10])) });
+  const fire = () => { try { if (opts.onChange) opts.onChange(units.slice(), wState()); } catch (e) { console.error(e); } };
+  // (15.157) opts.weights: the picks can be weighted (the Weights switch and the ACF distribution preset); kept here,
+  // reported to onChange(ids, { on, weights }) and by weights()
+  let wOn = !!(opts.weights && opts.weightsOn), wMap = { ...((opts.weights && opts.selectedWeights) || {}) };
+  const weights = opts.weights ? { on: () => wOn, setOn: (on) => { wOn = on; }, get: (u) => (Number.isFinite(wMap[u]) ? wMap[u] : 10), set: (u, v) => { wMap[u] = v; } } : null;
   const pk = makeUnitsPicker({
-    overlayId: id, get: () => units, set: (ids) => { units = ids; }, tree: () => view,
+    overlayId: id, get: () => units, set: (ids) => { units = ids; }, tree: () => view, weights,
     presetKind: opts.presets === false ? null : (opts.presets || (custom ? null : "search")),
     changed: () => { paint(); if (opts.live) fire(); },
   });
@@ -5544,6 +5563,7 @@ function CategoryButton(btn, opts) {
   const api = {
     el,
     get: () => units.slice(),
+    weights: () => (opts.weights ? wState() : null),
     set(ids) { units = (ids || []).map(String); paint(); },
     summary,
     tree: () => view,
@@ -5555,8 +5575,8 @@ function CategoryButton(btn, opts) {
       return api.paths().some((u) => p === u || p.startsWith(u + " > "));
     },
     open() {
-      const before = JSON.stringify(units.slice().sort());
-      return openUnitsPicker(id, pk, () => { paint(); if (!opts.live && JSON.stringify(units.slice().sort()) !== before) fire(); }, loadTree);
+      const before = JSON.stringify([units.slice().sort(), opts.weights ? wState() : null]);
+      return openUnitsPicker(id, pk, () => { paint(); if (!opts.live && JSON.stringify([units.slice().sort(), opts.weights ? wState() : null]) !== before) fire(); }, loadTree);
     },
   };
   el.addEventListener("click", (e) => { e.preventDefault(); api.open(); });
