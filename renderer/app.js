@@ -13678,7 +13678,7 @@ const ACH_SET_GLOBAL = [["total", "Questions", "chart"], ["powers", "Powers", "a
 const ACH_SET_ICON = { asterisk: '<path d="M12 3.5v17M4.6 7.75l14.8 8.5M4.6 16.25l14.8-8.5"/>', grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/>' };
 const ACH_SET_GLYPH = { Literature: "lit", History: "hist", Geography: "geo", Science: "sci", Math: "math", Mythology: "myth", "Pop Culture": "pop", Sports: "sports", "Fine Arts": "fa", Philosophy: "phil" };
 // a group whose top is below its last achievements (those are the badge's further levels): the top's threshold
-const ACH_SET_TOP = { daily: 500 };
+const ACH_SET_TOP = { daily: 500, total: 10000, powers: 999, cat: 1000 };   // (15.162) Questions, Powers and Categories go on too
 // what a general group's number counts ("For 1,000 questions in one day")
 const ACH_SET_UNIT = { total: "questions", powers: "powers", negs: "negs", cat: "questions in one category", daily: "questions in one day", streak: "days in a row" };
 const ACH_SET_LEVEL = [7, 9, 10];   // the emblem for each level of a badge (gold, gold with more, prismatic)
@@ -13701,7 +13701,8 @@ function achSets(achData) {
 // a badge's emblem; a general group's at level i of its levels (default: the one earned)
 function achSetEmblem(s, size, i) {
   if (!s.tiered) return emblemSvg({ level: 7, metal: "gold", hue: s.hue, glyph: s.glyph, ribbon: "100%", size });
-  const k = Math.max(0, i == null ? s.at : i), lv = ACH_SET_LEVEL[Math.min(k, ACH_SET_LEVEL.length - 1)];
+  // (15.162) a level can name its own tier (badge: 10, the prismatic top)
+  const k = Math.max(0, i == null ? s.at : i), lv = s.levels[k].badge || ACH_SET_LEVEL[Math.min(k, ACH_SET_LEVEL.length - 1)];
   return emblemSvg({ level: lv, metal: lv >= 10 ? "legend" : "gold", hue: s.hue, glyph: s.glyph, ribbon: String(s.levels[k].threshold), size });
 }
 const achSetName = (s) => s.tiered ? s.levels[Math.max(0, s.at)].name : s.label;
@@ -14094,11 +14095,14 @@ const ACHIEVEMENT_LIST = [
   { id:"q3000", name:"Legend", desc:"3000 questions", type:"total", threshold:3000, icon:"壱" },
   { id:"q5000", name:"Myth", desc:"5000 questions", type:"total", threshold:5000, icon:"極" },
   { id:"q10000", name:"Zenith", desc:"10000 questions", type:"total", threshold:10000, icon:"萬" },
+  // (15.162) past each group's top: the badge's next level, at its highest tier (badge: 10, prismatic)
+  { id:"q15000", name:"Supernova", desc:"15000 questions", type:"total", threshold:15000, icon:"越", badge:10 },
   { id:"pwr50", name:"Speedy", desc:"50 powers", type:"powers", threshold:50, icon:"速" },
   { id:"pwr100", name:"Really fast", desc:"100 powers", type:"powers", threshold:100, icon:"迅" },
   { id:"pwr250", name:"Really really fast", desc:"250 powers", type:"powers", threshold:250, icon:"疾" },
   { id:"pwr500", name:"Overclocking", desc:"500 powers", type:"powers", threshold:500, icon:"光" },
   { id:"pwr999", name:"Lightspeed", desc:"999 powers", type:"powers", threshold:999, icon:"輝" },
+  { id:"pwr9999", name:"Warp Speed", desc:"9999 powers", type:"powers", threshold:9999, icon:"閃", badge:10 },
   { id:"neg100", name:"Learning Experience", desc:"100 negs", type:"negs", threshold:100, icon:"誤" },
   { id:"neg300", name:"Confidence Interval", desc:"300 negs", type:"negs", threshold:300, icon:"迷" },
   { id:"neg500", name:"Buzzer Damage", desc:"500 negs", type:"negs", threshold:500, icon:"散" },
@@ -14107,6 +14111,7 @@ const ACHIEVEMENT_LIST = [
   { id:"cat300", name:"Intrigued", desc:"300 in a category", type:"cat", threshold:300, icon:"探" },
   { id:"cat500", name:"Specialist", desc:"500 in a category", type:"cat", threshold:500, icon:"達" },
   { id:"cat1000", name:"Enthusiast", desc:"1000 in a category", type:"cat", threshold:1000, icon:"匠" },
+  { id:"cat5000", name:"Walking Encyclopedia", desc:"5000 in a category", type:"cat", threshold:5000, icon:"典" },
   { id:"day200", name:"Invitational Champions", desc:"200 Qs in a day", type:"daily", threshold:200, icon:"杯" },
   { id:"day500", name:"Get a life bro", desc:"500 Qs in a day", type:"daily", threshold:500, icon:"狂" },
   { id:"streak3", name:"Habit", desc:"3 day streak", type:"streak", threshold:3, icon:"慣" },
@@ -14120,6 +14125,7 @@ const ACHIEVEMENT_LIST = [
   // (15.109) past the top of Endurance (Get a life bro, 500): the Endurance badge's next two levels
   { id:"day1000", name:"Touch Grass", desc:"Answer 1000 questions in a day", type:"daily", threshold:1000, icon:"草" },
   { id:"day2000", name:"How did we get here?", desc:"Answer 2000 questions in a day", type:"daily", threshold:2000, icon:"何" },
+  { id:"day3000", name:"Sleep Is Optional", desc:"Answer 3000 questions in a day", type:"daily", threshold:3000, icon:"眠", badge:10 },
   // ── Halloween 2026 (14.90): limited — only powers inside the event's window count; kept for good once earned ──
   {id:"hw26-candy13",name:"Sweet Tooth",desc:"Collect 13 candies (power 13 pumpkin tossups)",type:"candy",threshold:13,during:HW_WIN,event:"Halloween 2026",svg:PUMPKIN_SVG,icon:"糖"},
   {id:"hw26-candy31",name:"King-Size Bar",desc:"Collect 31 candies",type:"candy",threshold:31,during:HW_WIN,event:"Halloween 2026",svg:CANDYBAR_SVG,icon:"菓"},
