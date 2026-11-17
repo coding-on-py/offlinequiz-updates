@@ -16491,6 +16491,20 @@ async function openUserProfile(handle, shownName) {
     : rel === "incoming" ? '<button type="button" class="btn btn-sm btn-primary" data-up="accept">Accept friend request</button>'
     : '<button type="button" class="btn btn-sm btn-primary" data-up="add">Add friend</button>';
   const st = d.stats || {}, num = (v) => Number(v || 0).toLocaleString();
+  // (15.163) earned achievements their own app hasn't dated yet (one added since they last opened it): the server finds
+  // when they reached each from their history (the counted kinds), so every earned card has its date
+  if (!d.private && d.powers) {
+    const p0 = d.powers, now0 = computeAchievementData(st, p0.answer_counts || {}, p0.answer_classes || {}, achRecordsFrom(p0), p0.ach_at);
+    const COUNTED = new Set(["total", "powers", "negs", "cat", "daily", "streak"]);
+    const miss = ACHIEVEMENT_LIST.filter((a) => COUNTED.has(a.type) && !a.event && now0[a.id] && now0[a.id].earned && !(Number(now0[a.id].at) > 0));
+    if (miss.length) {
+      try {
+        const r = await API.get("/api/users/profile?handle=" + encodeURIComponent(handle) + "&achdates=" + encodeURIComponent(JSON.stringify(miss.map((a) => [a.id, a.type, a.threshold]))));
+        if (r && r.achDates) d.powers.ach_at = { ...(d.powers.ach_at || {}), ...r.achDates };
+      } catch (e) { /* the cards show without those dates */ }
+      if (!document.body.contains(el)) return;
+    }
+  }
   let achHtml = "", achNote = "", upAch = null;
   if (d.private) achNote = `<p class="fr-empty">${ic("lock", 14)} @${escapeHtml(d.handle)} keeps their practice private.</p>`;
   else {
