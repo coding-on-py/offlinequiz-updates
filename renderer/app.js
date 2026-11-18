@@ -217,8 +217,10 @@ const API = IS_LAN ? LAN_API : isElectron
     };
 {
   const post = API.post.bind(API), del = API.delete.bind(API);
-  API.post = (url, data, timeoutMs) => { const r = post(url, data, timeoutMs); if (SYNC_WRITES.test(url)) cloudDirty(); readsWritten(url); return r; };
-  API.delete = (url) => { const r = del(url); if (/^\/api\/sessions\//.test(url)) cloudDirty(); readsWritten(url); return r; };
+  // (15.164) and again once the server has it: what was read while it was on its way is from before it
+  const settled = (r, url) => { Promise.resolve(r).then(() => readsWritten(url, true), () => readsWritten(url, true)); return r; };
+  API.post = (url, data, timeoutMs) => { const r = post(url, data, timeoutMs); if (SYNC_WRITES.test(url)) cloudDirty(); readsWritten(url); return settled(r, url); };
+  API.delete = (url) => { const r = del(url); if (/^\/api\/sessions\//.test(url)) cloudDirty(); readsWritten(url); return settled(r, url); };
 }
 // ── Reads kept and fetched ahead (15.76) ──
 // The pages people open (Profile, Statistics, Leaderboards, Clubs, Friends, a player's card) read through here: a GET
@@ -228,21 +230,36 @@ const API = IS_LAN ? LAN_API : isElectron
 // two minutes while the page is open, and a few seconds after a write.
 const READS = [
   // [the path, how long it's good for, what clears it]
-  [/^\/api\/(sets|category-tree|tag-vocab|categories|subcategories|alternate-subcategories|difficulty-range)(\?|$)/, 1800000, "static"],
-  [/^\/api\/(leaderboards(\/groups)?|users\/profile|friends|clubs(\/org|\/leaderboard)?)(\?|$)/, 90000, "social"],
-  [/^\/api\/(stats|sessions|sessions\/breakdown|answer-powers|profiles\/active|account\/profile|activity|starred)(\?|$)/, 300000, "mine"],   // (not trials: its answer carries the server's clock)
+  [/^\/api\/(sets|category-tree|tag-vocab|categories|subcategories|alternate-subcategories|difficulty-range|packets-for-set|packet-content|set-packets)(\?|$)/, 1800000, "static"],
+  // (15.164) a question by its id never changes (a session's rows, a report, a question's menu open it)
+  [/^\/api\/(tossups|bonuses)\/(?!(count|random|search|query)$)[^/?]+$/, 1800000, "static"],
+  // a player's card: good for ten minutes (a friend change, a write, clears it)
+  [/^\/api\/users\/profile\?/, 600000, "social"],
+  [/^\/api\/(leaderboards(\/groups|\/board)?|friends|clubs(\/org|\/leaderboard)?|diag(\/report)?)(\?|$)/, 90000, "social"],
+  [/^\/api\/(stats|sessions|sessions\/breakdown|sessions\/entries|answer-powers|profiles\/active|account\/profile|activity|starred|achievements\/timeline|review\/due)(\?|$)/, 300000, "mine"],   // (not trials: its answer carries the server's clock)
+  // (15.164) the admins' pages (not Rooms: it's live)
+  [/^\/api\/admin\/(stats|users|user|user\/data|visitor|visitor\/data|visitors|clubs|club|lessons|reports)(\?|$)/, 60000, "admin"],
 ];
 const _reads = new Map();   // url → { data, at, p, kind }
+// (15.164) counts writes: a read started before the last one isn't handed to anyone asking after it, and doesn't count
+// as fresh (one-click-ahead's reads are often on their way when something is changed)
+let _readsGen = 0;
 const readRule = (url) => READS.find((r) => r[0].test(url)) || null;
 const copyOf = (d) => { try { return structuredClone(d); } catch (e) { return d; } };
 {
   const get = API.get.bind(API);
   const fetchRead = (url, kind) => {
     const e = _reads.get(url) || { kind };
-    if (e.p) return e.p;
-    e.p = get(url).then((d) => { e.p = null; if (d && !d.error) { e.data = d; e.at = Date.now(); e.stale = false; } return d; }, (err) => { e.p = null; throw err; });
+    if (e.p && e.pg === _readsGen) return e.p;
+    const g = _readsGen;
+    const p = get(url).then((d) => {
+      if (e.p === p) e.p = null;
+      if (d && !d.error && g >= (e.g || 0)) { e.data = d; e.at = Date.now(); e.stale = g !== _readsGen; e.g = g; }
+      return d;
+    }, (err) => { if (e.p === p) e.p = null; throw err; });
+    e.p = p; e.pg = g;
     _reads.set(url, e);
-    return e.p;
+    return p;
   };
   API.get = (url, ...rest) => {
     const rule = readRule(url); if (!rule) return get(url, ...rest);
@@ -270,15 +287,109 @@ const copyOf = (d) => { try { return structuredClone(d); } catch (e) { return d;
     return fetchRead(url, rule[2]).then(copyOf);
   };
   API.fetchRead = (url) => { const rule = readRule(url); return rule ? fetchRead(url, rule[2]) : get(url); };
+  // (15.164) what's kept for a read, however old (null: never fetched): a page paints it at once, then takes the new one
+  API.peek = (url) => { const e = _reads.get(url); return e && e.data !== undefined ? copyOf(e.data) : null; };
+  // (15.164) a page's own read as it opens, after it has painted what was kept (API.peek): the server's, unless what's
+  // kept is from the last moment (a second and a half), so what other people changed shows (the page redraws if it differs)
+  API.getNew = (url, maxAge = 1500) => {
+    const rule = readRule(url); if (!rule) return get(url);
+    const e = _reads.get(url);
+    if (e && e.data !== undefined && !e.stale && Date.now() - e.at < maxAge) return Promise.resolve(copyOf(e.data));
+    return fetchRead(url, rule[2]).then(copyOf);
+  };
 }
+// ── One click ahead (15.164) ──
+// On every page, what each of its tabs, links and rows opens is fetched before the click, into the kept reads, so the
+// click paints at once. A page names its reads in AHEAD_OF (by screen; worked out again after it draws, aheadSoon), and
+// a list marks each row with data-ahead="url|url" (fetched as the row comes into view, first when the pointer is on it).
+// Four at a time, the page on screen first (opening another drops the last one's list), skipping any that's fresh, and
+// again every 40 seconds while the page stays up and just after a write, so nothing is old when it's clicked.
+const AHEAD_OF = {};   // screen id → () => [urls]
+const _ahead = { q: [], have: new Set(), busy: 0, io: null, obs: new Set(), vis: new Set(), t: 0 };
+// a row's reads: its data-ahead, and a player's card wherever a player's name is (data-user: rows, rooms, chat)
+const aheadUrls = (el) => { const d = (el && el.dataset) || {}, u = String(d.ahead || "").split("|").filter(Boolean); if (d.user && !u.length) u.push(profileUrl(d.user)); return u; };
+const AHEAD_SEL = "[data-ahead], [data-user]:not([data-user=''])";
+function aheadFresh(url) {
+  const r = readRule(url), e = _reads.get(url);
+  return !r || !!(e && ((e.p && e.pg === _readsGen) || (e.data !== undefined && !e.stale && Date.now() - e.at < r[1] / 2)));
+}
+// urls: kept reads' addresses, or { k, run } for what keeps its own (Frequency's pages, Trials, Lessons): run() fetches
+// it, once per page (k)
+function ahead(urls, first) {
+  if (IS_LAN) return;
+  for (const u of urls || []) {
+    const k = u && typeof u === "object" ? u.k : u;
+    if (!k || (typeof u === "string" && !readRule(u))) continue;
+    if (_ahead.have.has(k)) { if (first) { const i = _ahead.q.findIndex((x) => (typeof x === "object" ? x.k : x) === k); if (i > 0) _ahead.q.unshift(..._ahead.q.splice(i, 1)); } continue; }
+    _ahead.have.add(k);
+    if (first) _ahead.q.unshift(u); else _ahead.q.push(u);
+  }
+  pumpAhead();
+}
+function pumpAhead() {
+  while (_ahead.busy < 4 && _ahead.q.length) {
+    const u = _ahead.q.shift();
+    if (typeof u === "string" ? aheadFresh(u) : !u.run) continue;
+    _ahead.busy++;
+    const p = typeof u === "string" ? API.fetchRead(u).then((d) => { try { aheadAfter(u, d); } catch (e) {} }) : Promise.resolve().then(u.run);
+    p.catch(() => {}).finally(() => { _ahead.busy--; pruneReads(); pumpAhead(); });
+  }
+}
+// what a fetched read leads to in turn: a player's card also asks when they reached the achievements their app hasn't dated
+function aheadAfter(url, d) {
+  const m = /^\/api\/users\/profile\?handle=([^&]+)$/.exec(url);
+  if (m && d && !d.error && d.powers && !d.private) (window.requestIdleCallback || setTimeout)(() => { const x = profileAchUrl(decodeURIComponent(m[1]), d); if (x) ahead([x], true); });
+}
+// players' cards are big: the 60 looked at last are kept (and 600 reads in all)
+function pruneReads() {
+  const cards = [...(_reads)].filter(([u, e]) => !e.p && u.startsWith("/api/users/profile?")).sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+  for (let i = 0; i < cards.length - 60; i++) _reads.delete(cards[i][0]);
+  if (_reads.size > 600) for (const [u, e] of [..._reads].filter(([, e]) => !e.p).sort((a, b) => (a[1].at || 0) - (b[1].at || 0)).slice(0, _reads.size - 600)) _reads.delete(u);
+}
+// rows: what each opens, fetched once it's in view (or about to be)
+function aheadIn(root) {
+  if (!root || typeof IntersectionObserver === "undefined") return;
+  if (!_ahead.io) {
+    _ahead.io = new IntersectionObserver((ents) => {
+      for (const en of ents) { if (en.isIntersecting) { _ahead.vis.add(en.target); ahead(aheadUrls(en.target)); } else _ahead.vis.delete(en.target); }
+    }, { rootMargin: "300px 0px" });
+    const near = (e) => { const el = e.target.closest && e.target.closest(AHEAD_SEL); if (el && Account.available !== false) ahead(aheadUrls(el), true); };
+    document.addEventListener("pointerover", near, { passive: true });
+    document.addEventListener("focusin", near);
+  }
+  for (const el of _ahead.obs) if (!el.isConnected) { _ahead.io.unobserve(el); _ahead.obs.delete(el); _ahead.vis.delete(el); }
+  root.querySelectorAll(AHEAD_SEL).forEach((el) => { if (!_ahead.obs.has(el)) { _ahead.obs.add(el); _ahead.io.observe(el); } });
+}
+// the page on screen: its own list, then the rows in view
+function aheadPage() {
+  const a = document.querySelector(".screen.active");
+  if (!a || document.hidden || IS_LAN) return;
+  let urls = [];
+  try { urls = (AHEAD_OF[a.id] && AHEAD_OF[a.id]()) || []; } catch (e) { console.warn("ahead:", e); }
+  ahead(urls);
+  for (const el of _ahead.vis) { if (el.isConnected) ahead(aheadUrls(el)); else _ahead.vis.delete(el); }
+}
+function aheadSoon(ms) { clearTimeout(_ahead.t); _ahead.t = setTimeout(aheadPage, ms == null ? 120 : ms); }
+// another page: the last one's list goes
+function aheadNewPage() {
+  _ahead.q = []; _ahead.have.clear(); _ahead.vis.clear();
+  if (_ahead.io) { _ahead.io.disconnect(); _ahead.obs.clear(); }
+  aheadSoon(250);
+}
+setInterval(() => { if (!document.hidden) { _ahead.have.clear(); aheadPage(); } }, 40000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { _ahead.have.clear(); aheadSoon(300); } });
 // a write: the player's own reads (and the boards their numbers are on) are out of date
 let _warmT = 0;
-function readsWritten(url) {
+function readsWritten(url, done) {
   if (/^\/api\/(evaluate-|reports|plugin-data|plugin-stats)/.test(url)) return;
+  _readsGen++;
+  if (done) { for (const [, e] of _reads) if (e.kind !== "static") e.stale = true; return; }   // (15.164) answered: just marked again
   // (15.86) kept, marked stale: a page opens on them at once and redraws when the new ones come (API.getQuick), which
   // are fetched a moment later
   for (const [u, e] of _reads) if (e.kind !== "static") e.stale = true;
   clearTimeout(_warmT); _warmT = setTimeout(() => warmReads(), 1200);
+  // (15.164) and what the page on screen opens
+  clearTimeout(_ahead.wt); _ahead.wt = setTimeout(() => { _ahead.have.clear(); aheadPage(); }, 1500);
 }
 
 let _profileSyncTimer = null;
@@ -3147,6 +3258,7 @@ function showScreen(name, opts) {
     setTimeout(() => { if (document.querySelector("#title-screen.active")) preloadLeaderboards(); }, 1200);   // so Leaderboards opens at once
   }
   updateTopbar();
+  aheadNewPage();   // (15.164) what this page opens, fetched before it's clicked
   qbEmit("screen:change", { name, back });
   if (screen) restoreScreenScroll(screen);
 }
@@ -10780,11 +10892,12 @@ function drawCelerityDetail(canvas, breakdown) {
 
 
 let _statsPeriod = "all";
-function statsSinceMs() {
-  const p = _statsPeriod;
+// (15.164) the last 7, 30 or 90 days from the hour (not the millisecond), so the same period asks for the same read
+// and one fetched ahead is the one the page opens
+function statsSinceMs(p = _statsPeriod) {
   if (p === "today") { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
   const days = parseInt(p);
-  return days > 0 ? Date.now() - days * 86400000 : 0;
+  return days > 0 ? Math.floor((Date.now() - days * 86400000) / 3600000) * 3600000 : 0;
 }
 function statsPeriodLabel() {
   return { all: "All time", today: "Today", "7": "Last 7 days", "30": "Last 30 days", "90": "Last 90 days" }[_statsPeriod] || "All time";
@@ -10843,9 +10956,9 @@ function deleteSessionRow(id) {
     });
 }
 // what Statistics asks for, as it stands (warmReads fetches the same ahead)
-function statsUrl(sid) {
+function statsUrl(sid, period) {
   if (sid) return "/api/stats?sessionId=" + encodeURIComponent(sid);
-  const cids = statsCatIds(), since = statsSinceMs();
+  const cids = statsCatIds(), since = statsSinceMs(period);
   return "/api/stats?since=" + (since || 0) + (cids.length ? "&categoryIds=" + encodeURIComponent(cids.join(",")) : "");
 }
 // Everything those pages read, fetched ahead one at a time while nothing else is going on (not while a question is
@@ -10855,7 +10968,7 @@ async function warmReads() {
   if (_warming || document.hidden || needsAccount()) return;
   if (state.sessionActive && state.currentQuestion && !state.resultAreaVisible) { clearTimeout(_warmT); _warmT = setTimeout(warmReads, 3000); return; }
   _warming = true; _warmedAt = Date.now();
-  const one = async (url) => { try { await API.fetchRead(url); } catch (e) {} };
+  const one = async (url) => { if (aheadFresh(url)) return; try { await API.fetchRead(url); } catch (e) {} };   // (15.164) not what's fresh
   // (15.86) three at a time, as soon as the page is up (it was one at a time, each after an idle moment, from 3.5 s):
   // what the top bar and the home screen open first, Statistics' own first
   const pool = async (urls) => { const q = urls.slice(); await Promise.all([0, 1, 2].map(async () => { while (q.length) await one(q.shift()); })); };
@@ -10876,11 +10989,13 @@ async function warmReads() {
         if (!orgs.some((o) => o.id === oid)) oid = orgs[0] ? orgs[0].id : "";
         if (oid) await one("/api/clubs/org?id=" + encodeURIComponent(oid));
       }
+      if (Account.user.admin) await one("/api/admin/stats");   // (15.164) the menu's Site stats
     }
   } finally { _warming = false; }
 }
 setTimeout(() => warmReads(), 900);
-setInterval(() => { if (!document.hidden && Date.now() - _warmedAt > 110000) warmReads(); }, 30000);
+// (15.164) every 40 seconds (it skips what's fresh), so the top bar's pages are never older than they're good for
+setInterval(() => { if (!document.hidden && Date.now() - _warmedAt > 40000) warmReads(); }, 20000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - _warmedAt > 60000) warmReads(); });
 // (15.86) a page shown from kept reads redraws once the new ones are in (only the page on screen, quietly)
 const quietRedraw = (() => { const t = {}; return (screen, fn) => { clearTimeout(t[screen]); t[screen] = setTimeout(() => { if (document.getElementById(screen)?.classList.contains("active")) fn(); }, 150); }; })();
@@ -11069,7 +11184,7 @@ async function loadStats(preserveScroll = false) {
         // a bonus keeps no answers of its own (its parts' aren't stored): a dash, not "(no answer)"
         const ans = en.given_answer ? escapeHtml(en.given_answer) : isBonus ? '<span class="text-muted">\u2014</span>' : '<span class="text-muted">(no answer)</span>';
         const res = isBonus ? ((en.bonus_parts_correct || 0) >= (en.part_count || 3) ? "correct" : en.points > 0 ? "partial" : "miss") : (en.points >= 15 ? "power" : en.correct ? "correct" : en.points < 0 ? "neg" : "miss");
-        return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '" data-qtype="' + (en.type || "tossup") + '" data-res="' + res + '" data-path="' + escapeHtml(en.category_path || en.category || "") + '" data-ans="' + escapeHtml((en.given_answer || "").toLowerCase()) + '" style="cursor:pointer" title="Show the question & answer">' +
+        return '<tr class="qh-row" data-qh="' + i + '" data-qid="' + escapeHtml(en.question_id || "") + '"' + (en.question_id ? ' data-ahead="' + escapeHtml("/api/" + (en.type === "bonus" ? "bonuses" : "tossups") + "/" + encodeURIComponent(en.question_id)) + '"' : "") + ' data-qtype="' + (en.type || "tossup") + '" data-res="' + res + '" data-path="' + escapeHtml(en.category_path || en.category || "") + '" data-ans="' + escapeHtml((en.given_answer || "").toLowerCase()) + '" style="cursor:pointer" title="Show the question & answer">' +
           '<td><span class="qh-res"><span class="qh-chev">▸</span><span class="qh-badge ' + cls + '">' + label + "</span></span></td>" +
           "<td>" + escapeHtml(en.category || "") + (shownDiff(en.difficulty) ? ' <span class="text-muted">d' + en.difficulty + "</span>" : "") + "</td>" +
           "<td>" + ans + "</td>" +
@@ -11146,7 +11261,7 @@ async function loadStats(preserveScroll = false) {
                 const outOfCat = selectedCat && !sCats.some((c) => pickedRoots.includes(c));
                 const faint = outOfPeriod || outOfCat;
                 return `
-              <tr class="session-row${faint ? " session-faint" : ""}" data-session="${escapeHtml(s.session_id)}" title="${faint ? "Outside the current filter. Click to open anyway" : "View this session's stats"}">
+              <tr class="session-row${faint ? " session-faint" : ""}" data-session="${escapeHtml(s.session_id)}" data-ahead="${escapeHtml(statsUrl(s.session_id) + "|/api/sessions/entries?sessionId=" + encodeURIComponent(s.session_id))}" title="${faint ? "Outside the current filter. Click to open anyway" : "View this session's stats"}">
                 <td>${formatSessionTitle(s.session_id)}</td>
                 <td>${s.question_count}</td>
                 <td>${s.total_points}</td>
@@ -11320,6 +11435,7 @@ async function loadStats(preserveScroll = false) {
         loadStats();
       });
     });
+    aheadIn(container); aheadSoon();   // (15.164) the sessions and questions in view, the other periods
 
     container.querySelectorAll(".session-delete").forEach((b) => {
       b.addEventListener("click", (ev) => {
@@ -14409,6 +14525,7 @@ function loadDatabase() {
 
 function renderDbTab() {
   const tab = state.dbTab || "search";
+  aheadSoon();   // (15.164) this tab's neighbours
   if (IS_WEB) window.qbWebPathSync();   // /search, /sets, /frequency, /starred
   // another tab starts at its top (Frequency used to open scrolled down to where Search was)
   if (renderDbTab._last !== tab) { const sc = document.getElementById("db-content"); if (sc) sc.scrollTop = 0; }
@@ -15118,8 +15235,9 @@ async function renderSetsTab() {
     const list = _dbSets.filter((s) => !term || (s.name || "").toLowerCase().includes(term));
     const n = document.getElementById("db-set-n"); if (n) n.textContent = list.length.toLocaleString() + " sets";
     document.getElementById("db-set-list").innerHTML = list.map((s) =>
-      `<div class="list-row clickable db-row" data-set="${escapeHtml(s.name)}"><span class="lr-name">${escapeHtml(s.name)}</span>${yearBadgeHtml(s.year)}<span class="lr-diff">${escapeHtml(DIFF_FULL[s.difficulty] || "")}</span></div>`
+      `<div class="list-row clickable db-row" data-set="${escapeHtml(s.name)}" data-ahead="${escapeHtml("/api/packets-for-set?setName=" + encodeURIComponent(s.name))}"><span class="lr-name">${escapeHtml(s.name)}</span>${yearBadgeHtml(s.year)}<span class="lr-diff">${escapeHtml(DIFF_FULL[s.difficulty] || "")}</span></div>`
     ).join("") || '<div class="db-empty" style="border:0">No sets</div>';
+    aheadIn(document.getElementById("db-set-list"));   // (15.164) the packets of the sets in view
     document.querySelectorAll("#db-set-list .db-row").forEach((r) => {
       r.addEventListener("click", () => openSet(r.dataset.set));
       r.addEventListener("contextmenu", (ev) => {
@@ -15140,7 +15258,7 @@ async function renderSetsTab() {
 }
 
 async function openSet(setName) {
-  _dbBrowse = { set: setName };
+  _dbBrowse = { set: setName }; aheadSoon();
   const c = document.getElementById("db-content");
   const s = (_dbSets || []).find((x) => x.name === setName) || {};
   c.innerHTML = `<div class="db-page"><div class="db-crumb"><button class="ext-link" id="db-back-sets">${ic("left", 14)} Sets</button><span aria-hidden="true">/</span><strong>${escapeHtml(setName)}</strong>${yearBadgeHtml(s.year)}<span class="db-pkt-view"><button class="btn btn-sm btn-primary" id="db-set-play-tu">${ic("play", 13)}Play tossups</button><button class="btn btn-sm" id="db-set-play-bo">Play bonuses</button></span></div><div class="list db-browse" id="db-packet-list">${loadingBarHtml("Loading packets…")}</div></div>`;
@@ -15153,8 +15271,9 @@ async function openSet(setName) {
     packets = (res && (res.packets || (Array.isArray(res) ? res : []))) || [];
   } catch (e) { err = e.message || String(e); }
   document.getElementById("db-packet-list").innerHTML = packets.length
-    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}"><span class="lr-name">${((l) => '<span class="pk-n">' + escapeHtml(l[0]) + "</span>" + (l[1] ? '<span class="pk-sep"> · </span><span class="pk-name">' + escapeHtml(l.slice(1).join(" · ")) + "</span>" : ""))(packetLabel(p.packet_number, p.packet_name).split(" · "))}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
+    ? packets.map((p) => `<div class="list-row clickable db-row" data-pkt="${p.packet_number}" data-ahead="${escapeHtml(`/api/packet-content?setName=${encodeURIComponent(setName)}&packetNumber=${p.packet_number}`)}"><span class="lr-name">${((l) => '<span class="pk-n">' + escapeHtml(l[0]) + "</span>" + (l[1] ? '<span class="pk-sep"> · </span><span class="pk-name">' + escapeHtml(l.slice(1).join(" · ")) + "</span>" : ""))(packetLabel(p.packet_number, p.packet_name).split(" · "))}</span>${ic("right", 16, ' style="color:var(--muted)"')}</div>`).join("")
     : `<div class="db-empty" style="border:0">${err ? "Couldn't load packets: " + escapeHtml(err) : "No packets in this set."}</div>`;
+  aheadIn(document.getElementById("db-packet-list"));   // (15.164) the packets in view
   document.querySelectorAll("#db-packet-list .db-row").forEach((r) => {
     r.addEventListener("click", () => openPacket(setName, parseInt(r.dataset.pkt)));
     r.addEventListener("contextmenu", (ev) => {
@@ -15172,7 +15291,7 @@ async function openSet(setName) {
 }
 
 async function openPacket(setName, packetNumber) {
-  _dbBrowse = { set: setName, pkt: packetNumber };
+  _dbBrowse = { set: setName, pkt: packetNumber }; aheadSoon();   // (15.164) the packets on either side
   const c = document.getElementById("db-content");
   c.innerHTML =
     `<div class="db-page"><div class="db-crumb"><button class="ext-link" id="db-back-sets">${ic("left", 14)} Sets</button><span aria-hidden="true">/</span><button class="ext-link" id="db-back-set">${escapeHtml(setName)}</button><span aria-hidden="true">/</span><strong>Packet ${packetNumber}</strong>` +
@@ -15343,6 +15462,7 @@ function freqFetch(url) {
 }
 async function runFrequency(page) {
   if (page != null) _freqPage = Math.max(0, page);
+  aheadSoon();   // (15.164) the other kinds, the pages on either side
   const el = document.getElementById("freq-results"); if (!el) return;
   const seq = ++_freqSeq;
   const qtype = _freqType;
@@ -16353,7 +16473,8 @@ function friendsSeen() { lsSet(FR_SEEN, JSON.stringify(_frIncoming.slice(0, 200)
 async function friendPoll() {
   try { window.QBClubs?.poll(); } catch (e) {}   // Clubs' count: invites + join requests (clubs.js)
   if (!Account.user || !Account.user.handle || Account.offline) { _frIncoming = []; friendDots(); return; }
-  try { const d = await API.get("/api/friends"); if (d && Array.isArray(d.incoming)) { _frIncoming = d.incoming.map((f) => f.handle); friendDots(); noteFriendRelations(d); } } catch (e) {}
+  // (15.164) from the server, not what's kept: it's here to see what others did (the kept one is often only seconds old)
+  try { const d = await API.fetchRead("/api/friends"); if (d && Array.isArray(d.incoming)) { _frIncoming = d.incoming.map((f) => f.handle); friendDots(); noteFriendRelations(d); } } catch (e) {}
 }
 
 // ── Other players: one menu wherever they appear ──
@@ -16463,6 +16584,16 @@ async function openUserMenu(x, y, u) {
 }
 // Their profile: who they are, their totals and achievements (worked out here from
 // what the server sends, exactly as your own are), and the friend button.
+// (15.164) the card's second read (one-click-ahead fetches it too): when the player reached the earned achievements
+// their own app hasn't dated (the counted kinds); null when every one has its date
+function profileAchUrl(handle, d) {
+  if (!d || d.error || d.private || !d.powers) return null;
+  const st = d.stats || {}, p0 = d.powers, now0 = computeAchievementData(st, p0.answer_counts || {}, p0.answer_classes || {}, achRecordsFrom(p0), p0.ach_at);
+  const COUNTED = new Set(["total", "powers", "negs", "cat", "daily", "streak"]);
+  const miss = ACHIEVEMENT_LIST.filter((a) => COUNTED.has(a.type) && !a.event && now0[a.id] && now0[a.id].earned && !(Number(now0[a.id].at) > 0));
+  return miss.length ? "/api/users/profile?handle=" + encodeURIComponent(handle) + "&achdates=" + encodeURIComponent(JSON.stringify(miss.map((a) => [a.id, a.type, a.threshold]))) : null;
+}
+const profileUrl = (handle) => "/api/users/profile?handle=" + encodeURIComponent(handle);
 async function openUserProfile(handle, shownName) {
   document.getElementById("user-profile")?.remove();
   const el = document.createElement("div");
@@ -16476,7 +16607,16 @@ async function openUserProfile(handle, shownName) {
   document.addEventListener("keydown", onKey, true);
   document.body.appendChild(el);
   let d;
-  try { d = await API.get("/api/users/profile?handle=" + encodeURIComponent(handle)); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
+  try { d = await API.get(profileUrl(handle)); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
+  // (15.164) how you stand with them as last heard (your friends list, which the player's menu just asked for) when
+  // that's newer than the kept card
+  if (d && !d.error && !d.you && Account.user && _rel.at) { const e = _reads.get(profileUrl(handle)); if (!e || _rel.at > (e.at || 0)) d.relation = _rel.map.get(d.handle) || null; }
+  // (15.164) a card kept a while (one-click-ahead fetched it): how you stand with them comes from the server again (your
+  // friends list, small), and a change (they answered your request) fetches the card again and draws it anew
+  if (d && !d.error && !d.you && Account.user && Account.user.handle) friendRelations(true).then((m) => {
+    if ((m.get(d.handle) || null) === (d.relation || null) || !document.body.contains(el)) return;
+    API.fetchRead(profileUrl(handle)).then((n) => { if (n && !n.error && n.relation !== d.relation && document.body.contains(el)) openUserProfile(handle, shownName); }, () => {});
+  }, () => {});
   if (!document.body.contains(el)) return;
   const body = el.querySelector(".up-body");
   if (!d || d.error) { body.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't load that profile.")}</div>`; return; }
@@ -16493,17 +16633,10 @@ async function openUserProfile(handle, shownName) {
   const st = d.stats || {}, num = (v) => Number(v || 0).toLocaleString();
   // (15.163) earned achievements their own app hasn't dated yet (one added since they last opened it): the server finds
   // when they reached each from their history (the counted kinds), so every earned card has its date
-  if (!d.private && d.powers) {
-    const p0 = d.powers, now0 = computeAchievementData(st, p0.answer_counts || {}, p0.answer_classes || {}, achRecordsFrom(p0), p0.ach_at);
-    const COUNTED = new Set(["total", "powers", "negs", "cat", "daily", "streak"]);
-    const miss = ACHIEVEMENT_LIST.filter((a) => COUNTED.has(a.type) && !a.event && now0[a.id] && now0[a.id].earned && !(Number(now0[a.id].at) > 0));
-    if (miss.length) {
-      try {
-        const r = await API.get("/api/users/profile?handle=" + encodeURIComponent(handle) + "&achdates=" + encodeURIComponent(JSON.stringify(miss.map((a) => [a.id, a.type, a.threshold]))));
-        if (r && r.achDates) d.powers.ach_at = { ...(d.powers.ach_at || {}), ...r.achDates };
-      } catch (e) { /* the cards show without those dates */ }
-      if (!document.body.contains(el)) return;
-    }
+  const achUrl = profileAchUrl(handle, d);
+  if (achUrl) {
+    try { const r = await API.get(achUrl); if (r && r.achDates) d.powers.ach_at = { ...(d.powers.ach_at || {}), ...r.achDates }; } catch (e) { /* the cards show without those dates */ }
+    if (!document.body.contains(el)) return;
   }
   let achHtml = "", achNote = "", upAch = null;
   if (d.private) achNote = `<p class="fr-empty">${ic("lock", 14)} @${escapeHtml(d.handle)} keeps their practice private.</p>`;
@@ -16883,6 +17016,30 @@ const _lbCache = new Map();   // url → response
 const lbPeriods = () => [["week", "This week"], ["month", "This month"], ["all", "All time"], ...SEASONS.filter((e) => Date.now() >= e.start && Date.now() < e.boardUntil).map((e) => [e.key, e.name])];
 const _lbUrl = (period) => "/api/leaderboards?period=" + period;
 const _lbBoardUrl = (id, period) => "/api/leaderboards/board?id=" + encodeURIComponent(id) + "&period=" + period;
+// (15.164) what's kept for a leaderboard: the page's own, else what one-click-ahead fetched
+const lbKept = (url) => _lbCache.get(url) || API.peek(url);
+// Leaderboards, one click ahead (15.164): every period of what's showing, each of your leaderboards, Teams and
+// Organizations, and Friends (a leaderboard's invite list); the players' cards come from the rows in view (data-ahead)
+const lbGroupsUrl = (kind, period) => "/api/leaderboards/groups?kind=" + kind + "&period=" + period;
+AHEAD_OF["leaderboards-screen"] = () => {
+  if (!Account.available) return [];
+  const main = ["week", "month", "all"], urls = [], board = _lb.tab !== "global" ? _lb.tab : null;
+  if (_lb.kind === "individuals" || !window.QBClubs) {
+    for (const [p] of lbPeriods()) { urls.push(_lbUrl(p)); if (board) urls.push(_lbBoardUrl(board, p)); }
+    const d = lbKept(_lbUrl(_lb.period)), boards = ((d && d.boards) || []).map((b) => b.id).filter((id) => id !== board);
+    for (const id of boards) urls.push(_lbBoardUrl(id, _lb.period));
+    if (window.QBClubs) { const gp = main.includes(_lb.period) ? _lb.period : "week"; urls.push(lbGroupsUrl("teams", gp), lbGroupsUrl("orgs", gp)); }
+    // and two clicks away (a period, then a leaderboard or a kind): few, and small
+    for (const [p] of lbPeriods()) for (const id of boards) urls.push(_lbBoardUrl(id, p));
+    if (window.QBClubs) for (const p of main) urls.push(lbGroupsUrl("teams", p), lbGroupsUrl("orgs", p));
+  } else {
+    for (const p of main) urls.push(lbGroupsUrl(_lb.kind, p));
+    urls.push(lbGroupsUrl(_lb.kind === "teams" ? "orgs" : "teams", _lb.period), _lbUrl(_lb.period));
+    if (board) urls.push(_lbBoardUrl(board, _lb.period));
+  }
+  if (Account.user) urls.push("/api/friends");
+  return urls;
+};
 let _lbPreloadAt = 0;
 function preloadLeaderboards() {
   if (!Account.available || Date.now() - _lbPreloadAt < 45000) return;
@@ -17163,9 +17320,12 @@ async function storeNeon(k, btn) {
 
 async function renderLeaderboards(note) {
   const c = document.getElementById("lb-container"); if (!c) return;
+  // (15.164) only the newest draw paints: one still waiting for the server when a tab is clicked steps aside
+  const gen = _lb.gen = (_lb.gen || 0) + 1, old = () => gen !== _lb.gen;
   if (!lbPeriods().some(([k]) => k === _lb.period)) _lb.period = "week";   // an event's board that has closed
   // the account check runs alongside (it's a round trip) once the account is known
   if (!note) { const af = accountFresh(); if (!Account.known) await af; }
+  if (old()) return;
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("chart", 26)}</div><p>Leaderboards need OnlineQuiz accounts, which aren't open yet.</p></div>`; return; }
   if (_lb.kind !== "individuals" && window.QBClubs) {
     // teams and organizations rank by points only (an event's board is for players)
@@ -17175,24 +17335,27 @@ async function renderLeaderboards(note) {
     wireLbKinds(c);
     c.querySelectorAll("[data-lb-period]").forEach((b) => b.onclick = () => { _lb.period = b.dataset.lbPeriod; renderLeaderboards(); });
     window.QBClubs.renderGroups(c.querySelector("#lb-groups"), _lb.kind, _lb.period);
+    aheadSoon();   // (15.164) the other periods, the other kind, Individuals
     return;
   }
   const url = _lbUrl(_lb.period);
   // preloaded numbers first (not after an edit: those must show the change)
   let shown = "";
-  const cd = !note ? _lbCache.get(url) : null, cb = cd && _lb.tab !== "global" ? _lbCache.get(_lbBoardUrl(_lb.tab, _lb.period)) : null;
+  const cd = !note ? lbKept(url) : null, cb = cd && _lb.tab !== "global" ? lbKept(_lbBoardUrl(_lb.tab, _lb.period)) : null;
   if (cd && (_lb.tab === "global" || cb) && (_lb.tab === "global" || (cd.boards || []).some((b) => b.id === _lb.tab))) {
     shown = JSON.stringify([cd, cb || null]);
     await paintLeaderboards(c, cd, cb || null, note);
   } else if (!c.querySelector(".lb-page")) c.innerHTML = loadingBarHtml("Loading leaderboards…");
   if (_cloudOn) await cloudSyncNow();   // the app: your own numbers include what you just did
   let d, board = null;
-  try { d = await API.get(url); } catch (e) { d = null; }
+  try { d = await API.getNew(url); } catch (e) { d = null; }
+  if (old()) return;
   if (!d || d.error) { if (!shown) c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't reach onlinequiz.net. Check your internet connection.")}</div>`; return; }
   _lbCache.set(url, d);
   if (_lb.tab !== "global" && !(d.boards || []).some((b) => b.id === _lb.tab)) _lb.tab = "global";
-  if (_lb.tab !== "global") { try { board = await API.get(_lbBoardUrl(_lb.tab, _lb.period)); } catch (e) { board = null; } if (!board || board.error) { _lb.tab = "global"; board = null; } else _lbCache.set(_lbBoardUrl(_lb.tab, _lb.period), board); }
+  if (_lb.tab !== "global") { try { board = await API.getNew(_lbBoardUrl(_lb.tab, _lb.period)); } catch (e) { board = null; } if (!board || board.error) { _lb.tab = "global"; board = null; } else _lbCache.set(_lbBoardUrl(_lb.tab, _lb.period), board); }
   if (!document.querySelector("#leaderboards-screen.active") && !note) return;
+  if (old()) return;
   if (shown && shown === JSON.stringify([d, board])) return;   // the preloaded numbers were current
   await paintLeaderboards(c, d, board, note);
 }
@@ -17202,7 +17365,7 @@ async function paintLeaderboards(c, d, board, note) {
   const periods = lbPeriods().map(([k, l]) => `<button type="button" data-lb-period="${k}" aria-pressed="${_lb.period === k}">${l}</button>`).join("");
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const avN = (h, n) => `<span class="fr-av"${avatarStyle(n)}>${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
-  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}" data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${avN(r.displayName || r.handle, r.neon)}` +
+  const row = (r, removable) => `<div class="lb-row${r.you ? " lb-you" : ""}" data-user="${escapeHtml(r.handle || "")}"${r.handle ? ` data-ahead="${escapeHtml(profileUrl(r.handle))}"` : ""} data-user-name="${escapeHtml(r.displayName || r.handle || "")}" data-user-neon="${escapeHtml(r.neon || "")}"><span class="lb-rank num">${r.rank}</span>${avN(r.displayName || r.handle, r.neon)}` +
     `<span class="fr-name"><b>${neonName(r.displayName || r.handle, r.neon)}</b>${r.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(r.handle)}</small></span>` +
     // NAQT's abbreviations (15.61): PTS points, TUH tossups heard, P powers (15.67, was 15); ACC the share of tossups answered right
     `<span class="fr-stat"><b class="num">${Number(r.points || 0).toLocaleString()}</b><small title="Points">${(SEASONS.find((e) => e.key === _lb.period) || { unit: "PTS" }).unit}</small></span>` +
@@ -17219,7 +17382,8 @@ async function paintLeaderboards(c, d, board, note) {
   } else {
     const b = board.board;
     // friends as they are now (one made since the page opened must be invitable)
-    try { const f = await API.get("/api/friends"); _lb.friends = (f && Array.isArray(f.friends)) ? f.friends : (_lb.friends || []); } catch (e) { _lb.friends = _lb.friends || []; }
+    // (15.164) the kept ones at once (one-click-ahead keeps them), and the page again if newer ones differ
+    try { const f = await API.getQuick("/api/friends", () => quietRedraw("leaderboards-screen", () => renderLeaderboards())); _lb.friends = (f && Array.isArray(f.friends)) ? f.friends : (_lb.friends || []); } catch (e) { _lb.friends = _lb.friends || []; }
     const onBoard = new Set([...board.rows.map((r) => r.handle), ...(board.invited || []).map((r) => r.handle)]);
     const canInvite = _lb.friends.filter((f) => !onBoard.has(f.handle));
     body = `<div class="lb-head"><div class="lb-title"><b>${escapeHtml(b.name)}</b><small>${b.owner ? "Made by " + neonName(b.owner.displayName, b.owner.neon) : ""} · ${board.rows.length} ${board.rows.length === 1 ? "member" : "members"}</small></div>` +
@@ -17267,9 +17431,8 @@ async function paintLeaderboards(c, d, board, note) {
   c.querySelector("[data-lb-leave]")?.addEventListener("click", () => confirmDialog("Leave " + board.board.name + "?", () => dropBoard("/api/leaderboards/leave", "Couldn't leave " + board.board.name + ". Try again."), { yes: "Leave", danger: true }));
   c.querySelector("[data-lb-invite]")?.addEventListener("click", () => { const h = document.getElementById("lb-invite-who")?.value; if (h) { msg("Inviting @" + h + "…"); act("/api/leaderboards/invite", { id: _lb.tab, handle: h }, "Invited @" + h + "."); } });
   c.querySelectorAll("[data-lb-remove]").forEach((b) => b.onclick = () => confirmDialog("Remove @" + b.dataset.lbRemove + " from this leaderboard?", () => removeOptimistic(b.closest(".lb-row"), () => API.post("/api/leaderboards/remove", { id: _lb.tab, handle: b.dataset.lbRemove }), { failText: "Couldn't remove @" + b.dataset.lbRemove + ". Try again." }).then((ok) => { if (ok) { _lbCache.clear(); renderLeaderboards(" "); } }), { yes: "Remove", danger: true }));
-  // (15.76) the players on it, fetched ahead one after another, so opening anyone's card is instant
-  const handles = [...c.querySelectorAll(".lb-row[data-user]")].map((r) => r.dataset.user).filter((h) => h && h !== (Account.user && Account.user.handle)).slice(0, 15);
-  handles.forEach((h, i) => setTimeout(() => { if (document.querySelector("#leaderboards-screen.active")) API.fetchRead("/api/users/profile?handle=" + encodeURIComponent(h)).catch(() => {}); }, 300 + 180 * i));
+  // (15.164) one click ahead: the other periods, leaderboards and kinds, and the cards of the players in view
+  aheadIn(c); aheadSoon();
 }
 
 // ── Site stats (website; admins only — QB_ADMIN_HANDLES on the server) ──
@@ -17308,10 +17471,10 @@ function paintAdminUsers(c) {
   paintAdmResults(); paintAdmUser();
   if (!_admu.all || _admu.all.length <= 100) admLoadAll();   // shown as it was, then fresh (unless more pages were opened)
 }
-async function admLoadAll(more) {
+async function admLoadAll(more, fresh) {
   const my = ++_admu.allGen, from = more && _admu.all ? _admu.all.length : 0;
   _admu.loadingMore = !!more; if (more) paintAdmResults();
-  let d = null; try { d = await API.get("/api/admin/users?limit=100&offset=" + from + (["unverified", "testers", "visitors"].includes(_admu.filter) ? "&filter=" + _admu.filter : "")); } catch (e) {}
+  let d = null; try { d = await (fresh ? (u) => API.fetchRead(u).then(copyOf) : API.get)("/api/admin/users?limit=100&offset=" + from + (["unverified", "testers", "visitors"].includes(_admu.filter) ? "&filter=" + _admu.filter : "")); } catch (e) {}
   if (my !== _admu.allGen) return;
   _admu.loadingMore = false;
   if (!d || !Array.isArray(d.users)) { _admu.err = true; if (!more) _admu.all = null; paintAdmResults(); return; }
@@ -17320,7 +17483,7 @@ async function admLoadAll(more) {
   _admu.total = d.total || 0; _admu.unverified = d.unverified || 0;
   // (15.138) No account: the server was still counting the visitor files, so the list is asked for again shortly
   _admu.counting = !!d.counting; clearTimeout(_admu.countT);
-  if (d.counting && !more) _admu.countT = setTimeout(() => { if (_admu.filter === "visitors" && document.getElementById("adm-results") && (_admu.all || []).length <= 100) admLoadAll(); }, 4000);
+  if (d.counting && !more) _admu.countT = setTimeout(() => { if (_admu.filter === "visitors" && document.getElementById("adm-results") && (_admu.all || []).length <= 100) admLoadAll(false, true); }, 4000);
   paintAdmResults();
 }
 async function admSearch() {
@@ -17338,11 +17501,11 @@ const admPlace = (u) => u.country ? admCountry(u.country) : u.zoneCountry ? admC
 const admVisitorName = (v) => "Visitor " + String(v.key || "").slice(0, 6);
 const admSaved = (v) => [[v.answers, "answer", "answers"], [v.sessions, "session", "sessions"], [v.stars, "star", "stars"], [v.plugins, "plugin entry", "plugin entries"]]
   .filter(([n]) => n > 0).map(([n, one, many]) => Number(n).toLocaleString() + " " + (n === 1 ? one : many)).join(" · ");
-const admVisitorRow = (v) => `<button type="button" class="adm-urow${v.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(v.id)}"><span class="fr-av na" aria-hidden="true">?</span><span class="adm-uname"><b>${escapeHtml(admVisitorName(v))}</b>` +
+const admVisitorRow = (v) => `<button type="button" class="adm-urow${v.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(v.id)}" data-ahead="${escapeHtml(admUserUrl(v.id))}"><span class="fr-av na" aria-hidden="true">?</span><span class="adm-uname"><b>${escapeHtml(admVisitorName(v))}</b>` +
   `<small>${escapeHtml([v.country ? admCountry(v.country) : "", v.ip || ""].filter(Boolean).join(" · ") || "Location not known")}</small>` +
   `<small>${escapeHtml([v.lastAt ? "last seen " + admAgo(v.lastAt) : "", v.firstAt ? "first " + admWhen(v.firstAt) : ""].filter(Boolean).join(" · "))}</small>` +
   `<small>${escapeHtml(admSaved(v) || "Nothing saved")}</small></span>${v.signedUp ? '<span class="adm-pill">Signed up</span>' : ""}</button>`;
-const admUserRow = (u) => u.visitor ? admVisitorRow(u) : `<button type="button" class="adm-urow${u.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(u.id)}">${admAv(u.displayName || u.handle || u.email, u.neon)}<span class="adm-uname"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b><small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : ""}${escapeHtml(u.email || "")}</small><small>${[admPlace(u), "joined " + admAgo(u.createdAt)].filter(Boolean).map(escapeHtml).join(" · ")}</small></span>${u.tester ? '<span class="adm-pill adm-pill-tester">Tester</span>' : ""}${u.verified ? "" : '<span class="adm-pill">Not verified</span>'}</button>`;
+const admUserRow = (u) => u.visitor ? admVisitorRow(u) : `<button type="button" class="adm-urow${u.id === _admu.id ? " on" : ""}" data-adm-user="${escapeHtml(u.id)}" data-ahead="${escapeHtml(admUserUrl(u.id))}">${admAv(u.displayName || u.handle || u.email, u.neon)}<span class="adm-uname"><b>${neonName(u.displayName || u.handle || "(no name)", u.neon)}</b><small>${u.handle ? "@" + escapeHtml(u.handle) + " · " : ""}${escapeHtml(u.email || "")}</small><small>${[admPlace(u), "joined " + admAgo(u.createdAt)].filter(Boolean).map(escapeHtml).join(" · ")}</small></span>${u.tester ? '<span class="adm-pill adm-pill-tester">Tester</span>' : ""}${u.verified ? "" : '<span class="adm-pill">Not verified</span>'}</button>`;
 function paintAdmResults() {
   const el = document.getElementById("adm-results"), head = document.getElementById("adm-listhead"); if (!el) return;
   const searching = !!_admu.q.trim();
@@ -17363,17 +17526,20 @@ function paintAdmResults() {
     el.querySelector("#adm-umore")?.addEventListener("click", () => admLoadAll(true));
   }
   el.querySelectorAll("[data-adm-user]").forEach((b) => b.onclick = () => admOpen(b.dataset.admUser));
+  aheadIn(el);   // (15.164) the accounts in view
 }
+// (15.164) what opening an account (or a signed-out visitor, "v:<key>") reads
+const admUserUrl = (id) => String(id).startsWith("v:") ? "/api/admin/visitor?id=" + encodeURIComponent(String(id).slice(2)) : "/api/admin/user?id=" + encodeURIComponent(id);
 async function admOpen(id, keep) {
   if (_admu.id !== id) { _admu.pd = {}; _admu.profile = ""; _admu.sess = null; _admu.sd = null; }
   else if (keep) _admu.pd = {};
   _admu.id = id; if (!keep) _admu.d = null;
   if (admIsVisitor() && _admu.part === "social") _admu.part = "overview";   // (15.138) a visitor has no People
   paintAdmResults(); paintAdmUser();
-  let d = null; try { d = await API.get(admIsVisitor() ? "/api/admin/visitor?id=" + encodeURIComponent(id.slice(2)) : "/api/admin/user?id=" + encodeURIComponent(id)); } catch (e) {}
+  let d = null; try { d = await API.get(admUserUrl(id)); } catch (e) {}
   if (_admu.id !== id) return;
   _admu.d = d && !d.error ? d : { error: (d && d.error) || (admIsVisitor() ? "Couldn't load that visitor." : "Couldn't load that account.") };
-  paintAdmUser();
+  paintAdmUser(); aheadSoon();   // (15.164) its other parts
 }
 // (15.138) the one open is a signed-out visitor ("v:<key>"), whose parts come from /api/admin/visitor/data
 const admIsVisitor = () => String(_admu.id || "").startsWith("v:");
@@ -17540,7 +17706,7 @@ async function loadAdmPart() {
   if (_admu.id !== id || _admu.part !== part) return;
   _admu.pd[key] = d && !d.error ? d : { error: (d && d.error) || "Couldn't load that." };
   if (d && d.profile && !_admu.profile) _admu.profile = d.profile;
-  paintAdmPart();
+  paintAdmPart(); aheadSoon();
 }
 function paintAdmPart() {
   const box = document.getElementById("adm-part"); if (!box) return;
@@ -17697,8 +17863,9 @@ function paintAdmClubList() {
   const q = _admc.q.trim().toLowerCase();
   const orgs = (d.orgs || []).filter((o) => !q || [o.name, o.tag, o.owner, o.ownerName].some((x) => String(x || "").toLowerCase().includes(q)));
   head.innerHTML = `<small>${admNum(orgs.length)} of ${admNum((d.orgs || []).length)} organizations</small>`;
-  list.innerHTML = orgs.map((o) => `<button type="button" class="adm-urow${o.id === _admc.id ? " on" : ""}" data-admc="${escapeHtml(o.id)}"><span class="club-tile sm" aria-hidden="true">${escapeHtml(o.tag)}</span><span class="adm-uname"><b>${escapeHtml(o.name)}</b><small>${admNum(o.members)} ${o.members === 1 ? "member" : "members"} · ${admNum(o.teams)} ${o.teams === 1 ? "team" : "teams"}${o.diags ? " · " + admNum(o.diags) + " diagnostics" : ""}</small></span></button>`).join("") || '<p class="adm-none">No organization matches.</p>';
+  list.innerHTML = orgs.map((o) => `<button type="button" class="adm-urow${o.id === _admc.id ? " on" : ""}" data-admc="${escapeHtml(o.id)}" data-ahead="${escapeHtml("/api/admin/club?id=" + encodeURIComponent(o.id))}"><span class="club-tile sm" aria-hidden="true">${escapeHtml(o.tag)}</span><span class="adm-uname"><b>${escapeHtml(o.name)}</b><small>${admNum(o.members)} ${o.members === 1 ? "member" : "members"} · ${admNum(o.teams)} ${o.teams === 1 ? "team" : "teams"}${o.diags ? " · " + admNum(o.diags) + " diagnostics" : ""}</small></span></button>`).join("") || '<p class="adm-none">No organization matches.</p>';
   list.querySelectorAll("[data-admc]").forEach((b) => b.onclick = () => admOpenClub(b.dataset.admc));
+  aheadIn(list);   // (15.164) the organizations in view
 }
 async function admOpenClub(id) {
   _admc.id = id; _admc.od = null; paintAdmClubList(); paintAdmClub();
@@ -17867,6 +18034,7 @@ function admWatch(btn, id, code, back) {
 
 async function renderAdmin() {
   const c = document.getElementById("admin-container"); if (!c) return;
+  aheadSoon();   // (15.164) the other tabs
   if (_adm.tab === "users") { paintAdminUsers(c); return; }
   if (_adm.tab === "reports") { renderAdminReports(c); return; }
   if (_adm.tab === "visitors") { renderAdminVisitors(c); return; }
@@ -17876,7 +18044,7 @@ async function renderAdmin() {
   if (!c.querySelector(".adm-page") || c.querySelector(".adm-users, .adm-rpage, .adm-vpage")) c.innerHTML = loadingBarHtml("Loading…");
   loadAdmGeo();
   let d;
-  try { d = await API.get("/api/admin/stats"); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
+  try { d = await API.getQuick("/api/admin/stats", () => quietRedraw("admin-screen", () => { if (_adm.tab === "stats") renderAdmin(); })); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
   if (!document.querySelector("#admin-screen.active")) return;
   if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml(d && d.error === "Not found" ? "Nothing here." : (d && d.error) || "Couldn't load the stats.")}</div>`; return; }
   _adm.data = d;
@@ -18154,7 +18322,8 @@ function paintAdminReports(c) {
 // streak, from each account's synced practice (server: activitySummary).
 async function renderFriends(note) {
   const c = document.getElementById("friends-container"); if (!c) return;
-  if (!note) await accountFresh();
+  // (15.164) the account check runs alongside once the account is known (it's a round trip), as Leaderboards' does
+  if (!note) { const af = accountFresh(); if (!Account.known) await af; }
   if (!Account.available) { c.innerHTML = `<div class="acct-panel"><div class="acct-panel-ico">${ic("user", 26)}</div><p>Friends need an OnlineQuiz account. Accounts aren't open yet.</p></div>`; return; }
   if (!Account.user) { c.innerHTML = accountPanelHtml("Sign in to add friends and see how they're practicing."); return; }
   if (!Account.user.handle) {
@@ -18162,12 +18331,20 @@ async function renderFriends(note) {
     document.getElementById("fr-choose").onclick = () => openAccount("handle");
     return;
   }
-  if (!c.querySelector(".fr-page")) c.innerHTML = loadingBarHtml("Loading friends…");
+  // (15.164) the kept list at once (one-click-ahead keeps it), then the server's (after the app's sync) if it differs
+  const kept = !note ? API.peek("/api/friends") : null;
+  if (kept && !kept.error) paintFriends(c, kept, note);
+  else if (!c.querySelector(".fr-page")) c.innerHTML = loadingBarHtml("Loading friends…");
   if (_cloudOn) await cloudSyncNow();   // the app: your own numbers include what you just did
   let d;
-  try { d = await API.get("/api/friends"); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
+  try { d = await API.getNew("/api/friends"); } catch (e) { d = { error: "Couldn't reach onlinequiz.net." }; }
   if (!document.querySelector("#friends-screen.active") && !note) return;
-  if (!d || d.error) { c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't load friends.")}</div>`; return; }
+  if (!d || d.error) { if (!kept) c.innerHTML = `<div class="db-empty">${escapeHtml((d && d.error) || "Couldn't load friends.")}</div>`; return; }
+  if (kept && JSON.stringify(kept) === JSON.stringify(d)) return;
+  paintFriends(c, d, note);
+}
+function paintFriends(c, d, note) {
+  const typed = (c.querySelector("#fr-handle") || {}).value || "";   // a redraw keeps what's being typed
   const me = d.me || {};
   const av = (h) => `<span class="fr-av">${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
   const avN = (h, n) => `<span class="fr-av"${avatarStyle(n)}>${escapeHtml(String(h || "?")[0].toUpperCase())}</span>`;
@@ -18176,15 +18353,15 @@ async function renderFriends(note) {
   const board = rows.map((f, i) => {
     const s = f.summary || {}, w = s.week || {};
     const nm = f.you ? (Account.user && Account.user.displayName) || f.handle : f.displayName || f.handle;
-    return `<div class="fr-row${f.you ? " fr-you" : ""}" data-user="${escapeHtml(f.handle || "")}" data-user-name="${escapeHtml(nm || "")}" data-user-neon="${escapeHtml((f.you ? myNeon() : f.neon) || "")}"><span class="fr-rank num">${i + 1}</span>${avN(nm, f.you ? myNeon() : f.neon)}<span class="fr-name"><b>${neonName(nm || "", f.you ? myNeon() : f.neon)}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
+    return `<div class="fr-row${f.you ? " fr-you" : ""}" data-user="${escapeHtml(f.handle || "")}"${f.handle ? ` data-ahead="${escapeHtml(profileUrl(f.handle))}"` : ""} data-user-name="${escapeHtml(nm || "")}" data-user-neon="${escapeHtml((f.you ? myNeon() : f.neon) || "")}"><span class="fr-rank num">${i + 1}</span>${avN(nm, f.you ? myNeon() : f.neon)}<span class="fr-name"><b>${neonName(nm || "", f.you ? myNeon() : f.neon)}</b>${f.you ? '<span class="badge">You</span>' : ""}<small>@${escapeHtml(f.handle || "")} · ${s.lastActive ? "active " + escapeHtml(relTime(s.lastActive)) : "no practice yet"}</small></span>` +
       `<span class="fr-stat"><b class="num">${num(w.questions)}</b><small>this week</small></span>` +
       `<span class="fr-stat"><b class="num">${w.accuracy == null ? "—" : w.accuracy + "%"}</b><small>accuracy</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.today)}</b><small>today</small></span>` +
       `<span class="fr-stat"><b class="num">${num(s.streak)}</b><small>day streak</small></span>` +
       (f.you ? '<span class="fr-act"></span>' : `<span class="fr-act"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fr-remove="${escapeHtml(f.handle)}" title="Remove friend" aria-label="Remove @${escapeHtml(f.handle)}">${ic("trash", 15)}</button></span>`) + "</div>";
   }).join("");
-  const reqs = (d.incoming || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
-  const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
+  const reqs = (d.incoming || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-ahead="${escapeHtml(profileUrl(f.handle))}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} wants to be friends</small></span><button type="button" class="btn btn-sm" data-fr-decline="${escapeHtml(f.handle)}">Decline</button><button type="button" class="btn btn-sm btn-primary" data-fr-accept="${escapeHtml(f.handle)}">Accept</button></div>`).join("");
+  const sent = (d.outgoing || []).map((f) => `<div class="fr-req" data-user="${escapeHtml(f.handle)}" data-ahead="${escapeHtml(profileUrl(f.handle))}" data-user-name="${escapeHtml(f.displayName || f.handle)}" data-user-neon="${escapeHtml(f.neon || "")}">${avN(f.displayName || f.handle, f.neon)}<span class="fr-name"><b>${neonName(f.displayName || f.handle, f.neon)}</b><small>@${escapeHtml(f.handle)} · request sent</small></span><button type="button" class="btn btn-sm" data-fr-remove="${escapeHtml(f.handle)}">Cancel</button></div>`).join("");
   c.innerHTML = `<div class="fr-page">` +
     `<section class="fr-card fr-top"><div class="fr-me">Your username <b>@${escapeHtml(me.handle || "")}</b><button type="button" class="btn btn-ghost btn-icon btn-sm" id="fr-copy" title="Copy your username" aria-label="Copy your username">${ic("copy", 15)}</button><button type="button" class="btn btn-sm fr-link" id="fr-link">${ic("link", 15)}Friend link</button></div>` +
       `<form class="fr-add" id="fr-add"><input class="mode-input" id="fr-handle" placeholder="Their username" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="21"><button type="submit" class="btn btn-primary">Add friend</button></form>` +
@@ -18195,6 +18372,8 @@ async function renderFriends(note) {
     (sent ? `<section class="fr-sec"><h2 class="eyebrow">Sent</h2><div class="fr-list">${sent}</div></section>` : "") +
   `</div>`;
   tipInto(c.querySelector(".fr-page"), "friends");
+  if (typed) { const i = c.querySelector("#fr-handle"); if (i) i.value = typed; }
+  aheadIn(c);   // (15.164) the cards of the players in view
   _frIncoming = (d.incoming || []).map((f) => f.handle); friendsSeen();   // looked at: the dots go
   noteFriendRelations(d);
   const act = async (path, body, okNote) => {
@@ -18224,6 +18403,60 @@ async function renderFriends(note) {
     confirmDialog("Remove @" + h + " from your friends?", () => drop(row, "/api/friends/remove", { handle: h }, "", "Couldn't remove @" + h + ". Try again."), { yes: "Remove", danger: true });
   });
 }
+
+// ── One click ahead: what each page's tabs and links open (15.164; rows mark their own with data-ahead) ──
+// Frequency keeps its pages itself (freqFetch): its first page of a kind, as a task
+const freqAhead = (qtype, page) => { const u = freqUrl(qtype, page, _freqUnits.slice(), freqATypes()); return { k: "freq:" + u, run: () => freqFetch(u) }; };
+const signedInNow = () => !!(Account.available && Account.user);
+// Home: Database's tabs, an event's leaderboard (its card's button)
+AHEAD_OF["title-screen"] = () => {
+  const urls = ["/api/sets", "/api/starred"];
+  if (!freqTags()) urls.push(freqAhead(_freqType, 0));
+  if (Account.available) for (const [p] of lbPeriods().slice(3)) urls.push(_lbUrl(p));
+  return urls;
+};
+// Database: its tabs; Frequency's other kinds and pages; the set or packet open, the packets beside it
+AHEAD_OF["database-screen"] = () => {
+  const urls = ["/api/sets", "/api/starred"];
+  if (!freqTags()) {
+    urls.push(freqAhead(_freqType, 0));
+    if (state.dbTab === "frequency") { for (const t of ["tossup", "bonus", "both"]) if (t !== _freqType) urls.push(freqAhead(t, 0)); if (_freqPage > 0) urls.push(freqAhead(_freqType, _freqPage - 1)); urls.push(freqAhead(_freqType, _freqPage + 1)); }
+  }
+  const b = state.dbTab === "sets" && _dbBrowse;
+  if (b && b.set) {
+    urls.push("/api/packets-for-set?setName=" + encodeURIComponent(b.set));
+    if (b.pkt != null) for (const n of [b.pkt - 1, b.pkt + 1]) if (n >= 1) urls.push(`/api/packet-content?setName=${encodeURIComponent(b.set)}&packetNumber=${n}`);
+  }
+  return urls;
+};
+// Statistics: the other periods (or All sessions, from one), and the categories' breakdown
+AHEAD_OF["stats-screen"] = () => {
+  if (needsAccount()) return [];
+  const cids = (() => { try { return statsCatIds(); } catch (e) { return []; } })();
+  const urls = ["/api/sessions", "/api/sessions/breakdown" + (cids.length ? "?categoryIds=" + encodeURIComponent(cids.join(",")) : "")];
+  if (state.statsSessionId) urls.unshift(statsUrl(null));
+  else for (const p of ["all", "today", "7", "30", "90"]) if (p !== _statsPeriod) urls.push(statsUrl(null, p));
+  return urls;
+};
+// Profile and Streaks: each other's, and Statistics
+AHEAD_OF["player-screen"] = AHEAD_OF["streaks-screen"] = () => needsAccount() ? [] : ["/api/stats", "/api/sessions", "/api/answer-powers", "/api/profiles/active", activityUrl(), statsUrl(null)];
+// Clubs (clubs.js): the other organizations, its Leaderboard tab, the reports shown
+AHEAD_OF["clubs-screen"] = () => (signedInNow() && window.QBClubs && window.QBClubs.ahead ? window.QBClubs.ahead() : []);
+// a diagnostic's setup: the sets (Packets), and Clubs to go back to
+AHEAD_OF["diagnostic-screen"] = () => (signedInNow() ? ["/api/sets", "/api/clubs"] : []);
+// Admin: every tab's first page; an open account's other parts
+AHEAD_OF["admin-screen"] = () => {
+  if (!(Account.user && Account.user.admin)) return [];
+  const users = (f) => "/api/admin/users?limit=100&offset=0" + (["unverified", "testers", "visitors"].includes(f) ? "&filter=" + f : "");
+  const urls = ["/api/admin/stats", users(_admu.filter), "/api/admin/reports?status=" + _admr.status + "&limit=50&offset=0",
+    "/api/admin/visitors?limit=100&offset=0" + (_admv.all ? "&all=1" : ""), "/api/admin/clubs", "/api/admin/lessons?status=" + _adml.status + "&limit=100"];
+  if (_adm.tab === "users") for (const f of ["all", "unverified", "visitors", "testers"]) if (f !== _admu.filter) urls.push(users(f));
+  if (_adm.tab === "users" && _admu.id) for (const [k] of ADM_PARTS) if (k !== "overview" && !(admIsVisitor() && k === "social")) urls.push(admDataUrl("part=" + k + (_admu.profile && k !== "social" ? "&profile=" + encodeURIComponent(_admu.profile) : "")));
+  return urls;
+};
+// Plugins: the Store's list (extensions.js)
+AHEAD_OF["extensions-screen"] = () => (window.QB && QB.preloadStore ? [{ k: "plugin-store", run: () => QB.preloadStore() }] : []);
+// Friends and Leaderboards' players come from their rows (data-user); the top bar's pages from warmReads
 
 // ── Download page (website only) ──
 // /download/latest.json sits next to the installers on the server

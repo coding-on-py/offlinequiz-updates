@@ -2435,16 +2435,20 @@ QB.registerTheme({
     if (shot) return '<div class="sc-shot" aria-hidden="true" inert><div class="pgm">' + cleanMock(shot.html) + "</div></div>";
     return '<div class="sc-shot sc-hero" aria-hidden="true" style="--g:' + esc(color) + '">' + piconHtml(item, color, " sc-hero-ico") + "</div>";
   }
+  // (15.164) the Store's list, fetched before its tab is opened too (app.js one-click-ahead, from the Plugins page)
+  QB.preloadStore = () => {
+    const st = QB._store;
+    if (st.list || st.loading || st.err) return Promise.resolve();
+    st.loading = true;
+    const load = WEBSITE ? fetch("/api/plugin-store", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then((d) => (d && d.plugins) || []) : appStoreList();
+    return load.then((list) => { st.list = list; }).catch(() => { st.err = true; })
+      .then(() => { st.loading = false; if (QB._extTab === "store") QB.renderScreen(); });
+  };
   function storeHtml() {
     const st = QB._store;
     if (!st.list) {
       if (st.err) return '<div class="ext-empty-state">Couldn\'t reach the Store <button type="button" class="btn btn-sm" data-store-reload>Try again</button></div>';
-      if (!st.loading) {
-        st.loading = true;
-        const load = WEBSITE ? fetch("/api/plugin-store", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then((d) => (d && d.plugins) || []) : appStoreList();
-        load.then((list) => { st.list = list; }).catch(() => { st.err = true; })
-          .then(() => { st.loading = false; if (QB._extTab === "store") QB.renderScreen(); });
-      }
+      QB.preloadStore();
       return '<div class="ext-empty-state">Loading…</div>';
     }
     if (!st.list.length) return '<div class="ext-empty-state">The Store is empty right now</div>';
@@ -6972,6 +6976,10 @@ function __qbMain(ctx) {
   const info = (tip, label) => '<span class="qb-info" data-tip="' + esc(tip) + '" tabindex="0" role="img" aria-label="' + esc(label || "More info") + '">i</span>';
 
   // ── the server ──
+  // (15.164) a page's own read as it opens: the server's unless what's kept is from the last moment (app.js API.getNew)
+  async function getNew(path) {
+    try { const r = await (API.getNew ? API.getNew(path) : API.get(path)); return r || { error: OFFLINE }; } catch (e) { return { error: e && e.message && !/fetch|network|timeout|abort/i.test(e.message) ? e.message : OFFLINE }; }
+  }
   async function get(path) {
     try { const r = await API.get(path); return r || { error: OFFLINE }; } catch (e) { return { error: e && e.message && !/fetch|network|timeout|abort/i.test(e.message) ? e.message : OFFLINE }; }
   }
@@ -7087,12 +7095,15 @@ function __qbMain(ctx) {
   }
   async function poll() {
     if (!signedIn()) { S.list = null; paintBadge(0); return; }
-    const d = await get("/api/clubs");
+    // (15.164) from the server, not the kept read: it's here to see what others did
+    const fresh = (u) => (API.fetchRead ? API.fetchRead(u).then((x) => (x && typeof structuredClone === "function" ? structuredClone(x) : x)) : API.get(u));
+    let d; try { d = await fresh("/api/clubs"); } catch (e) { d = null; }
     if (!d || d.error) return;
     const was = JSON.stringify(S.list && [S.list.invites, S.list.requests, S.list.orgs]);
     S.list = d; paintBadge(d.notify || 0);
     // Clubs open: the organization again (members, teams and diagnostics change from other people)
     if (screenOn("clubs-screen") && !document.querySelector("#clubs-screen .pop:not([hidden]), #cl-overlay, #prompt-dialog, #confirm-dialog")) {
+      if (S.orgId) { try { await fresh("/api/clubs/org?id=" + encodeURIComponent(S.orgId)); } catch (e) {} }   // (the kept one, new)
       if (was !== JSON.stringify([d.invites, d.requests, d.orgs])) renderClubs({ quiet: true }); else refresh();
     }
   }
@@ -7162,17 +7173,23 @@ function __qbMain(ctx) {
     const c = document.getElementById("clubs-container"); if (!c) return;
     paintHeadButtons();
     if (await gate(c, "users", "Clubs")) { paintHeadButtons(); return; }
-    // what we had, at once; then the server's
+    // what we had (or one-click-ahead kept), at once; then the server's
+    const peek = (u) => (API.peek ? API.peek(u) : null);
+    if (!S.list) { const k = peek("/api/clubs"); if (k && Array.isArray(k.orgs)) S.list = k; }
+    if (S.list && !S.org && S.list.orgs.length) {
+      const id = S.list.orgs.some((o) => o.id === S.orgId) ? S.orgId : S.list.orgs[0].id, k = peek("/api/clubs/org?id=" + encodeURIComponent(id));
+      if (k && !k.error) { S.orgId = id; S.org = k; }
+    }
     if (S.list && (S.org || !S.list.orgs.length)) paintClubs(c);
     else if (!opts.quiet) c.innerHTML = loading("Loading clubs…");
     const gen = ++loadGen;
-    const d = await get("/api/clubs");
+    const d = await getNew("/api/clubs");
     if (gen !== loadGen) return;
     if (!d || d.error) { if (!S.list) c.innerHTML = '<div class="db-empty">' + esc((d && d.error) || OFFLINE) + "</div>"; return; }
     S.list = d; paintBadge(d.notify || 0);
     if (!d.orgs.some((o) => o.id === S.orgId)) S.orgId = d.orgs.length ? d.orgs[0].id : "";
     if (S.orgId) {
-      const o = await get("/api/clubs/org?id=" + encodeURIComponent(S.orgId));
+      const o = await getNew("/api/clubs/org?id=" + encodeURIComponent(S.orgId));
       if (gen !== loadGen) return;
       if (o && !o.error) { S.org = o; ls.set("qb-club-org", S.orgId); }
       else if (o && o.error) { S.org = null; }
@@ -7239,7 +7256,7 @@ function __qbMain(ctx) {
       return '<div class="fr-row"><span class="club-tile sm" aria-hidden="true">' + esc(i.org.tag) + '</span><span class="fr-name"><b>' + esc(i.org.name) + "</b><small>" + sub + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-inv-no="' + esc(i.id) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-inv-yes="' + esc(i.id) + '">Accept</button></span></div>';
     }).join("") + joins.map((r) =>
       '<div class="fr-row" data-user="' + esc(r.handle) + '" data-user-name="' + esc(r.name || r.handle) + '" data-user-neon="' + esc(r.neon || "") + '">' + av({ name: r.name || r.handle, neon: r.neon }) + '<span class="fr-name"><b>' + neonHtml(esc(r.name || r.handle), r.neon) + "</b><small>@" + esc(r.handle) + " wants to join " + esc(O().name) + " · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-cl="req-no" data-h="' + esc(r.handle) + '">Decline</button><button type="button" class="btn btn-sm btn-primary" data-cl="req-yes" data-h="' + esc(r.handle) + '">Accept</button></span></div>').join("") + reps.map((r) =>
-      '<div class="fr-row"><span class="dg-ico" aria-hidden="true">' + ico("doc", 18) + '</span><span class="fr-name"><b>' + esc(r.team) + " diagnostic</b><small>" + esc(r.orgName || "") + " · report ready · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-rep-seen="' + esc(r.id) + '">Dismiss</button><button type="button" class="btn btn-sm btn-primary" data-report="' + esc(r.id) + '">View report</button></span></div>').join("");
+      '<div class="fr-row"><span class="dg-ico" aria-hidden="true">' + ico("doc", 18) + '</span><span class="fr-name"><b>' + esc(r.team) + " diagnostic</b><small>" + esc(r.orgName || "") + " · report ready · " + esc(ago(r.at)) + '</small></span><span class="fr-act"><button type="button" class="btn btn-sm" data-rep-seen="' + esc(r.id) + '">Dismiss</button><button type="button" class="btn btn-sm btn-primary" data-report="' + esc(r.id) + '"' + repAhead(r.id) + '>View report</button></span></div>').join("");
     const n = inv.length + joins.length;
     return '<section class="cl-req" aria-label="Requests"><h2 class="eyebrow">' + (n ? "Requests" : "New reports") + (n ? '<span class="tab-n num">' + n + "</span>" : "") + '</h2><div class="fr-list">' + rows + "</div></section>";
   }
@@ -7267,6 +7284,25 @@ function __qbMain(ctx) {
   }
   function afterTab(c) {
     if (S.tab === "leaderboard") loadOrgLb();
+    // (15.164) one click ahead (app.js): what this page's tabs, organizations, rows and reports open
+    if (typeof aheadIn === "function") { aheadIn(c); aheadSoon(); }
+  }
+  // a report's two reads (renderReport), for its View report button
+  const repAhead = (id) => ' data-ahead="' + esc("/api/diag/report?id=" + encodeURIComponent(id) + "|/api/diag?id=" + encodeURIComponent(id)) + '"';
+  const orgLbUrl = (team, period) => "/api/clubs/leaderboard?org=" + encodeURIComponent(S.orgId) + "&team=" + encodeURIComponent(team) + "&period=" + period;
+  // (15.164) Clubs' reads one click away: the other organizations, the Leaderboard tab (every team and period once it's
+  // open), and each report shown (its rows carry data-ahead)
+  function ahead() {
+    const urls = ["/api/clubs"];
+    for (const o of (S.list && S.list.orgs) || []) if (o.id !== S.orgId) urls.push("/api/clubs/org?id=" + encodeURIComponent(o.id));
+    if (S.orgId && S.org) {
+      urls.push(orgLbUrl(S.lbTeam, S.lbPeriod));
+      if (S.tab === "leaderboard") {
+        for (const p of ["week", "month", "all"]) urls.push(orgLbUrl(S.lbTeam, p));
+        for (const t of [{ id: "all" }].concat(teams())) urls.push(orgLbUrl(t.id, S.lbPeriod));
+      }
+    }
+    return urls;
   }
   function msg(text, err) { const m = document.getElementById("cl-msg"); if (m) { m.textContent = text || ""; m.classList.toggle("err", !!err); } }
   // a change: the button waits, a refusal shows next to it, success repaints from the server
@@ -7400,7 +7436,7 @@ function __qbMain(ctx) {
   function orgLbHtml() {
     if (S.lbTeam !== "all" && !team(S.lbTeam)) S.lbTeam = "all";
     const filt = '<div class="seg cl-seg-scroll" role="group" aria-label="Show">' + [["all", "Everyone"]].concat(teams().map((t) => [t.id, t.name])).map((x) => '<button type="button" data-lb-team="' + esc(x[0]) + '" aria-pressed="' + (S.lbTeam === x[0]) + '">' + esc(x[1]) + "</button>").join("") + "</div>";
-    const key = S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod, d = S.lb && S.lb.key === key ? S.lb.d : null;
+    const key = S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod, d = (S.lb && S.lb.key === key ? S.lb.d : null) || (API.peek && API.peek(orgLbUrl(S.lbTeam, S.lbPeriod)));
     return '<div class="cl-toolbar">' + filt + '<div class="end">' + periodSeg(S.lbPeriod, "data-lb-period") + "</div></div>" +
       '<div id="cl-lb">' + (d ? orgLbRows(d) : loading("Loading the leaderboard…")) + "</div>";
   }
@@ -7411,10 +7447,10 @@ function __qbMain(ctx) {
   }
   async function loadOrgLb() {
     const key = S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod;
-    const d = await get("/api/clubs/leaderboard?org=" + encodeURIComponent(S.orgId) + "&team=" + encodeURIComponent(S.lbTeam) + "&period=" + S.lbPeriod);
+    const d = await getNew(orgLbUrl(S.lbTeam, S.lbPeriod));
     S.lb = { key, d };
     const el = document.getElementById("cl-lb");
-    if (el && S.tab === "leaderboard" && key === S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod) el.innerHTML = orgLbRows(d);
+    if (el && S.tab === "leaderboard" && key === S.orgId + "|" + S.lbTeam + "|" + S.lbPeriod) { const h = orgLbRows(d); if (el.innerHTML !== h) el.innerHTML = h; if (typeof aheadIn === "function") aheadIn(el); }
   }
 
   // ── Invites: by username, the code, join requests, pending invites ──
@@ -7449,7 +7485,7 @@ function __qbMain(ctx) {
 
   // ── Diagnostics: one row each — what it is, where it stands, the one thing to do ──
   function dxStatus(d) {
-    if (d.status === "done") return { tone: "good", text: "Report ready" + (d.conv != null ? " · " + d.conv + "% conversion" : ""), btn: '<button type="button" class="btn btn-sm" data-report="' + esc(d.id) + '">View report</button>' };
+    if (d.status === "done") return { tone: "good", text: "Report ready" + (d.conv != null ? " · " + d.conv + "% conversion" : ""), btn: '<button type="button" class="btn btn-sm" data-report="' + esc(d.id) + '"' + repAhead(d.id) + '>View report</button>' };
     if (d.place === "irl") return { tone: "mid", text: "Being read aloud · " + plural(d.players, "player"), btn: d.canManage ? '<button type="button" class="btn btn-sm" data-irl="' + esc(d.id) + '">Continue reading</button>' : "" };
     if (d.place === "own") {
       const pr = d.progress || { done: 0, total: d.players }, mine = d.myProgress;
@@ -7940,7 +7976,7 @@ function __qbMain(ctx) {
   }
   function newDx(target) {
     const t = target && canRunTarget(target) ? target : defaultTarget(), days = dayOpts();
-    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [2, 3, 4, 5], years: { min: null, max: null }, yearsMode: "any" };
+    return { org: S.orgId, target: t, players: playersFor(t, "room"), format: "tb", place: "room", when: "now", startDay: days[1].v, startHour: 16, dueDay: days[Math.min(6, days.length - 1)].v, dueHour: 18, tu: 40, bo: 20, diff: [2, 3, 4, 5], years: { min: null, max: null }, yearsMode: "any", src: "draw", packets: [], pkSet: "" };
   }
   async function renderSetup() {
     const c = document.getElementById("dx-container"); if (!c) return;
@@ -8011,11 +8047,43 @@ function __qbMain(ctx) {
     else if (d.place === "own") html += '<div class="opt-row"><span class="cl-lbl">Deadline</span>' + dsel("dx-due-day", d.dueDay) + hsel("dx-due-hour", d.dueHour) + "</div>";
     el.innerHTML = html;
   }
+  // (15.164) the questions: drawn by the distribution, or packets picked (played in the order picked, each packet's
+  // questions in their own order)
+  const DX_MAX_PACKETS = 10;
+  function loadDxSets() {
+    if (S.dxSets || S.dxSetsP) return;
+    S.dxSetsP = get("/api/sets").then((r) => { S.dxSetsP = null; if (r && Array.isArray(r.sets)) { S.dxSets = r.sets; if (S.dx && S.dx.src === "packets") paintQty(); } });
+  }
+  function loadDxPackets(set) {
+    if (!set || (S.dxPk && S.dxPk.set === set)) return;
+    get("/api/packets-for-set?setName=" + encodeURIComponent(set)).then((r) => {
+      if (!S.dx || S.dx.pkSet !== set) return;
+      S.dxPk = { set, list: (r && Array.isArray(r.packets)) ? r.packets : [] };
+      paintQty();
+    });
+  }
+  const pkName = (p) => String(p.packet_name || "").trim() || "Packet " + p.packet_number;
+  function packetsHtml() {
+    const d = S.dx, sets = S.dxSets;
+    const setSel = !sets ? loading("") : '<select class="mode-input dx-pk-set" id="dx-pk-set" aria-label="Set"><option value="">Pick a set</option>' +
+      sets.map((x) => '<option value="' + esc(x.name) + '"' + (x.name === d.pkSet ? " selected" : "") + ">" + esc(x.name) + "</option>").join("") + "</select>";
+    const list = !d.pkSet ? [] : S.dxPk && S.dxPk.set === d.pkSet ? S.dxPk.list : null;
+    const at = (n) => d.packets.findIndex((p) => p.set === d.pkSet && p.n === n);
+    const chips = !d.pkSet ? "" : !list ? loading("") : !list.length ? '<p class="cl-none">No packets in this set.</p>'
+      : '<div class="pchips dx-pk-list">' + list.map((p) => { const i = at(p.packet_number);
+        return '<label class="pchip dx-pk" title="' + esc(pkName(p)) + '"><input type="checkbox" data-pk="' + p.packet_number + '"' + (i >= 0 ? " checked" : "") + ">" +
+          (i >= 0 ? '<span class="dx-pk-n num">' + (i + 1) + "</span>" : "") + '<span class="pc-name">' + esc(pkName(p)) + "</span></label>"; }).join("") + "</div>";
+    const picked = d.packets.length ? '<p class="cl-sub-label">Played in this order</p><ol class="dx-pk-picked">' + d.packets.map((p, i) =>
+      '<li><span class="dx-pk-n num">' + (i + 1) + '</span><span class="pc-name"><b>' + esc(p.name) + "</b><small>" + esc(p.set) + '</small></span><button type="button" class="btn btn-ghost btn-icon btn-sm" data-pk-off="' + i + '" title="Take it out" aria-label="Take out ' + esc(p.name) + '">' + ico("x", 14) + "</button></li>").join("") + "</ol>" : "";
+    return '<div class="dx-pk-pick">' + setSel + chips + "</div>" + picked;
+  }
   function paintQty() {
     const d = S.dx, el = document.getElementById("dx-qty"); if (!el) return;
     const seg = (attr, vals, cur, label) => '<div class="seg" role="group" aria-label="' + label + '">' + vals.map((v) => '<button type="button" data-' + attr + '="' + v + '" aria-pressed="' + (cur === v) + '">' + v + "</button>").join("") + "</div>";
-    el.innerHTML = d.format === "bo" ? '<div class="opt-row"><span class="cl-lbl">Bonuses</span>' + seg("bo", [10, 20, 30], d.bo, "Bonuses") + "</div>"
-      : '<div class="opt-row"><span class="cl-lbl">Tossups</span>' + seg("tu", [20, 40, 60], d.tu, "Tossups") + (d.format === "tb" ? info("A bonus follows each tossup your team gets.", "About bonuses") : "") + "</div>";
+    const src = '<div class="opt-row"><div class="seg" role="group" aria-label="Questions from"><button type="button" data-src="draw" aria-pressed="' + (d.src !== "packets") + '">Drawn</button><button type="button" data-src="packets" aria-pressed="' + (d.src === "packets") + '">Packets</button></div></div>';
+    if (d.src === "packets") { el.innerHTML = src + packetsHtml(); if (typeof aheadSoon === "function") aheadSoon(); return; }
+    el.innerHTML = src + (d.format === "bo" ? '<div class="opt-row"><span class="cl-lbl">Bonuses</span>' + seg("bo", [10, 20, 30], d.bo, "Bonuses") + "</div>"
+      : '<div class="opt-row"><span class="cl-lbl">Tossups</span>' + seg("tu", [20, 40, 60], d.tu, "Tossups") + (d.format === "tb" ? info("A bonus follows each tossup your team gets.", "About bonuses") : "") + "</div>");
   }
   function syncSetup() {
     const d = S.dx;
@@ -8030,12 +8098,17 @@ function __qbMain(ctx) {
     set("dx-s-team", tname + " · " + plural(d.players.length, "player"));
     set("dx-s-format", FORMATS[d.format].label);
     set("dx-s-where", d.place === "own" ? "On their own, due " + whenText(atOf(d.dueDay, d.dueHour)) : d.place === "irl" ? "IRL Reading, read aloud in person" : "In a room, " + (d.when === "now" ? "now" : whenText(atOf(d.startDay, d.startHour))));
-    set("dx-s-q", d.format === "tb" ? d.tu + " tossups, bonuses as earned" : d.format === "bo" ? d.bo + " bonuses" : d.tu + " tossups");
+    const pk = d.src === "packets", what = d.format === "tb" ? "tossups and bonuses" : d.format === "bo" ? "bonuses" : "tossups";
+    // (15.164) packets bring their own difficulty and years
+    $$('#dx-form .fsec[aria-label="Difficulty"], #dx-form .fsec[aria-label="Years"]').forEach((x) => { x.hidden = pk; });
+    $$("#dx-s-diff, #dx-s-years").forEach((x) => { const row = x.closest("div"); if (row) row.hidden = pk; });
+    set("dx-s-q", pk ? (d.packets.length ? "The " + what + " of " + plural(d.packets.length, "packet") : "Pick a packet") : d.format === "tb" ? d.tu + " tossups, bonuses as earned" : d.format === "bo" ? d.bo + " bonuses" : d.tu + " tossups");
     // (15.130: just the range, "2–5"; the "mostly 2–3" after it is gone)
     set("dx-s-diff", !d.diff.length ? "Pick at least one" : diffText(d.diff));
     set("dx-s-years", yearsBad(d.years) ? "From is after To" : yearsText(d.years) || "Any");
     const ys = document.getElementById("dx-s-years"); if (ys) ys.classList.toggle("bad", yearsBad(d.years));
-    const mins = d.format === "bo" ? Math.round(d.bo * 1.5 / 5) * 5 : d.format === "tu" ? Math.round(d.tu * 0.75 / 5) * 5 : Math.round(d.tu * 1.45 / 5) * 5;
+    const nTu = pk ? 20 * d.packets.length : d.tu, nBo = pk ? 20 * d.packets.length : d.bo;   // (a packet is about 20 of each)
+    const mins = d.format === "bo" ? Math.round(nBo * 1.5 / 5) * 5 : d.format === "tu" ? Math.round(nTu * 0.75 / 5) * 5 : Math.round(nTu * 1.45 / 5) * 5;
     set("dx-s-time", "About " + mins + " minutes" + (d.place === "own" ? " each" : ""));
     set("dx-go-lbl", d.place === "own" ? "Send it out" : d.place === "irl" ? "Open the packet" : d.when === "now" ? "Open the room" : "Schedule the room");
   }
@@ -8050,6 +8123,8 @@ function __qbMain(ctx) {
       else if (ds.when) d.when = ds.when;
       else if (ds.tu) d.tu = +ds.tu;
       else if (ds.bo) d.bo = +ds.bo;
+      else if (ds.src) { d.src = ds.src; if (d.src === "packets") { loadDxSets(); if (d.pkSet) loadDxPackets(d.pkSet); } }
+      else if (ds.pkOff != null) d.packets.splice(+ds.pkOff, 1);
       else if (ds.level) { const l = LEVELS.find((x) => x[0] === ds.level); if (l) d.diff = l[2].slice(); }
       else if (ds.ymode) {
         const y = new Date().getFullYear();
@@ -8065,6 +8140,17 @@ function __qbMain(ctx) {
     f.onchange = (e) => {
       const t = e.target, d = S.dx;
       if (t.dataset.player) { const m = t.dataset.player; d.players = t.checked ? d.players.concat([m]) : d.players.filter((x) => x !== m); syncSetup(); return; }
+      if (t.id === "dx-pk-set") { d.pkSet = t.value; loadDxPackets(d.pkSet); syncSetup(); return; }
+      if (t.dataset.pk != null) {
+        const n = +t.dataset.pk, i = d.packets.findIndex((p) => p.set === d.pkSet && p.n === n);
+        if (t.checked && i < 0) {
+          if (d.packets.length >= DX_MAX_PACKETS) { t.checked = false; document.getElementById("dx-msg").textContent = "Pick up to " + DX_MAX_PACKETS + " packets."; return; }
+          const p = ((S.dxPk && S.dxPk.list) || []).find((x) => x.packet_number === n);
+          d.packets.push({ set: d.pkSet, n, name: p ? pkName(p) : "Packet " + n });
+        } else if (!t.checked && i >= 0) d.packets.splice(i, 1);
+        document.getElementById("dx-msg").textContent = "";
+        syncSetup(); return;
+      }
       if (t.dataset.diff != null) { const v = +t.dataset.diff; d.diff = t.checked ? d.diff.concat([v]).sort((a, b) => a - b) : d.diff.filter((x) => x !== v); syncSetup(); return; }
       if (t.id === "dx-y0" || t.id === "dx-y1") { const n = parseInt(t.value, 10); d.years[t.id === "dx-y0" ? "min" : "max"] = n >= 1990 && n <= 2100 ? n : null; syncSetup(); return; }
       if (t.id === "dx-start-day") d.startDay = t.value; else if (t.id === "dx-start-hour") d.startHour = +t.value;
@@ -8077,11 +8163,13 @@ function __qbMain(ctx) {
       const d = S.dx, m = document.getElementById("dx-msg"), btn = document.getElementById("dx-go");
       const say = (t) => { m.textContent = t; };
       if (!d.players.length) return say("Pick at least one player.");
-      if (!d.diff.length) return say("Pick at least one difficulty.");
+      const pk = d.src === "packets";
+      if (pk && !d.packets.length) return say("Pick at least one packet.");
+      if (!pk && !d.diff.length) return say("Pick at least one difficulty.");
       const startAt = d.place === "room" && d.when === "later" ? atOf(d.startDay, d.startHour) : null, dueAt = d.place === "own" ? atOf(d.dueDay, d.dueHour) : null;
       if (dueAt && dueAt < Date.now() + 10 * 60e3) return say("Pick a deadline later than that.");
       btn.disabled = true; say("");
-      const r = await post("/api/diag/create", { org: d.org, team: d.target, players: d.players, format: d.format, place: d.place, startAt, dueAt, tu: d.tu, bo: d.bo, diff: d.diff, years: d.years });
+      const r = await post("/api/diag/create", { org: d.org, team: d.target, players: d.players, format: d.format, place: d.place, startAt, dueAt, tu: d.tu, bo: d.bo, diff: d.diff, years: d.years, ...(pk ? { packets: d.packets.map((p) => ({ set: p.set, n: p.n })) } : {}) });
       if (!r || r.error) { btn.disabled = false; return say((r && r.error) || OFFLINE); }
       S.dx = null;
       if (d.place === "irl") { btn.disabled = false; return openIrl(r.id); }
@@ -8745,12 +8833,13 @@ function __qbMain(ctx) {
   }
   // ═══ LEADERBOARDS: Teams and Organizations (Individuals stays app.js's) ═══
   async function renderGroups(box, kind, period) {
-    const key = kind + "|" + period;
-    if (S.groups && S.groups.key === key) box.innerHTML = groupsHtml(S.groups.d, kind);
-    else box.innerHTML = loading("Loading the leaderboard…");
-    const d = await get("/api/leaderboards/groups?kind=" + kind + "&period=" + period);
+    const key = kind + "|" + period, url = "/api/leaderboards/groups?kind=" + kind + "&period=" + period;
+    // (15.164) what's kept (app.js one-click-ahead fetches every period and kind) at once, then the server's if it differs
+    const kept = (S.groups && S.groups.key === key && S.groups.d) || (API.peek && API.peek(url)) || null;
+    box.innerHTML = kept ? groupsHtml(kept, kind) : loading("Loading the leaderboard…");
+    const d = await getNew(url);
     S.groups = { key, d };
-    if (box.isConnected) box.innerHTML = groupsHtml(d, kind);
+    if (box.isConnected && (!kept || JSON.stringify(kept) !== JSON.stringify(d))) box.innerHTML = groupsHtml(d, kind);
   }
   function groupsHtml(d, kind) {
     if (!d || d.error) return '<div class="db-empty">' + esc((d && d.error) || OFFLINE) + "</div>";
@@ -8805,7 +8894,7 @@ function __qbMain(ctx) {
     if (a === "l" && b) { openLink(b); return true; }
     return false;
   }
-  window.QBClubs = { resumeLink, poll, paintBadge, onScreen, open, openIrl, openReport, openLink, shareDialog, webPath, route, renderGroups, groupsTip, renderClubs, beforeBack };
+  window.QBClubs = { resumeLink, poll, paintBadge, onScreen, open, openIrl, openReport, openLink, shareDialog, webPath, route, renderGroups, groupsTip, renderClubs, beforeBack, ahead };
   if (window.QB) {
     window.QB.openClubs = (tab) => open(tab || "diagnostics");
     window.QB.openDiagReport = (id) => openReport(id);
