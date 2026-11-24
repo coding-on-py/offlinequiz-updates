@@ -1,46 +1,46 @@
 {
   "format": 1,
-  "version": "1794886461197",
-  "name": "Question database 2026-11-17",
+  "version": "1795535997053",
+  "name": "Question database 2026-11-24",
   "schema": 2,
   "mode": "final",
   "tree": "v3.7",
   "tossups": 187083,
   "bonuses": 159309,
-  "size": 2145304576,
-  "sha256": "e8b084ad149b2a6c090f2e232c6c30c11682892455c317e92cb5c6f88a0fab74",
+  "size": 2145222656,
+  "sha256": "e71f016abd566ec328f55c67e92fb1525644883ba94190f70f7b4fc164d0ca58",
   "compression": "br",
   "parts": [
     {
       "name": "questions.db.br.000",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1794886461197/questions.db.br.000",
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1795535997053/questions.db.br.000",
       "size": 99614720,
-      "sha256": "2d56aff00cea3499ef9eed1428122b0bcc133332f9937aa5e5f3cff86ad0f176"
+      "sha256": "f7177bd8ffbecde0db381d9c433291ca9b8a1d40d2cc7597fb7cdf222975a898"
     },
     {
       "name": "questions.db.br.001",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1794886461197/questions.db.br.001",
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1795535997053/questions.db.br.001",
       "size": 99614720,
-      "sha256": "0325c2cf1ac1621238432dd50c2573ef56964541480c9b84d9694734abc3bd7e"
+      "sha256": "3b37fbf048454f6a842ea54ba3269a06e1d7a42edfc1f45fc04a76ba6e4da6f1"
     },
     {
       "name": "questions.db.br.002",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1794886461197/questions.db.br.002",
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1795535997053/questions.db.br.002",
       "size": 99614720,
-      "sha256": "afc0d85c69230c69632aa5a20a95338628485c3269624c67fd6fa82954b9629f"
+      "sha256": "dfd73dd16e42cf042e5cdcaf67c1c61aea609bfe1ba369d8ec69cacb0036f863"
     },
     {
       "name": "questions.db.br.003",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1794886461197/questions.db.br.003",
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1795535997053/questions.db.br.003",
       "size": 99614720,
-      "sha256": "df08d7aa7a269897b0c2df9f62a187bfe9c8cf694c8f36002515d712f79632c1"
+      "sha256": "49fad8259504ce6440389f5a0385e194c89c875fb1c5e6a8476ff8fe1acf1bb9"
     },
     {
       "name": "questions.db.br.004",
-      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1794886461197/questions.db.br.004",
-      "size": 68456306,
-      "sha256": "6c868d8aa23c816bfa323a187d5e9bc24c437a319f7d5692eb45a2d021acfeef"
+      "url": "https://github.com/coding-on-py/offlinequiz-updates/releases/download/db-1795535997053/questions.db.br.004",
+      "size": 68334986,
+      "sha256": "7fe4852af164faaf339ae4fc2c0e32158b941cd213f9d6dd5469e07e1c8d3a3f"
     }
   ],
-  "signature": "hCrUK9J/oiGNrreEWXxSsoRqqfStiVSU4syA1LpQbA72fwc4mx6D59NHw+TLH3FW+HRzhDoWOP1pSUog9q7yBA=="
+  "signature": "sg7hOQtSUFHgFR940oFReaRZh6C1bMu2d6ooHDAS+AGIFh7N5g+JDG+wIYsAe4zVYemDwkqnTtNJ1x39jRvJCQ=="
 }
